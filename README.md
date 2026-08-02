@@ -23,12 +23,6 @@ Khi tham gia AI20K Build Phase, mỗi đội cần xây dựng một AI Agent ho
 # Clone template
 git clone https://github.com/AI20K-Build-Cohort-2/starter-code-template.git team-YOUR_TEAM_NAME
 cd team-YOUR_TEAM_NAME
-
-# Xóa git history cũ và khởi tạo lại
-rm -rf .git
-git init
-git add .
-git commit -m "feat: khởi tạo dự án từ template"
 ```
 
 ### Bước 2: Setup môi trường
