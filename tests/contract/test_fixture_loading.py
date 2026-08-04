@@ -90,6 +90,14 @@ async def test_fake_url_scanner_replays_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fake_url_scanner_reports_unconfigured_response_id() -> None:
+    scanner = FakeUrlScanner({}, "missing-response")
+
+    with pytest.raises(ValueError, match="missing-response"):
+        await scanner.scan("https://example.com")
+
+
+@pytest.mark.asyncio
 async def test_fake_claim_retriever_honors_limit() -> None:
     loaded = load_claim_retriever_responses()["claim_false_001"]
     assert loaded.results is not None

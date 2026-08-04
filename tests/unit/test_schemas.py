@@ -13,6 +13,7 @@ from src.models import (
     AnalysisResponse,
     AnalysisStatus,
     CaseStatus,
+    ErrorBody,
     Evidence,
     EvidenceType,
     InputType,
@@ -78,6 +79,16 @@ def test_accepted_response_serializes_contract_version_and_utc() -> None:
 def test_contract_rejects_non_utc_timestamp() -> None:
     with pytest.raises(ValidationError, match="timestamps must use UTC"):
         AnalysisAcceptedResponse(analysis_id=ANALYSIS_ID, created_at=datetime(2026, 8, 3, 13, 0))
+
+
+def test_contract_rejects_empty_strings_in_nested_dictionary() -> None:
+    with pytest.raises(ValidationError, match="empty strings are not valid contract values"):
+        ErrorBody(
+            code="VALIDATION_ERROR",
+            message="Invalid request.",
+            retryable=False,
+            details={"context": {"reason": "   "}},
+        )
 
 
 @pytest.mark.parametrize(

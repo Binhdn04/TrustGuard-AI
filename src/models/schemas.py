@@ -99,6 +99,9 @@ class ContractModel(BaseModel):
             if isinstance(item, list):
                 for nested_item in item:
                     validate(nested_item)
+            if isinstance(item, dict):
+                for nested_item in item.values():
+                    validate(nested_item)
 
         validate(value)
         return value

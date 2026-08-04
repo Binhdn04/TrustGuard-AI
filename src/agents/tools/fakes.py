@@ -25,6 +25,10 @@ class FakeUrlScanner:
 
     async def scan(self, normalized_url: str) -> UrlScanResult:
         self.calls.append(normalized_url)
+        if self._response_id not in self._responses:
+            raise ValueError(
+                f"URL scanner fixture response ID {self._response_id!r} is not configured"
+            )
         result = self._responses[self._response_id]
         if isinstance(result, ToolError):
             raise FakeToolCallError(result)
