@@ -1,7 +1,7 @@
-from src.agents.state import AgentState
+from src.agents.state import LegacyAgentState
 
 
-async def analyze_node(state: AgentState) -> dict:
+async def analyze_node(state: LegacyAgentState) -> dict:
     """Phân tích query từ user."""
     query = state.get("query", "")
 
@@ -12,7 +12,7 @@ async def analyze_node(state: AgentState) -> dict:
     return {"analysis": analysis}
 
 
-async def respond_node(state: AgentState) -> dict:
+async def respond_node(state: LegacyAgentState) -> dict:
     """Tạo response từ analysis."""
     analysis = state.get("analysis", "")
     error = state.get("error")

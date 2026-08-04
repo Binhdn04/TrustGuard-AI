@@ -82,7 +82,7 @@ team-YOUR_TEAM_NAME/
 
 Mỗi thư mục phục vụ một mục đích cụ thể. Hãy hiểu rõ trước khi bắt đầu code:
 
-**`src/agent/`** — Nơi chứa toàn bộ logic AI Agent của bạn. File `graph.py` định nghĩa state graph (sơ đồ trạng thái) cho Agent, `state.py` chứa schema dữ liệu truyền giữa các node, `nodes.py` chứa các hàm xử lý logic tại mỗi bước, và `tools.py` chứa các công cụ mà Agent có thể sử dụng (tìm kiếm web, truy vấn database, gọi API, v.v.). Đây là "bộ não" của ứng dụng.
+**`src/agents/`** — Nơi chứa toàn bộ logic AI Agent của bạn. File `graph.py` định nghĩa state graph (sơ đồ trạng thái) cho Agent, `state.py` chứa schema dữ liệu truyền giữa các node, `nodes/` chứa các hàm xử lý logic tại mỗi bước, và `tools/` chứa các công cụ mà Agent có thể sử dụng (tìm kiếm web, truy vấn database, gọi API, v.v.). Đây là "bộ não" của ứng dụng.
 
 **`src/api/`** — FastAPI backend. File `main.py` tạo ứng dụng FastAPI và cấu hình middleware. Thư mục `routes/` chứa các file định nghĩa API endpoints, mỗi file tương ứng với một nhóm chức năng. File `deps.py` quản lý dependency injection — ví dụ, tạo instance của Agent và inject vào các route handler.
 
@@ -335,7 +335,7 @@ $ git pull origin develop
 $ git checkout -b feature/agent-search-tool
 
 # Làm việc, commit thường xuyên
-$ git add src/agent/tools/search.py
+$ git add src/agents/tools/search.py
 $ git commit -m "feat(agent): thêm tool tìm kiếm web"
 
 # Push và tạo Pull Request
@@ -554,7 +554,7 @@ Sau khi hoàn thành tất cả các bước trong chương này, bạn nên có
 
 Nếu bạn đã có đủ 7 mục trên, bạn đang đi đúng hướng. Sang Chương 3, chúng ta sẽ thiết kế kiến trúc hệ thống — quyết định quan trọng nhất ảnh hưởng đến toàn bộ dự án.
 
-> ⚠️ **LƯU Ý:** Đừng vội bắt đầu viết Agent logic ngay. Template có sẵn placeholder code trong `src/agent/` — để yên cho đến khi bạn hoàn thành thiết kế kiến trúc ở Chương 3. Code mà không có thiết kế là code mà bạn sẽ phải viết lại. Kinh nghiệm cho thấy: các đội thiết kế trước khi code luôn có kết quả tốt hơn đáng kể so với các đội "code first, design later."
+> ⚠️ **LƯU Ý:** Đừng vội bắt đầu viết Agent logic ngay. Template có sẵn placeholder code trong `src/agents/` — để yên cho đến khi bạn hoàn thành thiết kế kiến trúc ở Chương 3. Code mà không có thiết kế là code mà bạn sẽ phải viết lại. Kinh nghiệm cho thấy: các đội thiết kế trước khi code luôn có kết quả tốt hơn đáng kể so với các đội "code first, design later."
 
 ## Cài đặt AI Usage Logging Hooks
 

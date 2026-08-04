@@ -1,0 +1,27 @@
+{
+  "claim_none_001": {"results": []},
+  "claim_unconfirmed_001": {
+    "results": [
+      {
+        "source": "fake-official-source",
+        "title": "Thông báo khuyến mãi hiện hành",
+        "url": "https://official.example/promotions",
+        "finding": "Không tìm thấy chương trình phù hợp trong thông báo hiện hành.",
+        "relevance": 0.71,
+        "observed_at": "2026-08-03T13:00:00Z"
+      }
+    ]
+  },
+  "claim_false_001": {
+    "results": [
+      {
+        "source": "fake-fact-check",
+        "title": "Cảnh báo giả mạo phí mở khóa",
+        "url": "https://factcheck.example/reports/unlock-fee",
+        "finding": "Nguồn chính thức bác bỏ yêu cầu nộp phí mở khóa tài khoản.",
+        "relevance": 0.96,
+        "observed_at": "2026-08-03T13:00:00Z"
+      }
+    ]
+  }
+}

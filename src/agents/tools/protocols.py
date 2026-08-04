@@ -1,0 +1,19 @@
+from __future__ import annotations
+
+from typing import Protocol
+
+from src.models import ClaimEvidence, UrlScanResult
+
+
+class UrlScanner(Protocol):
+    async def scan(self, normalized_url: str) -> UrlScanResult: ...
+
+
+class ClaimRetriever(Protocol):
+    async def search(self, claim: str, limit: int = 5) -> list[ClaimEvidence]: ...
+
+
+class BlacklistRepository(Protocol):
+    async def contains(self, domain: str) -> bool: ...
+
+    async def add_approved(self, domain: str, decision_id: str) -> None: ...
