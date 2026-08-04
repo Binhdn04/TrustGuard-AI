@@ -1,10 +1,10 @@
 from langgraph.graph import END, StateGraph
 
 from src.agents.nodes.example_node import analyze_node, respond_node
-from src.agents.state import AgentState
+from src.agents.state import LegacyAgentState
 
 
-def should_continue(state: AgentState) -> str:
+def should_continue(state: LegacyAgentState) -> str:
     """Route based on whether an error occurred during analysis."""
     if state.get("error"):
         return END
@@ -12,7 +12,7 @@ def should_continue(state: AgentState) -> str:
 
 
 def build_graph() -> StateGraph:
-    graph = StateGraph(AgentState)
+    graph = StateGraph(LegacyAgentState)
 
     # Add nodes
     graph.add_node("analyze", analyze_node)
