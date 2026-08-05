@@ -1,144 +1,90 @@
 # Implementation Plan — P-068
 
-> Tài liệu này chỉ định **ai làm gì, theo thứ tự nào và khi nào được coi là xong**. Mọi code phải tham chiếu contract v1 trong `02-CONTRACT_AND_FIXTURES.md`.
+> Mục tiêu triển khai của MVP là tạo được **một luồng Agent chạy thật end-to-end**: người dùng gửi tin nhắn hoặc URL, Agent tự chọn bước kiểm tra, gọi ít nhất một provider thật, tổng hợp evidence, tính điểm rủi ro, trả cảnh báo và chuyển case cần thiết sang Security Admin review.
+>
+> Mọi module phải tuân thủ contract v1 trong `02-CONTRACT_AND_FIXTURES.md`. Fake adapters được sử dụng để phát triển và kiểm thử, nhưng không thay thế cho demo luồng thật.
 
-## 1. Nguyên tắc triển khai
+## 2. Luồng MVP bắt buộc phải chạy thật
 
-1. Merge contract skeleton trước khi chia nhánh tính năng.
-2. Phát triển trên fake adapters/fixtures; chỉ ghép provider thật sau khi contract test xanh.
-3. Mỗi module có một owner kỹ thuật và reviewer chéo; owner không phải người duy nhất được code.
-4. Thay đổi schema/enum/fixture expectation cần PR `contract-change` và review của các module bị ảnh hưởng.
-5. Không sửa expected label chỉ để làm test xanh; thay scoring/prompt phải kèm lý do và eval result.
+```text
+User nhập tin nhắn hoặc URL
+        ↓
+POST /api/v1/analyses
+        ↓
+Classify input
+        ↓
+Extract URL và claim
+        ↓
+Normalize URL
+        ↓
+Rule check + approved blacklist
+        ↓
+Lập kế hoạch kiểm tra
+        ↓
+Gọi URL reputation provider thật
+        ↓
+Fact-check claim nếu có
+        ↓
+Chuẩn hóa evidence
+        ↓
+Risk Engine tính score và verdict
+        ↓
+Lưu analysis
+        ↓
+UI hiển thị kết quả và limitation
+        ↓
+Nếu đạt ngưỡng escalation
+        ↓
+Tạo case trong Admin Review Queue
+        ↓
+Admin xác nhận, bác bỏ hoặc yêu cầu thêm evidence
+```
 
-## 2. Module ownership
+Một luồng được xem là “chạy thật” khi evidence từ provider thật được đưa vào AgentState, ảnh hưởng đến kết quả scoring và hiển thị được trên UI.
 
-Thay `Member 1–4` bằng tên thật trước PR đầu tiên.
+## 3. Phạm vi kỹ thuật MVP
 
-| Thành viên | Module sở hữu | Deliverable | Reviewer chính |
-|---|---|---|---|
-| Member 1 — Agent | `src/agents/{state,graph,nodes/**}`, risk engine | Graph, node routing, budget loop, deterministic scoring, node tests | Member 2, 4 |
-| Member 2 — Tools/Data | `src/agents/tools/**`, `src/repositories/**`, migrations/ingestion | Protocol implementations, SSRF guard, fake + real adapters, fact-check/blacklist repositories | Member 1, 3 |
-| Member 3 — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v1, auth/RBAC, persistence orchestration, WebSocket, audit, Docker | Member 1, 4 |
-| Member 4 — Frontend/QA | frontend/API client, `tests/{contract,integration,eval,fixtures}/**`, `eval/**` | User/admin flows, fixtures, contract/regression/eval runner, demo script | Member 1, 3 |
+### 3.1. Bắt buộc
 
-Shared-file rules:
+* FastAPI API cho tạo và xem analysis.
+* LangGraph hoặc workflow graph có conditional routing.
+* Trích xuất URL và claim từ input thật.
+* URL normalization và URL safety rules.
+* Approved blacklist nội bộ.
+* Một URL reputation provider thật.
+* Một fact-check source hoặc corpus nhỏ có provenance.
+* Risk Engine deterministic có version.
+* PostgreSQL hoặc database tương đương để lưu analysis, evidence, review và blacklist.
+* User UI: submit, trạng thái, result và history tối thiểu.
+* Admin UI: review queue, detail và decision.
+* Consent, SSRF guard, timeout, retry và limitation.
+* Fake adapters và offline fixtures cho CI.
+* Docker Compose chạy được toàn bộ luồng local.
 
-| Phạm vi | Owner | Review bắt buộc |
-|---|---|---|
-| `src/models/**` | Member 3 | Member 1 + 4 |
-| `src/agents/state.py` | Member 1 | Member 2 + 3 |
-| Tool protocols | Member 2 | Member 1 |
-| `tests/fixtures/**` | Member 4 | Member 1 + 2 |
-| Migration/Compose/env | Member 3 | Member 2 |
+### 3.2. Có thể giản lược trong vertical slice đầu
 
-## 3. Thứ tự PR
+* Xử lý analysis đồng bộ trong API trước khi tách worker.
+* Polling trước khi hoàn thiện WebSocket.
+* Auth seed hoặc demo account trước auth production-grade.
+* Fact-check corpus nhỏ dạng JSON/PostgreSQL search trước pgvector.
+* Một provider thật thay vì nhiều provider.
+* Logging cơ bản có redaction trước observability stack đầy đủ.
 
-### PR-0 — Contract freeze và project skeleton
+### 3.3. Chưa nằm trên đường găng
 
-**Lead:** Member 3; cả team review.
+* Phát hiện chiến dịch lan truyền.
+* Dashboard xu hướng.
+* Nhiều provider dự phòng.
+* Online learning từ feedback.
+* Screenshot renderer phức tạp.
+* Browser extension hoặc tích hợp ứng dụng chat.
+* Auto scaling và production monitoring hoàn chỉnh.
 
-- Tạo package/repository layout theo Architecture.
-- Khai báo Pydantic enum/schema, AgentState và tool protocols v1.
-- Thêm 12 fixture skeleton, fake adapters và contract import tests.
-- Thêm CI tối thiểu: lint, type check, unit/contract test; cập nhật `.gitignore` loại cache, `.env`, `.next`.
+## 4. Module ownership
 
-**Gate:** OpenAPI, AgentState và fixtures dùng cùng enum/tên trường; không còn contract song song.
-
-### PR-1A đến PR-1D — Vertical modules chạy song song
-
-| PR | Owner | Tasks | Gate riêng |
-|---|---|---|---|
-| PR-1A Agent core | Member 1 | classify/extract/normalize, planning loop, assessment, explanation boundary, fake-tool graph | Node tests; deterministic score; loop dừng đúng budget |
-| PR-1B Tools/data | Member 2 | SSRF-safe URL client, reputation adapter, claim retriever, repositories, migrations | Adapter contract tests; timeout/no-hit/redirect/private-IP cases |
-| PR-1C API/platform | Member 3 | create/get/list analysis, job queue, auth/RBAC, WebSocket/polling, reports/review/audit | API integration tests với fake agent; user isolation và 403 |
-| PR-1D UI/eval | Member 4 | user form/progress/result/history; admin queue/detail/decision; fixture loader/eval runner | UI dùng generated contract; URL không clickable; offline fixture suite |
-
-Các PR chỉ merge khi rebase trên PR-0 và không thay contract âm thầm.
-
-### PR-2 — Integration trên fake dependencies
-
-**Lead:** Member 4; Member 1 và 3 ghép luồng.
-
-- Chạy end-to-end user analysis và admin review bằng fake adapters.
-- Kiểm tra persistence, event ordering, retry/budget và audit transaction.
-- Chạy toàn bộ fixture/safety invariant trong CI.
-
-**Gate:** 12 fixture xanh; happy path, no-consent, timeout, SSRF và admin review chạy end-to-end.
-
-### PR-3 — Provider thật và hardening
-
-**Lead:** Member 2.
-
-- Cấu hình một URL reputation provider và fact-check source thật sau feature flag.
-- Thêm rate limit, cache, provider timeout/retry, redaction và observability metadata.
-- Kiểm tra migration, container healthcheck và local Docker Compose.
-
-**Gate:** provider smoke test thủ công trong môi trường test; CI vẫn offline; không lộ secret/raw payload.
-
-### PR-4 — Evaluation, tuning và release candidate
-
-**Lead:** Member 4; cả team sign-off.
-
-- Chạy golden set và failure set; phân tích false positive/negative.
-- Chỉ tinh chỉnh scoring/prompt sau khi ghi baseline và impact.
-- Chạy security checklist, load/latency smoke test và demo rehearsal.
-- Hoàn thiện README, `.env.example`, migration/rollback và demo seed.
-
-**Gate:** toàn bộ acceptance criteria có automated test hoặc kịch bản nghiệm thu được lưu; không có blocker severity cao.
-
-## 4. Task checklist theo thành viên
-
-### Member 1 — Agent
-
-- [ ] Implement state reducers và graph edges.
-- [ ] Implement extraction fallback không bịa trường thiếu.
-- [ ] Enforce tool allowlist, max calls/retries/time budget.
-- [ ] Implement scoring `risk-v1`, verdict/confidence và grounded explanation.
-- [ ] Test determinism, provider failure, no-consent và loop termination.
-
-### Member 2 — Tools/Data
-
-- [ ] Implement internal result models và fake adapters trước.
-- [ ] Implement SSRF validation trước/sau DNS và redirect.
-- [ ] Implement reputation/fact-check adapters với timeout, cache, rate limit.
-- [ ] Implement analysis/evidence/review/blacklist repositories và migrations.
-- [ ] Seed approved official domains/fact-check corpus có provenance.
-
-### Member 3 — API/Platform
-
-- [ ] Implement API v1, ownership checks và error envelope.
-- [ ] Implement queue worker boundary, WebSocket và polling events.
-- [ ] Implement auth/RBAC, report/review action và atomic audit write.
-- [ ] Configure settings, redacted logging, Docker/Compose và healthchecks.
-- [ ] Publish OpenAPI artifact cho frontend/contract tests.
-
-### Member 4 — Frontend/QA
-
-- [ ] Implement consent-aware submit/progress/result/history screens.
-- [ ] Implement admin review queue/detail/decision screens.
-- [ ] Disable direct navigation for suspicious URLs; render evidence/limitations.
-- [ ] Complete fixtures, fake data loader, contract/integration/eval suites.
-- [ ] Prepare two demo flows and record expected outputs.
-
-## 5. Branch, review và merge policy
-
-- Branch: `feat/<module>-<short-name>`; PR nhỏ, một mục tiêu, có test.
-- Dependency order: PR-0 → PR-1* → PR-2 → PR-3 → PR-4.
-- Không import ngược từ `agents/tools` hoặc repositories vào API; agent nodes không import provider SDK trực tiếp.
-- CODEOWNERS theo bảng shared files; PR contract-change cần Member 1, 3 và 4 duyệt.
-- Không commit `.env`, key, provider raw response thật, database dump, build/cache/log.
-
-## 6. Definition of Done
-
-Một task chỉ Done khi code, test và tài liệu liên quan cùng PR; lint/type/test xanh; error path được xử lý; không thêm secret/log nhạy cảm.
-
-MVP Done khi:
-
-- API và UI tuân thủ contract v1; frontend build được từ OpenAPI/fixtures.
-- 12 fixtures chạy offline, deterministic; CI không gọi provider thật.
-- Consent, SSRF, timeout, RBAC, user isolation, HITL, blacklist audit đều có test.
-- Có thể thay provider mà không sửa graph hoặc public schema.
-- Docker Compose khởi động API, worker, PostgreSQL/pgvector và Redis; migration chạy sạch.
-- Demo chạy trọn hai flow: user phân tích và admin review.
-- Mọi AC-01…AC-16 có test tự động hoặc evidence nghiệm thu được lưu.
-- README mô tả setup, test, demo, cấu hình provider và giới hạn MVP.
+| Thành viên         | Module sở hữu                                                           | Deliverable chính                                                                      | Reviewer chính |
+| ------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- |
+| Bình — Agent       | `src/agents/{state,graph,nodes/**}`, risk engine                        | Graph, routing, extraction, planning loop, deterministic scoring, grounded explanation | Duc, Hiếu      |
+| Duc — Tools/Data   | `src/agents/tools/**`, `src/repositories/**`, provider integration      | Fake adapters, provider thật, SSRF guard, blacklist và fact-check repositories         | Bình, Hải      |
+| Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v1, persistence orchestration, demo auth/RBAC, Docker và deployment                | Bình, Hiếu     |
+| Hiếu — Frontend/QA | frontend/API client, `tests/**`, `eval/**`                              | User/admin UI, fixtures, contract/integration/eval runner và demo script               | Bình, Hải      |
