@@ -4,8 +4,8 @@ Submit .ai-log/session.jsonl to grading server.
 Called by git pre-push hook or manually.
 
 After a successful submit, the live log is rotated:
-  - Moved into .ai-log/archive/YYYY-MM-DD.jsonl (appended, never overwritten)
-  - The live session.jsonl is recreated empty by the next hook write
+  - Moved into .ai-log/archive/YYYY-MM-DD.jsonl (appended, never overwritten).
+  - The live session.jsonl is recreated empty by the next hook write.
 
 If the POST fails, the pending file is restored so nothing is lost.
 """
@@ -19,11 +19,28 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
+def _load_env_fallback():
+    env_file = Path(".env")
+    if env_file.exists():
+        try:
+            with open(env_file, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip().strip("'\"")
+                        if k not in os.environ:
+                            os.environ[k] = v
+        except Exception:
+            pass
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
-except ImportError:
+except Exception:
     pass
+
+_load_env_fallback()
 
 SERVER_URL = os.environ.get("AI_LOG_SERVER", "")
 API_KEY = os.environ.get("AI_LOG_API_KEY", "")
