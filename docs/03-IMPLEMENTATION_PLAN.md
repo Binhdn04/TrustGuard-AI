@@ -88,14 +88,3 @@ Một luồng được xem là “chạy thật” khi evidence từ provider th
 | Duc — Tools/Data   | `src/agents/tools/**`, `src/repositories/**`, provider integration      | Fake adapters, provider thật, SSRF guard, blacklist và fact-check repositories         | Bình, Hải      |
 | Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v1, persistence orchestration, demo auth/RBAC, Docker và deployment                | Bình, Hiếu     |
 | Hiếu — Frontend/QA | frontend/API client, `tests/**`, `eval/**`                              | User/admin UI, fixtures, contract/integration/eval runner và demo script               | Bình, Hải      |
-
-### Shared-file rules
-
-| Phạm vi               | Owner | Review bắt buộc |
-| --------------------- | ----- | --------------- |
-| `src/models/**`       | Hải   | Bình + Hiếu     |
-| `src/agents/state.py` | Bình  | Duc + Hải       |
-| Tool protocols        | Duc   | Bình            |
-| `tests/fixtures/**`   | Hiếu  | Bình + Duc      |
-| Migration/Compose/env | Hải   | Duc             |
-| Scoring rules         | Bình  | Duc + Hiếu      |
