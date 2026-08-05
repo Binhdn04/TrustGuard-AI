@@ -15,8 +15,10 @@ flowchart TB
         Services["Analysis, Review, Audit"]
     end
     subgraph Agent["LangGraph Worker"]
-        Graph["Orchestrator"]
+        Graph["LangGraph Orchestrator"]
+        Semantic["GPT-4o-mini Semantic + Planning"]
         Risk["Deterministic Risk Engine"]
+        Grounding["GPT-4o-mini Review + Grounded Response"]
         Adapters["Tool Adapters + SSRF Guard"]
     end
     subgraph Data["Private Data Layer"]
@@ -36,10 +38,13 @@ flowchart TB
     API <--> Redis
     Graph <--> Redis
     Graph --> Risk
+    Graph --> Semantic
+    Risk --> Grounding
     Graph --> Adapters
     Adapters --> Reputation
     Adapters --> FactCheck
-    Graph --> LLM
+    Semantic --> LLM
+    Grounding --> LLM
     Graph <--> DB
 ```
 
@@ -51,9 +56,10 @@ Dependency direction trong code: `api → application service → agents graph �
 flowchart TB
     Start(["Analysis queued"]) --> Validate["Validate and classify"]
     Validate --> Extract["Extract URLs and claims"]
-    Extract --> Rules["Normalize + local rules + blacklist"]
+    Extract --> Semantic["GPT-4o-mini: context, emotion, sender intent"]
+    Semantic --> Rules["Normalize + local rules + blacklist"]
     Rules --> Enough{"Enough evidence?"}
-    Enough -->|"No"| Plan["Select next allowed tool"]
+    Enough -->|"No"| Plan["GPT-4o-mini proposes allowed tool order"]
     Plan --> Consent{"External URL scan needs consent?"}
     Consent -->|"No consent"| Limit["Record limitation"]
     Consent -->|"Allowed / not required"| Tool["Call adapter"]
@@ -63,14 +69,18 @@ flowchart TB
     Stop -->|"Stop"| Score["Deterministic assessment"]
     Limit --> Score
     Enough -->|"Yes"| Score
-    Score --> Explain["Grounded explanation"]
+    Score --> ReviewLLM["GPT-4o-mini reviews evidence coverage"]
+    ReviewLLM --> Explain["Grounded explanation + response"]
     Explain --> Escalate{"Review required?"}
     Escalate -->|"No"| Done(["Return result"])
     Escalate -->|"Yes"| Review["Create pending review case"]
     Review --> Done
 ```
 
-Vòng lặp dừng khi evidence đủ, hết tool calls/retries, vượt time/cost budget hoặc không còn tool phù hợp. Tool lỗi được chuẩn hóa thành error/limitation; không trở thành tín hiệu an toàn.
+Vòng lặp dừng khi evidence đủ, hết tool calls/retries, vượt time/cost budget hoặc không
+còn tool phù hợp. LLM chỉ xếp ưu tiên các tool trong allowlist; code có quyền bổ sung tool
+cần thiết hoặc phủ quyết kế hoạch vi phạm consent/SSRF/budget. Tool/LLM lỗi được chuẩn hóa
+thành error/limitation và kích hoạt deterministic fallback; không trở thành tín hiệu an toàn.
 
 ## 3. Deployment
 
@@ -105,7 +115,14 @@ flowchart TB
 - Redirect count, response size, timeout, retry, rate và tool budget bị giới hạn.
 - AuthN ở API; ownership/RBAC được kiểm tra trước đọc analysis hoặc admin action.
 - Message chỉ đi đến thành phần cần thiết; log dùng ID/latency/status và redaction dữ liệu nhạy cảm.
-- LLM chỉ nhận context tối thiểu và output có schema; Risk Engine không dùng output tự do làm điểm.
+- `gpt-4o-mini` chỉ nhận context tối thiểu, dùng structured output và không được truy cập
+  trực tiếp provider/network tool. Prompt coi message là dữ liệu không tin cậy để giảm
+  prompt injection; tool allowlist và policy được kiểm tra lại bằng code.
+- Semantic labels và scam indicators của LLM hỗ trợ extraction/planning nhưng không phải
+  evidence. Risk Engine không dùng output LLM tự do làm điểm; score/verdict/action chỉ do
+  structured evidence và scoring version quyết định.
+- Grounded response chỉ chấp nhận evidence index tồn tại. Nếu parse/schema/grounding lỗi,
+  hệ thống giữ explanation deterministic và thêm limitation.
 - Blacklist write chỉ nằm sau admin authorization và audit transaction.
 
 ## 5. Repository mapping
