@@ -70,8 +70,21 @@ def _build_planning_loop_node(
             route = plan["next_tool"]
             if route == "assess":
                 break
+            calls_before = working.get("tool_calls_used", 0)
             update = await (scan_node(working) if route == "scan_url" else claim_node(working))
             working.update(update)
+            if working.get("tool_calls_used", 0) <= calls_before:
+                # Tool nodes normally advance the counter before doing I/O. If
+                # that contract regresses, stop safely instead of spinning on
+                # the same plan forever.
+                limitations = list(working.get("limitations", []))
+                limitations.append("Vòng lặp công cụ dừng vì không ghi nhận tiến độ.")
+                working.update({
+                    "next_tool": "assess",
+                    "tool_target": "assessment",
+                    "limitations": list(dict.fromkeys(limitations)),
+                })
+                break
         return {
             key: working[key]
             for key in (

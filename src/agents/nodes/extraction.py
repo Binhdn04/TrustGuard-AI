@@ -40,9 +40,10 @@ def classify_input(state: AgentState) -> dict:
 def extract_indicators(state: AgentState) -> dict:
     message = state.get("message", "").strip()
     urls = _extract_urls(message)
-    text_without_urls = message
-    for url in urls:
-        text_without_urls = text_without_urls.replace(url, " ")
+    # Remove every URL occurrence in one pass. Iterating over the de-duplicated
+    # display list needlessly rescans the message and couples cleanup to the
+    # exact candidate returned by ``_extract_urls``.
+    text_without_urls = _URL_RE.sub(" ", message)
     text_without_urls = " ".join(text_without_urls.split()).strip(" -:;,.")
 
     lower = text_without_urls.casefold()
