@@ -19,7 +19,6 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-
 def _load_env_fallback():
     env_file = Path(".env")
     if env_file.exists():
