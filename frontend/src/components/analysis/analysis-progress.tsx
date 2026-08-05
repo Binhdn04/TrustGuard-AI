@@ -25,7 +25,7 @@ export function AnalysisProgress({ status }: { status: AnalysisStatus }) {
           <div>
             <p className="font-bold">Agent đang điều tra</p>
             <p className="mt-1 text-sm text-slate-300">
-              Kết quả thường có trong vài giây, tùy tốc độ của nguồn kiểm chứng.
+              Kết quả thường có trong vài giây với dữ liệu mô phỏng.
             </p>
           </div>
         </div>

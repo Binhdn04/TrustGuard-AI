@@ -28,19 +28,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      // Check local storage for the demo session after hydration.
-      const storedUser = localStorage.getItem("ai_protect_user");
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser));
-        } catch {
-          localStorage.removeItem("ai_protect_user");
-        }
-      }
-      setIsLoading(false);
-    }, 0);
-    return () => window.clearTimeout(timeout);
+    // Check local storage for mock session on load
+    const storedUser = localStorage.getItem("ai_protect_user");
+    if (storedUser) {
+      setUser(JSON.parse(storedUser));
+    }
+    setIsLoading(false);
   }, []);
 
   useEffect(() => {
