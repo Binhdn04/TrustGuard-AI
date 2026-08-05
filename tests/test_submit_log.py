@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "submit_log.py"
 SPEC = importlib.util.spec_from_file_location("submit_log", SCRIPT_PATH)
 submit_log = importlib.util.module_from_spec(SPEC)
