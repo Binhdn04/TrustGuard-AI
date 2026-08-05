@@ -35,6 +35,7 @@ ARCHIVE_DIR = LOG_DIR / "archive"
 # If the local file has more than this, we submit the oldest BATCH_LIMIT
 # and leave the rest for the next push.
 BATCH_LIMIT = 500
+STALE_PENDING_SECONDS = 30
 
 
 def _archive(pending: Path) -> None:
@@ -67,10 +68,27 @@ def _restore_pending(pending: Path) -> None:
         pending.rename(LOG_FILE)
 
 
+def _recover_stale_pending() -> None:
+    """Restore batches left behind by an interrupted submit process."""
+    if not LOG_DIR.exists():
+        return
+    now = time.time()
+    for pending in sorted(LOG_DIR.glob("session.pending.*.jsonl")):
+        try:
+            age = now - pending.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        # Avoid interfering with another submit process that is still active.
+        if age >= STALE_PENDING_SECONDS:
+            _restore_pending(pending)
+
+
 def main():
     if not SERVER_URL:
         print("[ai-log] AI_LOG_SERVER not set — skipping submission.", file=sys.stderr)
         sys.exit(0)
+
+    _recover_stale_pending()
 
     if not LOG_FILE.exists() or LOG_FILE.stat().st_size == 0:
         print("[ai-log] No logs to submit.", file=sys.stderr)
@@ -121,7 +139,7 @@ def main():
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             print(f"[ai-log] Submitted {len(entries)} entries → {resp.status}", file=sys.stderr)
-    except urllib.error.URLError as e:
+    except (urllib.error.URLError, TimeoutError) as e:
         # Failure: restore the whole pending (including leftover) for next push.
         _restore_pending(pending)
         print(f"[ai-log] Submit failed: {e} — logs kept locally.", file=sys.stderr)

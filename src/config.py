@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
 
+    # Demo authentication. Production must replace this with an identity
+    # provider and set DEMO_AUTH_ENABLED=false.
+    demo_auth_enabled: bool = True
+    demo_user_token: str = "dev-user-token"
+    demo_admin_token: str = "dev-admin-token"
+
     # LLM
     openai_api_key: str = ""
     model_name: str = "gpt-4o-mini"
@@ -27,9 +33,16 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "sqlite:///./data/app.db"
+    redis_url: str = "redis://localhost:6379/0"
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
+
+    @model_validator(mode="after")
+    def reject_demo_auth_in_production(self) -> "Settings":
+        if self.app_env == "production" and self.demo_auth_enabled:
+            raise ValueError("demo authentication must be disabled in production")
+        return self
 
 
 @lru_cache
