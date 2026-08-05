@@ -161,7 +161,24 @@ class BlacklistRepository(Protocol):
 
 Adapter trả model nội bộ, không truyền raw response. `UrlScanResult` tối thiểu có provider, normalized URL, verdict, redirect chain, signals, observed_at; `ClaimEvidence` có source/title/url/finding/relevance/observed_at.
 
-### 4.1 LLM contract
+### 4.1 Adapter profile hiện tại
+
+- URL reputation production adapter: Google Safe Browsing v4. Threat match được chuẩn hóa thành
+  `malicious`; no-hit được chuẩn hóa thành `inconclusive`, không phải `safe`.
+- Fact-check production adapter: Google Fact Check Tools API. Chỉ các review có provenance được
+  chuyển thành `ClaimEvidence`; response provider thô không đi vào AgentState.
+- Offline fact-check adapter: corpus JSON gồm các bản ghi hợp lệ theo `ClaimEvidence`, tìm kiếm từ
+  khóa và xếp hạng deterministic.
+- Provider timeout/lỗi HTTP/lỗi payload được chuyển thành `ToolError`; message lỗi không chứa API
+  key, query string nhạy cảm hoặc raw response.
+- SSRF validation áp dụng trước URL scan: URL tuyệt đối `http`/`https`, không credential, port
+  80/443, DNS phải trả toàn địa chỉ public/global. Guarded redirect phải kiểm tra lại cùng policy
+  sau từng hop, tối đa 5 redirect và 1 MB response.
+- Blacklist production repository chuẩn hóa hostname bằng IDNA. `add_approved(domain,
+  decision_id)` chỉ thành công nếu repository đã có audit decision tương ứng với
+  `decision=approved` và `action=add_to_blacklist`.
+
+### 4.2 LLM contract
 
 - Production model mặc định: `gpt-4o-mini`; temperature `0`, timeout 15 giây và tối đa
   một retry. Model được inject vào graph và không lưu trong AgentState/checkpoint.

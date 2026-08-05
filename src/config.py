@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=15.0, gt=0.0, le=60.0)
     llm_max_retries: int = Field(default=1, ge=0, le=3)
 
+    # Evidence providers (server-side only)
+    google_safe_browsing_api_key: str = ""
+    google_fact_check_api_key: str = ""
+    provider_timeout_seconds: float = Field(default=10.0, gt=0.0, le=30.0)
+
     # Database
     database_url: str = "sqlite:///./data/app.db"
 

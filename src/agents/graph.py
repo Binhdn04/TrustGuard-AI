@@ -159,10 +159,14 @@ def build_legacy_graph():
 
 def build_openai_graph(**kwargs):
     """Build the production graph; remains offline when no API key is configured."""
+    from src.agents.tools.integration import build_provider_adapters
     from src.config import get_settings
     from src.services.llm import get_llm
 
-    llm = get_llm() if get_settings().openai_api_key else None
+    settings = get_settings()
+    llm = get_llm() if settings.openai_api_key else None
+    for name, adapter in build_provider_adapters(settings).items():
+        kwargs.setdefault(name, adapter)
     return build_graph(llm=llm, **kwargs)
 
 

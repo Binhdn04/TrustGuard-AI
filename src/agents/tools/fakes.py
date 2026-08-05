@@ -54,6 +54,10 @@ class FakeClaimRetriever:
 
     async def search(self, claim: str, limit: int = 5) -> list[ClaimEvidence]:
         self.calls.append((claim, limit))
+        if self._response_id not in self._responses:
+            raise ValueError(
+                f"Claim retriever fixture response ID {self._response_id!r} is not configured"
+            )
         result = self._responses[self._response_id]
         if isinstance(result, ToolError):
             raise FakeToolCallError(result)

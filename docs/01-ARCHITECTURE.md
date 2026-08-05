@@ -112,6 +112,10 @@ flowchart TB
 ## 4. Security boundaries
 
 - URL adapter validate scheme/host, resolve DNS, chặn loopback/private/link-local/multicast/cloud-metadata trước request và sau mỗi redirect.
+- Network boundary hiện thực bằng `SsrfGuard` và `GuardedHttpClient`: chỉ chấp nhận URL tuyệt đối
+  `http`/`https`, không chấp nhận credential trong URL, chỉ cho port 80/443, kiểm tra **mọi** địa chỉ
+  IP trả về từ DNS và revalidate URL đích sau từng redirect. Redirect mặc định tối đa 5 lần và
+  response body tối đa 1 MB.
 - Redirect count, response size, timeout, retry, rate và tool budget bị giới hạn.
 - AuthN ở API; ownership/RBAC được kiểm tra trước đọc analysis hoặc admin action.
 - Message chỉ đi đến thành phần cần thiết; log dùng ID/latency/status và redaction dữ liệu nhạy cảm.
@@ -140,3 +144,25 @@ eval/{datasets,scripts}/
 ```
 
 Giữ package hiện tại `src/agents` làm nơi duy nhất cho orchestration và tool boundary. Tool protocol, fake adapter, provider adapter và network safety được tách thành các module trong `src/agents/tools/`; `src/services` và `src/repositories` được thêm ở top level để tách use case và persistence khỏi agent.
+
+### 5.1 Tools/Data implementation profile
+
+```text
+src/agents/tools/
+├── protocols.py      # UrlScanner, ClaimRetriever, BlacklistRepository
+├── fakes.py          # fixture-driven adapters cho test offline
+├── errors.py         # lỗi tool chuẩn hóa cho workflow
+├── network.py        # SSRF policy, DNS validation, guarded redirects
+├── providers.py      # Google Safe Browsing v4 + Google Fact Check Tools API
+└── integration.py    # tạo adapter thật khi server có API key
+
+src/repositories/
+├── blacklist.py      # SQLite blacklist + audited admin decision
+└── fact_check.py     # corpus JSON offline có provenance và ranking deterministic
+```
+
+Provider thật chỉ được khởi tạo khi API key tương ứng có trong cấu hình server. Google Safe
+Browsing `no match` được chuẩn hóa thành `inconclusive` với signal `no_known_threat_match`, không
+thành evidence khẳng định URL an toàn. SQLite được dùng như “database tương đương” cho vertical
+slice hiện tại; schema buộc blacklist entry tham chiếu một decision đã audit với cặp
+`approved` + `add_to_blacklist`.
