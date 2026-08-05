@@ -16,6 +16,8 @@ MVP cho phép người dùng chủ động dán một URL hoặc tin nhắn đ�
 - giải thích rủi ro và hành động nên làm bằng ngôn ngữ dễ hiểu;
 - không biến thiếu dữ liệu thành kết luận “an toàn”;
 - dùng scoring xác định từ structured evidence, không để LLM tự chấm điểm;
+- dùng `gpt-4o-mini` để hiểu ngữ cảnh, kỹ thuật tác động cảm xúc và ý đồ có khả năng
+  thuộc về người gửi; kết quả LLM không được xem là external evidence;
 - yêu cầu Security Admin duyệt mọi thay đổi blacklist hoặc cảnh báo diện rộng;
 - chỉ xử lý nội dung người dùng chủ động gửi.
 
@@ -34,9 +36,13 @@ Xem hàng đợi case cần duyệt, kiểm tra evidence, xác nhận/bác bỏ 
 ### 3.1 Phân tích
 
 1. User đăng nhập, dán URL/tin nhắn, chọn đồng ý hoặc không đồng ý quét URL bên ngoài, rồi bấm **Kiểm tra**.
-2. Hệ thống validation, trích xuất URL và claim; nếu input không hợp lệ thì dừng trước khi gọi tool.
-3. Agent chạy rule nội bộ, blacklist và các tool phù hợp trong giới hạn thời gian/lượt gọi.
-4. Risk Engine tổng hợp evidence thành điểm và mức rủi ro; Agent tạo giải thích grounded.
+2. Hệ thống validation, trích xuất URL/claim và dùng structured LLM output để phân tích
+   ngữ cảnh, cảm xúc gây áp lực, ý đồ của người gửi và dấu hiệu lừa đảo; nếu input không
+   hợp lệ thì dừng trước khi gọi model/tool.
+3. LLM đề xuất thứ tự tool trong allowlist; Agent vẫn cưỡng chế consent, SSRF guard,
+   retry và budget trước khi chạy rule nội bộ, blacklist và provider phù hợp.
+4. Risk Engine tổng hợp evidence thành điểm/mức rủi ro deterministic. LLM chỉ review
+   assessment và viết giải thích grounded, không được sửa score, verdict hay tạo evidence.
 5. UI hiển thị verdict, mức/điểm rủi ro, lý do, evidence, limitations và hành động đề xuất.
 6. Case cần hành động diện rộng được đưa vào hàng đợi admin; cảnh báo cho user không phải chờ admin.
 
@@ -48,7 +54,9 @@ Xem hàng đợi case cần duyệt, kiểm tra evidence, xác nhận/bác bỏ 
 
 ### 3.3 Tool lỗi hoặc thiếu dữ liệu
 
-Agent retry trong budget. Khi hết budget, hệ thống trả kết quả giới hạn với verdict `inconclusive` khi phù hợp, nêu tool/dữ liệu còn thiếu và không giả lập evidence.
+Agent retry trong budget. Khi LLM hoặc tool lỗi/hết budget, hệ thống trả kết quả giới hạn
+với verdict `inconclusive` khi phù hợp, nêu model/tool/dữ liệu còn thiếu, dùng fallback
+deterministic và không giả lập evidence.
 
 ## 4. Phạm vi MVP
 
@@ -58,6 +66,8 @@ Agent retry trong budget. Khi hết budget, hệ thống trả kết quả giớ
 - Phân tích URL/claim bằng rule, approved blacklist, ít nhất một URL reputation provider và fact-check retriever.
 - Kiểm tra URL an toàn gồm normalization, punycode/look-alike, redirect metadata và SSRF guard.
 - Agent workflow có nhánh, retry và giới hạn tool/time/cost.
+- Structured LLM reasoning bằng `gpt-4o-mini` cho semantic analysis, tool planning,
+  assessment review và phản hồi grounded; có timeout, retry và deterministic fallback.
 - Kết quả có evidence, limitations và nguồn/thời điểm quan sát.
 - Lịch sử phân tích, báo kết quả sai, review queue và audit trail.
 - Realtime progress bằng WebSocket, có polling fallback.
@@ -77,6 +87,8 @@ Agent retry trong budget. Khi hết budget, hệ thống trả kết quả giớ
 
 - 100% analysis hoàn tất trả đủ các trường bắt buộc theo contract v1.
 - 100% provider failure/thiếu evidence có limitation và không bị diễn đạt thành “safe”.
+- 100% LLM output ảnh hưởng routing/response phải qua schema và safety guard; LLM
+  failure không làm mất kết quả deterministic.
 - 100% thay đổi blacklist có admin decision và audit record.
 - Luồng phổ biến hoàn tất trong 60 giây; hết budget phải fail safely.
 - Không có secret hoặc toàn bộ message trong operational log.
@@ -102,4 +114,7 @@ Agent retry trong budget. Khi hết budget, hệ thống trả kết quả giớ
 | AC-14 | URL trỏ private/local/metadata IP, kể cả sau redirect | Chặn request trước kết nối và ghi evidence/limitation an toàn. |
 | AC-15 | Workflow chuyển bước | Đúng user nhận progress qua WebSocket hoặc polling fallback. |
 | AC-16 | Provider bình thường | Trả kết quả trong 60 giây; hết budget trả kết quả giới hạn. |
-
+| AC-17 | Input hợp lệ và LLM khả dụng | Structured output mô tả ngữ cảnh, cảm xúc tác động và ý đồ có khả năng của người gửi; không quy kết ý đồ đó cho user đang kiểm tra. |
+| AC-18 | LLM đề xuất tool | Chỉ tool trong allowlist được chạy; consent, SSRF và budget có quyền phủ quyết kế hoạch. |
+| AC-19 | LLM review hoặc sinh phản hồi | Không sửa deterministic score/verdict/action, không thêm evidence và chỉ giải thích theo evidence index tồn tại. |
+| AC-20 | LLM timeout/schema lỗi | Workflow tiếp tục bằng fallback deterministic, ghi limitation và không trả 500 chỉ vì LLM lỗi. |
