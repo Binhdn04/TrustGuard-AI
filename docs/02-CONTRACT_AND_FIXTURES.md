@@ -134,12 +134,15 @@ class AgentState(TypedDict, total=False):
 |---|---|---|---|
 | `classify_input` | message | input_type | External call |
 | `extract_indicators` | message | URLs, claims | Chấm điểm cuối |
+| `analyze_message` | message, extracted indicators | context, emotion, sender intent, scam indicators, claims | Quy kết ý đồ cho user; tạo evidence |
 | `normalize_and_check_rules` | URLs | normalized URLs, rule evidence | Truy cập URL đích |
-| `plan_next_tool` | state/budget | route | Chọn tool ngoài allowlist |
+| `plan_tools` | semantic state, indicators | ordered tool proposal, rationale | Vượt allowlist/consent/SSRF/budget |
+| `plan_next_tool` | state/budget + proposal | route | Chọn tool ngoài allowlist |
 | `scan_urls` | URL + consent | findings/evidence/errors | Scan khi thiếu consent |
 | `verify_claims` | claims | findings/evidence/errors | Khẳng định không có nguồn |
 | `assess_risk` | structured evidence | score/level/verdict/confidence | Ghi blacklist, dùng LLM tự do làm điểm |
-| `explain_result` | assessment/evidence | summary/reasons/limitations | Thêm evidence không tồn tại |
+| `review_assessment` | deterministic assessment/evidence | narrative, missing information, evidence indexes | Sửa score/verdict; thêm evidence |
+| `explain_result` / `generate_response` | assessment/evidence | summary/reasons/limitations | Thêm evidence không tồn tại; sửa action |
 | `route_action` | assessment | action/case status | Tự chặn domain |
 
 ## 4. Tool interfaces
@@ -157,6 +160,23 @@ class BlacklistRepository(Protocol):
 ```
 
 Adapter trả model nội bộ, không truyền raw response. `UrlScanResult` tối thiểu có provider, normalized URL, verdict, redirect chain, signals, observed_at; `ClaimEvidence` có source/title/url/finding/relevance/observed_at.
+
+### 4.1 LLM contract
+
+- Production model mặc định: `gpt-4o-mini`; temperature `0`, timeout 15 giây và tối đa
+  một retry. Model được inject vào graph và không lưu trong AgentState/checkpoint.
+- Mọi call dùng Pydantic structured output. Bốn output nội bộ là `MessageAnalysis`,
+  `ToolPlan`, `AssessmentReview` và `GroundedResponse`.
+- `sender_intent` mô tả ý đồ có khả năng của người tạo/gửi nội dung được dán, không phải
+  ý đồ của user đang yêu cầu kiểm tra.
+- `ToolPlan.tools` chỉ nhận `url_scanner|claim_retriever`. Code luôn kiểm tra lại consent,
+  SSRF, retry và budget, đồng thời có thể bổ sung tool cần thiết bị model bỏ sót.
+- `AssessmentReview` tham chiếu evidence bằng zero-based index. Mỗi reason của
+  `GroundedResponse` là cặp `{evidence_index, text}`. Index không tồn tại bị loại bỏ;
+  response có evidence nhưng không còn reason hợp lệ sẽ bị thay bằng fallback.
+- Các field orchestration như `llm_context`, `llm_emotion`, `llm_sender_intent`,
+  `llm_tool_plan`, `llm_assessment`, `llm_*_evidence_indexes` và `llm_errors` là private
+  `WorkflowState`, không mở rộng public `AgentState` contract v1.
 
 ## 5. Fixture chuẩn
 
@@ -205,4 +225,8 @@ Không assert nguyên văn summary/reasons. Assert enum, khoảng điểm, evide
 - Evidence ảnh hưởng điểm phải truy được tới signal và scoring version.
 - Log không chứa full message, token/API key, credential hoặc sensitive query string.
 - Unit/integration/eval mặc định không gọi provider thật.
-
+- Unit/integration/eval inject fake LLM hoặc `llm=None`; không gọi OpenAI thật.
+- LLM output không được trực tiếp tăng/giảm risk score, đổi verdict/action, tạo evidence,
+  bỏ qua consent/SSRF hoặc chọn tool ngoài allowlist.
+- LLM failure phải ghi limitation khi LLM đã được cấu hình và tiếp tục bằng extraction,
+  planning, scoring và explanation deterministic.

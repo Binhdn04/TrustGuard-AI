@@ -15,11 +15,13 @@ Classify input
         ↓
 Extract URL và claim
         ↓
+GPT-4o-mini phân tích ngữ cảnh, cảm xúc tác động và ý đồ người gửi
+        ↓
 Normalize URL
         ↓
 Rule check + approved blacklist
         ↓
-Lập kế hoạch kiểm tra
+GPT-4o-mini đề xuất kế hoạch và thứ tự tool trong allowlist
         ↓
 Gọi URL reputation provider thật
         ↓
@@ -28,6 +30,10 @@ Fact-check claim nếu có
 Chuẩn hóa evidence
         ↓
 Risk Engine tính score và verdict
+        ↓
+GPT-4o-mini review assessment theo evidence
+        ↓
+Sinh phản hồi grounded, giữ nguyên score/verdict/action
         ↓
 Lưu analysis
         ↓
@@ -40,7 +46,10 @@ Tạo case trong Admin Review Queue
 Admin xác nhận, bác bỏ hoặc yêu cầu thêm evidence
 ```
 
-Một luồng được xem là “chạy thật” khi evidence từ provider thật được đưa vào AgentState, ảnh hưởng đến kết quả scoring và hiển thị được trên UI.
+Một luồng được xem là “chạy thật” khi evidence từ provider thật được đưa vào AgentState,
+ảnh hưởng đến deterministic scoring và hiển thị được trên UI; đồng thời structured output
+từ `gpt-4o-mini` phải tham gia semantic analysis, tool prioritization, assessment review và
+phản hồi cuối. LLM output không được tính như evidence hoặc tự thay đổi score/verdict.
 
 ## 3. Phạm vi kỹ thuật MVP
 
@@ -48,6 +57,8 @@ Một luồng được xem là “chạy thật” khi evidence từ provider th
 
 * FastAPI API cho tạo và xem analysis.
 * LangGraph hoặc workflow graph có conditional routing.
+* `gpt-4o-mini` structured output cho semantic analysis, tool planning, assessment review
+  và grounded response; có timeout/retry/fallback và fake LLM cho CI.
 * Trích xuất URL và claim từ input thật.
 * URL normalization và URL safety rules.
 * Approved blacklist nội bộ.
@@ -84,7 +95,7 @@ Một luồng được xem là “chạy thật” khi evidence từ provider th
 
 | Thành viên         | Module sở hữu                                                           | Deliverable chính                                                                      | Reviewer chính |
 | ------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- |
-| Bình — Agent       | `src/agents/{state,graph,nodes/**}`, risk engine                        | Graph, routing, extraction, planning loop, deterministic scoring, grounded explanation | Duc, Hiếu      |
+| Bình — Agent       | `src/agents/{state,graph,nodes/**}`, risk engine                        | Graph, semantic LLM nodes, guarded tool planning, extraction, planning loop, deterministic scoring, grounded explanation/response | Duc, Hiếu      |
 | Duc — Tools/Data   | `src/agents/tools/**`, `src/repositories/**`, provider integration      | Fake adapters, provider thật, SSRF guard, blacklist và fact-check repositories         | Bình, Hải      |
 | Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v1, persistence orchestration, demo auth/RBAC, Docker và deployment                | Bình, Hiếu     |
 | Hiếu — Frontend/QA | frontend/API client, `tests/**`, `eval/**`                              | User/admin UI, fixtures, contract/integration/eval runner và demo script               | Bình, Hải      |
