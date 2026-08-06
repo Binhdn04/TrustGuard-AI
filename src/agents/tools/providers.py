@@ -9,6 +9,8 @@ from src.agents.tools.errors import ToolCallError
 from src.agents.tools.network import SsrfGuard
 from src.models import ClaimEvidence, UrlScanResult, Verdict
 
+from .fact_check import normalize_claim_rating
+
 
 class GoogleSafeBrowsingScanner:
     """Google Safe Browsing v4 adapter; raw provider data never leaves this class."""
@@ -139,6 +141,7 @@ class GoogleFactCheckRetriever:
                         url=review.get("url") or None,
                         finding=rating,
                         relevance=1.0,
+                        stance=normalize_claim_rating(rating),
                         observed_at=observed_at.astimezone(UTC),
                     )
                 )

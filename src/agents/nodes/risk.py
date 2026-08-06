@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC
-
 from src.agents.state import AgentState
 from src.models import SCORING_VERSION, ClaimStance, EvidenceType, Verdict, risk_level_for_score
 
@@ -13,6 +11,12 @@ _RULE_WEIGHTS = {
 }
 _CLAIM_RELEVANCE_THRESHOLD = 0.6
 _DOMAIN_SIGNAL_CAP = 20
+_DOMAIN_SIGNAL_WEIGHTS = {
+    "new_domain": 20,
+    "recent_registration": 20,
+    "short_registration": 10,
+    "privacy_redacted": 5,
+}
 
 
 def _claim_weight(finding: str) -> int:
@@ -43,6 +47,16 @@ def _claim_weight(finding: str) -> int:
     ):
         return 35
     return 0
+
+
+def _domain_registration_score(state: AgentState) -> int:
+    score = 0
+    for finding in state.get("domain_findings", []):
+        for signal in finding.signals:
+            score += _DOMAIN_SIGNAL_WEIGHTS.get(signal, 0)
+        if finding.privacy_redacted:
+            score += _DOMAIN_SIGNAL_WEIGHTS["privacy_redacted"]
+    return min(_DOMAIN_SIGNAL_CAP, score)
 
 
 def assess_risk(state: AgentState) -> dict:

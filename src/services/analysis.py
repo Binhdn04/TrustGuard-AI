@@ -338,11 +338,7 @@ class AnalysisService:
             apply_decision = getattr(blacklist, "apply_decision", None)
             if apply_decision is not None:
                 domains = tuple(
-                    sorted(
-                        domain
-                        for domain in {urlsplit(url).hostname for url in normalized_urls}
-                        if domain
-                    )
+                    sorted(domain for domain in {urlsplit(url).hostname for url in normalized_urls} if domain)
                 )
                 await apply_decision(
                     decision_id=str(decision_id),

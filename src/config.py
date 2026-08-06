@@ -1,11 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-<<<<<<< Updated upstream
-from pydantic import Field
-=======
-from pydantic import AliasChoices, Field, model_validator
->>>>>>> Stashed changes
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,17 +24,26 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     model_name: str = "gpt-4o-mini"
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
+    llm_max_retries: int = Field(default=2, ge=0)
+
+    # Provider adapters
+    provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    google_safe_browsing_api_key: str = ""
+    google_fact_check_api_key: str = ""
+
+    # Demo auth
+    demo_auth_enabled: bool = True
+    demo_user_token: str = "dev-user-token"
+    demo_admin_token: str = "dev-admin-token"
 
     # Database
     database_url: str = "sqlite:///./data/app.db"
-<<<<<<< Updated upstream
-=======
     security_database_path: str = Field(
         default="./data/security.db",
         validation_alias=AliasChoices("SECURITY_DATABASE_PATH", "BLACKLIST_DATABASE_PATH"),
     )
     redis_url: str = "redis://localhost:6379/0"
->>>>>>> Stashed changes
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
