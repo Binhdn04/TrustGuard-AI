@@ -14,10 +14,11 @@ import os
 import shutil
 import sys
 import time
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
+
 
 def _load_env_fallback():
     env_file = Path(".env")
@@ -60,7 +61,7 @@ def _archive(pending: Path) -> None:
     if not pending.exists() or pending.stat().st_size == 0:
         return
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     archive_file = ARCHIVE_DIR / f"{today}.jsonl"
     with open(pending, "rb") as src, open(archive_file, "ab") as dst:
         shutil.copyfileobj(src, dst)
