@@ -10,6 +10,7 @@ import pytest
 from src.agents.nodes.risk import assess_risk
 from src.agents.nodes.tools import build_verify_claims_node
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
+from src.agents.tools.fact_check import normalize_claim_rating
 from src.agents.tools.fakes import FakeClaimRetriever
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
@@ -19,6 +20,7 @@ from src.models import (
     AnalysisResponse,
     AnalysisStatus,
     ClaimEvidence,
+    ClaimStance,
     Verdict,
 )
 from src.repositories import JsonFactCheckRepository, SQLiteBlacklistRepository
@@ -128,7 +130,13 @@ async def test_fact_check_provider_normalizes_reviews():
 
     assert results[0].source == "Verified Source"
     assert results[0].finding == "False"
+    assert results[0].stance is ClaimStance.REFUTES
     assert results[0].observed_at.tzinfo is UTC
+
+
+def test_fact_check_rating_mapping_does_not_infer_from_prose():
+    assert normalize_claim_rating("False") is ClaimStance.REFUTES
+    assert normalize_claim_rating("The review says this is false") is ClaimStance.UNRATED
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,7 +10,7 @@ from src.api.dependencies import close_analysis_service
 from src.api.routes import router
 from src.config import get_settings
 from src.core.errors import PlatformError
-from src.models import ErrorBody, ErrorCode, ErrorEnvelope
+from src.models import ErrorCode
 
 
 @asynccontextmanager
@@ -43,33 +44,33 @@ app.include_router(router, prefix="/api/v1")
 
 
 @app.exception_handler(PlatformError)
-async def platform_error_handler(request: Request, exc: PlatformError) -> JSONResponse:
-    envelope = ErrorEnvelope(
-        error=ErrorBody(
-            code=exc.code,
-            message=exc.message,
-            retryable=exc.retryable,
-            details=exc.details,
-        )
+async def platform_error_handler(request, exc: PlatformError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code.value,
+                "message": exc.message,
+                "retryable": exc.retryable,
+                "details": exc.details,
+            }
+        },
     )
-    return JSONResponse(status_code=exc.status_code, content=envelope.model_dump(mode="json"))
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    # FastAPI/Starlette versions expose slightly different errors() keyword
-    # arguments. Keep only stable, non-sensitive fields instead of returning
-    # the rejected user input or provider context.
-    details = {"errors": [{key: item[key] for key in ("type", "loc", "msg") if key in item} for item in exc.errors()]}
-    envelope = ErrorEnvelope(
-        error=ErrorBody(
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Request validation failed.",
-            retryable=False,
-            details=details,
-        )
+async def validation_error_handler(request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": ErrorCode.VALIDATION_ERROR.value,
+                "message": "Request validation failed.",
+                "retryable": False,
+                "details": {"errors": jsonable_encoder(exc.errors())},
+            }
+        },
     )
-    return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
 
 
 @app.get("/health")

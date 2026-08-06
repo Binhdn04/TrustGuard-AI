@@ -12,10 +12,23 @@ import asyncio
 import json
 from datetime import UTC, datetime
 
-from src.agents.graph import build_openai_graph
+from src.agents import build_graph
 from src.agents.tools.fakes import FakeBlacklistRepository, FakeClaimRetriever, FakeUrlScanner
 from src.config import get_settings
-from src.models import UrlScanResult, Verdict
+from src.models import DomainIntelligenceResult, UrlScanResult, Verdict
+from src.services.llm import get_llm
+
+
+class SmokeDomainIntelligence:
+    """Offline domain-intelligence adapter used by the v2 workflow."""
+
+    async def lookup(self, domain: str) -> DomainIntelligenceResult:
+        return DomainIntelligenceResult(
+            provider="smoke-fake-domain-intelligence",
+            domain=domain,
+            signals=["unverified_domain"],
+            observed_at=datetime.now(UTC),
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,8 +71,12 @@ async def run(message: str, consent: bool) -> None:
         "smoke",
     )
     retriever = FakeClaimRetriever({"smoke": []}, "smoke")
-    graph = build_openai_graph(
+    # Build the injectable v2 agent directly so every security-provider call
+    # remains deterministic while the LLM nodes use the configured OpenAI model.
+    graph = build_graph(
+        llm=get_llm(),
         url_scanner=scanner,
+        domain_intelligence=SmokeDomainIntelligence(),
         claim_retriever=retriever,
         blacklist=FakeBlacklistRepository(),
     )
@@ -81,6 +98,9 @@ async def run(message: str, consent: bool) -> None:
         "suspected_scam_intent": result.get("llm_suspected_scam_intent"),
         "scam_indicators": result.get("llm_scam_indicators", []),
         "tool_plan": result.get("llm_tool_plan", []),
+        "investigation_plan": [step.model_dump(mode="json") for step in result.get("investigation_plan", [])],
+        "url_findings": [finding.model_dump(mode="json") for finding in result.get("url_findings", [])],
+        "domain_findings": [finding.model_dump(mode="json") for finding in result.get("domain_findings", [])],
         "risk_score": result.get("risk_score"),
         "risk_level": getattr(result.get("risk_level"), "value", result.get("risk_level")),
         "verdict": getattr(result.get("verdict"), "value", result.get("verdict")),
