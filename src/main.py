@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router
+from src.agents.graph import analysis_agent, close_graph_resources
 from src.config import get_settings
 
 
@@ -11,8 +12,11 @@ from src.config import get_settings
 async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
-    yield
-    print("Shutting down...")
+    try:
+        yield
+    finally:
+        await close_graph_resources(analysis_agent)
+        print("Shutting down...")
 
 
 app = FastAPI(

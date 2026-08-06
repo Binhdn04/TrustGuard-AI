@@ -165,9 +165,22 @@ def build_openai_graph(**kwargs):
 
     settings = get_settings()
     llm = get_llm() if settings.openai_api_key else None
-    for name, adapter in build_provider_adapters(settings).items():
+    owned_adapters = build_provider_adapters(settings)
+    for name, adapter in owned_adapters.items():
         kwargs.setdefault(name, adapter)
-    return build_graph(llm=llm, **kwargs)
+    graph = build_graph(llm=llm, **kwargs)
+    # Keep application-owned resources reachable so the ASGI lifespan can
+    # deterministically close their connection pools.
+    graph._owned_adapters = tuple(owned_adapters.values())
+    return graph
+
+
+async def close_graph_resources(graph) -> None:
+    """Close provider clients created while building a production graph."""
+    for adapter in getattr(graph, "_owned_adapters", ()):
+        close = getattr(adapter, "aclose", None)
+        if close is not None:
+            await close()
 
 
 # Preferred graph for Analysis service integration. In CI it degrades offline.
@@ -176,5 +189,5 @@ analysis_agent = build_openai_graph()
 agent = build_legacy_graph()
 
 __all__ = [
-    "agent", "analysis_agent", "build_graph", "build_legacy_graph", "build_openai_graph",
+    "agent", "analysis_agent", "build_graph", "build_legacy_graph", "build_openai_graph", "close_graph_resources",
 ]

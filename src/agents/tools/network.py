@@ -5,7 +5,7 @@ import ipaddress
 import socket
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -28,6 +28,30 @@ class SsrfPolicy:
     max_response_bytes: int = 1_000_000
 
 
+@dataclass(frozen=True)
+class ValidatedTarget:
+    """A URL together with the DNS answers that passed the SSRF policy."""
+
+    url: str
+    host: str
+    port: int
+    addresses: tuple[str, ...]
+
+    def pinned_url(self, address: str) -> str:
+        parsed = urlsplit(self.url)
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+        literal = f"[{ip}]" if ip.version == 6 else str(ip)
+        default_port = 443 if parsed.scheme.casefold() == "https" else 80
+        authority = literal if self.port == default_port else f"{literal}:{self.port}"
+        return urlunsplit((parsed.scheme, authority, parsed.path, parsed.query, parsed.fragment))
+
+    @property
+    def host_header(self) -> str:
+        default_port = 443 if urlsplit(self.url).scheme.casefold() == "https" else 80
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return host if self.port == default_port else f"{host}:{self.port}"
+
+
 class SsrfGuard:
     """Reject URLs that can reach local, private, metadata, or special networks."""
 
@@ -37,7 +61,7 @@ class SsrfGuard:
         self._resolver = resolver
         self.policy = policy or SsrfPolicy()
 
-    async def validate(self, url: str) -> str:
+    async def validate(self, url: str) -> ValidatedTarget:
         try:
             parsed = urlsplit(url)
             port = parsed.port or (443 if parsed.scheme.casefold() == "https" else 80)
@@ -69,7 +93,7 @@ class SsrfGuard:
                 raise UnsafeUrlError("DNS returned an invalid address") from exc
             if not address.is_global:
                 raise UnsafeUrlError(f"Host resolves to a non-public address ({address})")
-        return url
+        return ValidatedTarget(url=url, host=host, port=port, addresses=tuple(addresses))
 
 
 class GuardedHttpClient:
@@ -82,9 +106,24 @@ class GuardedHttpClient:
     async def get(self, url: str, **kwargs: object) -> tuple[httpx.Response, list[str]]:
         current = url
         chain = [url]
+        request_headers = dict(kwargs.pop("headers", {}) or {})
+        request_extensions = dict(kwargs.pop("extensions", {}) or {})
         for redirect_number in range(self._guard.policy.max_redirects + 1):
-            await self._guard.validate(current)
-            response = await self._client.get(current, follow_redirects=False, **kwargs)
+            target = await self._guard.validate(current)
+            # Connect to the exact DNS answer that was checked.  The original
+            # hostname is retained for HTTP routing and TLS SNI/certificate
+            # verification, eliminating the validation/request DNS race.
+            headers = request_headers.copy()
+            headers["host"] = target.host_header
+            extensions = request_extensions.copy()
+            extensions["sni_hostname"] = target.host.encode("ascii")
+            response = await self._client.get(
+                target.pinned_url(target.addresses[0]),
+                headers=headers,
+                extensions=extensions,
+                follow_redirects=False,
+                **kwargs,
+            )
             location = response.headers.get("location")
             if response.is_redirect and location:
                 if redirect_number >= self._guard.policy.max_redirects:

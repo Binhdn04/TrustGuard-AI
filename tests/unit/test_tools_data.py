@@ -37,6 +37,24 @@ async def test_guarded_client_revalidates_redirect_target():
 
 
 @pytest.mark.asyncio
+async def test_guarded_client_connects_to_the_validated_ip_and_preserves_host():
+    async def resolver(_host: str, _port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "93.184.216.34"
+        assert request.headers["host"] == "public.example"
+        assert request.extensions["sni_hostname"] == b"public.example"
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        guarded = GuardedHttpClient(client, SsrfGuard(resolver=resolver))
+        response, _ = await guarded.get("https://public.example/path")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_safe_browsing_no_hit_is_inconclusive():
     async def resolver(_host: str, _port: int) -> list[str]:
         return ["8.8.8.8"]

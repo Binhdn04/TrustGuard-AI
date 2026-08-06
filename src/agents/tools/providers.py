@@ -68,6 +68,12 @@ class GoogleSafeBrowsingScanner:
         if self._owns_client:
             await self._client.aclose()
 
+    async def __aenter__(self) -> GoogleSafeBrowsingScanner:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.aclose()
+
 
 class GoogleFactCheckRetriever:
     """Google Fact Check Tools API adapter with normalized ClaimEvidence output."""
@@ -126,3 +132,9 @@ class GoogleFactCheckRetriever:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    async def __aenter__(self) -> GoogleFactCheckRetriever:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.aclose()

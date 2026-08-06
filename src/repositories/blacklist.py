@@ -35,7 +35,10 @@ class SQLiteBlacklistRepository:
         self._database = str(database)
         if self._database != ":memory:":
             Path(self._database).parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self._database, check_same_thread=False)
+        # This repository is scoped to one event-loop thread.  Retaining
+        # SQLite's thread check prevents accidental cross-thread connection
+        # sharing, which an asyncio.Lock cannot make safe.
+        self._connection = sqlite3.connect(self._database)
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._lock = asyncio.Lock()
         self._create_schema()
