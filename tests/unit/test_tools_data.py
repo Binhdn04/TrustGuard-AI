@@ -91,16 +91,20 @@ async def test_safe_browsing_timeout_is_normalized():
 @pytest.mark.asyncio
 async def test_fact_check_provider_normalizes_reviews():
     payload = {
-        "claims": [{
-            "text": "claim",
-            "claimReview": [{
-                "publisher": {"name": "Verified Source"},
-                "url": "https://fact.example/review",
-                "title": "Review title",
-                "textualRating": "False",
-                "reviewDate": "2026-08-03T13:00:00Z",
-            }],
-        }]
+        "claims": [
+            {
+                "text": "claim",
+                "claimReview": [
+                    {
+                        "publisher": {"name": "Verified Source"},
+                        "url": "https://fact.example/review",
+                        "title": "Review title",
+                        "textualRating": "False",
+                        "reviewDate": "2026-08-03T13:00:00Z",
+                    }
+                ],
+            }
+        ]
     }
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -136,16 +140,18 @@ async def test_blacklist_requires_audited_approval(tmp_path):
 
 @pytest.mark.asyncio
 async def test_offline_fact_check_repository_is_ranked_and_copied():
-    corpus = JsonFactCheckRepository([
-        ClaimEvidence(
-            source="source",
-            title="Cảnh báo phí mở khóa tài khoản",
-            url="https://example.com/review",
-            finding="Yêu cầu phí mở khóa là giả mạo",
-            relevance=1,
-            observed_at=datetime(2026, 8, 3, tzinfo=UTC),
-        )
-    ])
+    corpus = JsonFactCheckRepository(
+        [
+            ClaimEvidence(
+                source="source",
+                title="Cảnh báo phí mở khóa tài khoản",
+                url="https://example.com/review",
+                finding="Yêu cầu phí mở khóa là giả mạo",
+                relevance=1,
+                observed_at=datetime(2026, 8, 3, tzinfo=UTC),
+            )
+        ]
+    )
     results = await corpus.search("nộp phí mở khóa tài khoản")
 
     assert len(results) == 1
