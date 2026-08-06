@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.models import (
     CaseStatus,
     ClaimEvidence,
+    DomainIntelligenceResult,
     EvidenceType,
     InputType,
     RecommendedAction,
@@ -35,6 +36,7 @@ class FixtureMocks(FixtureModel):
     url_scanner: str | None = None
     claim_retriever: str | None = None
     blacklist: str | None = None
+    domain_intelligence: str | None = None
 
 
 class FixtureExpected(FixtureModel):
@@ -96,6 +98,17 @@ class BlacklistFixtureResponse(FixtureModel):
     domains: list[str]
 
 
+class DomainIntelligenceFixtureResponse(FixtureModel):
+    result: DomainIntelligenceResult | None = None
+    error: ToolError | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_outcome(self) -> DomainIntelligenceFixtureResponse:
+        if (self.result is None) == (self.error is None):
+            raise ValueError("fixture response requires exactly one of result or error")
+        return self
+
+
 def load_analyses(path: Path = FIXTURE_ROOT / "analyses.jsonl") -> list[AnalysisFixture]:
     fixtures: list[AnalysisFixture] = []
     with path.open(encoding="utf-8") as stream:
@@ -130,3 +143,8 @@ def load_claim_retriever_responses() -> dict[str, ClaimRetrieverFixtureResponse]
 def load_blacklist_responses() -> dict[str, BlacklistFixtureResponse]:
     payload = _load_json(FIXTURE_ROOT / "tool_responses" / "blacklist.json")
     return {key: BlacklistFixtureResponse.model_validate(value) for key, value in payload.items()}
+
+
+def load_domain_intelligence_responses() -> dict[str, DomainIntelligenceFixtureResponse]:
+    payload = _load_json(FIXTURE_ROOT / "tool_responses" / "domain_intelligence.json")
+    return {key: DomainIntelligenceFixtureResponse.model_validate(value) for key, value in payload.items()}

@@ -3,6 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
+from src.agents.tools.rdap import RdapDomainIntelligence
+
+
+def build_domain_intelligence_adapter(settings: Any) -> RdapDomainIntelligence:
+    """Build a lazy RDAP adapter; its HTTP client is created only on an allowed lookup."""
+    return RdapDomainIntelligence(timeout=min(settings.provider_timeout_seconds, 5.0))
 
 
 def build_provider_adapters(settings: Any) -> dict[str, object]:

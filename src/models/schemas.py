@@ -43,6 +43,7 @@ class EvidenceType(StrEnum):
     DOMAIN_REPUTATION = "domain_reputation"
     REDIRECT = "redirect"
     BLACKLIST = "blacklist"
+    DOMAIN_REGISTRATION = "domain_registration"
     FACT_CHECK = "fact_check"
     OFFICIAL_SOURCE = "official_source"
     USER_REPORT = "user_report"
@@ -70,6 +71,13 @@ class ReviewDecision(StrEnum):
 class ReviewAction(StrEnum):
     ADD_TO_BLACKLIST = "add_to_blacklist"
     NONE = "none"
+
+
+class ClaimStance(StrEnum):
+    SUPPORTS = "supports"
+    REFUTES = "refutes"
+    MIXED = "mixed"
+    UNRATED = "unrated"
 
 
 class ErrorCode(StrEnum):
@@ -153,8 +161,30 @@ class ClaimEvidence(ContractModel):
     title: str
     url: str | None = None
     finding: str
+    stance: ClaimStance
     relevance: float = Field(ge=0.0, le=1.0)
     observed_at: datetime
+
+
+class DomainIntelligenceResult(ContractModel):
+    provider: str
+    domain: str
+    registered_at: datetime | None = None
+    expires_at: datetime | None = None
+    registrar: str | None = None
+    country: str | None = None
+    status: list[str] = Field(default_factory=list)
+    privacy_redacted: bool
+    signals: list[str] = Field(default_factory=list)
+    observed_at: datetime
+
+
+class BlacklistEntry(ContractModel):
+    domain: str
+    decision_id: str
+    source: str
+    added_at: datetime
+    active: bool
 
 
 class ToolError(ContractModel):

@@ -3,14 +3,16 @@ import pytest
 from src.agents.tools import (
     FakeBlacklistRepository,
     FakeClaimRetriever,
+    FakeDomainIntelligence,
     FakeToolCallError,
     FakeUrlScanner,
 )
-from src.models import ToolError, UrlScanResult, Verdict
+from src.models import DomainIntelligenceResult, ToolError, UrlScanResult, Verdict
 from tests.fixture_loader import (
     load_analyses,
     load_blacklist_responses,
     load_claim_retriever_responses,
+    load_domain_intelligence_responses,
     load_url_scanner_responses,
 )
 
@@ -105,6 +107,19 @@ async def test_fake_claim_retriever_honors_limit() -> None:
 
     assert len(await retriever.search("claim", limit=1)) == 1
     assert await retriever.search("claim", limit=0) == []
+
+
+@pytest.mark.asyncio
+async def test_fake_domain_intelligence_returns_typed_copy_without_network() -> None:
+    loaded = load_domain_intelligence_responses()["domain_new_001"]
+    assert loaded.result is not None
+    adapter = FakeDomainIntelligence({"domain_new_001": loaded.result}, "domain_new_001")
+
+    result = await adapter.lookup("example.com")
+
+    assert isinstance(result, DomainIntelligenceResult)
+    assert result.domain == "example.com"
+    assert result.signals == ["recent_registration"]
 
 
 @pytest.mark.asyncio

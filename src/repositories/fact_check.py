@@ -33,6 +33,8 @@ class JsonFactCheckRepository:
             if not isinstance(item, dict):
                 raise ValueError("fact-check records must be objects")
             normalized = dict(item)
+            if not isinstance(normalized.get("url"), str) or not normalized["url"].strip():
+                raise ValueError("fact-check records require a source URL")
             normalized.setdefault("observed_at", now)
             normalized.setdefault("relevance", 1.0)
             records.append(ClaimEvidence.model_validate(normalized))
