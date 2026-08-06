@@ -99,3 +99,24 @@ phản hồi cuối. LLM output không được tính như evidence hoặc tự 
 | Duc — Tools/Data   | `src/agents/tools/**`, `src/repositories/**`, provider integration      | Fake adapters, provider thật, SSRF guard, blacklist và fact-check repositories         | Bình, Hải      |
 | Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v1, persistence orchestration, demo auth/RBAC, Docker và deployment                | Bình, Hiếu     |
 | Hiếu — Frontend/QA | frontend/API client, `tests/**`, `eval/**`                              | User/admin UI, fixtures, contract/integration/eval runner và demo script               | Bình, Hải      |
+
+## 5. Trạng thái Tools/Data (Duc)
+
+Phần Tools/Data hiện dùng profile triển khai sau:
+
+- Fake URL scanner, claim retriever và blacklist repository chạy hoàn toàn offline cho CI.
+- Provider thật gồm Google Safe Browsing v4 và Google Fact Check Tools API, được inject vào graph
+  khi có `GOOGLE_SAFE_BROWSING_API_KEY` hoặc `GOOGLE_FACT_CHECK_API_KEY`.
+- Google Safe Browsing no-hit trả `inconclusive`; hệ thống không dùng thiếu hit làm bằng chứng
+  `safe`.
+- `SsrfGuard` kiểm tra scheme, credential, port và toàn bộ DNS answers. `GuardedHttpClient` kiểm
+  tra lại từng redirect và giới hạn redirect/response size.
+- Blacklist vertical slice dùng SQLite. Ghi blacklist yêu cầu trước đó phải lưu audit decision
+  `approved + add_to_blacklist`; domain được chuẩn hóa IDNA.
+- Fact-check repository offline dùng corpus JSON có provenance và ranking deterministic. Đây là
+  fallback/công cụ CI, không thay thế provider thật trong demo production.
+- Cấu hình provider nằm server-side; browser và AgentState không nhận API key hoặc raw provider
+  response.
+
+Các lựa chọn trên cụ thể hóa contract v1 và không thay đổi public API/enum. PostgreSQL vẫn là đích
+deployment chung; SQLite là database tương đương được cho phép cho vertical slice Tools/Data.

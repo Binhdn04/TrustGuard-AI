@@ -19,12 +19,15 @@ class _StrictOutput(BaseModel):
 
 class MessageAnalysis(_StrictOutput):
     context: str = Field(min_length=1, max_length=500)
-    dominant_emotion: Literal[
-        "neutral", "urgency", "fear", "greed", "curiosity", "trust", "unknown"
-    ]
+    dominant_emotion: Literal["neutral", "urgency", "fear", "greed", "curiosity", "trust", "unknown"]
     sender_intent: Literal[
-        "informational", "promotion", "credential_harvest", "financial_request",
-        "impersonation", "coercion", "unknown",
+        "informational",
+        "promotion",
+        "credential_harvest",
+        "financial_request",
+        "impersonation",
+        "coercion",
+        "unknown",
     ]
     suspected_scam_intent: bool
     scam_indicators: list[str] = Field(max_length=8)
@@ -83,12 +86,14 @@ def build_analyze_message_node(llm: Any | None):
                 llm,
                 MessageAnalysis,
                 [
-                    SystemMessage(content=(
-                        "Bạn phân tích tin nhắn mà người dùng dán để kiểm tra lừa đảo. "
-                        "Đánh giá ý đồ có khả năng thuộc về NGƯỜI GỬI tin nhắn, không quy kết người dùng. "
-                        "Chỉ trích xuất claim có trong input; không thêm sự kiện hoặc bằng chứng. "
-                        "Cảm xúc là kỹ thuật tác động nổi bật trong nội dung. Trả structured output."
-                    )),
+                    SystemMessage(
+                        content=(
+                            "Bạn phân tích tin nhắn mà người dùng dán để kiểm tra lừa đảo. "
+                            "Đánh giá ý đồ có khả năng thuộc về NGƯỜI GỬI tin nhắn, không quy kết người dùng. "
+                            "Chỉ trích xuất claim có trong input; không thêm sự kiện hoặc bằng chứng. "
+                            "Cảm xúc là kỹ thuật tác động nổi bật trong nội dung. Trả structured output."
+                        )
+                    ),
                     HumanMessage(content=state.get("message", "")),
                 ],
             )
@@ -98,11 +103,7 @@ def build_analyze_message_node(llm: Any | None):
         claims = list(state.get("claims", []))
         for claim in result.claims:
             cleaned = claim.strip()
-            if (
-                cleaned
-                and cleaned not in claims
-                and _claim_is_grounded(cleaned, state.get("message", ""))
-            ):
+            if cleaned and cleaned not in claims and _claim_is_grounded(cleaned, state.get("message", "")):
                 claims.append(cleaned)
         return {
             "claims": claims[:5],
@@ -135,11 +136,13 @@ def build_plan_tools_node(llm: Any | None):
                 llm,
                 ToolPlan,
                 [
-                    SystemMessage(content=(
-                        "Lập thứ tự tool để thu thập evidence. Chỉ chọn từ allowed_tools. "
-                        "Không chọn url_scanner khi thiếu consent hoặc URL đã bị chặn. "
-                        "Không xem suy luận LLM là evidence và không tự kết luận verdict."
-                    )),
+                    SystemMessage(
+                        content=(
+                            "Lập thứ tự tool để thu thập evidence. Chỉ chọn từ allowed_tools. "
+                            "Không chọn url_scanner khi thiếu consent hoặc URL đã bị chặn. "
+                            "Không xem suy luận LLM là evidence và không tự kết luận verdict."
+                        )
+                    ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
             )
@@ -158,8 +161,13 @@ def build_review_assessment_node(llm: Any | None):
         if llm is None:
             return {}
         evidence = [
-            {"index": index, "type": item.type.value, "source": item.source,
-             "title": item.title, "finding": item.finding}
+            {
+                "index": index,
+                "type": item.type.value,
+                "source": item.source,
+                "title": item.title,
+                "finding": item.finding,
+            }
             for index, item in enumerate(state.get("evidence", []))
         ]
         payload = {
@@ -178,11 +186,13 @@ def build_review_assessment_node(llm: Any | None):
                 llm,
                 AssessmentReview,
                 [
-                    SystemMessage(content=(
-                        "Đóng vai reviewer an toàn. Giải thích assessment chỉ bằng evidence được cung cấp. "
-                        "Không sửa score/verdict, không tạo evidence, và chỉ tham chiếu index tồn tại. "
-                        "Nếu evidence thiếu hoặc mâu thuẫn, ghi vào missing_information."
-                    )),
+                    SystemMessage(
+                        content=(
+                            "Đóng vai reviewer an toàn. Giải thích assessment chỉ bằng evidence được cung cấp. "
+                            "Không sửa score/verdict, không tạo evidence, và chỉ tham chiếu index tồn tại. "
+                            "Nếu evidence thiếu hoặc mâu thuẫn, ghi vào missing_information."
+                        )
+                    ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
             )
@@ -214,9 +224,7 @@ def build_generate_response_node(llm: Any | None):
             "missing_information": state.get("llm_missing_information", []),
             "verdict": getattr(state.get("verdict"), "value", state.get("verdict")),
             "risk_level": getattr(state.get("risk_level"), "value", state.get("risk_level")),
-            "recommended_action": getattr(
-                state.get("recommended_action"), "value", state.get("recommended_action")
-            ),
+            "recommended_action": getattr(state.get("recommended_action"), "value", state.get("recommended_action")),
             "evidence": evidence,
             "limitations": state.get("limitations", []),
         }
@@ -225,21 +233,21 @@ def build_generate_response_node(llm: Any | None):
                 llm,
                 GroundedResponse,
                 [
-                    SystemMessage(content=(
-                        "Viết phản hồi tiếng Việt ngắn, dễ hiểu, không gây hoảng sợ. "
-                        "Mỗi reason phải mang evidence_index của evidence hỗ trợ nó; không nói an toàn "
-                        "khi thiếu dữ liệu. Nếu không có evidence, để reasons rỗng. "
-                        "Giữ nguyên verdict, risk level và action do hệ thống cung cấp."
-                    )),
+                    SystemMessage(
+                        content=(
+                            "Viết phản hồi tiếng Việt ngắn, dễ hiểu, không gây hoảng sợ. "
+                            "Mỗi reason phải mang evidence_index của evidence hỗ trợ nó; không nói an toàn "
+                            "khi thiếu dữ liệu. Nếu không có evidence, để reasons rỗng. "
+                            "Giữ nguyên verdict, risk level và action do hệ thống cung cấp."
+                        )
+                    ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
             )
         except Exception:
             return _failure_update(state, "tạo phản hồi")
 
-        valid_reasons = [
-            reason for reason in result.reasons if 0 <= reason.evidence_index < len(evidence)
-        ]
+        valid_reasons = [reason for reason in result.reasons if 0 <= reason.evidence_index < len(evidence)]
         indexes = [reason.evidence_index for reason in valid_reasons]
         if not valid_reasons and evidence:
             # Reject an ungrounded response and keep the deterministic explanation.
@@ -256,8 +264,14 @@ def build_generate_response_node(llm: Any | None):
 
 
 __all__ = [
-    "AssessmentReview", "GroundedReason", "GroundedResponse", "LLM_MODEL", "MessageAnalysis",
+    "AssessmentReview",
+    "GroundedReason",
+    "GroundedResponse",
+    "LLM_MODEL",
+    "MessageAnalysis",
     "ToolPlan",
-    "build_analyze_message_node", "build_generate_response_node", "build_plan_tools_node",
+    "build_analyze_message_node",
+    "build_generate_response_node",
+    "build_plan_tools_node",
     "build_review_assessment_node",
 ]

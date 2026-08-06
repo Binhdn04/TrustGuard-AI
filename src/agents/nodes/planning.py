@@ -29,11 +29,7 @@ def plan_next_tool(state: WorkflowState) -> dict:
         if tool == "url_scanner" and state.get("consent_to_scan_urls", False):
             for url in state.get("normalized_urls", []):
                 key = _attempt_key("scan_url", url)
-                if (
-                    url not in state.get("blocked_urls", [])
-                    and url not in scanned
-                    and attempts.get(key, 0) < 2
-                ):
+                if url not in state.get("blocked_urls", []) and url not in scanned and attempts.get(key, 0) < 2:
                     return {"next_tool": "scan_url", "tool_target": url}
         if tool == "claim_retriever":
             for claim in state.get("claims", []):

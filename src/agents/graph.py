@@ -43,8 +43,7 @@ async def _action_node(state: WorkflowState) -> dict:
 
 def _route_after_rules(state: WorkflowState) -> str:
     has_scannable_url = bool(
-        state.get("consent_to_scan_urls")
-        and set(state.get("normalized_urls", [])) - set(state.get("blocked_urls", []))
+        state.get("consent_to_scan_urls") and set(state.get("normalized_urls", [])) - set(state.get("blocked_urls", []))
     )
     return "plan" if has_scannable_url or state.get("claims") else "assess"
 
@@ -79,17 +78,26 @@ def _build_planning_loop_node(
                 # the same plan forever.
                 limitations = list(working.get("limitations", []))
                 limitations.append("Vòng lặp công cụ dừng vì không ghi nhận tiến độ.")
-                working.update({
-                    "next_tool": "assess",
-                    "tool_target": "assessment",
-                    "limitations": list(dict.fromkeys(limitations)),
-                })
+                working.update(
+                    {
+                        "next_tool": "assess",
+                        "tool_target": "assessment",
+                        "limitations": list(dict.fromkeys(limitations)),
+                    }
+                )
                 break
         return {
             key: working[key]
             for key in (
-                "next_tool", "tool_target", "tool_calls_used", "tool_attempts",
-                "url_findings", "claim_findings", "evidence", "errors", "limitations",
+                "next_tool",
+                "tool_target",
+                "tool_calls_used",
+                "tool_attempts",
+                "url_findings",
+                "claim_findings",
+                "evidence",
+                "errors",
+                "limitations",
             )
             if key in working
         }
@@ -159,11 +167,28 @@ def build_legacy_graph():
 
 def build_openai_graph(**kwargs):
     """Build the production graph; remains offline when no API key is configured."""
+    from src.agents.tools.integration import build_provider_adapters
     from src.config import get_settings
     from src.services.llm import get_llm
 
-    llm = get_llm() if get_settings().openai_api_key else None
-    return build_graph(llm=llm, **kwargs)
+    settings = get_settings()
+    llm = get_llm() if settings.openai_api_key else None
+    owned_adapters = build_provider_adapters(settings)
+    for name, adapter in owned_adapters.items():
+        kwargs.setdefault(name, adapter)
+    graph = build_graph(llm=llm, **kwargs)
+    # Keep application-owned resources reachable so the ASGI lifespan can
+    # deterministically close their connection pools.
+    graph._owned_adapters = tuple(owned_adapters.values())
+    return graph
+
+
+async def close_graph_resources(graph) -> None:
+    """Close provider clients created while building a production graph."""
+    for adapter in getattr(graph, "_owned_adapters", ()):
+        close = getattr(adapter, "aclose", None)
+        if close is not None:
+            await close()
 
 
 # Preferred graph for Analysis service integration. In CI it degrades offline.
@@ -172,5 +197,10 @@ analysis_agent = build_openai_graph()
 agent = build_legacy_graph()
 
 __all__ = [
-    "agent", "analysis_agent", "build_graph", "build_legacy_graph", "build_openai_graph",
+    "agent",
+    "analysis_agent",
+    "build_graph",
+    "build_legacy_graph",
+    "build_openai_graph",
+    "close_graph_resources",
 ]

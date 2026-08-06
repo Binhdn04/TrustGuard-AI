@@ -26,9 +26,7 @@ class FakeUrlScanner:
     async def scan(self, normalized_url: str) -> UrlScanResult:
         self.calls.append(normalized_url)
         if self._response_id not in self._responses:
-            raise ValueError(
-                f"URL scanner fixture response ID {self._response_id!r} is not configured"
-            )
+            raise ValueError(f"URL scanner fixture response ID {self._response_id!r} is not configured")
         result = self._responses[self._response_id]
         if isinstance(result, ToolError):
             raise FakeToolCallError(result)
@@ -46,14 +44,15 @@ class FakeClaimRetriever:
         response_id: str,
     ) -> None:
         self._responses = {
-            key: value if isinstance(value, ToolError) else list(value)
-            for key, value in responses.items()
+            key: value if isinstance(value, ToolError) else list(value) for key, value in responses.items()
         }
         self._response_id = response_id
         self.calls: list[tuple[str, int]] = []
 
     async def search(self, claim: str, limit: int = 5) -> list[ClaimEvidence]:
         self.calls.append((claim, limit))
+        if self._response_id not in self._responses:
+            raise ValueError(f"Claim retriever fixture response ID {self._response_id!r} is not configured")
         result = self._responses[self._response_id]
         if isinstance(result, ToolError):
             raise FakeToolCallError(result)
