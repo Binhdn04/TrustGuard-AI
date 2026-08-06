@@ -65,6 +65,7 @@ class FakeBlacklistRepository:
     def __init__(self, domains: Sequence[str] = ()) -> None:
         self._domains = {domain.casefold() for domain in domains}
         self.approved_writes: list[tuple[str, str]] = []
+        self.decisions: list[dict[str, str]] = []
 
     async def contains(self, domain: str) -> bool:
         return domain.casefold() in self._domains
@@ -75,3 +76,44 @@ class FakeBlacklistRepository:
         normalized_domain = domain.casefold()
         self._domains.add(normalized_domain)
         self.approved_writes.append((normalized_domain, decision_id))
+
+    async def record_decision(
+        self,
+        *,
+        decision_id: str,
+        reviewer_id: str,
+        decision: str,
+        action: str,
+        note: str,
+    ) -> None:
+        self.decisions.append(
+            {
+                "decision_id": decision_id,
+                "reviewer_id": reviewer_id,
+                "decision": decision,
+                "action": action,
+                "note": note,
+            }
+        )
+
+    async def apply_decision(
+        self,
+        *,
+        decision_id: str,
+        analysis_id: str | None,
+        reviewer_id: str,
+        decision: str,
+        action: str,
+        note: str,
+        domains: Sequence[str],
+    ) -> None:
+        await self.record_decision(
+            decision_id=decision_id,
+            reviewer_id=reviewer_id,
+            decision=decision,
+            action=action,
+            note=note,
+        )
+        self.decisions[-1]["analysis_id"] = analysis_id or ""
+        for domain in domains:
+            await self.add_approved(domain, decision_id)

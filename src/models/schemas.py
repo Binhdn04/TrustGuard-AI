@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CONTRACT_VERSION = "v1"
-SCORING_VERSION = "risk-v2"
+SCORING_VERSION = "risk-v1"
 
 
 class InputType(StrEnum):
@@ -43,34 +43,9 @@ class EvidenceType(StrEnum):
     DOMAIN_REPUTATION = "domain_reputation"
     REDIRECT = "redirect"
     BLACKLIST = "blacklist"
-    DOMAIN_REGISTRATION = "domain_registration"
     FACT_CHECK = "fact_check"
     OFFICIAL_SOURCE = "official_source"
     USER_REPORT = "user_report"
-
-
-class InvestigationStepStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    SKIPPED = "skipped"
-    FAILED = "failed"
-
-
-class InvestigationTool(StrEnum):
-    LOCAL_RULES = "local_rules"
-    BLACKLIST_LOOKUP = "blacklist_lookup"
-    URL_SCANNER = "url_scanner"
-    REDIRECT_RESOLVER = "redirect_resolver"
-    DOMAIN_INTELLIGENCE = "domain_intelligence"
-    CLAIM_RETRIEVER = "claim_retriever"
-
-
-class ClaimStance(StrEnum):
-    SUPPORTS = "supports"
-    REFUTES = "refutes"
-    MIXED = "mixed"
-    UNRATED = "unrated"
 
 
 class CaseStatus(StrEnum):
@@ -107,7 +82,7 @@ class ErrorCode(StrEnum):
 
 
 class ContractModel(BaseModel):
-    """Strict base for the frozen v2 JSON contract."""
+    """Strict base for the frozen v1 JSON contract."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
@@ -117,7 +92,9 @@ class ContractModel(BaseModel):
         def validate(item: Any) -> None:
             if isinstance(item, str) and not item.strip():
                 raise ValueError("empty strings are not valid contract values")
-            if isinstance(item, datetime) and (item.tzinfo is None or item.utcoffset() != timedelta(0)):
+            if isinstance(item, datetime) and (
+                item.tzinfo is None or item.utcoffset() != timedelta(0)
+            ):
                 raise ValueError("timestamps must use UTC")
             if isinstance(item, list):
                 for nested_item in item:
@@ -164,15 +141,6 @@ class Evidence(ContractModel):
     observed_at: datetime
 
 
-class InvestigationStep(ContractModel):
-    step_id: str
-    tool: InvestigationTool
-    target: str
-    reason_code: str
-    depends_on: list[str] = Field(default_factory=list)
-    status: InvestigationStepStatus = InvestigationStepStatus.PENDING
-
-
 class UrlScanResult(ContractModel):
     provider: str
     normalized_url: str
@@ -188,29 +156,7 @@ class ClaimEvidence(ContractModel):
     url: str | None = None
     finding: str
     relevance: float = Field(ge=0.0, le=1.0)
-    stance: ClaimStance = ClaimStance.UNRATED
     observed_at: datetime
-
-
-class DomainIntelligenceResult(ContractModel):
-    provider: str
-    domain: str
-    registered_at: datetime | None = None
-    expires_at: datetime | None = None
-    registrar: str | None = None
-    country: str | None = None
-    status: list[str] = Field(default_factory=list)
-    privacy_redacted: bool = False
-    signals: list[str] = Field(default_factory=list)
-    observed_at: datetime
-
-
-class BlacklistEntry(ContractModel):
-    domain: str
-    decision_id: str
-    source: str
-    added_at: datetime
-    active: bool
 
 
 class ToolError(ContractModel):
@@ -227,7 +173,6 @@ class AnalysisResponse(ContractModel):
     input_type: InputType | None = None
     normalized_urls: list[str] | None = None
     claims: list[str] | None = None
-    investigation_plan: list[InvestigationStep] = Field(default_factory=list)
     risk_score: int | None = Field(default=None, ge=0, le=100)
     risk_level: RiskLevel | None = None
     verdict: Verdict | None = None
@@ -279,8 +224,6 @@ class AnalysisEvent(ContractModel):
     status: AnalysisStatus
     step: str
     occurred_at: datetime
-    step_id: str | None = None
-    step_status: InvestigationStepStatus | None = None
 
 
 class AnalysisReportRequest(ContractModel):
@@ -288,12 +231,21 @@ class AnalysisReportRequest(ContractModel):
     comment: str | None = None
 
 
+<<<<<<< Updated upstream
+=======
 class AnalysisReportResponse(ContractModel):
     report_id: UUID
     analysis_id: UUID
     created_at: datetime
 
 
+class AnalysisReportRecord(AnalysisReportResponse):
+    reporter_id: str
+    reason: str
+    comment: str | None = None
+
+
+>>>>>>> Stashed changes
 class AdminDecisionRequest(ContractModel):
     decision: ReviewDecision
     action: ReviewAction
@@ -306,6 +258,8 @@ class AdminDecisionRequest(ContractModel):
         return self
 
 
+<<<<<<< Updated upstream
+=======
 class AdminDecisionResponse(ContractModel):
     decision_id: UUID
     analysis_id: UUID
@@ -313,6 +267,23 @@ class AdminDecisionResponse(ContractModel):
     reviewed_at: datetime
 
 
+class AdminDecisionAudit(ContractModel):
+    decision_id: UUID
+    analysis_id: UUID | None = None
+    reviewer_id: str
+    decision: ReviewDecision
+    action: ReviewAction
+    note: str
+    decided_at: datetime
+
+
+class BlacklistEntry(ContractModel):
+    domain: str
+    decision_id: UUID
+    added_at: datetime
+
+
+>>>>>>> Stashed changes
 class ErrorBody(ContractModel):
     code: ErrorCode
     message: str
