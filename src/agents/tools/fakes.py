@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from src.models import ClaimEvidence, ToolError, UrlScanResult
+from src.models import ClaimEvidence, ClaimStance, ToolError, UrlScanResult
+
+from .fact_check import normalize_claim_rating
 
 
 class FakeToolCallError(RuntimeError):
@@ -56,7 +58,17 @@ class FakeClaimRetriever:
         result = self._responses[self._response_id]
         if isinstance(result, ToolError):
             raise FakeToolCallError(result)
-        return [item.model_copy(deep=True) for item in result[:limit]]
+        return [
+            item.model_copy(
+                update={
+                    "stance": (
+                        normalize_claim_rating(item.finding) if item.stance is ClaimStance.UNRATED else item.stance
+                    )
+                },
+                deep=True,
+            )
+            for item in result[:limit]
+        ]
 
 
 class FakeBlacklistRepository:

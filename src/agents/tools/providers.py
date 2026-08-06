@@ -31,6 +31,8 @@ def map_google_fact_check_rating(rating: object) -> ClaimStance:
         return ClaimStance.UNRATED
     return _FACT_CHECK_RATING_MAP.get(rating.strip().casefold(), ClaimStance.UNRATED)
 
+from .fact_check import normalize_claim_rating
+
 
 class GoogleSafeBrowsingScanner:
     """Google Safe Browsing v4 adapter; raw provider data never leaves this class."""
@@ -168,6 +170,7 @@ class GoogleFactCheckRetriever:
                         finding=rating,
                         stance=map_google_fact_check_rating(review.get("textualRating")),
                         relevance=1.0,
+                        stance=normalize_claim_rating(rating),
                         observed_at=observed_at.astimezone(UTC),
                     )
                 )

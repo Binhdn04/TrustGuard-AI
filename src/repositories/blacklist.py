@@ -98,9 +98,7 @@ class SQLiteBlacklistRepository:
             );
             """
         )
-        columns = {
-            row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()
-        }
+        columns = {row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()}
         if "analysis_id" not in columns:
             self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
         self._connection.commit()

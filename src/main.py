@@ -1,30 +1,27 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-<<<<<<< Updated upstream
-=======
 from src.api.dependencies import close_analysis_service
->>>>>>> Stashed changes
 from src.api.routes import router
 from src.config import get_settings
+from src.core.errors import PlatformError
+from src.models import ErrorCode
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
-<<<<<<< Updated upstream
-    yield
-    print("Shutting down...")
-=======
     try:
         yield
     finally:
         await close_analysis_service()
         print("Shutting down...")
->>>>>>> Stashed changes
 
 
 app = FastAPI(
@@ -44,6 +41,36 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+
+
+@app.exception_handler(PlatformError)
+async def platform_error_handler(request, exc: PlatformError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code.value,
+                "message": exc.message,
+                "retryable": exc.retryable,
+                "details": exc.details,
+            }
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": ErrorCode.VALIDATION_ERROR.value,
+                "message": "Request validation failed.",
+                "retryable": False,
+                "details": {"errors": jsonable_encoder(exc.errors())},
+            }
+        },
+    )
 
 
 @app.get("/health")
