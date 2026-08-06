@@ -5,8 +5,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from src.api.routes import router
 from src.agents.graph import analysis_agent, close_graph_resources
+from src.api.routes import router
 from src.config import get_settings
 from src.core.errors import PlatformError
 from src.models import ErrorBody, ErrorCode, ErrorEnvelope

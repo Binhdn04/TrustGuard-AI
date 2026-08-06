@@ -43,7 +43,6 @@ class AgentState(TypedDict, total=False):
     scoring_version: str
 
 
-
 class WorkflowState(AgentState, total=False):
     """Serializable private state used only while the graph is executing."""
 

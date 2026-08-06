@@ -34,9 +34,11 @@ def normalize_url(raw_url: str) -> str | None:
 
 def _is_forbidden_host(host: str) -> bool:
     lowered = host.casefold().rstrip(".")
-    if lowered == "localhost" or lowered.endswith(".localhost") or lowered in {
-        "metadata.google.internal", "metadata.azure.internal"
-    }:
+    if (
+        lowered == "localhost"
+        or lowered.endswith(".localhost")
+        or lowered in {"metadata.google.internal", "metadata.azure.internal"}
+    ):
         return True
     try:
         address = ipaddress.ip_address(lowered)
@@ -76,34 +78,48 @@ def build_rule_check_node(blacklist: BlacklistRepository | None):
 
             if _is_forbidden_host(host):
                 blocked.append(url)
-                evidence.append(_evidence(
-                    "URL đích bị chặn bởi SSRF guard",
-                    f"Host {host} thuộc vùng mạng không được phép truy cập.", now,
-                ))
+                evidence.append(
+                    _evidence(
+                        "URL đích bị chặn bởi SSRF guard",
+                        f"Host {host} thuộc vùng mạng không được phép truy cập.",
+                        now,
+                    )
+                )
                 limitations.append("Không quét URL bên ngoài vì đích là địa chỉ private/local/metadata.")
             if host.startswith("xn--") or ".xn--" in host:
-                evidence.append(_evidence(
-                    "Tên miền quốc tế hóa cần thận trọng",
-                    f"Tên miền {host} dùng biểu diễn punycode và có thể gây nhầm lẫn.", now,
-                ))
+                evidence.append(
+                    _evidence(
+                        "Tên miền quốc tế hóa cần thận trọng",
+                        f"Tên miền {host} dùng biểu diễn punycode và có thể gây nhầm lẫn.",
+                        now,
+                    )
+                )
             if any(token in path for token in _CREDENTIAL_TOKENS):
-                evidence.append(_evidence(
-                    "Đường dẫn yêu cầu thông tin tài khoản",
-                    f"Đường dẫn của {host} có dấu hiệu trang đăng nhập hoặc xác minh.", now,
-                ))
+                evidence.append(
+                    _evidence(
+                        "Đường dẫn yêu cầu thông tin tài khoản",
+                        f"Đường dẫn của {host} có dấu hiệu trang đăng nhập hoặc xác minh.",
+                        now,
+                    )
+                )
             if any(token in host for token in _BRAND_LURE_TOKENS):
-                evidence.append(_evidence(
-                    "Tên miền có mẫu mạo danh khuyến mãi",
-                    f"Tên miền {host} chứa mẫu thường dùng để dụ nhận quà/khuyến mãi.", now,
-                ))
+                evidence.append(
+                    _evidence(
+                        "Tên miền có mẫu mạo danh khuyến mãi",
+                        f"Tên miền {host} chứa mẫu thường dùng để dụ nhận quà/khuyến mãi.",
+                        now,
+                    )
+                )
             if blacklist is not None and await blacklist.contains(host):
-                evidence.append(Evidence(
-                    type=EvidenceType.BLACKLIST,
-                    source="approved-blacklist",
-                    title="Tên miền nằm trong blacklist đã duyệt",
-                    finding=f"Tên miền {host} đã được Security Admin phê duyệt đưa vào blacklist.",
-                    observed_at=now,
-                ))
+                evidence.append(
+                    Evidence(
+                        type=EvidenceType.BLACKLIST,
+                        source="approved-blacklist",
+                        title="Tên miền nằm trong blacklist đã duyệt",
+                        finding=f"Tên miền {host} đã được Security Admin phê duyệt đưa vào blacklist.",
+                        observed_at=now,
+                    )
+                )
 
         if normalized and not state.get("consent_to_scan_urls", False):
             limitations.append("Người dùng chưa đồng ý quét URL bằng provider bên ngoài.")

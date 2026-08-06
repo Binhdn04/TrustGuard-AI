@@ -20,12 +20,7 @@ async def test_agent_state_structure():
 
 
 def test_extract_indicators_removes_repeated_urls_in_one_pass():
-    state = {
-        "message": (
-            "Thông báo example.com/path, yêu cầu xác nhận tại "
-            "example.com/path ngay hôm nay"
-        )
-    }
+    state = {"message": ("Thông báo example.com/path, yêu cầu xác nhận tại example.com/path ngay hôm nay")}
     state.update(classify_input(state))
 
     result = extract_indicators(state)

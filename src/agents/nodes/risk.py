@@ -48,16 +48,17 @@ def assess_risk(state: AgentState) -> dict:
     has_errors = bool(state.get("errors"))
     has_positive_risk = score >= 60
     provider_safe = any(item.verdict is Verdict.SAFE for item in state.get("url_findings", []))
-    fact_refuted = any(item.type is EvidenceType.FACT_CHECK and _claim_weight(item.finding) >= 70
-                       for item in state.get("evidence", []))
+    fact_refuted = any(
+        item.type is EvidenceType.FACT_CHECK and _claim_weight(item.finding) >= 70 for item in state.get("evidence", [])
+    )
     provider_malicious = any(item.verdict is Verdict.MALICIOUS for item in state.get("url_findings", []))
 
     if fact_refuted or provider_malicious:
         verdict = Verdict.MALICIOUS
     elif has_positive_risk:
         verdict = Verdict.SUSPICIOUS
-    elif score >= 30 and not has_errors and not (
-        state.get("normalized_urls") and not state.get("consent_to_scan_urls")
+    elif (
+        score >= 30 and not has_errors and not (state.get("normalized_urls") and not state.get("consent_to_scan_urls"))
     ):
         verdict = Verdict.SUSPICIOUS
     elif limitations or has_errors or not state.get("evidence"):

@@ -35,7 +35,12 @@ class GoogleSafeBrowsingScanner:
         payload = {
             "client": {"clientId": "p-068", "clientVersion": "1.0"},
             "threatInfo": {
-                "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
+                "threatTypes": [
+                    "MALWARE",
+                    "SOCIAL_ENGINEERING",
+                    "UNWANTED_SOFTWARE",
+                    "POTENTIALLY_HARMFUL_APPLICATION",
+                ],
                 "platformTypes": ["ANY_PLATFORM"],
                 "threatEntryTypes": ["URL"],
                 "threatEntries": [{"url": normalized_url}],
@@ -48,9 +53,13 @@ class GoogleSafeBrowsingScanner:
             if not isinstance(data, dict):
                 raise ValueError("provider response must be an object")
         except httpx.TimeoutException as exc:
-            raise ToolCallError("url_scanner", "PROVIDER_TIMEOUT", "URL reputation provider timed out", retryable=True) from exc
+            raise ToolCallError(
+                "url_scanner", "PROVIDER_TIMEOUT", "URL reputation provider timed out", retryable=True
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise ToolCallError("url_scanner", "PROVIDER_ERROR", "URL reputation provider failed", retryable=True) from exc
+            raise ToolCallError(
+                "url_scanner", "PROVIDER_ERROR", "URL reputation provider failed", retryable=True
+            ) from exc
         matches = data.get("matches") or []
         signals = sorted({str(match.get("threatType", "unknown")).casefold() for match in matches})
         # A no-hit response is absence of evidence, never affirmative safety evidence.
@@ -101,9 +110,13 @@ class GoogleFactCheckRetriever:
             if not isinstance(payload, dict):
                 raise ValueError("provider response must be an object")
         except httpx.TimeoutException as exc:
-            raise ToolCallError("claim_retriever", "PROVIDER_TIMEOUT", "Fact-check provider timed out", retryable=True) from exc
+            raise ToolCallError(
+                "claim_retriever", "PROVIDER_TIMEOUT", "Fact-check provider timed out", retryable=True
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise ToolCallError("claim_retriever", "PROVIDER_ERROR", "Fact-check provider failed", retryable=True) from exc
+            raise ToolCallError(
+                "claim_retriever", "PROVIDER_ERROR", "Fact-check provider failed", retryable=True
+            ) from exc
         results: list[ClaimEvidence] = []
         for item in payload.get("claims", []):
             for review in item.get("claimReview", []):
@@ -112,19 +125,23 @@ class GoogleFactCheckRetriever:
                 rating = str(review.get("textualRating") or "Fact-check source discusses this claim")
                 reviewed_at = review.get("reviewDate")
                 try:
-                    observed_at = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00")) if reviewed_at else datetime.now(UTC)
+                    observed_at = (
+                        datetime.fromisoformat(reviewed_at.replace("Z", "+00:00")) if reviewed_at else datetime.now(UTC)
+                    )
                     if observed_at.tzinfo is None:
                         observed_at = observed_at.replace(tzinfo=UTC)
                 except (AttributeError, ValueError):
                     observed_at = datetime.now(UTC)
-                results.append(ClaimEvidence(
-                    source=str(publisher.get("name") or "Google Fact Check Tools"),
-                    title=title,
-                    url=review.get("url") or None,
-                    finding=rating,
-                    relevance=1.0,
-                    observed_at=observed_at.astimezone(UTC),
-                ))
+                results.append(
+                    ClaimEvidence(
+                        source=str(publisher.get("name") or "Google Fact Check Tools"),
+                        title=title,
+                        url=review.get("url") or None,
+                        finding=rating,
+                        relevance=1.0,
+                        observed_at=observed_at.astimezone(UTC),
+                    )
+                )
                 if len(results) >= limit:
                     return results
         return results

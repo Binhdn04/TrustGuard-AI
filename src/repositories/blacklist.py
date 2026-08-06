@@ -90,9 +90,7 @@ class SQLiteBlacklistRepository:
     async def contains(self, domain: str) -> bool:
         normalized = normalize_domain(domain)
         async with self._lock:
-            row = self._connection.execute(
-                "SELECT 1 FROM blacklist WHERE domain = ?", (normalized,)
-            ).fetchone()
+            row = self._connection.execute("SELECT 1 FROM blacklist WHERE domain = ?", (normalized,)).fetchone()
         return row is not None
 
     async def add_approved(self, domain: str, decision_id: str) -> None:

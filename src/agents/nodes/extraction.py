@@ -6,14 +6,24 @@ from urllib.parse import urlsplit
 from src.agents.state import AgentState
 from src.models import InputType
 
-_URL_RE = re.compile(
-    r"(?i)(?:https?://|www\.)[^\s<>\"']+|(?<![@\w])(?:[a-z0-9-]+\.)+[a-z]{2,63}(?:/[^\s<>\"']*)?"
-)
+_URL_RE = re.compile(r"(?i)(?:https?://|www\.)[^\s<>\"']+|(?<![@\w])(?:[a-z0-9-]+\.)+[a-z]{2,63}(?:/[^\s<>\"']*)?")
 _TRAILING_PUNCTUATION = ".,;:!?)]}>'\""
 _CLAIM_MARKERS = (
-    "tặng", "quà", "khuyến mãi", "thông báo", "yêu cầu", "phải",
-    "cảnh báo", "miễn phí", "trúng", "nộp phí", "mở khóa", "xác nhận",
-    "đăng nhập", "chuyển khoản", "hôm nay",
+    "tặng",
+    "quà",
+    "khuyến mãi",
+    "thông báo",
+    "yêu cầu",
+    "phải",
+    "cảnh báo",
+    "miễn phí",
+    "trúng",
+    "nộp phí",
+    "mở khóa",
+    "xác nhận",
+    "đăng nhập",
+    "chuyển khoản",
+    "hôm nay",
 )
 
 
