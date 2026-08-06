@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CONTRACT_VERSION = "v1"
-SCORING_VERSION = "risk-v1"
+SCORING_VERSION = "risk-v2"
 
 
 class InputType(StrEnum):
@@ -47,6 +47,30 @@ class EvidenceType(StrEnum):
     FACT_CHECK = "fact_check"
     OFFICIAL_SOURCE = "official_source"
     USER_REPORT = "user_report"
+
+
+class InvestigationStepStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class InvestigationTool(StrEnum):
+    LOCAL_RULES = "local_rules"
+    BLACKLIST_LOOKUP = "blacklist_lookup"
+    URL_SCANNER = "url_scanner"
+    REDIRECT_RESOLVER = "redirect_resolver"
+    DOMAIN_INTELLIGENCE = "domain_intelligence"
+    CLAIM_RETRIEVER = "claim_retriever"
+
+
+class ClaimStance(StrEnum):
+    SUPPORTS = "supports"
+    REFUTES = "refutes"
+    MIXED = "mixed"
+    UNRATED = "unrated"
 
 
 class CaseStatus(StrEnum):
@@ -90,7 +114,7 @@ class ErrorCode(StrEnum):
 
 
 class ContractModel(BaseModel):
-    """Strict base for the frozen v1 JSON contract."""
+    """Strict base for the frozen v2 JSON contract."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
@@ -147,6 +171,15 @@ class Evidence(ContractModel):
     observed_at: datetime
 
 
+class InvestigationStep(ContractModel):
+    step_id: str
+    tool: InvestigationTool
+    target: str
+    reason_code: str
+    depends_on: list[str] = Field(default_factory=list)
+    status: InvestigationStepStatus = InvestigationStepStatus.PENDING
+
+
 class UrlScanResult(ContractModel):
     provider: str
     normalized_url: str
@@ -163,6 +196,7 @@ class ClaimEvidence(ContractModel):
     finding: str
     stance: ClaimStance
     relevance: float = Field(ge=0.0, le=1.0)
+    stance: ClaimStance = ClaimStance.UNRATED
     observed_at: datetime
 
 
@@ -174,7 +208,7 @@ class DomainIntelligenceResult(ContractModel):
     registrar: str | None = None
     country: str | None = None
     status: list[str] = Field(default_factory=list)
-    privacy_redacted: bool
+    privacy_redacted: bool = False
     signals: list[str] = Field(default_factory=list)
     observed_at: datetime
 
@@ -201,6 +235,7 @@ class AnalysisResponse(ContractModel):
     input_type: InputType | None = None
     normalized_urls: list[str] | None = None
     claims: list[str] | None = None
+    investigation_plan: list[InvestigationStep] = Field(default_factory=list)
     risk_score: int | None = Field(default=None, ge=0, le=100)
     risk_level: RiskLevel | None = None
     verdict: Verdict | None = None
@@ -252,6 +287,8 @@ class AnalysisEvent(ContractModel):
     status: AnalysisStatus
     step: str
     occurred_at: datetime
+    step_id: str | None = None
+    step_status: InvestigationStepStatus | None = None
 
 
 class AnalysisReportRequest(ContractModel):

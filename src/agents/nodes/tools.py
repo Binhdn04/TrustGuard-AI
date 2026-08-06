@@ -3,7 +3,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from src.agents.state import WorkflowState
-from src.agents.tools.protocols import BlacklistRepository, ClaimRetriever, UrlScanner
+from src.agents.tools.protocols import BlacklistRepository, ClaimRetriever, DomainIntelligence, UrlScanner
 from src.models import Evidence, EvidenceType, ToolError
 
 
@@ -24,11 +24,23 @@ def _advance(state: WorkflowState, tool: str, target: str) -> tuple[int, dict[st
 def build_scan_urls_node(scanner: UrlScanner | None, blacklist: BlacklistRepository | None = None):
     async def scan_urls(state: WorkflowState) -> dict:
         target = state["tool_target"]
-        used, attempts = _advance(state, "scan_url", target)
         errors = list(state.get("errors", []))
         limitations = list(state.get("limitations", []))
         findings = list(state.get("url_findings", []))
         evidence = list(state.get("evidence", []))
+        # This is deliberately before accounting, task creation, or adapter
+        # access. Direct callers receive the same hard gate as the executor.
+        if state.get("consent_to_scan_urls") is not True or target in state.get("blocked_urls", []):
+            limitations.append("URL reputation lookup bị bỏ qua do consent hoặc URL policy.")
+            return {
+                "tool_calls_used": state.get("tool_calls_used", 0),
+                "tool_attempts": dict(state.get("tool_attempts", {})),
+                "errors": errors,
+                "limitations": list(dict.fromkeys(limitations)),
+                "url_findings": findings,
+                "evidence": evidence,
+            }
+        used, attempts = _advance(state, "scan_url", target)
         if scanner is None:
             errors.append(
                 ToolError(
@@ -105,24 +117,6 @@ def build_scan_urls_node(scanner: UrlScanner | None, blacklist: BlacklistReposit
     return scan_urls
 
 
-def _claim_type(finding: str) -> EvidenceType:
-    folded = finding.casefold()
-    if any(
-        word in folded
-        for word in (
-            "bác bỏ",
-            "sai sự thật",
-            "giả mạo",
-            "không đúng",
-            "false",
-            "incorrect",
-            "misleading",
-        )
-    ):
-        return EvidenceType.FACT_CHECK
-    return EvidenceType.OFFICIAL_SOURCE
-
-
 def build_verify_claims_node(retriever: ClaimRetriever | None):
     async def verify_claims(state: WorkflowState) -> dict:
         target = state["tool_target"]
@@ -148,7 +142,7 @@ def build_verify_claims_node(retriever: ClaimRetriever | None):
                 for item in results:
                     evidence.append(
                         Evidence(
-                            type=_claim_type(item.finding),
+                            type=EvidenceType.FACT_CHECK,
                             source=item.source,
                             title=item.title,
                             url=item.url,
@@ -156,8 +150,6 @@ def build_verify_claims_node(retriever: ClaimRetriever | None):
                             observed_at=item.observed_at,
                         )
                     )
-                    if "không tìm thấy" in item.finding.casefold():
-                        limitations.append("Không tìm thấy xác nhận chính thức; đây chưa phải bằng chứng bác bỏ claim.")
                 if not results:
                     limitations.append("Không tìm thấy nguồn đủ liên quan để xác minh claim.")
             except Exception as exc:
@@ -174,3 +166,79 @@ def build_verify_claims_node(retriever: ClaimRetriever | None):
         }
 
     return verify_claims
+
+
+def build_inspect_domains_node(domain_intelligence: DomainIntelligence | None):
+    async def inspect_domains(state: WorkflowState) -> dict:
+        target = state["tool_target"]
+        errors = list(state.get("errors", []))
+        limitations = list(state.get("limitations", []))
+        findings = list(state.get("domain_findings", []))
+        evidence = list(state.get("evidence", []))
+        # Consent must be checked before touching the injected adapter. The
+        # adapter performs registrable-domain and network policy validation.
+        if state.get("consent_to_scan_urls") is not True:
+            limitations.append("Domain intelligence lookup bị bỏ qua vì chưa có consent.")
+            return {
+                "tool_calls_used": state.get("tool_calls_used", 0),
+                "tool_attempts": dict(state.get("tool_attempts", {})),
+                "errors": errors,
+                "limitations": list(dict.fromkeys(limitations)),
+                "domain_findings": findings,
+                "evidence": evidence,
+            }
+        used, attempts = _advance(state, "domain_intelligence", target)
+        if domain_intelligence is None:
+            errors.append(
+                ToolError(
+                    tool="domain_intelligence",
+                    code="NOT_CONFIGURED",
+                    message="Domain intelligence provider is not configured",
+                    retryable=False,
+                )
+            )
+            limitations.append("Không có RDAP domain intelligence provider được cấu hình.")
+            attempts[f"domain_intelligence:{target}"] = 2
+        else:
+            try:
+                result = await domain_intelligence.lookup(target)
+                findings.append(result)
+                details: list[str] = []
+                if result.registered_at is not None:
+                    details.append(f"registered_at={result.registered_at.isoformat()}")
+                if result.expires_at is not None:
+                    details.append(f"expires_at={result.expires_at.isoformat()}")
+                if result.registrar is not None:
+                    details.append(f"registrar={result.registrar}")
+                if result.privacy_redacted:
+                    details.append("privacy_redacted=true")
+                evidence.append(
+                    Evidence(
+                        type=EvidenceType.DOMAIN_REGISTRATION,
+                        source=result.provider,
+                        title="Thông tin đăng ký domain",
+                        finding="; ".join(details) or "RDAP không cung cấp trường đăng ký có thể sử dụng.",
+                        observed_at=result.observed_at,
+                    )
+                )
+                if result.privacy_redacted and result.registered_at is None:
+                    limitations.append("RDAP đã ẩn hoặc không cung cấp ngày đăng ký domain.")
+            except Exception as exc:
+                error = _error_from_exception("domain_intelligence", exc)
+                errors.append(error)
+                if not error.retryable:
+                    attempts[f"domain_intelligence:{target}"] = 2
+                limitations.append(f"RDAP không trả được kết quả ({error.code}).")
+        return {
+            "tool_calls_used": used,
+            "tool_attempts": attempts,
+            "errors": errors,
+            "limitations": list(dict.fromkeys(limitations)),
+            "domain_findings": findings,
+            "evidence": evidence,
+        }
+
+    return inspect_domains
+
+
+__all__ = ["build_inspect_domains_node", "build_scan_urls_node", "build_verify_claims_node"]

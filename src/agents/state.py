@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, TypedDict
 
 from src.models import (
     CaseStatus,
     ClaimEvidence,
+    DomainIntelligenceResult,
     Evidence,
     InputType,
+    InvestigationStep,
     RecommendedAction,
     RiskLevel,
     ToolError,
@@ -14,11 +17,11 @@ from src.models import (
     Verdict,
 )
 
-ToolRoute = Literal["scan_url", "verify_claim", "assess"]
+ToolRoute = Literal["execute", "assess"]
 
 
 class AgentState(TypedDict, total=False):
-    """Frozen public AgentState v1 contract."""
+    """Frozen public AgentState v2 contract."""
 
     analysis_id: str
     message: str
@@ -27,7 +30,9 @@ class AgentState(TypedDict, total=False):
     extracted_urls: list[str]
     normalized_urls: list[str]
     claims: list[str]
+    investigation_plan: list[InvestigationStep]
     url_findings: list[UrlScanResult]
+    domain_findings: list[DomainIntelligenceResult]
     claim_findings: list[ClaimEvidence]
     evidence: list[Evidence]
     tool_calls_used: int
@@ -51,15 +56,17 @@ class WorkflowState(AgentState, total=False):
     tool_target: str
     tool_attempts: dict[str, int]
     max_tool_calls: int
+    max_tool_retries: int
+    deadline_at: datetime
     blocked_urls: list[str]
+    blacklisted_domains: list[str]
     llm_model: str
     llm_context: str
     llm_emotion: str
     llm_sender_intent: str
     llm_suspected_scam_intent: bool
     llm_scam_indicators: list[str]
-    llm_tool_plan: list[str]
-    llm_plan_rationale: str
+    llm_tool_plan: list[dict[str, str]]
     llm_assessment: str
     llm_assessment_agrees: bool
     llm_evidence_indexes: list[int]
