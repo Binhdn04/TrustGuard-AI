@@ -14,7 +14,7 @@ flowchart TB
         API["REST + WebSocket"]
         Services["Analysis, Review, Audit"]
     end
-    subgraph Agent["LangGraph Worker"]
+    subgraph Agent["LangGraph Runtime"]
         Graph["LangGraph Orchestrator"]
         Semantic["GPT-4o-mini Semantic + Planning"]
         Risk["Deterministic Risk Engine"]
@@ -22,11 +22,12 @@ flowchart TB
         Adapters["Tool Adapters + SSRF Guard"]
     end
     subgraph Data["Private Data Layer"]
-        DB[("PostgreSQL + pgvector")]
+        DB[("PostgreSQL")]
         Redis[("Redis")]
     end
     subgraph External["External Providers"]
         Reputation["URL Reputation"]
+        Whois["RDAP Domain Intelligence"]
         FactCheck["Fact-check Sources"]
         LLM["LLM API"]
     end
@@ -42,13 +43,17 @@ flowchart TB
     Risk --> Grounding
     Graph --> Adapters
     Adapters --> Reputation
+    Adapters --> Whois
     Adapters --> FactCheck
     Semantic --> LLM
     Grounding --> LLM
     Graph <--> DB
 ```
 
-Dependency direction trong code: `api → application service → agents graph → agents.tools protocol → adapter`. Node không import provider SDK; API không biết raw provider response.
+Dependency direction trong code: `api → application service → agents.graph → agents.tools protocol → adapter`.
+Node không import provider SDK; API không biết raw provider response. Đây là topology đích; bước
+đầu có thể chạy graph trong API process qua một processor interface, sau đó chuyển cùng interface
+sang worker mà không đổi public contract.
 
 ## 2. Agent Flow
 
@@ -57,12 +62,13 @@ flowchart TB
     Start(["Analysis queued"]) --> Validate["Validate and classify"]
     Validate --> Extract["Extract URLs and claims"]
     Extract --> Semantic["GPT-4o-mini: context, emotion, sender intent"]
-    Semantic --> Rules["Normalize + local rules + blacklist"]
-    Rules --> Enough{"Enough evidence?"}
+    Semantic --> Rules["Normalize + local rules"]
+    Rules --> Memory["Approved blacklist lookup"]
+    Memory --> Enough{"Enough evidence?"}
     Enough -->|"No"| Plan["GPT-4o-mini proposes allowed tool order"]
-    Plan --> Consent{"External URL scan needs consent?"}
+    Plan --> Consent{"External URL/domain lookup needs consent?"}
     Consent -->|"No consent"| Limit["Record limitation"]
-    Consent -->|"Allowed / not required"| Tool["Call adapter"]
+    Consent -->|"Allowed / not required"| Tool["Run eligible independent adapters"]
     Tool --> Observe["Normalize evidence"]
     Observe --> Stop{"Enough or budget exhausted?"}
     Stop -->|"Continue"| Plan
@@ -77,7 +83,9 @@ flowchart TB
     Review --> Done
 ```
 
-Vòng lặp dừng khi evidence đủ, hết tool calls/retries, vượt time/cost budget hoặc không
+`plan_tools` tạo **kế hoạch tác vụ có cấu trúc**, không lưu chain-of-thought: mỗi bước chỉ gồm
+`step_id`, `tool`, `target`, `reason_code`, `depends_on` và trạng thái. Executor, không phải LLM,
+luôn chèn local rules/blacklist và chuẩn hóa target. Vòng lặp dừng khi evidence đủ, hết tool calls/retries, vượt time/cost budget hoặc không
 còn tool phù hợp. LLM chỉ xếp ưu tiên các tool trong allowlist; code có quyền bổ sung tool
 cần thiết hoặc phủ quyết kế hoạch vi phạm consent/SSRF/budget. Tool/LLM lỗi được chuẩn hóa
 thành error/limitation và kích hoạt deterministic fallback; không trở thành tín hiệu an toàn.
@@ -90,8 +98,8 @@ flowchart TB
     subgraph Runtime["Railway Private Project"]
         Web["Web Container"]
         API["API Container"]
-        Worker["Agent Worker"]
-        DB[("PostgreSQL + pgvector")]
+        Worker["Agent Worker (phase 2)"]
+        DB[("PostgreSQL")]
         Redis[("Redis")]
     end
     Edge --> Web
@@ -105,13 +113,20 @@ flowchart TB
 ```
 
 - Chỉ Web/API public; Worker, Redis và DB nằm trong private network.
-- API enqueue job và phát status; Worker thực thi graph, persist state/evidence.
+- Phase 1: API gọi processor và phát status. Phase 2: API enqueue durable job; Worker thực thi
+  graph và persist state/evidence.
 - Secrets được inject server-side. Browser không gọi trực tiếp provider.
 - CI build immutable images, chạy test/migration rồi deploy; DB dùng persistent storage và backup.
+- Vertical slice đầu chạy processor trong API process và polling như code hiện tại; chỉ tách worker
+  khi đã có durable job/outbox, idempotency key và recovery test. Redis không được coi là nguồn sự thật.
+- `pgvector` không nằm trên đường găng: fact-check corpus hiện xếp hạng lexical deterministic; chỉ
+  thêm vector index khi eval chứng minh recall tốt hơn đáng kể.
 
 ## 4. Security boundaries
 
-- URL adapter validate scheme/host, resolve DNS, chặn loopback/private/link-local/multicast/cloud-metadata trước request và sau mỗi redirect.
+- URL reputation adapter gọi endpoint provider cố định nên chỉ validate/normalize input và consent;
+  không resolve/fetch URL đích. Chỉ redirect resolver chủ động truy cập URL mới resolve DNS và chặn
+  loopback/private/link-local/multicast/cloud-metadata trước request và sau mỗi redirect.
 - Network boundary hiện thực bằng `SsrfGuard` và `GuardedHttpClient`: chỉ chấp nhận URL tuyệt đối
   `http`/`https`, không chấp nhận credential trong URL, chỉ cho port 80/443, kiểm tra **mọi** địa chỉ
   IP trả về từ DNS và revalidate URL đích sau từng redirect. Redirect mặc định tối đa 5 lần và
@@ -128,12 +143,16 @@ flowchart TB
 - Grounded response chỉ chấp nhận evidence index tồn tại. Nếu parse/schema/grounding lỗi,
   hệ thống giữ explanation deterministic và thêm limitation.
 - Blacklist write chỉ nằm sau admin authorization và audit transaction.
+- RDAP domain intelligence là metadata không hoàn chỉnh: trường bị privacy-redacted được giữ
+  là `null`; tuổi domain chỉ là một signal có trọng số, không tự đủ để kết luận malicious.
+- Memory blacklist chỉ chứa entry đã được admin phê duyệt, có `decision_id`, `source`,
+  `created_at` và trạng thái hiệu lực. Lookup được thực hiện trước provider; write không nằm trong agent loop.
 
 ## 5. Repository mapping
 
 ```text
 src/
-├── agents/         # state, graph, nodes, tool protocols, adapters and network safety
+├── agents/         # package hiện có: state, graph, nodes, tools và orchestration
 ├── api/            # REST, WebSocket, auth dependencies
 ├── services/       # analysis/review use cases
 ├── repositories/   # persistence implementations
@@ -143,26 +162,53 @@ tests/{unit,integration,contract,eval,fixtures}/
 eval/{datasets,scripts}/
 ```
 
-Giữ package hiện tại `src/agents` làm nơi duy nhất cho orchestration và tool boundary. Tool protocol, fake adapter, provider adapter và network safety được tách thành các module trong `src/agents/tools/`; `src/services` và `src/repositories` được thêm ở top level để tách use case và persistence khỏi agent.
+Giữ package hiện tại `src/agents` làm nơi duy nhất cho orchestration; `src/agents/tools/` đã là
+package protocol/adapters/network safety. Không tạo thêm `src/agent`. `src/services` và
+`src/repositories` tiếp tục tách use case và persistence khỏi graph.
 
 ### 5.1 Tools/Data implementation profile
 
 ```text
 src/agents/tools/
-├── protocols.py      # UrlScanner, ClaimRetriever, BlacklistRepository
+├── protocols.py      # UrlScanner, RedirectResolver, DomainIntelligence, ClaimRetriever, BlacklistRepository
 ├── fakes.py          # fixture-driven adapters cho test offline
 ├── errors.py         # lỗi tool chuẩn hóa cho workflow
 ├── network.py        # SSRF policy, DNS validation, guarded redirects
-├── providers.py      # Google Safe Browsing v4 + Google Fact Check Tools API
+├── providers.py      # URL reputation + RDAP + Google Fact Check adapters
 └── integration.py    # tạo adapter thật khi server có API key
 
 src/repositories/
-├── blacklist.py      # SQLite blacklist + audited admin decision
+├── blacklist.py      # SQLite vertical slice; PostgreSQL implementation kế tiếp
 └── fact_check.py     # corpus JSON offline có provenance và ranking deterministic
 ```
 
-Provider thật chỉ được khởi tạo khi API key tương ứng có trong cấu hình server. Google Safe
-Browsing `no match` được chuẩn hóa thành `inconclusive` với signal `no_known_threat_match`, không
-thành evidence khẳng định URL an toàn. SQLite được dùng như “database tương đương” cho vertical
+Provider thật chỉ được khởi tạo khi cấu hình server hợp lệ. Adapter Google Safe Browsing v4 hiện
+có được giữ tạm để không phá code, nhưng [v4 đã deprecated và chỉ phù hợp non-commercial](https://developers.google.com/safe-browsing/v4);
+integration
+seam phải cho phép thay mà không đổi graph. Đích cutover là Safe Browsing v5 `urls.search` cho
+demo/non-commercial hoặc Web Risk v1 `uris.search` cho workload thương mại. Mọi `no match`
+được chuẩn hóa thành `inconclusive`, không thành evidence khẳng định URL an toàn. SQLite được dùng
+như “database tương đương” cho vertical
 slice hiện tại; schema buộc blacklist entry tham chiếu một decision đã audit với cặp
 `approved` + `add_to_blacklist`.
+
+RDAP adapter lấy **registrable domain** (eTLD+1) bằng Public Suffix List đóng gói/versioned, bỏ qua
+IP literal và suffix không đăng ký được. Adapter dùng IANA bootstrap tới RDAP-over-HTTPS, áp dụng
+allowlist/SSRF guard cho bootstrap endpoint và mọi redirect, chỉ giữ registration events/registrar
+đã chuẩn hóa, không giữ entity/vCard registrant. Cache positive/`not_found` với TTL riêng; timeout,
+429 và provider error không được negative-cache như một kết quả hợp lệ. Bootstrap source duy nhất
+của MVP là [IANA RDAP DNS registry](https://www.iana.org/assignments/rdap-dns/rdap-dns.xhtml);
+không hard-code danh sách registry endpoint trong source code.
+
+### 5.2 Trình tự tool ưu tiên
+
+| Điều kiện | Thứ tự mặc định | Lý do |
+|---|---|---|
+| Có URL + consent | normalize/rules → blacklist → reputation ∥ RDAP | Lookup độc lập chạy song song sau signal local để giảm latency. |
+| Có redirect cần quan sát | guarded redirect → reputation từng domain đích khi budget cho phép | Chặn SSRF sau mọi hop và phát hiện short-link che đích. |
+| Có claim | fact-check retriever → official-source retrieval nếu có | Claim chỉ được đánh giá từ nguồn có provenance. |
+| Blacklist hit đã phê duyệt | có thể bỏ qua tool tốn phí nếu evidence đã đủ | Giảm latency/cost; vẫn hiển thị provenance. |
+
+Planner chỉ ưu tiên tool tùy chọn; executor luôn áp dụng bảng policy, dependency, consent và budget.
+Parallel fan-out dùng timeout riêng từng adapter và merge evidence theo khóa idempotent
+`(analysis_id, step_id, target, provider)` để retry không nhân đôi kết quả.
