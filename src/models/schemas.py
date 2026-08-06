@@ -231,6 +231,21 @@ class AnalysisReportRequest(ContractModel):
     comment: str | None = None
 
 
+<<<<<<< Updated upstream
+=======
+class AnalysisReportResponse(ContractModel):
+    report_id: UUID
+    analysis_id: UUID
+    created_at: datetime
+
+
+class AnalysisReportRecord(AnalysisReportResponse):
+    reporter_id: str
+    reason: str
+    comment: str | None = None
+
+
+>>>>>>> Stashed changes
 class AdminDecisionRequest(ContractModel):
     decision: ReviewDecision
     action: ReviewAction
@@ -243,6 +258,32 @@ class AdminDecisionRequest(ContractModel):
         return self
 
 
+<<<<<<< Updated upstream
+=======
+class AdminDecisionResponse(ContractModel):
+    decision_id: UUID
+    analysis_id: UUID
+    case_status: Literal[CaseStatus.APPROVED, CaseStatus.REJECTED]
+    reviewed_at: datetime
+
+
+class AdminDecisionAudit(ContractModel):
+    decision_id: UUID
+    analysis_id: UUID | None = None
+    reviewer_id: str
+    decision: ReviewDecision
+    action: ReviewAction
+    note: str
+    decided_at: datetime
+
+
+class BlacklistEntry(ContractModel):
+    domain: str
+    decision_id: UUID
+    added_at: datetime
+
+
+>>>>>>> Stashed changes
 class ErrorBody(ContractModel):
     code: ErrorCode
     message: str

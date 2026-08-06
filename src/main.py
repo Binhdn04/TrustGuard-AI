@@ -3,6 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+<<<<<<< Updated upstream
+=======
+from src.api.dependencies import close_analysis_service
+>>>>>>> Stashed changes
 from src.api.routes import router
 from src.config import get_settings
 
@@ -11,8 +15,16 @@ from src.config import get_settings
 async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+<<<<<<< Updated upstream
     yield
     print("Shutting down...")
+=======
+    try:
+        yield
+    finally:
+        await close_analysis_service()
+        print("Shutting down...")
+>>>>>>> Stashed changes
 
 
 app = FastAPI(
