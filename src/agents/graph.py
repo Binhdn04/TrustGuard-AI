@@ -191,14 +191,11 @@ async def close_graph_resources(graph) -> None:
             await close()
 
 
-# Preferred graph for Analysis service integration. In CI it degrades offline.
-analysis_agent = build_openai_graph()
 # Backward compatibility for the existing `/chat` endpoint and starter tests.
 agent = build_legacy_graph()
 
 __all__ = [
     "agent",
-    "analysis_agent",
     "build_graph",
     "build_legacy_graph",
     "build_openai_graph",

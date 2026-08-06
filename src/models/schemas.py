@@ -265,6 +265,12 @@ class AnalysisReportResponse(ContractModel):
     created_at: datetime
 
 
+class AnalysisReportRecord(AnalysisReportResponse):
+    reporter_id: str
+    reason: str
+    comment: str | None = None
+
+
 class AdminDecisionRequest(ContractModel):
     decision: ReviewDecision
     action: ReviewAction
@@ -282,6 +288,22 @@ class AdminDecisionResponse(ContractModel):
     analysis_id: UUID
     case_status: Literal[CaseStatus.APPROVED, CaseStatus.REJECTED]
     reviewed_at: datetime
+
+
+class AdminDecisionAudit(ContractModel):
+    decision_id: UUID
+    analysis_id: UUID | None = None
+    reviewer_id: str
+    decision: ReviewDecision
+    action: ReviewAction
+    note: str
+    decided_at: datetime
+
+
+class BlacklistEntry(ContractModel):
+    domain: str
+    decision_id: UUID
+    added_at: datetime
 
 
 class ErrorBody(ContractModel):

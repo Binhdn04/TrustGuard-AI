@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "bash -lc 'repo_root=\"$(git rev-parse --show-toplevel)\" && AI_LOG_DIR=\"$repo_root/.ai-log\" bash \"$repo_root/scripts/_pyrun.sh\" \"$repo_root/scripts/log_hook.py\" --tool=codex >/dev/null'",
-            "commandWindows": "python scripts/log_hook.py --tool=codex",
+            "commandWindows": "cmd.exe /d /c \"scripts\\_pyrun.cmd scripts\\log_hook.py --tool=codex >nul\"",
             "timeout": 10
           }
         ]
@@ -19,7 +19,7 @@
           {
             "type": "command",
             "command": "bash -lc 'repo_root=\"$(git rev-parse --show-toplevel)\" && AI_LOG_DIR=\"$repo_root/.ai-log\" bash \"$repo_root/scripts/_pyrun.sh\" \"$repo_root/scripts/log_hook.py\" --tool=codex >/dev/null'",
-            "commandWindows": "python scripts/log_hook.py --tool=codex",
+            "commandWindows": "cmd.exe /d /c \"scripts\\_pyrun.cmd scripts\\log_hook.py --tool=codex >nul\"",
             "timeout": 10
           }
         ]

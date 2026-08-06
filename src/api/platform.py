@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from src.api.dependencies import AnalysisServiceDependency, PrincipalDependency
 from src.core.auth import require_security_admin
 from src.models import (
+    AdminDecisionAudit,
     AdminDecisionRequest,
     AdminDecisionResponse,
     AnalysisAcceptedResponse,
     AnalysisCreateRequest,
     AnalysisEvent,
+    AnalysisReportRecord,
     AnalysisReportRequest,
     AnalysisReportResponse,
     AnalysisResponse,
+    BlacklistEntry,
     ErrorEnvelope,
 )
 
@@ -86,6 +89,40 @@ async def list_admin_cases(
 ) -> list[AnalysisResponse]:
     require_security_admin(principal)
     return await service.list_review_cases()
+
+
+@router.get("/admin/reports", response_model=list[AnalysisReportRecord])
+async def list_admin_reports(
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[AnalysisReportRecord]:
+    require_security_admin(principal)
+    return await service.list_reports(limit=limit, offset=offset)
+
+
+@router.get("/admin/decisions", response_model=list[AdminDecisionAudit])
+async def list_admin_decisions(
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[AdminDecisionAudit]:
+    require_security_admin(principal)
+    return await service.list_decisions(limit=limit, offset=offset)
+
+
+@router.get("/admin/blacklist", response_model=list[BlacklistEntry])
+async def list_admin_blacklist(
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+    query: str | None = Query(default=None, max_length=253),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[BlacklistEntry]:
+    require_security_admin(principal)
+    return await service.list_blacklist(query=query, limit=limit, offset=offset)
 
 
 @router.post(
