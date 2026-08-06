@@ -92,9 +92,7 @@ class ContractModel(BaseModel):
         def validate(item: Any) -> None:
             if isinstance(item, str) and not item.strip():
                 raise ValueError("empty strings are not valid contract values")
-            if isinstance(item, datetime) and (
-                item.tzinfo is None or item.utcoffset() != timedelta(0)
-            ):
+            if isinstance(item, datetime) and (item.tzinfo is None or item.utcoffset() != timedelta(0)):
                 raise ValueError("timestamps must use UTC")
             if isinstance(item, list):
                 for nested_item in item:
@@ -231,8 +229,6 @@ class AnalysisReportRequest(ContractModel):
     comment: str | None = None
 
 
-<<<<<<< Updated upstream
-=======
 class AnalysisReportResponse(ContractModel):
     report_id: UUID
     analysis_id: UUID
@@ -245,7 +241,6 @@ class AnalysisReportRecord(AnalysisReportResponse):
     comment: str | None = None
 
 
->>>>>>> Stashed changes
 class AdminDecisionRequest(ContractModel):
     decision: ReviewDecision
     action: ReviewAction
@@ -258,8 +253,6 @@ class AdminDecisionRequest(ContractModel):
         return self
 
 
-<<<<<<< Updated upstream
-=======
 class AdminDecisionResponse(ContractModel):
     decision_id: UUID
     analysis_id: UUID
@@ -283,7 +276,6 @@ class BlacklistEntry(ContractModel):
     added_at: datetime
 
 
->>>>>>> Stashed changes
 class ErrorBody(ContractModel):
     code: ErrorCode
     message: str

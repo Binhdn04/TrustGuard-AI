@@ -8,7 +8,7 @@ let client: AnalysisApi | undefined;
 export function getAnalysisApi(): AnalysisApi {
   if (client) return client;
 
-  const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API !== "false";
+  const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === "true";
   client = useMockApi ? new MockAnalysisApi() : new HttpAnalysisApi();
   return client;
 }

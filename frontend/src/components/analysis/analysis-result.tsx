@@ -2,6 +2,7 @@ import { AlertIcon, CheckIcon } from "@/components/ui/icons";
 import type { AnalysisResponse } from "@/types/analysis";
 
 import { EvidenceList } from "./evidence-list";
+import { AnalysisReportForm } from "./analysis-report-form";
 import { RecommendationCard } from "./recommendation-card";
 import { RiskBanner } from "./risk-banner";
 
@@ -64,6 +65,8 @@ export function AnalysisResult({ result }: { result: AnalysisResponse }) {
           </div>
         </section>
       )}
+
+      <AnalysisReportForm analysisId={result.analysis_id} />
 
       <p className="text-center text-xs leading-5 text-slate-400">
         Kết quả hỗ trợ ra quyết định, không phải cam kết an toàn tuyệt đối. Mã phiên: {result.analysis_id.slice(0, 8)}
