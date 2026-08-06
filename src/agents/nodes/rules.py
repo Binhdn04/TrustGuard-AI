@@ -62,6 +62,7 @@ def build_rule_check_node(blacklist: BlacklistRepository | None):
         now = datetime.now(UTC)
         normalized: list[str] = []
         blocked: list[str] = []
+        blacklisted: list[str] = []
         evidence = list(state.get("evidence", []))
         limitations = list(state.get("limitations", []))
 
@@ -111,6 +112,7 @@ def build_rule_check_node(blacklist: BlacklistRepository | None):
                     )
                 )
             if blacklist is not None and await blacklist.contains(host):
+                blacklisted.append(host)
                 evidence.append(
                     Evidence(
                         type=EvidenceType.BLACKLIST,
@@ -128,6 +130,7 @@ def build_rule_check_node(blacklist: BlacklistRepository | None):
         return {
             "normalized_urls": normalized,
             "blocked_urls": blocked,
+            "blacklisted_domains": list(dict.fromkeys(blacklisted)),
             "evidence": evidence,
             "limitations": list(dict.fromkeys(limitations)),
         }

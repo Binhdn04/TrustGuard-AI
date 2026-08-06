@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.agents.state import WorkflowState
 
 LLM_MODEL = "gpt-4o-mini"
-AllowedTool = Literal["url_scanner", "claim_retriever"]
+AllowedTool = Literal["url_scanner", "domain_intelligence", "claim_retriever"]
 
 
 class _StrictOutput(BaseModel):
@@ -34,9 +34,14 @@ class MessageAnalysis(_StrictOutput):
     claims: list[str] = Field(max_length=5)
 
 
+class PlannedTool(_StrictOutput):
+    tool: AllowedTool
+    target: str = Field(min_length=1, max_length=500)
+    reason_code: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
+
+
 class ToolPlan(_StrictOutput):
-    tools: list[AllowedTool] = Field(max_length=2)
-    rationale: str = Field(min_length=1, max_length=500)
+    tools: list[PlannedTool] = Field(max_length=3)
 
 
 class AssessmentReview(_StrictOutput):
@@ -129,7 +134,7 @@ def build_plan_tools_node(llm: Any | None):
             "claims": state.get("claims", []),
             "consent_to_scan_urls": state.get("consent_to_scan_urls", False),
             "blocked_urls": state.get("blocked_urls", []),
-            "allowed_tools": ["url_scanner", "claim_retriever"],
+            "allowed_tools": ["url_scanner", "domain_intelligence", "claim_retriever"],
         }
         try:
             result = await _invoke_structured(
@@ -138,7 +143,8 @@ def build_plan_tools_node(llm: Any | None):
                 [
                     SystemMessage(
                         content=(
-                            "Lập thứ tự tool để thu thập evidence. Chỉ chọn từ allowed_tools. "
+                            "Lập thứ tự tool để thu thập evidence. Mỗi mục chỉ có tool, target và reason_code. "
+                            "Chỉ chọn từ allowed_tools và target có trong input. "
                             "Không chọn url_scanner khi thiếu consent hoặc URL đã bị chặn. "
                             "Không xem suy luận LLM là evidence và không tự kết luận verdict."
                         )
@@ -149,9 +155,17 @@ def build_plan_tools_node(llm: Any | None):
         except Exception:
             return _failure_update(state, "lập kế hoạch tool")
 
-        # Schema enforces the allowlist; code still deduplicates before routing.
-        tools = list(dict.fromkeys(result.tools))
-        return {"llm_tool_plan": tools, "llm_plan_rationale": result.rationale}
+        # The schema enforces the allowlist. The executor intentionally ignores
+        # model-supplied targets when constructing executable work and derives
+        # them again from normalized state.
+        tools: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in result.tools:
+            key = (item.tool, item.target)
+            if key not in seen:
+                seen.add(key)
+                tools.append(item.model_dump())
+        return {"llm_tool_plan": tools}
 
     return plan_tools
 
@@ -269,6 +283,7 @@ __all__ = [
     "GroundedResponse",
     "LLM_MODEL",
     "MessageAnalysis",
+    "PlannedTool",
     "ToolPlan",
     "build_analyze_message_node",
     "build_generate_response_node",

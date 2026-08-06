@@ -1,12 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC
+
 from src.agents.state import AgentState
-from src.models import (
-    SCORING_VERSION,
-    EvidenceType,
-    Verdict,
-    risk_level_for_score,
-)
+from src.models import SCORING_VERSION, ClaimStance, EvidenceType, Verdict, risk_level_for_score
 
 _RULE_WEIGHTS = {
     "URL đích bị chặn bởi SSRF guard": 65,
@@ -14,27 +11,38 @@ _RULE_WEIGHTS = {
     "Đường dẫn yêu cầu thông tin tài khoản": 35,
     "Tên miền có mẫu mạo danh khuyến mãi": 15,
 }
+_CLAIM_RELEVANCE_THRESHOLD = 0.6
+_DOMAIN_SIGNAL_CAP = 20
 
 
-def _claim_weight(finding: str) -> int:
-    folded = finding.casefold()
-    if any(word in folded for word in ("bác bỏ", "sai sự thật", "giả mạo", "không đúng")):
-        return 70
-    if any(word in folded for word in ("không tìm thấy", "chưa xác nhận", "không có thông báo")):
-        return 35
-    return 0
+def _domain_registration_score(state: AgentState) -> int:
+    """Score only explicit RDAP fields/signals, with a strict aggregate cap."""
+    score = 0
+    for finding in state.get("domain_findings", []):
+        if finding.registered_at is not None:
+            registered = finding.registered_at.astimezone(UTC)
+            observed = finding.observed_at.astimezone(UTC)
+            age_days = max(0, (observed - registered).days)
+            if age_days <= 30:
+                score += 15
+            elif age_days <= 90:
+                score += 10
+            elif age_days <= 180:
+                score += 5
+        normalized_signals = {signal.casefold() for signal in finding.signals}
+        if "recent_registration" in normalized_signals or "new_domain" in normalized_signals:
+            score += 5
+    return min(_DOMAIN_SIGNAL_CAP, score)
 
 
 def assess_risk(state: AgentState) -> dict:
-    """Deterministic risk-v1 scoring; no LLM output can affect the score."""
+    """Pure risk-v2 scoring; prose and LLM output never affect the result."""
     score = 0
     for item in state.get("evidence", []):
         if item.type is EvidenceType.URL_RULE:
             score += _RULE_WEIGHTS.get(item.title, 0)
         elif item.type is EvidenceType.BLACKLIST:
             score += 30
-        elif item.type in {EvidenceType.FACT_CHECK, EvidenceType.OFFICIAL_SOURCE}:
-            score += _claim_weight(item.finding)
 
     for finding in state.get("url_findings", []):
         if finding.verdict is Verdict.MALICIOUS:
@@ -42,24 +50,26 @@ def assess_risk(state: AgentState) -> dict:
         elif finding.verdict is Verdict.SUSPICIOUS:
             score += 15
 
+    relevant_claims = [
+        finding for finding in state.get("claim_findings", []) if finding.relevance >= _CLAIM_RELEVANCE_THRESHOLD
+    ]
+    if any(finding.stance is ClaimStance.REFUTES for finding in relevant_claims):
+        score += 70
+    elif any(finding.stance is ClaimStance.MIXED for finding in relevant_claims):
+        score += 25
+
+    score += _domain_registration_score(state)
     score = max(0, min(100, score))
     level = risk_level_for_score(score)
     limitations = state.get("limitations", [])
     has_errors = bool(state.get("errors"))
-    has_positive_risk = score >= 60
     provider_safe = any(item.verdict is Verdict.SAFE for item in state.get("url_findings", []))
-    fact_refuted = any(
-        item.type is EvidenceType.FACT_CHECK and _claim_weight(item.finding) >= 70 for item in state.get("evidence", [])
-    )
+    fact_refuted = any(finding.stance is ClaimStance.REFUTES for finding in relevant_claims)
     provider_malicious = any(item.verdict is Verdict.MALICIOUS for item in state.get("url_findings", []))
 
     if fact_refuted or provider_malicious:
         verdict = Verdict.MALICIOUS
-    elif has_positive_risk:
-        verdict = Verdict.SUSPICIOUS
-    elif (
-        score >= 30 and not has_errors and not (state.get("normalized_urls") and not state.get("consent_to_scan_urls"))
-    ):
+    elif score >= 30:
         verdict = Verdict.SUSPICIOUS
     elif limitations or has_errors or not state.get("evidence"):
         verdict = Verdict.INCONCLUSIVE
@@ -68,9 +78,10 @@ def assess_risk(state: AgentState) -> dict:
     else:
         verdict = Verdict.INCONCLUSIVE
 
-    # Confidence represents evidence coverage, not the inverse of risk.
+    # Confidence measures target coverage, not confidence that content is safe.
     targets = len(state.get("normalized_urls", [])) + len(state.get("claims", []))
-    successful = len(state.get("url_findings", [])) + (1 if state.get("claim_findings") else 0)
+    successful_url_targets = max(len(state.get("url_findings", [])), len(state.get("domain_findings", [])))
+    successful = successful_url_targets + (1 if state.get("claim_findings") else 0)
     confidence = 0.2 if targets == 0 else min(0.95, 0.35 + 0.6 * successful / targets)
     if limitations or has_errors:
         confidence = min(confidence, 0.55)
@@ -81,3 +92,6 @@ def assess_risk(state: AgentState) -> dict:
         "confidence": round(confidence, 2),
         "scoring_version": SCORING_VERSION,
     }
+
+
+__all__ = ["assess_risk"]
