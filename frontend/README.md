@@ -10,9 +10,9 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Mở `http://localhost:3000`. Mặc định frontend dùng mock API có cùng schema với backend để phát triển độc lập.
+Mở `http://localhost:3000`. Mặc định frontend gọi FastAPI tại `http://localhost:8000` và dùng demo bearer token theo role đăng nhập.
 
-Để kết nối FastAPI thật, đặt:
+Để cấu hình kết nối FastAPI, đặt:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000

@@ -1,8 +1,17 @@
 import type {
+  AdminDecisionAudit,
+  AdminDecisionRequest,
+  AdminDecisionResponse,
   AnalysisAcceptedResponse,
   AnalysisApi,
   AnalysisCreateRequest,
+  AnalysisEvent,
+  AnalysisReportRequest,
+  AnalysisReportRecord,
+  AnalysisReportResponse,
   AnalysisResponse,
+  BlacklistEntry,
+  CaseStatus,
   Evidence,
   InputType,
 } from "@/types/analysis";
@@ -14,6 +23,10 @@ interface MockRecord {
 }
 
 const records = new Map<string, MockRecord>();
+const reviewedCases = new Map<string, CaseStatus>();
+const reports = new Map<string, AnalysisReportRecord[]>();
+const decisions: AdminDecisionAudit[] = [];
+const blacklist: BlacklistEntry[] = [];
 const URL_PATTERN = /https?:\/\/[^\s]+/giu;
 
 function inputTypeFor(message: string): InputType {
@@ -80,8 +93,10 @@ function completedResponse(
     completed_at: observedAt,
   };
 
+  let response: AnalysisResponse;
+
   if (normalizedMessage.includes("official.example/security")) {
-    return {
+    response = {
       ...base,
       risk_score: 8,
       risk_level: "low",
@@ -104,14 +119,12 @@ function completedResponse(
       limitations: [],
       case_status: "not_required",
     };
-  }
-
-  if (
+  } else if (
     normalizedMessage.includes("tapdoanx-qua") ||
     normalizedMessage.includes("đăng nhập") ||
     normalizedMessage.includes("phishing")
   ) {
-    return {
+    response = {
       ...base,
       risk_score: 92,
       risk_level: "critical",
@@ -146,10 +159,8 @@ function completedResponse(
       ],
       case_status: "pending_review",
     };
-  }
-
-  if (normalizedUrls.length === 0) {
-    return {
+  } else if (normalizedUrls.length === 0) {
+    response = {
       ...base,
       risk_score: 18,
       risk_level: "low",
@@ -162,31 +173,33 @@ function completedResponse(
       limitations: ["Không đủ bằng chứng để kết luận nội dung là an toàn."],
       case_status: "not_required",
     };
+  } else {
+    response = {
+      ...base,
+      risk_score: record.request.consent_to_scan_urls ? 48 : 38,
+      risk_level: "medium",
+      verdict: "inconclusive",
+      recommended_action: "show_caution",
+      confidence: record.request.consent_to_scan_urls ? 0.61 : 0.38,
+      summary: "Liên kết cần được thận trọng vì chưa có đủ bằng chứng xác thực.",
+      reasons: ["Domain chưa nằm trong danh sách nguồn chính thức đã biết."],
+      evidence: [
+        evidence(
+          "url_rule",
+          "local-url-rules",
+          "Kiểm tra cấu trúc URL",
+          "URL đã được nhận diện nhưng chưa đủ dữ liệu để xác nhận uy tín.",
+          observedAt,
+        ),
+      ],
+      limitations: record.request.consent_to_scan_urls
+        ? ["Provider mô phỏng chưa có dữ liệu reputation cho domain này."]
+        : ["Bạn chưa cho phép quét URL qua dịch vụ bên ngoài."],
+      case_status: "not_required",
+    };
   }
-
-  return {
-    ...base,
-    risk_score: record.request.consent_to_scan_urls ? 48 : 38,
-    risk_level: "medium",
-    verdict: "inconclusive",
-    recommended_action: "show_caution",
-    confidence: record.request.consent_to_scan_urls ? 0.61 : 0.38,
-    summary: "Liên kết cần được thận trọng vì chưa có đủ bằng chứng xác thực.",
-    reasons: ["Domain chưa nằm trong danh sách nguồn chính thức đã biết."],
-    evidence: [
-      evidence(
-        "url_rule",
-        "local-url-rules",
-        "Kiểm tra cấu trúc URL",
-        "URL đã được nhận diện nhưng chưa đủ dữ liệu để xác nhận uy tín.",
-        observedAt,
-      ),
-    ],
-    limitations: record.request.consent_to_scan_urls
-      ? ["Provider mô phỏng chưa có dữ liệu reputation cho domain này."]
-      : ["Bạn chưa cho phép quét URL qua dịch vụ bên ngoài."],
-    case_status: "not_required",
-  };
+  const reviewedStatus = reviewedCases.get(analysisId);
+  return reviewedStatus ? { ...response, case_status: reviewedStatus } : response;
 }
 
 export class MockAnalysisApi implements AnalysisApi {
@@ -196,6 +209,7 @@ export class MockAnalysisApi implements AnalysisApi {
     const analysisId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     records.set(analysisId, { request, createdAt, polls: 0 });
+    reports.set(analysisId, []);
     return {
       contract_version: "v1",
       analysis_id: analysisId,
@@ -212,8 +226,109 @@ export class MockAnalysisApi implements AnalysisApi {
     if (record.polls < 2) return runningResponse(analysisId, record.createdAt);
     return completedResponse(analysisId, record);
   }
+
+  async listAnalyses(): Promise<AnalysisResponse[]> {
+    return [...records.entries()]
+      .map(([analysisId, record]) => completedResponse(analysisId, record))
+      .sort((left, right) => right.created_at.localeCompare(left.created_at));
+  }
+
+  async getAnalysisEvents(analysisId: string): Promise<AnalysisEvent[]> {
+    const record = records.get(analysisId);
+    if (!record) throw new Error("Không tìm thấy phiên phân tích.");
+    const completed = completedResponse(analysisId, record);
+    return [
+      {
+        analysis_id: analysisId,
+        status: "queued",
+        step: "queued",
+        occurred_at: record.createdAt,
+      },
+      {
+        analysis_id: analysisId,
+        status: "completed",
+        step: "completed",
+        occurred_at: completed.completed_at ?? record.createdAt,
+      },
+    ];
+  }
+
+  async reportAnalysis(
+    analysisId: string,
+    request: AnalysisReportRequest,
+  ): Promise<AnalysisReportResponse> {
+    if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
+    const receipt: AnalysisReportRecord = {
+      report_id: crypto.randomUUID(),
+      analysis_id: analysisId,
+      reporter_id: "demo-user",
+      reason: request.reason,
+      comment: request.comment ?? null,
+      created_at: new Date().toISOString(),
+    };
+    reports.get(analysisId)?.push(receipt);
+    return receipt;
+  }
+
+  async listAdminCases(): Promise<AnalysisResponse[]> {
+    return (await this.listAnalyses()).filter(
+      (analysis) => analysis.case_status === "pending_review",
+    );
+  }
+
+  async listAdminReports(): Promise<AnalysisReportRecord[]> {
+    return [...reports.values()].flat().sort((left, right) =>
+      right.created_at.localeCompare(left.created_at),
+    );
+  }
+
+  async listAdminDecisions(): Promise<AdminDecisionAudit[]> {
+    return [...decisions];
+  }
+
+  async listAdminBlacklist(): Promise<BlacklistEntry[]> {
+    return [...blacklist];
+  }
+
+  async decideAdminCase(
+    analysisId: string,
+    request: AdminDecisionRequest,
+  ): Promise<AdminDecisionResponse> {
+    if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
+    reviewedCases.set(analysisId, request.decision);
+    const decisionId = crypto.randomUUID();
+    const reviewedAt = new Date().toISOString();
+    decisions.unshift({
+      decision_id: decisionId,
+      analysis_id: analysisId,
+      reviewer_id: "demo-admin",
+      decision: request.decision,
+      action: request.action,
+      note: request.note,
+      decided_at: reviewedAt,
+    });
+    if (request.action === "add_to_blacklist") {
+      const response = completedResponse(analysisId, records.get(analysisId)!);
+      for (const url of response.normalized_urls ?? []) {
+        const domain = new URL(url).hostname;
+        if (!blacklist.some((entry) => entry.domain === domain)) {
+          blacklist.unshift({ domain, decision_id: decisionId, added_at: reviewedAt });
+        }
+      }
+    }
+    return {
+      decision_id: decisionId,
+      analysis_id: analysisId,
+      case_status: request.decision,
+      reviewed_at: reviewedAt,
+    };
+  }
 }
 
 export function resetMockAnalyses(): void {
   records.clear();
+  reviewedCases.clear();
+  reports.clear();
+  decisions.length = 0;
+  blacklist.length = 0;
 }

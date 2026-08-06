@@ -103,7 +103,7 @@ export function AnalyzeForm({ disabled = false, onSubmit }: AnalyzeFormProps) {
       <button
         type="submit"
         disabled={disabled}
-        className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--navy)] px-5 py-3 text-sm font-bold text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60 sm:w-auto sm:min-w-44"
+        className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-700 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-900/25 ring-1 ring-blue-800/20 transition hover:-translate-y-0.5 hover:from-blue-800 hover:to-cyan-800 hover:shadow-blue-900/35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60 sm:w-auto sm:min-w-44"
       >
         <SearchIcon className="size-5" />
         {disabled ? "Đang kiểm tra…" : "Phân tích ngay"}
