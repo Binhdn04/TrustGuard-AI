@@ -18,9 +18,30 @@ _RULE_WEIGHTS = {
 
 def _claim_weight(finding: str) -> int:
     folded = finding.casefold()
-    if any(word in folded for word in ("bác bỏ", "sai sự thật", "giả mạo", "không đúng")):
+    if any(
+        word in folded
+        for word in (
+            "bác bỏ",
+            "sai sự thật",
+            "giả mạo",
+            "không đúng",
+            "false",
+            "incorrect",
+            "misleading",
+        )
+    ):
         return 70
-    if any(word in folded for word in ("không tìm thấy", "chưa xác nhận", "không có thông báo")):
+    if any(
+        word in folded
+        for word in (
+            "không tìm thấy",
+            "chưa xác nhận",
+            "không có thông báo",
+            "unproven",
+            "unverified",
+            "no evidence",
+        )
+    ):
         return 35
     return 0
 

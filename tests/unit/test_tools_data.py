@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import httpx
 import pytest
 
+from src.agents.nodes.risk import assess_risk
+from src.agents.nodes.tools import build_verify_claims_node
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
+from src.agents.tools.fakes import FakeClaimRetriever
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
-from src.models import ClaimEvidence, Verdict
+from src.models import (
+    AnalysisCreateRequest,
+    AnalysisEvent,
+    AnalysisResponse,
+    AnalysisStatus,
+    ClaimEvidence,
+    Verdict,
+)
 from src.repositories import JsonFactCheckRepository, SQLiteBlacklistRepository
 
 
@@ -120,6 +132,31 @@ async def test_fact_check_provider_normalizes_reviews():
 
 
 @pytest.mark.asyncio
+async def test_english_false_rating_affects_deterministic_score():
+    evidence = ClaimEvidence(
+        source="Verified Source",
+        title="Review title",
+        url="https://fact.example/review",
+        finding="False",
+        relevance=1.0,
+        observed_at=datetime.now(UTC),
+    )
+    verify = build_verify_claims_node(FakeClaimRetriever({"false": [evidence]}, "false"))
+    update = await verify(
+        {
+            "tool_target": "claim",
+            "claims": ["claim"],
+            "tool_calls_used": 0,
+        }
+    )
+
+    assessment = assess_risk(update)
+
+    assert update["evidence"][0].type.value == "fact_check"
+    assert assessment["risk_score"] == 70
+
+
+@pytest.mark.asyncio
 async def test_blacklist_requires_audited_approval(tmp_path):
     repository = SQLiteBlacklistRepository(tmp_path / "security.db")
     with pytest.raises(PermissionError):
@@ -135,6 +172,79 @@ async def test_blacklist_requires_audited_approval(tmp_path):
     await repository.add_approved("BÄD.example.", "decision-1")
 
     assert await repository.contains("xn--bd-via.example")
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_security_repository_persists_admin_views_atomically(tmp_path):
+    repository = SQLiteBlacklistRepository(tmp_path / "security.db")
+    analysis_id = uuid4()
+    report_id = uuid4()
+    decision_id = uuid4()
+    created_at = datetime.now(UTC)
+    request = AnalysisCreateRequest(message="Check https://bad.example", consent_to_scan_urls=True)
+    response = AnalysisResponse(
+        analysis_id=analysis_id,
+        status=AnalysisStatus.QUEUED,
+        created_at=created_at,
+    )
+    event = AnalysisEvent(
+        analysis_id=analysis_id,
+        status=AnalysisStatus.QUEUED,
+        step="queued",
+        occurred_at=created_at,
+    )
+
+    await repository.create_analysis(
+        owner_id="user-1",
+        request=request,
+        response=response,
+        event=event,
+    )
+
+    await repository.record_report(
+        report_id=str(report_id),
+        analysis_id=str(analysis_id),
+        reporter_id="user-1",
+        reason="Evidence needs another review",
+        comment="Please verify the provider result.",
+        created_at=created_at,
+    )
+    await repository.apply_decision(
+        decision_id=str(decision_id),
+        analysis_id=str(analysis_id),
+        reviewer_id="admin-1",
+        decision="approved",
+        action="add_to_blacklist",
+        note="Evidence reviewed",
+        domains=["Bad.Example", "second.example"],
+    )
+
+    reports = await repository.list_reports(limit=50, offset=0)
+    decisions = await repository.list_decisions(limit=50, offset=0)
+    blacklist = await repository.list_blacklist(query=None, limit=50, offset=0)
+
+    assert reports[0].report_id == report_id
+    assert decisions[0].analysis_id == analysis_id
+    assert {entry.domain for entry in blacklist} == {"bad.example", "second.example"}
+    persisted = await repository.load_analysis(str(analysis_id))
+    assert persisted is not None
+    assert persisted[0] == "user-1"
+    assert persisted[2].status is AnalysisStatus.QUEUED
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await repository.apply_decision(
+            decision_id=str(decision_id),
+            analysis_id=str(analysis_id),
+            reviewer_id="admin-2",
+            decision="approved",
+            action="add_to_blacklist",
+            note="Duplicate decision ID",
+            domains=["must-not-be-written.example"],
+        )
+
+    blacklist_after_failure = await repository.list_blacklist(query=None, limit=50, offset=0)
+    assert "must-not-be-written.example" not in {entry.domain for entry in blacklist_after_failure}
     await repository.close()
 
 

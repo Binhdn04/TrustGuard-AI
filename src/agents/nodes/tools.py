@@ -107,7 +107,18 @@ def build_scan_urls_node(scanner: UrlScanner | None, blacklist: BlacklistReposit
 
 def _claim_type(finding: str) -> EvidenceType:
     folded = finding.casefold()
-    if any(word in folded for word in ("bác bỏ", "sai sự thật", "giả mạo", "không đúng")):
+    if any(
+        word in folded
+        for word in (
+            "bác bỏ",
+            "sai sự thật",
+            "giả mạo",
+            "không đúng",
+            "false",
+            "incorrect",
+            "misleading",
+        )
+    ):
         return EvidenceType.FACT_CHECK
     return EvidenceType.OFFICIAL_SOURCE
 
