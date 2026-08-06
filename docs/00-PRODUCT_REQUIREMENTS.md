@@ -58,8 +58,10 @@ Xem hàng đợi case cần duyệt, kiểm tra evidence, xác nhận/bác bỏ 
    hợp lệ thì dừng trước khi gọi model/tool.
 3. LLM đề xuất kế hoạch điều tra và thứ tự tool trong allowlist; Agent lưu trạng thái từng bước và vẫn cưỡng chế consent, SSRF guard,
    retry và budget trước khi chạy rule nội bộ, blacklist và provider phù hợp.
-4. Agent tra approved blacklist trước; nếu được consent, các lookup URL reputation và RDAP độc lập
-   có thể chạy song song. Fact-check retriever chỉ chạy khi có claim đủ điều kiện và evidence còn thiếu.
+4. Agent tra approved blacklist trước. Chỉ sau khi executor đã xác nhận consent cho từng target
+   hợp lệ, các lookup URL reputation và RDAP độc lập mới có thể chạy song song; không được tạo
+   request, task hay provider client trước hard gate này. Fact-check retriever chỉ chạy khi có
+   claim đủ điều kiện và evidence còn thiếu.
 5. Risk Engine tổng hợp evidence thành điểm/mức rủi ro deterministic. LLM chỉ review
    assessment và viết giải thích grounded, không được sửa score, verdict hay tạo evidence.
 6. UI hiển thị tiến trình điều tra, verdict, mức/điểm rủi ro, lý do, evidence, limitations và hành động đề xuất ngay trong hội thoại.
@@ -109,7 +111,7 @@ deterministic và không giả lập evidence.
 
 ## 6. Chỉ số thành công
 
-- 100% analysis hoàn tất trả đủ các trường bắt buộc theo contract v1.
+- 100% analysis hoàn tất trả đủ các trường bắt buộc theo contract v2.
 - 100% tool call phải ánh xạ tới một bước trong `investigation_plan` và qua policy guard.
 - 100% provider failure/thiếu evidence có limitation và không bị diễn đạt thành “safe”.
 - 100% LLM output ảnh hưởng routing/response phải qua schema và safety guard; LLM
@@ -126,8 +128,8 @@ deterministic và không giả lập evidence.
 | AC-01 | User hợp lệ gửi message 1–5.000 ký tự | Tạo analysis và bắt đầu workflow. |
 | AC-02 | Input rỗng/quá dài/sai kiểu | Trả validation error; không gọi external tool. |
 | AC-03 | Message chứa URL/claim | Trích xuất structured data; không bịa trường còn thiếu. |
-| AC-04 | URL có consent external lookup | Normalize, kiểm tra blacklist/rule/reputation/RDAP; evidence có source và timestamp. |
-| AC-05 | URL không có consent external lookup | Không gọi URL reputation hoặc RDAP provider; local rule/blacklist vẫn chạy và trả limitation phù hợp. |
+| AC-04 | URL có consent external lookup | Normalize, kiểm tra blacklist/rule; executor xác nhận consent trước khi fan-out reputation/RDAP; evidence có source và timestamp. |
+| AC-05 | URL không có consent external lookup | Không tạo task/request/client cho URL reputation hoặc RDAP provider; local rule/blacklist vẫn chạy và trả limitation phù hợp. |
 | AC-06 | Claim cần xác minh | Chỉ kết luận theo nguồn truy xuất; không có nguồn thì `inconclusive`/limitation. |
 | AC-07 | Cùng evidence và scoring version | Điểm, mức rủi ro và verdict lặp lại giống nhau, không cần LLM. |
 | AC-08 | Workflow hoàn tất | UI hiển thị đầy đủ kết quả; URL đáng ngờ không là link bấm trực tiếp. |

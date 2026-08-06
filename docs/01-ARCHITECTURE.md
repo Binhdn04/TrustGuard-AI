@@ -66,9 +66,9 @@ flowchart TB
     Rules --> Memory["Approved blacklist lookup"]
     Memory --> Enough{"Enough evidence?"}
     Enough -->|"No"| Plan["GPT-4o-mini proposes allowed tool order"]
-    Plan --> Consent{"External URL/domain lookup needs consent?"}
-    Consent -->|"No consent"| Limit["Record limitation"]
-    Consent -->|"Allowed / not required"| Tool["Run eligible independent adapters"]
+    Plan --> Consent{"Executor hard-gate: consent for external URL/domain target?"}
+    Consent -->|"No consent"| Limit["Record limitation; create no external work"]
+    Consent -->|"Consent granted + target eligible"| Tool["Create and run eligible independent adapters"]
     Tool --> Observe["Normalize evidence"]
     Observe --> Stop{"Enough or budget exhausted?"}
     Stop -->|"Continue"| Plan
@@ -87,7 +87,9 @@ flowchart TB
 `step_id`, `tool`, `target`, `reason_code`, `depends_on` và trạng thái. Executor, không phải LLM,
 luôn chèn local rules/blacklist và chuẩn hóa target. Vòng lặp dừng khi evidence đủ, hết tool calls/retries, vượt time/cost budget hoặc không
 còn tool phù hợp. LLM chỉ xếp ưu tiên các tool trong allowlist; code có quyền bổ sung tool
-cần thiết hoặc phủ quyết kế hoạch vi phạm consent/SSRF/budget. Tool/LLM lỗi được chuẩn hóa
+cần thiết hoặc phủ quyết kế hoạch vi phạm consent/SSRF/budget. Consent là hard gate của executor:
+trước khi tạo task, mở provider client hoặc fan-out bất kỳ lookup URL/domain nào, executor phải
+xác nhận `consent_to_scan_urls is true` và target đã qua policy/SSRF guard. Tool/LLM lỗi được chuẩn hóa
 thành error/limitation và kích hoạt deterministic fallback; không trở thành tín hiệu an toàn.
 
 ## 3. Deployment
@@ -204,11 +206,13 @@ không hard-code danh sách registry endpoint trong source code.
 
 | Điều kiện | Thứ tự mặc định | Lý do |
 |---|---|---|
-| Có URL + consent | normalize/rules → blacklist → reputation ∥ RDAP | Lookup độc lập chạy song song sau signal local để giảm latency. |
+| Có URL + consent | normalize/rules → blacklist → executor hard-gate → reputation ∥ RDAP | Chỉ các target đã được consent và qua policy mới được fan-out; lookup độc lập chạy song song sau signal local để giảm latency. |
 | Có redirect cần quan sát | guarded redirect → reputation từng domain đích khi budget cho phép | Chặn SSRF sau mọi hop và phát hiện short-link che đích. |
 | Có claim | fact-check retriever → official-source retrieval nếu có | Claim chỉ được đánh giá từ nguồn có provenance. |
 | Blacklist hit đã phê duyệt | có thể bỏ qua tool tốn phí nếu evidence đã đủ | Giảm latency/cost; vẫn hiển thị provenance. |
 
 Planner chỉ ưu tiên tool tùy chọn; executor luôn áp dụng bảng policy, dependency, consent và budget.
-Parallel fan-out dùng timeout riêng từng adapter và merge evidence theo khóa idempotent
+Consent được kiểm tra lại ngay trước khi tạo từng unit of work; khi false, executor chỉ ghi
+limitation và không khởi tạo fan-out, request hay provider client. Parallel fan-out chỉ nhận các
+unit of work đã qua hard gate, dùng timeout riêng từng adapter và merge evidence theo khóa idempotent
 `(analysis_id, step_id, target, provider)` để retry không nhân đôi kết quả.

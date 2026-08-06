@@ -2,14 +2,16 @@
 
 > Mục tiêu triển khai của MVP là tạo được **một luồng Agent chạy thật end-to-end**: người dùng gửi tin nhắn hoặc URL, Agent tự chọn bước kiểm tra, gọi ít nhất một provider thật, tổng hợp evidence, tính điểm rủi ro, trả cảnh báo và chuyển case cần thiết sang Security Admin review.
 >
-> Mọi module phải tuân thủ wire contract v1, revision v1.1 trong `02-CONTRACT_AND_FIXTURES.md`.
+> Mọi module phải tuân thủ wire contract v2 trong `02-CONTRACT_AND_FIXTURES.md`; v1 chưa production
+> nên không triển khai compatibility layer. `domain_registration` được server phát từ `/api/v2`
+> sau khi consumer/UI v2 đã được deploy.
 > Fake adapters được sử dụng để phát triển và kiểm thử, nhưng không thay thế cho demo luồng thật.
 
 ## 1. Baseline và mục tiêu thay đổi
 
 - **Baseline đã có:** `src/agents` graph xử lý URL/claim, structured LLM nodes, local rules,
   deterministic scoring, Google Safe Browsing v4, Google Fact Check, SQLite approved blacklist,
-  SSRF guard và API v1 in-memory. API create hiện chỉ lưu `queued`, chưa có processor chạy graph;
+  SSRF guard và API in-memory. API create hiện chỉ lưu `queued`, chưa có processor chạy graph;
   admin decision chưa ghi audit decision vào cùng repository trước blacklist write.
 - **Mục tiêu lần này:** nối các thành phần thành vertical slice end-to-end, thêm observable
   investigation plan và RDAP domain intelligence, rồi mới tối ưu worker/realtime.
@@ -20,7 +22,7 @@
 ```text
 User nhập tin nhắn hoặc URL
         ↓
-POST /api/v1/analyses
+POST /api/v2/analyses
         ↓
 Classify input
         ↓
@@ -33,6 +35,8 @@ Normalize URL
 Rule check + approved blacklist
         ↓
 GPT-4o-mini đề xuất kế hoạch và thứ tự tool trong allowlist
+        ↓
+Executor hard-gate consent cho từng target trước khi tạo external work
         ↓
 Gọi URL reputation provider được hỗ trợ ∥ RDAP khi cần
         ↓
@@ -110,7 +114,7 @@ phản hồi cuối. LLM output không được tính như evidence hoặc tự 
 | ------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- |
 | Bình — Agent       | `src/agents/{state,graph,nodes/**}`, risk engine                        | Graph, semantic LLM nodes, guarded tool planning, extraction, planning loop, deterministic scoring, grounded explanation/response | Duc, Hiếu      |
 | Duc — Tools/Data   | `src/agents/tools/**`, `src/repositories/**`, provider integration      | Fake adapters, provider thật, SSRF guard, blacklist và fact-check repositories         | Bình, Hải      |
-| Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v1, persistence orchestration, demo auth/RBAC, Docker và deployment                | Bình, Hiếu     |
+| Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v2, persistence orchestration, demo auth/RBAC, Docker và deployment | Bình, Hiếu     |
 | Hiếu — Frontend/QA | frontend/API client, `tests/**`, `eval/**`                              | User/admin UI, fixtures, contract/integration/eval runner và demo script               | Bình, Hải      |
 
 ## 5. Trạng thái Tools/Data (Duc)
@@ -135,21 +139,25 @@ Phần Tools/Data hiện dùng profile triển khai sau:
 - Domain intelligence dùng RDAP-over-HTTPS, IANA bootstrap, Public Suffix List versioned, cache có
   TTL và không lưu RDAP entity/vCard/registrant PII.
 
-Các lựa chọn trên cụ thể hóa wire contract v1; enum mới được rollout có kiểm soát theo contract
-revision v1.1. PostgreSQL vẫn là đích
-deployment chung; SQLite là database tương đương được cho phép cho vertical slice Tools/Data.
+Các lựa chọn trên cụ thể hóa wire contract v2. V2 phát `domain_registration` với provenance RDAP.
+Rollout theo thứ tự: deploy consumer/UI v2, kiểm thử contract v2, rồi bật producer/endpoint v2.
+Không triển khai endpoint hoặc serializer v1. PostgreSQL vẫn là đích deployment chung; SQLite là
+database tương đương được cho phép cho vertical slice Tools/Data.
 
 ## 7. Task chi tiết theo module
 
 ### 7.1 Agent — Bình
 
-1. Giữ `assess_risk` pure/deterministic; thêm scoring signals cho `domain_registration` có trần
-   tổng điểm (ví dụ ≤20) và không cho tuổi domain đơn độc tạo verdict `malicious`.
+1. Giữ `assess_risk` pure/deterministic; thêm scoring signals RDAP dưới evidence type v2
+   `domain_registration`, có trần tổng điểm (ví dụ ≤20) và không cho tuổi domain đơn độc tạo verdict
+   `malicious`.
 2. Thay heuristic dò từ khóa trong `ClaimEvidence.finding` bằng `stance` chuẩn hóa; Fact Check API
    không được tự biến thành `official_source`.
 3. Tạo `InvestigationStep` và executor đổi trạng thái idempotent.
 4. Planner chỉ sinh tool + target + reason code; blacklist lookup do code luôn chèn trước external tools.
-5. Chạy song song reputation/RDAP sau consent; fact-check có thể chạy song song nếu claim độc lập.
+5. Chạy song song reputation/RDAP chỉ sau hard gate của executor: với từng target, xác nhận
+   `consent_to_scan_urls is true`, policy/SSRF hợp lệ và budget còn trước khi tạo task, request,
+   provider client hoặc fan-out. Fact-check có thể chạy song song nếu claim độc lập.
 6. Dừng khi evidence đủ, không còn tool, hoặc chạm `max_tool_calls`, deadline hay retry budget.
 
 ### 7.2 Tools/Data — Duc
@@ -186,7 +194,8 @@ deployment chung; SQLite là database tương đương được cho phép cho ve
 - UI hiển thị task progress và cảnh báo trong ≤60 giây ở điều kiện bình thường.
 - Evidence trên UI truy được source + `observed_at`; không có raw provider response/PII.
 - Cùng evidence + `scoring_version` luôn cho cùng score/verdict/action khi tắt LLM.
-- Không external URL/domain lookup nếu thiếu consent; RDAP bootstrap endpoint và redirect cũng qua network guard.
+- Không external URL/domain lookup nếu thiếu consent: executor phải chặn trước khi tạo task,
+  fan-out, request hoặc provider client; RDAP bootstrap endpoint và redirect cũng qua network guard.
 - High/critical cảnh báo user ngay và tạo pending review; blacklist chỉ đổi sau admin approval.
 - Demo README ghi rõ env vars, quota/rate limit, lệnh chạy và fallback khi provider thiếu key.
 
@@ -194,8 +203,10 @@ deployment chung; SQLite là database tương đương được cho phép cho ve
 
 1. Unit: URL normalization, IDNA/eTLD+1, redirect SSRF, RDAP normalize/redaction, cache TTL,
    fact-check stance mapping và scoring.
-2. Contract: schema response/event/task plan và backward compatibility record cũ.
+2. Contract: schema response/event/task plan v2 và strict enum `domain_registration` ở mọi
+   producer/consumer.
 3. Integration: message → plan → fake tools → score → persisted result → escalation.
-4. Failure: no consent, reputation no-hit, RDAP 404/429/timeout, fact-check empty, LLM schema error.
+4. Failure: no consent (assert không tạo task/fan-out/request/provider client), reputation no-hit,
+   RDAP 404/429/timeout, fact-check empty, LLM schema error.
 5. Eval: false-positive set cho domain chính thức/mới đăng ký; claim-only; brand look-alike.
 6. Manual smoke: provider thật với secrets server-side; lưu request/result đã redaction làm demo evidence.

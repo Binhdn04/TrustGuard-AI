@@ -1,6 +1,6 @@
 # Contract and Fixtures — P-068
 
-**Document revision:** `v1.1` (wire field và API path vẫn là `contract_version: "v1"`, `/api/v1`)
+**Document revision:** `v2.0` (wire field `contract_version: "v2"`, API path `/api/v2`)
 **Freeze date:** 2026-08-06
 
 > Đây là nguồn sự thật duy nhất cho API schema, AgentState, enum, tool interface, fixture và safety invariant.
@@ -10,10 +10,10 @@
 - JSON `snake_case`; timestamp UTC ISO 8601; ID là UUID do backend sinh.
 - Field kết quả chưa có khi analysis đang chạy dùng `null`/omitted theo schema; string có mặt không
   được rỗng. Dữ liệu RDAP không có dùng `null`, không dùng chuỗi rỗng hoặc giá trị suy đoán.
-- Risk score là integer `[0,100]`; field mới trong response phải optional cho client v1. Việc thêm
-  enum `domain_registration` yêu cầu deploy consumer/UI hiểu giá trị mới **trước** khi server phát
-  giá trị đó vì strict client không thể tự động bỏ qua enum chưa biết. Đổi/xóa field hoặc thay nghĩa
-  enum cần `/api/v2`.
+- Risk score là integer `[0,100]`. `domain_registration` là một giá trị bắt buộc của enum v2;
+  mọi consumer/UI của dự án phải dùng contract `/api/v2` và validate enum này trước khi server
+  phát domain-registration evidence. Vì v1 chưa production, không duy trì endpoint, payload hay
+  lớp tương thích v1.
 
 ```python
 InputType = Literal["text", "url", "text_with_url"]
@@ -42,9 +42,12 @@ RecommendedAction = Literal["allow", "show_caution", "do_not_open", "escalate_fo
 
 `verdict` biểu diễn kết luận từ evidence; `risk_level` chỉ là bucket của điểm. Provider failure có thể dẫn đến `inconclusive`, không tạo thêm risk level.
 
-## 2. Public API v1
+## 2. Public API v2
 
-### `POST /api/v1/analyses` — `202 Accepted`
+Đây là public contract duy nhất. Client dùng domain intelligence gọi `/api/v2`; không dùng content
+negotiation hay feature flag để phát schema/enum khác nhau cho cùng endpoint.
+
+### `POST /api/v2/analyses` — `202 Accepted`
 
 ```json
 {"message":"Tập đoàn X tặng quà tại https://example.com/claim","consent_to_scan_urls":true}
@@ -54,18 +57,18 @@ Validation: `message` dài 1–5.000 ký tự. Response:
 
 ```json
 {
-  "contract_version":"v1",
+  "contract_version":"v2",
   "analysis_id":"550e8400-e29b-41d4-a716-446655440000",
   "status":"queued",
   "created_at":"2026-08-03T13:00:00Z"
 }
 ```
 
-### `GET /api/v1/analyses/{analysis_id}` — `200 OK`
+### `GET /api/v2/analyses/{analysis_id}` — `200 OK`
 
 ```json
 {
-  "contract_version":"v1",
+  "contract_version":"v2",
   "analysis_id":"550e8400-e29b-41d4-a716-446655440000",
   "status":"completed",
   "input_type":"text_with_url",
@@ -87,33 +90,33 @@ Validation: `message` dài 1–5.000 ký tự. Response:
   "summary":"Liên kết có dấu hiệu mạo danh và chưa được nguồn chính thức xác nhận.",
   "reasons":["Tên miền không thuộc danh sách chính thức."],
   "evidence":[{
-    "type":"official_source",
-    "source":"official-domain-registry",
-    "title":"Tên miền chính thức của Tập đoàn X",
-    "url":"https://official.example/security",
-    "finding":"example.com không nằm trong danh sách chính thức.",
+    "type":"domain_registration",
+    "source":"iana-rdap",
+    "title":"Thông tin đăng ký domain",
+    "url":null,
+    "finding":"Domain được đăng ký 12 ngày trước; dữ liệu registrant bị redacted.",
     "observed_at":"2026-08-03T13:00:00Z"
   }],
   "limitations":["Chưa đủ bằng chứng để kết luận chắc chắn là lừa đảo."],
   "case_status":"not_required",
-  "scoring_version":"risk-v1",
+  "scoring_version":"risk-v2",
   "created_at":"2026-08-03T13:00:00Z",
   "completed_at":"2026-08-03T13:00:09Z"
 }
 ```
 
-`investigation_plan` là optional để đọc được record v1 cũ. Khi `queued`/`running`, các trường kết
-quả nullable. User chỉ đọc analysis của mình; admin đọc case đã escalate.
+`investigation_plan` có mặt cho mọi analysis. Khi `queued`/`running`, các trường kết quả nullable.
+User chỉ đọc analysis của mình; admin đọc case đã escalate.
 
 ### Các endpoint còn lại
 
-- `GET /api/v1/analyses`: lịch sử của user hiện tại.
-- `POST /api/v1/analyses/{analysis_id}/reports`: `{reason, comment?}`; chỉ tạo report.
-- `GET /api/v1/admin/cases`: review queue, role `security_admin`.
-- `POST /api/v1/admin/cases/{analysis_id}/decision`: `{decision: approved|rejected, action: add_to_blacklist|none, note}`.
-- `GET /api/v1/analyses/{analysis_id}/events`: polling fallback; WebSocket phát cùng event schema
-  `{analysis_id,status,step,occurred_at,step_id?,step_status?}`. Giữ `step` trong revision này để
-  không phá test/client hiện tại; producer mới thêm hai field optional.
+- `GET /api/v2/analyses`: lịch sử của user hiện tại.
+- `POST /api/v2/analyses/{analysis_id}/reports`: `{reason, comment?}`; chỉ tạo report.
+- `GET /api/v2/admin/cases`: review queue, role `security_admin`.
+- `POST /api/v2/admin/cases/{analysis_id}/decision`: `{decision: approved|rejected, action: add_to_blacklist|none, note}`.
+- `GET /api/v2/analyses/{analysis_id}/events`: polling fallback; WebSocket phát cùng event schema
+  `{analysis_id,status,step,occurred_at,step_id?,step_status?}`. Các field task-plan được áp dụng
+  nhất quán cho mọi producer và consumer v2.
 
 `investigation_plan` là task trace có cấu trúc để UI giải thích agent đang làm gì; không chứa
 chain-of-thought. `tool` chỉ nhận giá trị trong `InvestigationTool`.
@@ -168,8 +171,8 @@ rationale tự do hoặc prompt/model trace.
 | `normalize_and_check_rules` | URLs | normalized URLs, rule evidence | Truy cập URL đích |
 | `plan_tools` | semantic state, indicators | ordered task plan + reason codes | Lưu chain-of-thought; vượt allowlist/consent/SSRF/budget |
 | `plan_next_tool` | state/budget + proposal | route | Chọn tool ngoài allowlist |
-| `scan_urls` | URL + consent | findings/evidence/errors | Scan khi thiếu consent |
-| `inspect_domains` | registrable domains + consent | domain findings/evidence/errors | Tra IP/public suffix; suy diễn field RDAP bị thiếu; bypass network guard/budget |
+| `scan_urls` | URL + consent | findings/evidence/errors | Scan khi thiếu consent hoặc trước executor hard gate |
+| `inspect_domains` | registrable domains + consent | domain findings/evidence/errors | Tạo provider work trước hard gate; tra IP/public suffix; suy diễn field RDAP bị thiếu; bypass network guard/budget |
 | `verify_claims` | claims | findings/evidence/errors | Khẳng định không có nguồn |
 | `assess_risk` | structured evidence | score/level/verdict/confidence | Ghi blacklist, dùng LLM tự do làm điểm |
 | `review_assessment` | deterministic assessment/evidence | narrative, missing information, evidence indexes | Sửa score/verdict; thêm evidence |
@@ -252,14 +255,16 @@ name/email/phone/address hoặc raw response.
 - `sender_intent` mô tả ý đồ có khả năng của người tạo/gửi nội dung được dán, không phải
   ý đồ của user đang yêu cầu kiểm tra.
 - `ToolPlan.tools` chỉ nhận `url_scanner|domain_intelligence|claim_retriever`. Blacklist lookup
-  luôn do code lập lịch trước provider. Code luôn kiểm tra lại consent,
-  SSRF, retry và budget, đồng thời có thể bổ sung tool cần thiết bị model bỏ sót.
+  luôn do code lập lịch trước provider. Với mọi URL/domain lookup, executor phải kiểm tra
+  `consent_to_scan_urls is true` **trước** khi tạo task, fan-out, request hoặc provider client;
+  target sau đó vẫn phải qua SSRF, retry và budget. Khi không có consent, chỉ local
+  rules/blacklist và limitation được phép chạy. Code có thể bổ sung tool cần thiết bị model bỏ sót.
 - `AssessmentReview` tham chiếu evidence bằng zero-based index. Mỗi reason của
   `GroundedResponse` là cặp `{evidence_index, text}`. Index không tồn tại bị loại bỏ;
   response có evidence nhưng không còn reason hợp lệ sẽ bị thay bằng fallback.
 - Các field orchestration như `llm_context`, `llm_emotion`, `llm_sender_intent`,
   `llm_tool_plan`, `llm_assessment`, `llm_*_evidence_indexes` và `llm_errors` là private
-  `WorkflowState`, không mở rộng public `AgentState` contract v1.
+  `WorkflowState`, không mở rộng public `AgentState` contract v2.
 
 ## 5. Fixture chuẩn
 
@@ -297,7 +302,7 @@ Không assert nguyên văn summary/reasons. Assert enum, khoảng điểm, evide
 | `ssrf_private_ip_001` | Private/metadata target | request bị chặn |
 | `empty_message_001` | Input rỗng | HTTP 422 |
 | `admin_review_001` | Approved review | audit + blacklist write |
-| `new_domain_001` | Domain mới đăng ký + brand look-alike | domain_registration evidence; riêng tuổi domain không đủ high+ |
+| `new_domain_001` | Domain mới đăng ký + brand look-alike | `domain_registration` evidence có provenance RDAP; riêng tuổi domain không đủ high+ |
 | `rdap_redacted_001` | RDAP ẩn thông tin | không suy diễn owner, có limitation nếu coverage bị ảnh hưởng |
 | `rdap_timeout_001` | Domain intelligence timeout | không 500/safe, workflow tiếp tục và không cache lỗi |
 | `rdap_subdomain_001` | URL có nhiều subdomain | chỉ lookup registrable domain một lần |
@@ -307,7 +312,9 @@ Không assert nguyên văn summary/reasons. Assert enum, khoảng điểm, evide
 
 ## 6. Safety invariants
 
-- Không external URL reputation/RDAP lookup khi consent là false; local rules/blacklist vẫn chạy.
+- Không external URL reputation/RDAP lookup khi consent là false; executor không được tạo task,
+  fan-out, request hoặc provider client trước khi kiểm tra hard gate này. Local rules/blacklist
+  vẫn chạy.
 - Không trả `safe` chỉ vì provider timeout, no-hit hoặc không có dữ liệu.
 - Không ghi blacklist nếu thiếu authenticated admin decision và audit record.
 - Chặn SSRF trước request và sau redirect/DNS resolution.
