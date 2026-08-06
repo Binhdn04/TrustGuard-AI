@@ -6,6 +6,7 @@ import pytest
 from src.agents.graph import build_graph
 from src.agents.nodes.planning import ensure_step, transition_step
 from src.agents.nodes.risk import assess_risk
+from src.agents.tools.errors import ToolCallError
 from src.agents.tools.fakes import FakeBlacklistRepository
 from src.models import (
     ClaimEvidence,
@@ -63,6 +64,32 @@ class RecordingDomainIntelligence:
         )
 
 
+class RetryOnceScanner(RecordingScanner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def scan(self, url: str) -> UrlScanResult:
+        self.calls.append(url)
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(0)
+            if len(self.calls) == 1:
+                raise ToolCallError("url_scanner", "PROVIDER_TIMEOUT", "Timed out", retryable=True)
+            return UrlScanResult(
+                provider="fake-reputation",
+                normalized_url=url,
+                verdict=Verdict.INCONCLUSIVE,
+                redirect_chain=[],
+                signals=["no_hit"],
+                observed_at=NOW,
+            )
+        finally:
+            self.active_calls -= 1
+
+
 def test_step_transition_is_idempotent_and_terminal() -> None:
     plan = []
     step = ensure_step(
@@ -78,6 +105,25 @@ def test_step_transition_is_idempotent_and_terminal() -> None:
     plan = transition_step(plan, step.step_id, InvestigationStepStatus.FAILED)
 
     assert plan[0].status is InvestigationStepStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_retry_returns_running_step_to_pending_without_overlap() -> None:
+    scanner = RetryOnceScanner()
+    graph = build_graph(url_scanner=scanner, blacklist=FakeBlacklistRepository())
+
+    result = await graph.ainvoke(
+        {
+            "message": "Kiểm tra https://unknown.example/login",
+            "consent_to_scan_urls": True,
+            "max_tool_retries": 1,
+        }
+    )
+
+    scanner_step = next(step for step in result["investigation_plan"] if step.tool is InvestigationTool.URL_SCANNER)
+    assert len(scanner.calls) == 2
+    assert scanner.max_active_calls == 1
+    assert scanner_step.status is InvestigationStepStatus.COMPLETED
 
 
 def test_rdap_signal_is_capped_and_cannot_be_malicious_alone() -> None:
@@ -103,6 +149,32 @@ def test_rdap_signal_is_capped_and_cannot_be_malicious_alone() -> None:
     )
 
     assert result["risk_score"] == 20
+    assert result["verdict"] is Verdict.INCONCLUSIVE
+
+
+def test_rdap_privacy_redaction_does_not_increase_risk() -> None:
+    result = assess_risk(
+        {
+            "domain_findings": [
+                DomainIntelligenceResult(
+                    provider="fake-rdap",
+                    domain="redacted.example",
+                    registered_at=None,
+                    expires_at=None,
+                    registrar=None,
+                    country=None,
+                    status=[],
+                    privacy_redacted=True,
+                    signals=["privacy_redacted"],
+                    observed_at=NOW,
+                )
+            ],
+            "evidence": [],
+            "normalized_urls": ["https://redacted.example/"],
+        }
+    )
+
+    assert result["risk_score"] == 0
     assert result["verdict"] is Verdict.INCONCLUSIVE
 
 

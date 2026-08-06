@@ -15,7 +15,6 @@ _DOMAIN_SIGNAL_WEIGHTS = {
     "new_domain": 20,
     "recent_registration": 20,
     "short_registration": 10,
-    "privacy_redacted": 5,
 }
 
 
@@ -54,8 +53,6 @@ def _domain_registration_score(state: AgentState) -> int:
     for finding in state.get("domain_findings", []):
         for signal in finding.signals:
             score += _DOMAIN_SIGNAL_WEIGHTS.get(signal, 0)
-        if finding.privacy_redacted:
-            score += _DOMAIN_SIGNAL_WEIGHTS["privacy_redacted"]
     return min(_DOMAIN_SIGNAL_CAP, score)
 
 

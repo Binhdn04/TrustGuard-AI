@@ -154,7 +154,11 @@ def _build_planning_loop_node(
             remaining = working["max_tool_calls"] - working["tool_calls_used"]
             selected = gated[:remaining]
             if not selected:
-                continue
+                limitations = list(working.get("limitations", []))
+                limitations.append("Vòng lặp công cụ dừng vì không còn bước vượt qua policy gate.")
+                working["limitations"] = list(dict.fromkeys(limitations))
+                working["next_tool"] = "assess"
+                break
             for step in selected:
                 working["investigation_plan"] = transition_step(
                     working["investigation_plan"], step.step_id, InvestigationStepStatus.RUNNING
