@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import sqlite3
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -10,13 +12,15 @@ from src.agents.nodes.tools import build_verify_claims_node
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import FakeClaimRetriever
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
-from src.agents.tools.providers import (
-    GoogleFactCheckRetriever,
-    GoogleSafeBrowsingScanner,
-    map_google_fact_check_rating,
+from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
+from src.models import (
+    AnalysisCreateRequest,
+    AnalysisEvent,
+    AnalysisResponse,
+    AnalysisStatus,
+    ClaimEvidence,
+    Verdict,
 )
-from src.agents.tools.rdap import RdapDomainIntelligence
-from src.models import ClaimEvidence, ClaimStance, Verdict
 from src.repositories import JsonFactCheckRepository, SQLiteBlacklistRepository
 
 
@@ -125,88 +129,6 @@ async def test_fact_check_provider_normalizes_reviews():
     assert results[0].source == "Verified Source"
     assert results[0].finding == "False"
     assert results[0].observed_at.tzinfo is UTC
-    assert results[0].stance is ClaimStance.REFUTES
-
-
-def test_unknown_fact_check_rating_is_not_inferred_from_prose():
-    assert map_google_fact_check_rating("Definitely bogus according to this article") is ClaimStance.UNRATED
-
-
-@pytest.mark.asyncio
-async def test_rdap_normalizes_registrable_domain_redaction_and_caches():
-    observed_at = datetime(2026, 8, 6, 13, tzinfo=UTC)
-    requests: list[str] = []
-
-    async def resolver(_host: str, _port: int) -> list[str]:
-        return ["93.184.216.34"]
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        host = request.headers["host"]
-        requests.append(host)
-        if host == "data.iana.org":
-            return httpx.Response(200, json={"services": [[["com"], ["https://rdap.example/"]]]})
-        assert host == "rdap.example"
-        assert request.url.path == "/domain/example.com"
-        return httpx.Response(200, json={
-            "events": [
-                {"eventAction": "registration", "eventDate": "2026-07-26T13:00:00Z"},
-                {"eventAction": "expiration", "eventDate": "2027-07-26T13:00:00Z"},
-            ],
-            "status": ["active"],
-            "remarks": [{"description": ["Registrant data redacted for privacy"]}],
-            "entities": [{"vcardArray": ["vcard", [["email", {}, "text", "secret@example.com"]]]}],
-        })
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        adapter = RdapDomainIntelligence(
-            client=client,
-            guard=SsrfGuard(resolver=resolver),
-            clock=lambda: observed_at,
-        )
-        first = await adapter.lookup("login.shop.example.com")
-        second = await adapter.lookup("example.com")
-
-    assert first == second
-    assert first.domain == "example.com"
-    assert first.registrar is None
-    assert first.privacy_redacted is True
-    assert first.signals == ["recent_registration"]
-    assert requests == ["data.iana.org", "rdap.example"]
-
-
-@pytest.mark.asyncio
-async def test_rdap_not_found_uses_separate_ttl():
-    current = datetime(2026, 8, 6, 13, tzinfo=UTC)
-    rdap_calls = 0
-
-    async def resolver(_host: str, _port: int) -> list[str]:
-        return ["93.184.216.34"]
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal rdap_calls
-        if request.headers["host"] == "data.iana.org":
-            return httpx.Response(200, json={"services": [[["com"], ["https://rdap.example/"]]]})
-        rdap_calls += 1
-        return httpx.Response(404)
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        adapter = RdapDomainIntelligence(
-            client=client,
-            guard=SsrfGuard(resolver=resolver),
-            not_found_ttl=timedelta(minutes=5),
-            clock=lambda: current,
-        )
-        assert (await adapter.lookup("missing.com")).signals == ["not_found"]
-        assert (await adapter.lookup("missing.com")).signals == ["not_found"]
-
-    assert rdap_calls == 1
-
-
-def test_rdap_skips_ip_and_public_suffix():
-    adapter = RdapDomainIntelligence()
-    assert adapter.registrable_domain("127.0.0.1") is None
-    assert adapter.registrable_domain("com") is None
-    assert adapter.registrable_domain("a.b.example.co.uk") == "example.co.uk"
 
 
 @pytest.mark.asyncio
@@ -250,11 +172,6 @@ async def test_blacklist_requires_audited_approval(tmp_path):
     await repository.add_approved("BÄD.example.", "decision-1")
 
     assert await repository.contains("xn--bd-via.example")
-    entry = await repository.get("xn--bd-via.example")
-    assert entry is not None
-    assert entry.decision_id == "decision-1"
-    assert entry.source == "approved-blacklist"
-    assert entry.active is True
     await repository.close()
 
 
@@ -340,7 +257,6 @@ async def test_offline_fact_check_repository_is_ranked_and_copied():
                 title="Cảnh báo phí mở khóa tài khoản",
                 url="https://example.com/review",
                 finding="Yêu cầu phí mở khóa là giả mạo",
-                stance=ClaimStance.REFUTES,
                 relevance=1,
                 observed_at=datetime(2026, 8, 3, tzinfo=UTC),
             )

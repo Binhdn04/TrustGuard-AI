@@ -18,9 +18,6 @@ from src.models import (
     ReviewDecision,
 )
 
-from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST
-from src.models import BlacklistEntry
-
 
 def normalize_domain(domain: str) -> str:
     candidate = domain.strip().casefold().rstrip(".")
@@ -40,10 +37,7 @@ def normalize_domain(domain: str) -> str:
             raise ValueError("domain is invalid")
         if any(not all(char.isalnum() or char == "-" for char in label) for label in labels):
             raise ValueError("domain is invalid")
-    registrable = DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(normalized)
-    if registrable is None:
-        raise ValueError("domain must be registrable and cannot be an IP or public suffix")
-    return registrable
+    return normalized
 
 
 class SQLiteBlacklistRepository:
@@ -77,8 +71,6 @@ class SQLiteBlacklistRepository:
                 domain TEXT PRIMARY KEY,
                 decision_id TEXT NOT NULL,
                 added_at TEXT NOT NULL,
-                source TEXT NOT NULL DEFAULT 'approved-blacklist',
-                active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
                 FOREIGN KEY (decision_id) REFERENCES admin_decisions(decision_id)
             );
             CREATE TABLE IF NOT EXISTS analysis_reports (
@@ -107,40 +99,39 @@ class SQLiteBlacklistRepository:
             """
         )
         columns = {
-            row[1] for row in self._connection.execute("PRAGMA table_info(blacklist)").fetchall()
+            row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()
         }
-        if "source" not in columns:
-            self._connection.execute(
-                "ALTER TABLE blacklist ADD COLUMN source TEXT NOT NULL DEFAULT 'approved-blacklist'"
-            )
-        if "active" not in columns:
-            self._connection.execute(
-                "ALTER TABLE blacklist ADD COLUMN active INTEGER NOT NULL DEFAULT 1"
-            )
+        if "analysis_id" not in columns:
+            self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
         self._connection.commit()
 
-    async def get(self, domain: str) -> BlacklistEntry | None:
-        normalized = normalize_domain(domain)
-        async with self._lock:
-            row = self._connection.execute(
-                """
-                SELECT b.domain, b.decision_id, b.source, b.added_at, b.active
-                FROM blacklist AS b
-                JOIN admin_decisions AS d ON d.decision_id = b.decision_id
-                WHERE b.domain = ? AND b.active = 1
-                  AND d.decision = 'approved' AND d.action = 'add_to_blacklist'
-                """,
-                (normalized,),
-            ).fetchone()
-        if row is None:
-            return None
-        return BlacklistEntry(
-            domain=row[0],
-            decision_id=row[1],
-            source=row[2],
-            added_at=datetime.fromisoformat(row[3]).astimezone(UTC),
-            active=bool(row[4]),
-        )
+        blacklist_schema = self._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blacklist'"
+        ).fetchone()
+        if blacklist_schema and "DECISION_ID TEXT NOT NULL UNIQUE" in blacklist_schema[0].upper():
+            self._connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                self._connection.executescript(
+                    """
+                    BEGIN;
+                    ALTER TABLE blacklist RENAME TO blacklist_legacy;
+                    CREATE TABLE blacklist (
+                        domain TEXT PRIMARY KEY,
+                        decision_id TEXT NOT NULL,
+                        added_at TEXT NOT NULL,
+                        FOREIGN KEY (decision_id) REFERENCES admin_decisions(decision_id)
+                    );
+                    INSERT INTO blacklist(domain, decision_id, added_at)
+                    SELECT domain, decision_id, added_at FROM blacklist_legacy;
+                    DROP TABLE blacklist_legacy;
+                    COMMIT;
+                    """
+                )
+            except Exception:
+                self._connection.rollback()
+                raise
+            finally:
+                self._connection.execute("PRAGMA foreign_keys = ON")
 
     async def record_decision(
         self,
@@ -403,7 +394,10 @@ class SQLiteBlacklistRepository:
         ]
 
     async def contains(self, domain: str) -> bool:
-        return await self.get(domain) is not None
+        normalized = normalize_domain(domain)
+        async with self._lock:
+            row = self._connection.execute("SELECT 1 FROM blacklist WHERE domain = ?", (normalized,)).fetchone()
+        return row is not None
 
     async def add_approved(self, domain: str, decision_id: str) -> None:
         normalized = normalize_domain(domain)
@@ -418,8 +412,7 @@ class SQLiteBlacklistRepository:
                 raise PermissionError("an audited approved blacklist decision is required")
             try:
                 self._connection.execute(
-                    """INSERT INTO blacklist(domain, decision_id, added_at, source, active)
-                       VALUES (?, ?, ?, 'approved-blacklist', 1)""",
+                    "INSERT INTO blacklist(domain, decision_id, added_at) VALUES (?, ?, ?)",
                     (normalized, decision_id, datetime.now(UTC).isoformat()),
                 )
                 self._connection.commit()
