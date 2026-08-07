@@ -106,17 +106,9 @@ class SQLiteBlacklistRepository:
             );
             """
         )
-        columns = {
-            row[1] for row in self._connection.execute("PRAGMA table_info(blacklist)").fetchall()
-        }
-        if "source" not in columns:
-            self._connection.execute(
-                "ALTER TABLE blacklist ADD COLUMN source TEXT NOT NULL DEFAULT 'approved-blacklist'"
-            )
-        if "active" not in columns:
-            self._connection.execute(
-                "ALTER TABLE blacklist ADD COLUMN active INTEGER NOT NULL DEFAULT 1"
-            )
+        columns = {row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()}
+        if "analysis_id" not in columns:
+            self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
         self._connection.commit()
 
     async def get(self, domain: str) -> BlacklistEntry | None:

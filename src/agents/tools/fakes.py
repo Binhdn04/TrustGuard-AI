@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
-from src.models import BlacklistEntry, ClaimEvidence, DomainIntelligenceResult, ToolError, UrlScanResult
+from src.models import ClaimEvidence, ClaimStance, ToolError, UrlScanResult
+
+from .fact_check import normalize_claim_rating
 
 
 class FakeToolCallError(RuntimeError):
@@ -68,28 +70,6 @@ class FakeClaimRetriever:
             )
             for item in result[:limit]
         ]
-
-
-class FakeDomainIntelligence:
-    """Offline domain intelligence selected by a fixture response ID."""
-
-    def __init__(
-        self,
-        responses: Mapping[str, DomainIntelligenceResult | ToolError],
-        response_id: str,
-    ) -> None:
-        self._responses = dict(responses)
-        self._response_id = response_id
-        self.calls: list[str] = []
-
-    async def lookup(self, domain: str) -> DomainIntelligenceResult:
-        self.calls.append(domain)
-        if self._response_id not in self._responses:
-            raise ValueError(f"Domain fixture response ID {self._response_id!r} is not configured")
-        result = self._responses[self._response_id]
-        if isinstance(result, ToolError):
-            raise FakeToolCallError(result)
-        return result.model_copy(update={"domain": domain}, deep=True)
 
 
 class FakeBlacklistRepository:

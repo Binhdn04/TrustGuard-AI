@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from src.models import BlacklistEntry, ClaimEvidence, DomainIntelligenceResult, UrlScanResult
+from src.models import ClaimEvidence, DomainIntelligenceResult, UrlScanResult
 
 
 class UrlScanner(Protocol):

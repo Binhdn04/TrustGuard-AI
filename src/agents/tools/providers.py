@@ -33,6 +33,8 @@ def map_google_fact_check_rating(rating: object) -> ClaimStance:
 
 from .fact_check import normalize_claim_rating
 
+from .fact_check import normalize_claim_rating
+
 
 class GoogleSafeBrowsingScanner:
     """Google Safe Browsing v4 adapter; raw provider data never leaves this class."""

@@ -11,10 +11,15 @@ from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fact_check import normalize_claim_rating
 from src.agents.tools.fakes import FakeClaimRetriever
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
-from src.agents.tools.providers import (
-    GoogleFactCheckRetriever,
-    GoogleSafeBrowsingScanner,
-    map_google_fact_check_rating,
+from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
+from src.models import (
+    AnalysisCreateRequest,
+    AnalysisEvent,
+    AnalysisResponse,
+    AnalysisStatus,
+    ClaimEvidence,
+    ClaimStance,
+    Verdict,
 )
 from src.agents.tools.rdap import RdapDomainIntelligence
 from src.models import ClaimEvidence, ClaimStance, Verdict
@@ -209,6 +214,11 @@ def test_rdap_skips_ip_and_public_suffix():
     assert adapter.registrable_domain("127.0.0.1") is None
     assert adapter.registrable_domain("com") is None
     assert adapter.registrable_domain("a.b.example.co.uk") == "example.co.uk"
+
+
+def test_fact_check_rating_mapping_does_not_infer_from_prose():
+    assert normalize_claim_rating("False") is ClaimStance.REFUTES
+    assert normalize_claim_rating("The review says this is false") is ClaimStance.UNRATED
 
 
 def test_fact_check_rating_mapping_does_not_infer_from_prose():

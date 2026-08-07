@@ -221,6 +221,19 @@ class DomainIntelligenceResult(ContractModel):
     registrar: str | None = None
     country: str | None = None
     status: list[str] = Field(default_factory=list)
+    privacy_redacted: bool = False
+    signals: list[str] = Field(default_factory=list)
+    observed_at: datetime
+
+
+class DomainIntelligenceResult(ContractModel):
+    provider: str
+    domain: str
+    registered_at: datetime | None = None
+    expires_at: datetime | None = None
+    registrar: str | None = None
+    country: str | None = None
+    status: list[str] = Field(default_factory=list)
     privacy_redacted: bool
     signals: list[str] = Field(default_factory=list)
     observed_at: datetime
