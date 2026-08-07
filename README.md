@@ -1,195 +1,149 @@
-# 🤖 AI20K Agent Template
+# TrustGuard AI — P-068
 
-Template chính thức cho học viên **VinUni AI20K Build Phase** — cung cấp sẵn cấu trúc dự án, code mẫu, và hướng dẫn kỹ thuật chi tiết để xây dựng AI Agent đạt điểm cao (35+/50).
+AI Agent phát hiện liên kết độc và tuyên bố đáng ngờ trong nội dung chat do người dùng chủ động gửi.
+TrustGuard AI lập kế hoạch điều tra, thu thập bằng chứng từ rule, blacklist và provider uy tín, chấm
+điểm rủi ro deterministic rồi giải thích cảnh báo bằng ngôn ngữ dễ hiểu.
 
-> 📖 **Technical Guidebook:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
+> **Trạng thái:** backend contract v2 và LangGraph vertical slice đã hoạt động. Dashboard, history
+> và admin UI vẫn cần nối vào API thật; WebSocket, PostgreSQL runtime, pgvector, Railway, screenshot
+> renderer, campaign detection và appeal thuộc final-product plan nhưng chưa phải capability runtime
+> hiện tại. Contract đích là `/api/v3`; `/api/v2` được giữ tương thích trong release v3 đầu tiên.
 
-## 🎯 Template này dùng để làm gì?
+## Sản phẩm giải quyết gì?
 
-Khi tham gia AI20K Build Phase, mỗi đội cần xây dựng một AI Agent hoàn chỉnh — từ kiến trúc, code, test, đến deploy. Thay vì bắt đầu từ con số không, template này cung cấp:
+Người dùng phổ thông khó tự đánh giá URL giả mạo, redirect, tuổi domain và độ xác thực của một
+tuyên bố đang lan truyền. TrustGuard AI cung cấp:
 
-- **Cấu trúc thư mục chuẩn** — đã được thiết kế theo best practices (separation of concerns)
-- **Code mẫu** cho các phần cốt lõi: LangGraph agent, FastAPI API, config, schemas
-- **Docker + CI/CD sẵn** — Dockerfile multi-stage, GitHub Actions workflow
-- **Hướng dẫn kỹ thuật 10 chương** — từ clone template đến nộp bài Demo Day
-- **Checklist 10 deliverables** — đảm bảo không bỏ sót yêu cầu BTC
-- **AI Usage Logging tự động** — Pre-configured hooks cho Claude Code, Cursor, Codex, Gemini CLI, Antigravity, và GitHub Copilot
+- cảnh báo inline hai pha: cảnh báo sơ bộ nhanh từ rule/blacklist/cache, sau đó cập nhật kết luận khi
+  tool và LLM hoàn tất;
+- risk score, verdict, evidence, limitation và khuyến nghị rõ ràng;
+- kiểm tra URL/domain qua adapter reputation và RDAP/WHOIS, cùng fact-check retriever cho claim;
+- memory blacklist có nguồn gốc và audit;
+- chuyển case nghiêm trọng cho Security Admin mà không trì hoãn cảnh báo cá nhân;
+- Human-in-the-loop bắt buộc trước khi chặn domain hoặc phát cảnh báo diện rộng.
 
-## ⚡ Quick Start
+Hệ thống không đọc toàn bộ hội thoại, không phá mã hóa đầu cuối và không tự mở link trên thiết bị
+người dùng. Chỉ nội dung được người dùng chủ động gửi mới được phân tích; external URL/domain lookup
+cần consent rõ ràng.
 
-### Bước 1: Fork hoặc Clone
+## Luồng điều tra
 
-```bash
-# Clone template
-git clone https://github.com/AI20K-Build-Cohort-2/starter-code-template.git team-YOUR_TEAM_NAME
-cd team-YOUR_TEAM_NAME
+```mermaid
+flowchart LR
+    A[User chọn message hoặc URL] --> B[Extract URL và claim]
+    B --> C[Rule + blacklist + reputation cache]
+    C --> D[Cảnh báo sơ bộ]
+    C --> E[URL/domain scan]
+    C --> F[Fact-check retrieval]
+    E --> G[Risk Engine]
+    F --> G
+    G --> H[Giải thích grounded]
+    H --> I[Cập nhật cảnh báo inline]
+    G --> J{Cần tác động diện rộng?}
+    J -->|Có| K[Security Admin review]
+    K --> L[Blacklist / broad warning sau phê duyệt]
 ```
 
-### Bước 2: Setup môi trường
+LLM `gpt-4o-mini` hỗ trợ hiểu ngữ cảnh, đề xuất thứ tự tool, review coverage và viết giải thích.
+Score, verdict và action được quyết định từ structured evidence bằng Risk Engine; LLM không được tạo
+evidence hoặc tự sửa kết luận.
+
+## Công nghệ và kiến trúc
+
+| Lớp | Lựa chọn | Trạng thái |
+|---|---|---|
+| LLM | OpenAI `gpt-4o-mini` | Đã có, optional theo API key |
+| Orchestration | LangGraph: extract → scan → verify → score → warn/escalate | Đã có vertical slice |
+| URL reputation | Google Safe Browsing hiện tại; adapter đích hỗ trợ GSB/Web Risk hoặc VirusTotal | Một phần |
+| Domain intelligence | RDAP-first/WHOIS; guarded redirect | Adapter RDAP có, chưa wire mặc định |
+| Fact-check | Google Fact Check + fact-check corpus | Provider có; pgvector thuộc final scope |
+| Backend | FastAPI `/api/v2` hiện tại → `/api/v3` final contract | v2 đã có; v3 triển khai theo Wave 0–3 |
+| Frontend | Next.js/React với warning banner | UI có, chưa nối end-to-end |
+| Realtime | Event polling → WebSocket với polling fallback | Polling contract có; WebSocket thuộc final scope |
+| Data | SQLite hiện tại → PostgreSQL/pgvector + Redis | Topology đích |
+| Deploy | Docker → Railway | Docker có; Railway thuộc final scope |
+
+Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](docs/00-PRODUCT_REQUIREMENTS.md),
+[contract](docs/02-CONTRACT_AND_FIXTURES.md) và [kế hoạch triển khai](docs/03-IMPLEMENTATION_PLAN.md).
+
+## Phạm vi final product
+
+### Core product
+
+- App deploy, đăng nhập và hai vai trò `user`/`security_admin`.
+- Phân tích URL hoặc message được người dùng chủ động gửi.
+- Rule, approved blacklist, URL reputation, RDAP/WHOIS và fact-check retrieval.
+- Risk score deterministic; cảnh báo inline kèm lý do, evidence, limitation và khuyến nghị.
+- Lịch sử, user report và admin-managed blacklist có audit.
+- Theo dõi progress realtime, polling fallback và bảo vệ rate-limit/cost.
+
+### Advanced intelligence
+
+- Fact-check bằng corpus nguồn tin cậy trong pgvector.
+- Screenshot renderer cô lập, không cookie/đăng nhập và chỉ chạy sau consent khi scan tĩnh chưa đủ.
+- Phát hiện chiến dịch lan truyền theo cụm và dashboard xu hướng tin giả.
+- Học có kiểm duyệt từ báo cáo người dùng; feedback không tự động đổi model/score.
+- Dashboard chi phí API, quota/rate-limit và cơ chế appeal.
+
+Core product và Advanced intelligence đều bắt buộc trước final release; cách gọi này chỉ phân nhóm
+capability, không tạo một điểm dừng MVP. Việc triển khai được chia cho bốn coding agents tại
+[Final Product Implementation Plan](docs/03-IMPLEMENTATION_PLAN.md).
+
+## Chạy local
+
+Yêu cầu Python 3.11+, Node.js 20+ và npm.
 
 ```bash
-# Tạo virtual environment
 python3.11 -m venv .venv
 source .venv/bin/activate
-
-# Cài dependencies
-pip install -e ".[dev]"
-
-# Cấu hình API keys
+pip install -r requirements.txt
 cp .env.example .env
-# Mở .env và thêm OPENAI_API_KEY của bạn
-# Đồng thời cập nhật AI_LOG_API_KEY bằng key riêng từ link mời của BTC
-# (giá trị trong .env.example chỉ là placeholder)
-```
-
-### Bước 3: Cài AI Logging Hooks
-
-```bash
-# Linux / macOS / Git Bash
-bash scripts/setup_hooks.sh
-
-# Windows PowerShell
-# powershell -ExecutionPolicy Bypass -File scripts\setup_hooks.ps1
-```
-
-Hooks tự động log mọi AI prompt khi dùng Claude Code, Cursor, Codex, Gemini CLI, Antigravity, hoặc GitHub Copilot. Không cần thao tác thủ công.
-
-### Bước 4: Chạy server
-
-```bash
-# Chạy FastAPI backend
 uvicorn src.main:app --reload --port 8000
-
-# Mở Swagger UI
-# http://localhost:8000/docs
 ```
 
-### Bước 5: Đọc hướng dẫn
+Ở terminal khác:
 
-📖 Mở **[Technical Guidebook](https://phoenix.note.transformerlabs.ai/technical-book)** và làm theo từng chương.
-
-## 📁 Cấu trúc dự án
-
-```
-├── src/
-│   ├── agents/           # 🧠 LangGraph Agent
-│   │   ├── graph.py      #    State graph (nodes + edges)
-│   │   ├── state.py      #    State schema (TypedDict)
-│   │   ├── nodes/        #    Node functions
-│   │   └── tools/        #    Agent tools (@tool)
-│   ├── api/              # 🌐 FastAPI Backend
-│   │   └── routes.py     #    API endpoints
-│   ├── models/           # 📋 Pydantic schemas
-│   ├── services/         # 🔧 Business logic (LLM, etc.)
-│   ├── config.py         # ⚙️ Pydantic Settings
-│   └── main.py           # 🚀 App entry point
-├── tests/                # 🧪 pytest suite
-│   ├── test_agents/      #    Agent/graph tests
-│   └── test_api/         #    API endpoint tests
-├── scripts/              # 🔌 AI Logging Hooks
-│   ├── log_hook.py       #    Auto-log cho Claude/Cursor/Codex/Gemini/Copilot
-│   ├── log_antigravity.py#    Antigravity IDE prompt scanner
-│   ├── log_manual.py     #    Manual log cho ChatGPT / web tools
-│   ├── submit_log.py     #    Submit logs on git push
-│   └── setup_hooks.sh    #    One-time hook installer
-├── .claude/ .codex/ .cursor/ .gemini/  # Per-tool hook configs
-├── .agents/              # Antigravity rules + workflows
-├── .ai-log/              # 📊 AI usage logs (auto-generated)
-├── docs/
-│   ├── guide/            # 📖 Technical Guidebook (10 chapters)
-│   └── architecture_diagram.md
-├── eval/                 # 📊 Evaluation results
-├── presentation/         # 🎤 Demo Day slides
-├── .github/workflows/    # ⚡ CI/CD (GitHub Actions)
-├── .github/hooks/        # 🪝 Copilot hook config
-├── Dockerfile            # 🐳 Multi-stage build
-├── docker-compose.yml    # 🐙 Full stack orchestration
-└── README_boilerplate.md # 📝 README template cho đội của bạn
-```
-
-## 📚 Technical Guidebook — 10 Chương
-
-| Chương | Nội dung | Thời gian |
-|---------|----------|-----------|
-| 1 | Lời mở đầu — Mục tiêu, cách sử dụng | 15 phút |
-| 2 | Khởi tạo dự án — Clone, setup, git workflow | 4 giờ |
-| 3 | Thiết kế kiến trúc — 3-tier, diagrams, ADR | 6 giờ |
-| 4 | **LangGraph Agent** — State, nodes, edges, tools, RAG | 8 giờ |
-| 5 | FastAPI — Routes, validation, error handling, streaming | 6 giờ |
-| 6 | Giao diện — Next.js + Streamlit quickstart | 6 giờ |
-| 7 | DevOps — Docker, CI/CD, deploy, logging | 6 giờ |
-| 8 | Kiểm thử — Unit test, integration test, RAGAS | 4 giờ |
-| 9 | Demo Day — 10 deliverables, checklist, tips | 2 giờ |
-| 10 | Tài nguyên — Khóa học, docs, BMAD method | tham khảo |
-
-📖 **Đọc online:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
-
-## 📋 10 Deliverables cho Demo Day
-
-| # | Deliverable | File vị trí | Template có sẵn |
-|---|-------------|-------------|:---:|
-| 1 | Source Code | `src/` | ✅ |
-| 2 | README.md | `README_boilerplate.md` → copy thành `README.md` | ✅ |
-| 3 | Architecture Diagram | `docs/architecture_diagram.md` | ✅ |
-| 4 | AI Logs | LangSmith (3 env vars) + Auto AI Usage Logging | ✅ |
-| 5 | Live URL | Deploy lên Render/Vercel | ⚡ CI/CD sẵn |
-| 6 | Video Demo | `presentation/` | 📝 |
-| 7 | Pitch Deck | `presentation/` | 📝 |
-| 8 | Development Journal | `JOURNAL.md` | ✅ |
-| 9 | Worklog | `WORKLOG.md` | ✅ |
-| 10 | Evaluation Evidence | `eval/` | 📝 |
-
-## 🛠 Tech Stack
-
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| AI Agent | LangGraph + LangChain | Latest |
-| Backend | FastAPI + Uvicorn | 0.100+ |
-| LLM | OpenAI GPT-4o-mini | API |
-| Frontend | Next.js / Streamlit | 14+ / 1.30+ |
-| Database | SQLite (dev) / PostgreSQL (prod) | — |
-| DevOps | Docker + GitHub Actions | — |
-| Testing | pytest + pytest-asyncio | 8+ |
-
-## 📊 AI Usage Logging
-
-Template đã tích hợp sẵn auto-logging hooks cho 6 AI tools:
-
-| Tool | Cơ chế | Config |
-|------|--------|--------|
-| Claude Code | `.claude/settings.json` hooks | Tự động |
-| Cursor | `.cursor/hooks.json` | Tự động |
-| OpenAI Codex CLI | `.codex/hooks.json` | Tự động |
-| Gemini CLI | `.gemini/settings.json` | Tự động |
-| GitHub Copilot | `.github/hooks/hooks.json` | Tự động |
-| Antigravity IDE | Pre-push scan transcript | Tự động trên `git push` |
-
-Tất cả prompts và tool calls được log vào `.ai-log/session.jsonl` và tự động submit lên grading server mỗi khi `git push`.
-
-**ChatGPT / web tools khác** — log thủ công:
 ```bash
-bash scripts/_pyrun.sh scripts/log_manual.py --tool chatgpt --prompt "What you asked"
+cd frontend
+npm ci
+npm run dev
 ```
 
-> ⚠️ Chạy `bash scripts/setup_hooks.sh` một lần sau khi clone để cài pre-push hook.
+Đặt `NEXT_PUBLIC_API_URL=http://localhost:8000` và `NEXT_PUBLIC_USE_MOCK_API=false` trong
+`frontend/.env.local` khi kiểm thử HTTP integration. Swagger UI: `http://localhost:8000/docs`.
 
-## 📖 Đọc Technical Guidebook
+Docker Compose hiện khởi tạo backend, PostgreSQL/pgvector và Redis, nhưng backend vẫn persist vào
+SQLite qua `SECURITY_DATABASE_PATH`. Không dùng Compose hiện tại làm bằng chứng rằng migration
+PostgreSQL/Redis đã hoàn tất.
 
-**Online (khuyến nghị):** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
+## Kiểm thử
 
-Đăng nhập bằng GitHub (cùng account đã được BTC mời vào org `AI20K-Build-Cohort-2`)
-→ chọn tab **Technical Book** ở sidebar trái → đọc 10 chương + topic sections,
-có table of contents bên phải, hỗ trợ light/dark/cyberpunk theme.
+```bash
+ruff check src tests
+pytest -q
+cd frontend
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
 
-**Offline:** mọi chương đều ở thư mục `docs/guide/` trong template này — mở bằng
-bất kỳ markdown viewer/editor nào (VS Code, Obsidian, GitHub UI, …).
+Test mặc định phải chạy offline bằng fake adapters/fixtures, không tiêu tốn quota provider hoặc LLM.
 
-## 🔗 Liên kết
+## Nguyên tắc an toàn
 
-- 📖 **Technical Guidebook:** [phoenix.note.transformerlabs.ai/technical-book](https://phoenix.note.transformerlabs.ai/technical-book)
-- 🏫 **AI20K Program:** VinUni AI20K Build Phase
-- 👨‍🏫 **Mentor:** Đặng Hải Lộc
+- Không coi provider no-hit, timeout hoặc thiếu evidence là bằng chứng “an toàn”.
+- Không log secret, OTP, raw message hoặc raw provider response.
+- Không gọi URL/domain provider khi chưa có consent và không truy cập private/local/metadata IP.
+- Không biến URL đáng ngờ thành link bấm trực tiếp trong UI.
+- Chặn domain, thêm blacklist và cảnh báo diện rộng phải có Security Admin phê duyệt cùng audit.
 
-## 📄 License
+## Tài liệu
 
-MIT — Sử dụng tự do cho mục đích giáo dục.
+- [Product Requirements](docs/00-PRODUCT_REQUIREMENTS.md)
+- [Architecture](docs/01-ARCHITECTURE.md)
+- [Contract and Fixtures](docs/02-CONTRACT_AND_FIXTURES.md)
+- [Implementation Plan](docs/03-IMPLEMENTATION_PLAN.md)
+- [Gate 1 Brief](docs/gate1/brief.md)
+- [Gate 1 PRD](docs/gate1/prd.md)
+- [Gate 1 UI Flow](docs/gate1/UI_flow.md)

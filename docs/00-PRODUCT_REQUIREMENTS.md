@@ -1,155 +1,148 @@
 # Product Requirements — P-068
 
-**Sản phẩm:** AI Agent phát hiện tin giả và link độc trong tin nhắn
+**Sản phẩm:** TrustGuard AI — Agent phát hiện tin giả và liên kết độc trong tin nhắn
 
-**Giai đoạn:** MVP+ — hoàn thiện vertical slice hiện có và bổ sung domain intelligence
+**Bản tài liệu:** 2.2 — 2026-08-07
 
-**Trạng thái:** Implementation-ready — 2026-08-06
+**Trạng thái:** Backend vertical slice đã chạy; final product đang được triển khai từ baseline hiện tại
 
-> Tài liệu này định nghĩa **sản phẩm phải làm gì**. Schema, enum và fixture nằm tại `02-CONTRACT_AND_FIXTURES.md`; topology kỹ thuật nằm tại `01-ARCHITECTURE.md`; cách chia việc nằm tại `03-IMPLEMENTATION_PLAN.md`.
+> Contract đang chạy nằm ở `02-CONTRACT_AND_FIXTURES.md`; hiện trạng và kiến trúc đích ở
+> `01-ARCHITECTURE.md`; thứ tự giao hàng ở `03-IMPLEMENTATION_PLAN.md`.
 
 ## 1. Vấn đề và mục tiêu
 
-Tin nhắn giả mạo, link phishing và khuyến mãi lừa đảo thường được chia sẻ qua chat. Người dùng phổ thông khó tự kiểm tra domain, redirect và tính xác thực của claim trên nhiều nguồn.
+Link phishing, giả mạo thương hiệu và tuyên bố sai thường lan qua chat với ngôn ngữ khẩn cấp khiến
+người dùng khó tự kiểm tra URL, domain, redirect và nguồn xác thực. TrustGuard AI phân tích đúng phần
+nội dung người dùng chủ động chọn, lập kế hoạch điều tra, thu thập evidence, chấm điểm rủi ro và cảnh
+báo ngay trong hội thoại bằng giải thích dễ hiểu.
 
-MVP cho phép người dùng chủ động dán một URL hoặc tin nhắn để nhận đánh giá có bằng chứng trong vòng 60 giây ở điều kiện bình thường. Hệ thống phải:
+Mục tiêu sản phẩm:
 
-- phát hiện dấu hiệu link độc, giả mạo thương hiệu và claim đáng ngờ;
-- giải thích rủi ro và hành động nên làm bằng ngôn ngữ dễ hiểu;
-- không biến thiếu dữ liệu thành kết luận “an toàn”;
-- dùng scoring xác định từ structured evidence, không để LLM tự chấm điểm;
-- dùng `gpt-4o-mini` để hiểu ngữ cảnh, kỹ thuật tác động cảm xúc và ý đồ có khả năng
-  thuộc về người gửi; kết quả LLM không được xem là external evidence;
-- yêu cầu Security Admin duyệt mọi thay đổi blacklist hoặc cảnh báo diện rộng;
-- chỉ xử lý nội dung người dùng chủ động gửi.
+- phát hiện URL/claim đáng ngờ mà không cần đọc nền toàn bộ cuộc hội thoại;
+- ưu tiên rule, approved blacklist và cached reputation để giảm độ trễ/chi phí;
+- dùng URL scanner, RDAP/WHOIS, redirect resolver và fact-check retriever khi có consent/policy;
+- dùng `gpt-4o-mini` cho phân tích ngữ cảnh và diễn giải, không giao quyền chấm điểm cho LLM;
+- không biến no-hit, timeout hoặc thiếu evidence thành kết luận an toàn;
+- cảnh báo cá nhân ngay, nhưng yêu cầu Security Admin duyệt block domain/cảnh báo diện rộng;
+- cho phép report/appeal để đo và sửa false positive có kiểm soát.
 
-### 1.1 Kết quả của lần mở rộng này
+## 2. Người dùng và quyền hạn
 
-Codebase đã có graph phân tích URL/claim, Safe Browsing adapter, Google Fact Check adapter,
-blacklist repository và deterministic scoring, nhưng API hiện mới tạo record `queued` và chưa nối
-workflow/persistence thành một luồng end-to-end. Lần mở rộng phải hoàn thiện agent điều tra cho
-**tin nhắn có URL và/hoặc tuyên bố**, đồng thời bổ sung domain intelligence:
+### User
 
-- lập một `investigation_plan` có các bước quan sát được, nhưng policy engine có quyền phủ quyết;
-- tra memory blacklist trước khi gọi provider để giảm độ trễ và chi phí;
-- phân tích URL, redirect và thông tin đăng ký/tuổi domain;
-- đối chiếu reputation/phishing database và truy xuất fact-check cho claim;
-- hợp nhất evidence, chấm điểm deterministic và cảnh báo ngay trong kết quả hội thoại;
-- tạo security case khi cần review, nhưng không trì hoãn cảnh báo cá nhân cho user.
-
-## 2. Persona
-
-### Người dùng
-
-Dán nội dung đáng ngờ, theo dõi tiến trình, xem kết quả và lịch sử của mình, báo kết quả sai hoặc yêu cầu review.
+- Đăng nhập, chọn một message/URL cần kiểm tra và quyết định consent cho external lookup.
+- Nhận cảnh báo sơ bộ, theo dõi kế hoạch điều tra và xem kết luận cuối kèm evidence/limitation.
+- Xem lịch sử của chính mình, gửi report hoặc appeal khi cho rằng kết quả sai.
 
 ### Security Admin
 
-Xem hàng đợi case cần duyệt, kiểm tra evidence, xác nhận/bác bỏ kết luận, yêu cầu điều tra thêm và phê duyệt thay đổi blacklist có audit trail.
+- Xem case `pending_review`, report, appeal, evidence, decision audit và blacklist.
+- Phê duyệt/bác bỏ case, yêu cầu điều tra thêm và quản lý lifecycle blacklist.
+- Phê duyệt riêng mọi hành động `block_domain` hoặc `publish_broad_warning`.
 
-## 3. User flow
+Auth hiện tại chỉ có demo bearer tokens; production phải dùng IdP/OIDC hoặc session auth tương đương.
 
-### 3.1 Phân tích
+## 3. Trải nghiệm hai pha
 
-1. User đăng nhập, dán URL/tin nhắn, xem thông báo dữ liệu nào có thể được gửi tới LLM/fact-check
-   provider, chọn đồng ý hoặc không đồng ý **external URL/domain lookup**, rồi bấm **Kiểm tra**.
-2. Hệ thống validation, trích xuất URL/claim và dùng structured LLM output để phân tích
-   ngữ cảnh, cảm xúc gây áp lực, ý đồ của người gửi và dấu hiệu lừa đảo; nếu input không
-   hợp lệ thì dừng trước khi gọi model/tool.
-3. LLM đề xuất kế hoạch điều tra và thứ tự tool trong allowlist; Agent lưu trạng thái từng bước và vẫn cưỡng chế consent, SSRF guard,
-   retry và budget trước khi chạy rule nội bộ, blacklist và provider phù hợp.
-4. Agent tra approved blacklist trước. Chỉ sau khi executor đã xác nhận consent cho từng target
-   hợp lệ, các lookup URL reputation và RDAP độc lập mới có thể chạy song song; không được tạo
-   request, task hay provider client trước hard gate này. Fact-check retriever chỉ chạy khi có
-   claim đủ điều kiện và evidence còn thiếu.
-5. Risk Engine tổng hợp evidence thành điểm/mức rủi ro deterministic. LLM chỉ review
-   assessment và viết giải thích grounded, không được sửa score, verdict hay tạo evidence.
-6. UI hiển thị tiến trình điều tra, verdict, mức/điểm rủi ro, lý do, evidence, limitations và hành động đề xuất ngay trong hội thoại.
-7. Case cần hành động diện rộng được đưa vào hàng đợi admin; cảnh báo cho user không phải chờ admin.
+1. User chủ động gửi message/URL và đọc disclosure về dữ liệu có thể gửi tới provider.
+2. API validate, persist analysis `queued` và trả `202`.
+3. Agent extract URL, claim, thương hiệu, hành động được yêu cầu và dấu hiệu social engineering.
+4. Local rule, approved blacklist và reputation cache tạo assessment sơ bộ; UI có thể hiển thị
+   warning banner ngay, gắn nhãn **đang xác minh**.
+5. LangGraph lập policy plan `extract-link → scan → verify-claim → score → warn/escalate`. Executor
+   kiểm tra consent, SSRF, allowlist, deadline, quota và cost budget trước mỗi external call.
+6. URL reputation và RDAP/WHOIS có thể chạy song song; redirect được kiểm tra từng hop. Fact-check
+   chỉ chạy khi có claim đủ điều kiện. Screenshot chỉ thuộc pha nâng cao và chỉ chạy khi scan tĩnh
+   chưa đủ evidence.
+7. Risk Engine hợp nhất structured evidence thành score/verdict/action. LLM chỉ review coverage và
+   tạo lời giải thích grounded theo evidence index.
+8. UI cập nhật kết luận cuối, lý do, nguồn, thời điểm quan sát, limitation và hành động khuyến nghị.
+9. Cảnh báo cá nhân không chờ admin. Hành động diện rộng tạo case và chỉ có hiệu lực sau phê duyệt
+   có audit.
 
-### 3.2 Admin review
+Mục tiêu SLO: provisional warning p95 không quá 1 giây khi local/cache có dữ liệu; final result p95
+không quá 10 giây khi provider hoạt động bình thường. Timeout phải trả kết quả giới hạn trong budget.
 
-1. Admin mở case đã escalate và xem evidence/audit trail.
-2. Admin chọn **phê duyệt**, **bác bỏ**, hoặc **yêu cầu thêm evidence** và nhập lý do.
-3. Chỉ quyết định phê duyệt rõ ràng mới được tạo thay đổi blacklist; mọi quyết định đều được audit.
+## 4. Phạm vi
 
-### 3.3 Tool lỗi hoặc thiếu dữ liệu
+### 4.1 Core product
 
-Agent retry trong budget. Khi LLM hoặc tool lỗi/hết budget, hệ thống trả kết quả giới hạn
-với verdict `inconclusive` khi phù hợp, nêu model/tool/dữ liệu còn thiếu, dùng fallback
-deterministic và không giả lập evidence.
+- App deploy, login và RBAC `user`/`security_admin`.
+- Input URL hoặc message 1–5.000 ký tự do user chủ động gửi.
+- Structured extraction, URL normalization, punycode/look-alike, brand-domain mismatch.
+- Local rules, approved blacklist, URL reputation adapter, RDAP-first WHOIS, guarded redirects và
+  fact-check provider.
+- Deterministic risk score, confidence, verdict, evidence, limitation và inline warning hai pha.
+- Investigation progress qua WebSocket, cùng polling fallback.
+- History, user report, admin review, audit và admin-managed blacklist.
+- Rate limiting, tool/LLM budget, cache và quan sát token/cost/provider quota.
+- Docker deployment; production target dùng PostgreSQL, Redis và Railway.
 
-## 4. Phạm vi MVP
+### 4.2 Advanced intelligence
 
-- Đăng nhập và RBAC cho `user`, `security_admin`.
-- Nhập một URL hoặc một tin nhắn tối đa 5.000 ký tự.
-- Consent riêng cho external URL/domain lookup; UI phải nói rõ lookup có thể tiết lộ URL/domain cho provider.
-- Phân tích URL/claim bằng rule, approved blacklist, một URL reputation adapter còn được hỗ trợ,
-  một RDAP-over-HTTPS adapter và fact-check retriever.
-- Kiểm tra URL an toàn gồm normalization, punycode/look-alike, redirect metadata và SSRF guard.
-- Agent workflow có nhánh, retry và giới hạn tool/time/cost.
-- Structured LLM reasoning bằng `gpt-4o-mini` cho semantic analysis, tool planning,
-  assessment review và phản hồi grounded; có timeout, retry và deterministic fallback.
-- Kết quả có evidence, limitations và nguồn/thời điểm quan sát.
-- Lịch sử phân tích, báo kết quả sai, review queue và audit trail.
-- Realtime progress bằng WebSocket, có polling fallback.
-- Công khai `investigation_plan` và trạng thái bước ở mức an toàn; không công khai chain-of-thought, prompt hoặc raw provider response.
-- Docker Compose cho API, PostgreSQL và Redis; worker tách riêng sau khi vertical slice đồng bộ đã
-  chạy đúng. `pgvector` chỉ bật khi semantic retrieval chứng minh cần thiết.
+- pgvector fact-check corpus với nguồn tin cậy, version và ngày cập nhật.
+- Screenshot renderer sandboxed, không cookie/credential/login, có consent và giới hạn tài nguyên.
+- Phát hiện campaign theo cụm URL/domain/claim, không suy diễn danh tính người gửi.
+- Feedback learning theo batch có evaluation và admin approval; không online-learn trực tiếp.
+- Dashboard xu hướng, false-positive, API cost, cache hit, latency, quota và rate-limit.
+- Appeal lifecycle đầy đủ, SLA review và thông báo kết quả cho user.
 
-## 5. Ngoài phạm vi MVP
+Core product và Advanced intelligence đều thuộc phạm vi bắt buộc của final release. Hai nhóm chỉ mô
+tả dependency: capability advanced được merge sau khi contract, privacy, consent, SSRF và durable
+runtime gates tương ứng đã xanh; không có release MVP ở giữa.
 
-- Tự đọc toàn bộ hội thoại từ Zalo/Messenger/WhatsApp/email.
-- Tự mở link trên thiết bị user, tải/chạy file hoặc sandbox malware đầy đủ.
-- WHOIS TCP fallback và thu thập thông tin registrant; MVP chỉ dùng dữ liệu domain công khai từ RDAP.
-- Safe screenshot renderer và điều tra hình ảnh trang đích.
-- Tự động quét nền mọi tin nhắn hoặc tích hợp trực tiếp nền tảng chat; UI hội thoại của MVP chỉ phân tích nội dung user chủ động gửi.
-- Tự động chặn domain hoặc phát cảnh báo diện rộng không qua admin.
-- Phát hiện chiến dịch lan truyền, dashboard xu hướng nâng cao, online learning.
-- Native mobile app, browser extension hoặc tích hợp trực tiếp app chat.
-- Cam kết thay thế chuyên gia an ninh hoặc kết luận pháp lý.
+### 4.3 Ngoài phạm vi
+
+- Đọc nền toàn bộ chat từ Zalo/Messenger/WhatsApp/SMS/email hoặc phá E2E encryption.
+- Tự bấm link trên thiết bị user, chạy file, đăng nhập website hoặc sandbox malware đầy đủ.
+- Thu thập registrant/private WHOIS data hay gửi raw private message cho provider không cần thiết.
+- Tự block domain, tự phát cảnh báo diện rộng hoặc tự cập nhật model/score từ feedback.
+- Khẳng định tuyệt đối một URL an toàn hoặc thay thế chuyên gia/phán quyết pháp lý.
+
+## 5. Chính sách an toàn, riêng tư và độ chính xác
+
+- **Data minimization:** external URL/domain lookup cần consent; LLM/fact-check chỉ nhận đoạn trích,
+  claim hoặc metadata tối thiểu đã redact. Log không chứa raw message, OTP, secret hay provider body.
+- **E2E-aware:** tích hợp chat phải do client/user chủ động chuyển nội dung sang TrustGuard; backend
+  không được yêu cầu khóa giải mã hay quyền đọc lịch sử hội thoại.
+- **False positive control:** score deterministic có version; recent domain hoặc tín hiệu LLM đơn lẻ
+  không đủ kết luận malicious; evidence mâu thuẫn/thiếu phải trả `inconclusive` khi phù hợp.
+- **Human-in-the-loop:** cảnh báo cá nhân có thể tự động; blacklist/block/broad warning cần reviewer,
+  note, timestamp, evidence snapshot và audit.
+- **Cost/latency:** local/cache trước, external tools chạy song song trong budget, LLM chỉ cho ca cần
+  semantic context; retry có giới hạn và fallback deterministic.
+- **Unsafe navigation:** URL đáng ngờ không hiển thị thành anchor trực tiếp; redirect/screenshot phải
+  qua SSRF guard, DNS revalidation, hop/body/time limit.
 
 ## 6. Chỉ số thành công
 
-- 100% analysis hoàn tất trả đủ các trường bắt buộc theo contract v2.
-- 100% tool call phải ánh xạ tới một bước trong `investigation_plan` và qua policy guard.
-- 100% provider failure/thiếu evidence có limitation và không bị diễn đạt thành “safe”.
-- 100% LLM output ảnh hưởng routing/response phải qua schema và safety guard; LLM
-  failure không làm mất kết quả deterministic.
-- 100% thay đổi blacklist có admin decision và audit record.
-- Luồng phổ biến hoàn tất trong 60 giây; hết budget phải fail safely.
-- Không có secret hoặc toàn bộ message trong operational log.
-- Bộ fixture chuẩn chạy offline và deterministic trong CI.
+- Precision, recall và false-positive rate theo risk level trên fixture/eval set có version; chốt
+  release threshold sau khi có baseline, không đặt số tùy ý trước khi đo.
+- Tỷ lệ analysis có evidence/limitation đầy đủ và tỷ lệ no-hit/timeout không bị diễn đạt thành safe.
+- Provisional/final latency p50/p95, tool timeout, cache hit và số call mỗi analysis.
+- Token và chi phí provider theo ngày/user/analysis; tỷ lệ 429 và budget-exhausted.
+- Tỷ lệ critical case được review, thời gian review, appeal uphold rate và blacklist rollback.
+- Campaign cluster precision phải được reviewer xác nhận trước khi dùng cho broad warning.
 
 ## 7. Acceptance criteria
 
 | ID | Given / When | Then |
 |---|---|---|
-| AC-01 | User hợp lệ gửi message 1–5.000 ký tự | Tạo analysis và bắt đầu workflow. |
-| AC-02 | Input rỗng/quá dài/sai kiểu | Trả validation error; không gọi external tool. |
-| AC-03 | Message chứa URL/claim | Trích xuất structured data; không bịa trường còn thiếu. |
-| AC-04 | URL có consent external lookup | Normalize, kiểm tra blacklist/rule; executor xác nhận consent trước khi fan-out reputation/RDAP; evidence có source và timestamp. |
-| AC-05 | URL không có consent external lookup | Không tạo task/request/client cho URL reputation hoặc RDAP provider; local rule/blacklist vẫn chạy và trả limitation phù hợp. |
-| AC-06 | Claim cần xác minh | Chỉ kết luận theo nguồn truy xuất; không có nguồn thì `inconclusive`/limitation. |
-| AC-07 | Cùng evidence và scoring version | Điểm, mức rủi ro và verdict lặp lại giống nhau, không cần LLM. |
-| AC-08 | Workflow hoàn tất | UI hiển thị đầy đủ kết quả; URL đáng ngờ không là link bấm trực tiếp. |
-| AC-09 | Provider timeout/hỏng | Dừng trong budget, ghi limitation, không bịa kết quả và không trả `safe` chỉ vì thiếu dữ liệu. |
-| AC-10 | Evidence chưa đủ | Agent chỉ gọi tool allowlist và dừng theo điều kiện budget; không loop vô hạn. |
-| AC-11 | Case đạt rule escalation | Cảnh báo user ngay và tạo case `pending_review`. |
-| AC-12 | Admin ra quyết định | Lưu reviewer, timestamp, note; chỉ phê duyệt rõ ràng mới thay đổi blacklist. |
-| AC-13 | User thường gọi API admin | Trả 403 và không thay đổi dữ liệu. |
-| AC-14 | URL trỏ private/local/metadata IP, kể cả sau redirect | Chặn request trước kết nối và ghi evidence/limitation an toàn. |
-| AC-15 | Workflow chuyển bước | Đúng user nhận progress qua WebSocket hoặc polling fallback. |
-| AC-16 | Provider bình thường | Trả kết quả trong 60 giây; hết budget trả kết quả giới hạn. |
-| AC-17 | Input hợp lệ và LLM khả dụng | Structured output mô tả ngữ cảnh, cảm xúc tác động và ý đồ có khả năng của người gửi; không quy kết ý đồ đó cho user đang kiểm tra. |
-| AC-18 | LLM đề xuất tool | Chỉ tool trong allowlist được chạy; consent, SSRF và budget có quyền phủ quyết kế hoạch. |
-| AC-19 | LLM review hoặc sinh phản hồi | Không sửa deterministic score/verdict/action, không thêm evidence và chỉ giải thích theo evidence index tồn tại. |
-| AC-20 | LLM timeout/schema lỗi | Workflow tiếp tục bằng fallback deterministic, ghi limitation và không trả 500 chỉ vì LLM lỗi. |
-| AC-21 | Registrable domain chưa có trong blacklist và user đã consent | Agent có thể lấy RDAP domain intelligence; evidence ghi source, thời điểm và trường dữ liệu thực sự có. |
-| AC-22 | RDAP bị privacy-redacted/404/timeout | Không suy diễn chủ sở hữu hoặc coi dữ liệu thiếu là tín hiệu xấu; ghi limitation khi ảnh hưởng coverage và tiếp tục bằng evidence khác. |
-| AC-23 | Domain nằm trong approved blacklist | Memory hit được dùng trước external provider, có provenance và không cần LLM để kết luận. |
-| AC-24 | Analysis đang chạy | User thấy các bước điều tra ở trạng thái `pending/running/completed/skipped/failed` qua WebSocket hoặc polling. |
-| AC-25 | Tin nhắn chỉ có claim, không có URL | Không gọi URL/RDAP tool; fact-check claim và trả `inconclusive` nếu không đủ nguồn. |
-| AC-26 | Kết quả high/critical | Cảnh báo cá nhân hiển thị ngay; thao tác block domain/cảnh báo diện rộng vẫn chờ admin duyệt. |
-| AC-27 | URL dùng subdomain, public suffix hoặc IP literal | RDAP chỉ tra registrable domain hợp lệ; bỏ qua IP/suffix không đăng ký được và không tốn tool budget. |
-| AC-28 | Fact-check provider trả rating khác ngôn ngữ hoặc không map được | Giữ stance `unrated`; không suy ra refuted/supported bằng keyword trong prose. |
+| AC-01 | User gửi input hợp lệ | Analysis được tạo, extract URL/claim và có plan quan sát được. |
+| AC-02 | Input rỗng/quá dài | Trả validation error trước LLM/tool. |
+| AC-03 | Có local/cache signal | UI nhận provisional warning có nhãn đang xác minh; không trình bày như verdict cuối. |
+| AC-04 | User không consent URL lookup | Không tạo client/task/request external; local rule/blacklist vẫn chạy và ghi limitation. |
+| AC-05 | User consent URL lookup | URL được normalize, SSRF-check và scan; evidence có source/timestamp. |
+| AC-06 | URL redirect sang private/local/metadata IP | Chặn trước kết nối ở mọi hop. |
+| AC-07 | Có claim kiểm chứng được | Retriever trả nguồn/stance; thiếu nguồn thì không tự suy diễn. |
+| AC-08 | Provider no-hit/timeout/429 | Không trả safe chỉ vì thiếu dữ liệu; có limitation và retry/budget đúng policy. |
+| AC-09 | Cùng evidence và scoring version | Score/verdict/action lặp lại giống nhau dù không có LLM. |
+| AC-10 | LLM lỗi hoặc output sai schema | Workflow dùng deterministic fallback, không bịa evidence và không trả 500 chỉ vì LLM. |
+| AC-11 | Analysis đang chạy | Owner nhận đúng progress qua WebSocket hoặc polling fallback. |
+| AC-12 | Kết quả high/critical | Warning cá nhân hiển thị ngay; case phù hợp được tạo cho admin. |
+| AC-13 | Cần block/broad warning | Không có hiệu lực trước admin approval và audit transaction thành công. |
+| AC-14 | User báo false positive/appeal | Receipt được lưu, reviewer xử lý và kết quả không tự động sửa model/blacklist. |
+| AC-15 | Screenshot advanced được yêu cầu | Chỉ chạy sau consent trong sandbox không cookie/login; lỗi không chặn fallback. |
+| AC-16 | Campaign cluster được phát hiện | Chỉ hiện cho admin như hypothesis có evidence; broad warning vẫn chờ duyệt. |
+| AC-17 | User thường gọi admin API hoặc đọc analysis người khác | Trả 403/404 phù hợp, không rò dữ liệu. |
+| AC-18 | Dashboard vận hành | Hiển thị latency, cost, quota/429 và false-positive mà không chứa raw private message. |
