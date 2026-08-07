@@ -1,0 +1,16 @@
+{
+  "rdap_recent_domain_001": {
+    "status": "success",
+    "result": {"provider": "fixture-rdap/rdap-v1", "domain": "example.com", "registered_at": "2026-07-26T13:00:00Z", "expires_at": "2027-07-26T13:00:00Z", "registrar": null, "country": null, "status": ["active"], "privacy_redacted": true, "signals": ["recent_registration"], "observed_at": "2026-08-07T13:00:00Z"},
+    "error": null,
+    "cache": {"status": "hit", "cache_key_hash": "4444444444444444444444444444444444444444444444444444444444444444", "stored_at": "2026-08-07T12:00:00Z", "expires_at": "2026-08-08T12:00:00Z", "bypass_reason": null},
+    "usage": {"usage_ref": "usage:rdap:hit:1", "provider": "fixture-rdap", "provider_version": "rdap-v1", "operation": "domain_lookup", "attempts": 0, "network_calls": 0, "latency_ms": 0.2, "request_units": 0, "response_units": 0, "tokens": 0, "estimated_cost_usd": 0, "observed_at": "2026-08-07T13:00:00Z"}
+  },
+  "rdap_429_001": {
+    "status": "failed",
+    "result": null,
+    "error": {"tool": "rdap", "code": "RATE_LIMITED", "message": "RDAP provider rate limited the request.", "retryable": true, "provider": "fixture-rdap", "retry_after_ms": 60000},
+    "cache": {"status": "miss", "cache_key_hash": "5555555555555555555555555555555555555555555555555555555555555555", "stored_at": null, "expires_at": null, "bypass_reason": null},
+    "usage": {"usage_ref": "usage:rdap:429:1", "provider": "fixture-rdap", "provider_version": "rdap-v1", "operation": "domain_lookup", "attempts": 1, "network_calls": 1, "latency_ms": 12, "request_units": 1, "response_units": 0, "tokens": 0, "estimated_cost_usd": 0, "observed_at": "2026-08-07T13:00:00Z"}
+  }
+}

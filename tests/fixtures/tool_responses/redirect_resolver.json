@@ -1,0 +1,30 @@
+{
+  "redirect_public_001": {
+    "status": "success",
+    "result": {
+      "normalized_url": "https://short.example/gift",
+      "final_url": "https://landing.example/offer",
+      "redirect_chain": ["https://short.example/gift", "https://landing.example/offer"],
+      "status": "resolved",
+      "signals": ["cross_registrable_domain"],
+      "observed_at": "2026-08-07T13:00:00Z"
+    },
+    "error": null,
+    "cache": {"status": "bypass", "cache_key_hash": null, "stored_at": null, "expires_at": null, "bypass_reason": "fixture"},
+    "usage": {"usage_ref": "usage:redirect:public:1", "provider": "fixture-redirect", "provider_version": "v1", "operation": "resolve_redirects", "attempts": 1, "network_calls": 2, "latency_ms": 20, "request_units": 2, "response_units": 0, "tokens": 0, "estimated_cost_usd": 0, "observed_at": "2026-08-07T13:00:00Z"}
+  },
+  "redirect_private_hop_001": {
+    "status": "blocked",
+    "result": null,
+    "error": {"tool": "redirect_resolver", "code": "SSRF_BLOCKED", "message": "Redirect resolved to a non-public address.", "retryable": false, "provider": "fixture-redirect", "retry_after_ms": null},
+    "cache": {"status": "bypass", "cache_key_hash": null, "stored_at": null, "expires_at": null, "bypass_reason": "security_failure"},
+    "usage": {"usage_ref": "usage:redirect:blocked:1", "provider": "fixture-redirect", "provider_version": "v1", "operation": "resolve_redirects", "attempts": 1, "network_calls": 1, "latency_ms": 8, "request_units": 1, "response_units": 0, "tokens": 0, "estimated_cost_usd": 0, "observed_at": "2026-08-07T13:00:00Z"}
+  },
+  "redirect_loop_001": {
+    "status": "failed",
+    "result": null,
+    "error": {"tool": "redirect_resolver", "code": "REDIRECT_LOOP", "message": "Redirect chain contains a loop.", "retryable": false, "provider": "fixture-redirect", "retry_after_ms": null},
+    "cache": {"status": "bypass", "cache_key_hash": null, "stored_at": null, "expires_at": null, "bypass_reason": "invalid_result"},
+    "usage": {"usage_ref": "usage:redirect:loop:1", "provider": "fixture-redirect", "provider_version": "v1", "operation": "resolve_redirects", "attempts": 1, "network_calls": 3, "latency_ms": 30, "request_units": 3, "response_units": 0, "tokens": 0, "estimated_cost_usd": 0, "observed_at": "2026-08-07T13:00:00Z"}
+  }
+}

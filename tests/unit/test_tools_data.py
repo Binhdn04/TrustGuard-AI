@@ -367,6 +367,7 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
     assert persisted[0] == "user-1"
     assert persisted[2].status is AnalysisStatus.QUEUED
     assert persisted[2].case_status.value == "approved"
+    assert [item.step for item in persisted[3]] == ["queued", "review_approved"]
 
     with pytest.raises(sqlite3.IntegrityError):
         await repository.apply_decision(

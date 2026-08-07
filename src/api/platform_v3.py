@@ -153,6 +153,10 @@ async def analysis_events_v3(
     after_sequence = _decode_cursor(cursor)
     response = await service.get_for(analysis_id, principal)
     plan_by_id = {step.step_id: step for step in response.investigation_plan}
+    # events_for() returns append order. Persisted records enforce that order
+    # with their monotonic event_id; the in-memory implementation uses its
+    # append-only list. Sequence numbers must be assigned from that stable
+    # order rather than from timestamps, which are not necessarily unique.
     legacy_events = await service.events_for(analysis_id, principal)
     converted = []
 
@@ -204,6 +208,9 @@ async def analysis_events_v3(
         if len(converted) == limit:
             break
 
+    # This is a polling checkpoint, not an end-of-collection marker. On an
+    # empty poll the caller must retain the same checkpoint so a later event
+    # can be requested without replaying already-seen events.
     next_cursor = _encode_cursor(converted[-1].sequence) if converted else cursor
     return AnalysisEventPageV3(events=converted, next_cursor=next_cursor)
 

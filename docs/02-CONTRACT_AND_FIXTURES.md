@@ -405,6 +405,25 @@ cost, latency, cache status và outcome; target/raw prompt không thuộc public
 
 ### 11.4 Advanced tool contract
 
+Wave 0 freeze nằm tại `src/agents/tools/protocols.py` và `src/agents/tools/models.py`. Năm boundary
+provider-neutral là:
+
+```text
+UrlReputationProvider.lookup  -> NormalizedToolResult[UrlReputationFinding]
+UrlReputationCascade.assess   -> NormalizedToolResult[UrlReputationCascadeResult]
+RedirectResolver.resolve      -> NormalizedToolResult[RedirectResolutionResult]
+RdapProvider.lookup           -> NormalizedToolResult[DomainIntelligenceResult]
+FactCheckCorpus.search        -> NormalizedToolResult[FactCheckSearchResult]
+ScreenshotRenderer.render     -> NormalizedToolResult[ScreenshotResult]
+```
+
+Mọi boundary dùng cùng envelope gồm `status`, đúng một trong `result/error`, `cache` và `usage`.
+`cache` chỉ lộ SHA-256 cache-key hash, hit/miss/bypass và TTL; `usage` chỉ chứa provider/version,
+operation, attempts/network calls, latency, units/token và estimated cost. Không model nào có field
+raw provider body, request target, prompt, cookie hoặc credential. Cache hit bắt buộc có
+`network_calls=0`; 429 dùng `RATE_LIMITED` và optional `retry_after_ms`; provider no-hit bắt buộc là
+`inconclusive`, không được normalize thành `safe`.
+
 `ScreenshotRenderer` chỉ được thêm vào allowlist khi có sandbox implementation và security tests.
 Input là normalized public HTTP(S) URL đã consent; output chỉ gồm final URL, image/artifact reference,
 visible-text hash, render signals và observed time. Không trả cookie, credential, DOM/raw page body
@@ -415,6 +434,11 @@ time, embedding model/version và ingestion provenance. Vector similarity chỉ 
 ClaimEvidence stance vẫn phải đến từ normalized source metadata/reviewer, không suy ra từ similarity.
 
 ### 11.5 Fixture additions trước final v3 release gate
+
+Fixture Wave 0 đã có tại `tests/fixtures/tool_responses/`: consent/no-consent policy,
+`url_reputation_v3.json` (no-hit/conflict/429), `redirect_resolver.json` (public/private-hop/loop),
+`rdap_v3.json` (cache/429), và `screenshot_renderer.json` (credential/private-IP/redirect escape/
+download/timeout). Tất cả đều offline và validate qua đúng normalized envelope.
 
 - provisional → final upgrade, WebSocket reconnect/replay và duplicate event;
 - no-consent chứng minh không tạo provider/renderer client;

@@ -601,7 +601,10 @@ class SQLiteBlacklistRepository:
             if row is None:
                 return None
             event_rows = self._connection.execute(
-                "SELECT event_json FROM analysis_events WHERE analysis_id = ? ORDER BY event_id",
+                # event_id is the monotonic insertion key. This ordering is a
+                # contract: the v3 compatibility adapter derives stable
+                # per-analysis sequences from the returned append order.
+                "SELECT event_json FROM analysis_events WHERE analysis_id = ? ORDER BY event_id ASC",
                 (analysis_id,),
             ).fetchall()
         return (

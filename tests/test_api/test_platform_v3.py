@@ -65,6 +65,7 @@ async def test_v3_event_polling_returns_typed_stable_replay(client, platform_ser
     )
     assert after.status_code == 200
     assert after.json()["events"] == []
+    assert after.json()["next_cursor"] == body["next_cursor"]
 
 
 @pytest.mark.asyncio
