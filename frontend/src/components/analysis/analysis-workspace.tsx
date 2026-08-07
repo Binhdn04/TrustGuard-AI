@@ -1,147 +1,303 @@
 "use client";
 
-import { useState } from "react";
-import { SmartInput } from "./smart-input";
-import { ProgressStepper, AnalysisStep } from "./progress-stepper";
-import { VerdictCard, RiskLevel } from "./verdict-card";
-import { Shield } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, RefreshCw, Shield } from "lucide-react";
+
+import { getAnalysisApi } from "@/lib/api/analysis-api";
+import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
+import type { AnalysisEventV3 } from "@/types/generated/api-v3";
+import type { InvestigationStep, InvestigationTool } from "@/types/analysis";
+import type {
+  AnalysisTransportState,
+  AnalysisUiState,
+  AnalysisViewModel,
+} from "@/types/analysis-view-model";
+
+import { AnalysisProgress, type ProgressStep, type ProgressStepId } from "./analysis-progress";
+import { FactCheckComposer } from "./fact-check-composer";
+import { FactCheckSummary } from "./fact-check-summary";
+import { LinkSafetyPanel } from "./link-safety-panel";
+
+const INITIAL_STEPS: ProgressStep[] = [
+  { id: "extract", label: "Xác định các phát biểu cần kiểm chứng", status: "pending", visible: true },
+  { id: "search", label: "Tìm nguồn fact-check", status: "pending", visible: true },
+  { id: "verify", label: "Đối chiếu bằng chứng", status: "pending", visible: true },
+  { id: "summarize", label: "Tổng hợp kết luận", status: "pending", visible: true },
+  { id: "scan_urls", label: "Kiểm tra liên kết đính kèm", status: "pending", visible: false },
+];
+
+const TOOL_STEP: Partial<Record<InvestigationTool, ProgressStepId>> = {
+  local_rules: "extract",
+  claim_retriever: "search",
+  url_scanner: "scan_urls",
+  redirect_resolver: "scan_urls",
+  domain_intelligence: "scan_urls",
+  blacklist_lookup: "scan_urls",
+};
+
+function initialSteps(hasUrl: boolean, consent: boolean): ProgressStep[] {
+  return INITIAL_STEPS.map((step) => ({
+    ...step,
+    visible: step.id !== "scan_urls" || (hasUrl && consent),
+  }));
+}
+
+function updateStep(
+  steps: ProgressStep[],
+  id: ProgressStepId,
+  status: ProgressStep["status"],
+): ProgressStep[] {
+  return steps.map((step) => (step.id === id ? { ...step, status } : step));
+}
+
+function applyStepTransition(
+  steps: ProgressStep[],
+  tool: InvestigationTool,
+  status: ProgressStep["status"],
+): ProgressStep[] {
+  const id = TOOL_STEP[tool];
+  if (!id) return steps;
+  let next = updateStep(steps, id, status);
+  if (tool === "local_rules" && status === "completed") {
+    next = updateStep(next, "search", "running");
+  }
+  if (tool === "claim_retriever" && status === "running") {
+    next = updateStep(next, "extract", "completed");
+  }
+  if (tool === "claim_retriever" && status === "completed") {
+    next = updateStep(next, "verify", "completed");
+    next = updateStep(next, "summarize", "running");
+  }
+  return next;
+}
+
+function applyEvent(steps: ProgressStep[], event: AnalysisEventV3): ProgressStep[] {
+  if (event.event_type === "analysis_status" && event.payload.status === "running") {
+    return updateStep(steps, "extract", "running");
+  }
+  if (event.event_type === "step_transition") {
+    return applyStepTransition(steps, event.payload.tool, event.payload.status);
+  }
+  if (event.event_type === "final_result") {
+    return steps.map((step) =>
+      step.status === "skipped" || step.status === "failed"
+        ? step
+        : { ...step, status: "completed" },
+    );
+  }
+  return steps;
+}
+
+function mergePlan(steps: ProgressStep[], plan: InvestigationStep[]): ProgressStep[] {
+  return plan.reduce(
+    (current, step) => applyStepTransition(current, step.tool, step.status),
+    steps,
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "Đã xảy ra lỗi khi kết nối với dịch vụ phân tích.";
+}
 
 export function AnalysisWorkspace() {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showResult, setShowResult] = useState(false);
-  
-  const [steps, setSteps] = useState<AnalysisStep[]>([
-    { id: "extract", label: "Phân tách dữ liệu", status: "pending", description: "Trích xuất URL và các tuyên bố từ tin nhắn" },
-    { id: "scan", label: "Quét URL & Domain", status: "pending", description: "Kiểm tra danh sách đen và VirusTotal" },
-    { id: "fact-check", label: "Xác minh thông tin", status: "pending", description: "Đối chiếu với cơ sở dữ liệu tin giả" },
-    { id: "score", label: "Đánh giá rủi ro", status: "pending", description: "Tính điểm dựa trên bằng chứng thu thập được" },
-  ]);
+  const [viewModel, setViewModel] = useState<AnalysisViewModel | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<ProgressStep[]>(INITIAL_STEPS);
+  const [uiState, setUiState] = useState<AnalysisUiState>("idle");
+  const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const generationRef = useRef(0);
 
-  const [verdict, setVerdict] = useState<{
-    score: number;
-    level: RiskLevel;
-    reason: string;
-    recommendation: string;
-    limitations?: string[];
-  } | null>(null);
+  const clearPolling = useCallback(() => {
+    if (pollTimerRef.current !== null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
 
-  const simulateAnalysis = (content: string, hasConsent: boolean) => {
-    setIsAnalyzing(true);
-    setShowResult(false);
-    
-    // Reset steps
-    setSteps(steps.map(s => ({ ...s, status: "pending" })));
+  useEffect(() => {
+    return () => {
+      generationRef.current += 1;
+      clearPolling();
+    };
+  }, [clearPolling]);
 
-    // Step 1: Extract
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => s.id === "extract" ? { ...s, status: "running" } : s));
-    }, 500);
+  const resetWorkspace = useCallback(() => {
+    generationRef.current += 1;
+    clearPolling();
+    setViewModel(null);
+    setError(null);
+    setSteps(INITIAL_STEPS);
+    setUiState("idle");
+    setTransport("disconnected");
+  }, [clearPolling]);
 
-    // Step 2: Scan
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => {
-        if (s.id === "extract") return { ...s, status: "completed" };
-        if (s.id === "scan") return { ...s, status: "running" };
-        return s;
-      }));
-    }, 1500);
+  const startAnalysis = async (content: string, consentToScanUrls: boolean) => {
+    generationRef.current += 1;
+    const generation = generationRef.current;
+    clearPolling();
+    setError(null);
+    setViewModel(null);
+    setUiState("submitting");
+    setTransport("connecting");
 
-    // Step 3: Fact-check
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => {
-        if (s.id === "scan") return { ...s, status: "completed" };
-        if (s.id === "fact-check") return { ...s, status: "running" };
-        return s;
-      }));
-    }, 3000);
+    const hasUrl = /https?:\/\/[^\s]+/giu.test(content);
+    setSteps(initialSteps(hasUrl, consentToScanUrls));
 
-    // Step 4: Score
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => {
-        if (s.id === "fact-check") return { ...s, status: "completed" };
-        if (s.id === "score") return { ...s, status: "running" };
-        return s;
-      }));
-    }, 4500);
+    try {
+      const api = getAnalysisApi();
+      const accepted = await api.createAnalysis({
+        message: content,
+        consent_to_scan_urls: consentToScanUrls,
+      });
+      if (generation !== generationRef.current) return;
 
-    // Finish
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => s.id === "score" ? { ...s, status: "completed" } : s));
-      setIsAnalyzing(false);
-      setShowResult(true);
+      setUiState("queued");
+      setTransport("polling_fallback");
+      let cursor: string | null = null;
+      let eventPollingAvailable = true;
 
-      // Mock result based on content length or some random logic for demo
-      const isDangerous = content.includes("http") || content.toLowerCase().includes("trúng thưởng");
-      
-      if (isDangerous) {
-        setVerdict({
-          score: 85,
-          level: "MALICIOUS",
-          reason: "Đường dẫn trỏ đến một tên miền (Domain) mới đăng ký cách đây 2 ngày và bị gắn cờ lừa đảo (phishing) bởi 3 công cụ bảo mật trên VirusTotal. Tin nhắn dùng chiêu trò mạo danh thương hiệu.",
-          recommendation: "Tuyệt đối KHÔNG NHẤP VÀO LINK hoặc cung cấp thông tin cá nhân. Hãy xóa tin nhắn này ngay lập tức.",
-          limitations: hasConsent ? undefined : ["Không thể quét link chi tiết vì người dùng không cấp quyền (Consent) quét bên ngoài."]
-        });
-      } else {
-        setVerdict({
-          score: 15,
-          level: "SAFE",
-          reason: "Nội dung tin nhắn và các đường link đính kèm không có dấu hiệu lừa đảo. Không tìm thấy trong danh sách đen.",
-          recommendation: "Tin nhắn này an toàn để đọc. Tuy nhiên, luôn cảnh giác với các yêu cầu chuyển tiền hoặc thông tin nhạy cảm.",
-        });
-      }
-    }, 6000);
+      const poll = async () => {
+        const isCurrent = () => generation === generationRef.current;
+        if (!isCurrent()) return;
+        try {
+          if (eventPollingAvailable) {
+            try {
+              const page = await api.getAnalysisEvents(accepted.analysis_id, { cursor, limit: 100 });
+              if (!isCurrent()) return;
+              cursor = page.next_cursor;
+              setSteps((current) => page.events.reduce(applyEvent, current));
+              if (page.events.some((event) => event.event_type === "provisional_warning")) {
+                setUiState("provisional");
+              } else if (
+                page.events.some(
+                  (event) =>
+                    event.event_type === "step_transition" ||
+                    (event.event_type === "analysis_status" && event.payload.status === "running"),
+                )
+              ) {
+                setUiState("investigating");
+              }
+            } catch {
+              if (!isCurrent()) return;
+              eventPollingAvailable = false;
+              setTransport("polling_fallback");
+            }
+          }
+
+          const response = await api.getAnalysis(accepted.analysis_id);
+          if (!isCurrent()) return;
+          setSteps((current) => mergePlan(current, response.investigation_plan));
+          setViewModel(
+            mapAnalysisResponseToViewModel(response, {
+              originalContent: content,
+              consentToScanUrls,
+            }),
+          );
+
+          if (response.status === "completed") {
+            setSteps((current) =>
+              current.map((step) =>
+                step.status === "skipped" || step.status === "failed"
+                  ? step
+                  : { ...step, status: "completed" },
+              ),
+            );
+            setUiState("final");
+            setTransport("disconnected");
+            clearPolling();
+            return;
+          }
+          if (response.status === "failed") {
+            setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
+            setUiState("failed");
+            setTransport("disconnected");
+            clearPolling();
+            return;
+          }
+
+          setUiState((current) => current === "queued" ? "investigating" : current);
+          if (!isCurrent()) return;
+          pollTimerRef.current = setTimeout(poll, 1_500);
+        } catch (pollError) {
+          if (!isCurrent()) return;
+          setError(errorMessage(pollError));
+          setUiState("failed");
+          setTransport("disconnected");
+          clearPolling();
+        }
+      };
+
+      void poll();
+    } catch (submitError) {
+      if (generation !== generationRef.current) return;
+      setError(errorMessage(submitError));
+      setUiState("failed");
+      setTransport("disconnected");
+    }
   };
 
+  const isBusy = ["submitting", "queued", "provisional", "investigating"].includes(uiState);
+
   return (
-    <div className="min-h-screen py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto space-y-12">
-        
-        {/* Header Section */}
-        <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center p-3 bg-primary/10 rounded-full mb-4">
-            <Shield className="w-8 h-8 text-primary" />
+    <div className="min-h-screen bg-background px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-4xl space-y-12">
+        <div className="space-y-4 text-center">
+          <div className="mb-4 inline-flex items-center justify-center rounded-full bg-primary/10 p-3">
+            <Shield className="size-8 text-primary" />
           </div>
           <h1 className="text-4xl font-extrabold tracking-tight text-foreground">
-            AI PROTECT <span className="text-primary">Scanner</span>
+            Fact-Check <span className="text-primary">AI</span>
           </h1>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Hệ thống nhận diện tin giả và cảnh báo đường link lừa đảo theo thời gian thực.
-          </p>
         </div>
 
-        {/* Input Section */}
-        {!isAnalyzing && !showResult && (
-          <div className="fade-in">
-            <SmartInput onSubmit={simulateAnalysis} isLoading={isAnalyzing} />
+        {error && (
+          <div role="alert" className="mx-auto flex max-w-2xl items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4">
+            <AlertCircle className="mt-0.5 size-5 shrink-0 text-rose-600" />
+            <div className="flex-1">
+              <h2 className="text-sm font-bold text-rose-800">Lỗi phân tích</h2>
+              <p className="mt-1 text-sm text-rose-700">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={resetWorkspace}
+              className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100"
+            >
+              Thử lại
+            </button>
           </div>
         )}
 
-        {/* Progress Section */}
-        {isAnalyzing && (
-          <div className="fade-in">
-            <ProgressStepper steps={steps} />
-          </div>
+        {uiState === "idle" && !error && (
+          <FactCheckComposer onSubmit={startAnalysis} isLoading={false} />
         )}
 
-        {/* Result Section */}
-        {showResult && verdict && (
-          <div className="fade-in space-y-8">
-            <VerdictCard {...verdict} />
-            
-            <div className="text-center">
+        {isBusy && (
+          <AnalysisProgress
+            steps={steps}
+            phase={uiState as Exclude<AnalysisUiState, "idle" | "final" | "failed">}
+            transport={transport}
+          />
+        )}
+
+        {uiState === "final" && viewModel?.factCheck && (
+          <div className="space-y-6">
+            <FactCheckSummary result={viewModel.factCheck} />
+            <LinkSafetyPanel result={viewModel.linkSafety} />
+            <div className="flex justify-center pb-4 pt-8">
               <button
-                onClick={() => {
-                  setShowResult(false);
-                  setVerdict(null);
-                }}
-                className="px-6 py-2 rounded-full border border-border text-foreground hover:bg-secondary transition-colors"
+                type="button"
+                onClick={resetWorkspace}
+                className="flex items-center gap-2 rounded-full border border-border bg-background px-6 py-3 font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
               >
-                Kiểm tra tin nhắn khác
+                <RefreshCw className="size-4" />
+                Kiểm tra nội dung khác
               </button>
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

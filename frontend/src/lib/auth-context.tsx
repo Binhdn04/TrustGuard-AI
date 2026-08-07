@@ -31,6 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Check local storage for mock session on load
     const storedUser = localStorage.getItem("ai_protect_user");
     if (storedUser) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUser(JSON.parse(storedUser));
     }
     setIsLoading(false);

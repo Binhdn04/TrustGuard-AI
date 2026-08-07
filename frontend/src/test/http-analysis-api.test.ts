@@ -8,32 +8,7 @@ describe("HttpAnalysisApi", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sends the demo user bearer token to the analysis API", async () => {
-    window.localStorage.setItem(
-      "ai_protect_user",
-      JSON.stringify({ role: "user" }),
-    );
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    await new HttpAnalysisApi("http://backend.test").listAnalyses();
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v2/analyses",
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: "Bearer dev-user-token",
-        }),
-      }),
-    );
-  });
-
-  it("uses the admin token for review queue requests", async () => {
+  it("does not derive API credentials from the editable local user profile", async () => {
     window.localStorage.setItem(
       "ai_protect_user",
       JSON.stringify({ role: "security_admin" }),
@@ -46,13 +21,36 @@ describe("HttpAnalysisApi", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await new HttpAnalysisApi("http://backend.test").listAdminCases();
+    await new HttpAnalysisApi("http://backend.test").listAnalyses();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://backend.test/api/v3/analyses",
+      expect.objectContaining({
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      }),
+    );
+  });
+
+  it("uses a credential supplied by the authentication layer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HttpAnalysisApi(
+      "http://backend.test",
+      () => "signed-access-token",
+    ).listAdminCases();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://backend.test/api/v2/admin/cases",
       expect.objectContaining({
         headers: expect.objectContaining({
-          Authorization: "Bearer dev-admin-token",
+          Authorization: "Bearer signed-access-token",
         }),
       }),
     );
@@ -61,10 +59,6 @@ describe("HttpAnalysisApi", () => {
   it.each(["reports", "decisions", "blacklist"])(
     "loads admin %s from the backend",
     async (resource) => {
-      window.localStorage.setItem(
-        "ai_protect_user",
-        JSON.stringify({ role: "security_admin" }),
-      );
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify([]), {
           status: 200,
@@ -81,9 +75,8 @@ describe("HttpAnalysisApi", () => {
       expect(fetchMock).toHaveBeenCalledWith(
         `http://backend.test/api/v2/admin/${resource}`,
         expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer dev-admin-token",
-          }),
+          credentials: "include",
+          headers: { Accept: "application/json" },
         }),
       );
     },
@@ -109,7 +102,7 @@ describe("HttpAnalysisApi", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v2/analyses/analysis-1/reports",
+      "http://backend.test/api/v3/analyses/analysis-1/reports",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({

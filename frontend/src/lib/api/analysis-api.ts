@@ -1,4 +1,4 @@
-import type { AnalysisApi } from "@/types/analysis";
+import type { AnalysisApi } from "./analysis-api.types";
 
 import { HttpAnalysisApi } from "./http-analysis-api";
 import { MockAnalysisApi } from "./mock-analysis-api";
