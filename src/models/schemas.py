@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CONTRACT_VERSION = "v2"
+CONTRACT_VERSION_V3 = "v3"
 SCORING_VERSION = "risk-v2"
 
 
@@ -344,6 +345,401 @@ class ErrorBody(ContractModel):
 
 class ErrorEnvelope(ContractModel):
     error: ErrorBody
+
+
+# v3 is intentionally modeled separately from v2.  Do not add v3-only nullable
+# fields to the v2 resources: the first v3 release keeps the v2 read contract
+# stable during its deprecation window.
+
+
+class AnalysisCreateRequestV3(AnalysisCreateRequest):
+    pass
+
+
+class AnalysisAcceptedResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    analysis_id: UUID
+    status: Literal[AnalysisStatus.QUEUED] = AnalysisStatus.QUEUED
+    created_at: datetime
+
+
+class AnalysisResponseV3(AnalysisResponse):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+
+
+class AnalysisReportResponseV3(AnalysisReportResponse):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+
+
+class AnalysisEventType(StrEnum):
+    ANALYSIS_STATUS = "analysis_status"
+    STEP_TRANSITION = "step_transition"
+    PROVISIONAL_WARNING = "provisional_warning"
+    FINAL_RESULT = "final_result"
+    CASE_UPDATE = "case_update"
+    LIMITATION = "limitation"
+
+
+class AnalysisStatusEventPayload(ContractModel):
+    status: AnalysisStatus
+
+
+class StepTransitionEventPayload(ContractModel):
+    step_id: str
+    tool: InvestigationTool
+    target: str
+    reason_code: str
+    depends_on: list[str] = Field(default_factory=list)
+    status: InvestigationStepStatus
+
+
+class ProvisionalWarningEventPayload(ContractModel):
+    risk_level: Literal[RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
+    summary: str
+    evidence_refs: list[str] = Field(min_length=1)
+    is_provisional: Literal[True] = True
+
+
+class FinalResultEventPayload(ContractModel):
+    result_ref: str
+    status: Literal[AnalysisStatus.COMPLETED] = AnalysisStatus.COMPLETED
+
+
+class CaseUpdateEventPayload(ContractModel):
+    case_status: CaseStatus
+    decision_id: UUID | None = None
+
+
+class LimitationEventPayload(ContractModel):
+    code: str
+    message: str
+    retryable: bool
+
+
+class _AnalysisEventV3Base(ContractModel):
+    event_id: UUID
+    analysis_id: UUID
+    sequence: int = Field(ge=1)
+    occurred_at: datetime
+
+
+class AnalysisStatusEventV3(_AnalysisEventV3Base):
+    event_type: Literal[AnalysisEventType.ANALYSIS_STATUS] = AnalysisEventType.ANALYSIS_STATUS
+    payload: AnalysisStatusEventPayload
+
+
+class StepTransitionEventV3(_AnalysisEventV3Base):
+    event_type: Literal[AnalysisEventType.STEP_TRANSITION] = AnalysisEventType.STEP_TRANSITION
+    payload: StepTransitionEventPayload
+
+
+class ProvisionalWarningEventV3(_AnalysisEventV3Base):
+    event_type: Literal[AnalysisEventType.PROVISIONAL_WARNING] = AnalysisEventType.PROVISIONAL_WARNING
+    payload: ProvisionalWarningEventPayload
+
+
+class FinalResultEventV3(_AnalysisEventV3Base):
+    event_type: Literal[AnalysisEventType.FINAL_RESULT] = AnalysisEventType.FINAL_RESULT
+    payload: FinalResultEventPayload
+
+
+class CaseUpdateEventV3(_AnalysisEventV3Base):
+    event_type: Literal[AnalysisEventType.CASE_UPDATE] = AnalysisEventType.CASE_UPDATE
+    payload: CaseUpdateEventPayload
+
+
+class LimitationEventV3(_AnalysisEventV3Base):
+    event_type: Literal[AnalysisEventType.LIMITATION] = AnalysisEventType.LIMITATION
+    payload: LimitationEventPayload
+
+
+AnalysisEventV3 = Annotated[
+    AnalysisStatusEventV3
+    | StepTransitionEventV3
+    | ProvisionalWarningEventV3
+    | FinalResultEventV3
+    | CaseUpdateEventV3
+    | LimitationEventV3,
+    Field(discriminator="event_type"),
+]
+
+
+class AnalysisEventPageV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    events: list[AnalysisEventV3]
+    next_cursor: str | None = None
+
+
+class WebSocketTicketRequestV3(ContractModel):
+    analysis_id: UUID
+
+
+class WebSocketTicketResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    ticket: str
+    analysis_id: UUID
+    expires_at: datetime
+    stream_path: str
+    single_use: Literal[True] = True
+
+
+class AppealStatus(StrEnum):
+    SUBMITTED = "submitted"
+    UNDER_REVIEW = "under_review"
+    RESOLVED = "resolved"
+
+
+class AppealOutcome(StrEnum):
+    UPHOLD = "uphold"
+    OVERTURN = "overturn"
+    INCONCLUSIVE = "inconclusive"
+
+
+class AppealCreateRequestV3(ContractModel):
+    reason: str = Field(max_length=500)
+    comment: str | None = Field(default=None, max_length=5000)
+
+
+class AppealReceiptV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    appeal_id: UUID
+    analysis_id: UUID
+    status: Literal[AppealStatus.SUBMITTED] = AppealStatus.SUBMITTED
+    created_at: datetime
+
+
+class AppealResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    appeal_id: UUID
+    analysis_id: UUID
+    status: AppealStatus
+    reason: str
+    comment: str | None = None
+    outcome: AppealOutcome | None = None
+    resolution_note: str | None = None
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> Self:
+        resolution_fields = (self.outcome, self.resolution_note, self.resolved_at)
+        if self.status is AppealStatus.RESOLVED and any(value is None for value in resolution_fields):
+            raise ValueError("resolved appeal requires outcome, resolution_note and resolved_at")
+        if self.status is not AppealStatus.RESOLVED and any(value is not None for value in resolution_fields):
+            raise ValueError("unresolved appeal cannot contain resolution fields")
+        return self
+
+
+class AppealAdminRecordV3(AppealResponseV3):
+    owner_id: str
+
+
+class AppealPageV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    items: list[AppealAdminRecordV3]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class AppealDecisionRequestV3(ContractModel):
+    outcome: AppealOutcome
+    note: str = Field(max_length=5000)
+
+
+class AppealDecisionResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    appeal_id: UUID
+    decision_id: UUID
+    outcome: AppealOutcome
+    decided_at: datetime
+
+
+class ReviewedAction(StrEnum):
+    ADD_TO_BLACKLIST = "add_to_blacklist"
+    DISABLE_BLACKLIST = "disable_blacklist"
+    BLOCK_DOMAIN = "block_domain"
+    PUBLISH_BROAD_WARNING = "publish_broad_warning"
+    NONE = "none"
+
+
+class AdminActionStatus(StrEnum):
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+    FAILED = "failed"
+
+
+class AdminActionRecordV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    action_id: UUID
+    analysis_id: UUID | None = None
+    campaign_id: UUID | None = None
+    action: ReviewedAction
+    target: str | None = None
+    status: AdminActionStatus
+    evidence_snapshot: list[Evidence]
+    proposed_at: datetime
+    reviewer_id: str | None = None
+    review_note: str | None = None
+    reviewed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_review(self) -> Self:
+        review_fields = (self.reviewer_id, self.review_note, self.reviewed_at)
+        is_reviewed = self.status is not AdminActionStatus.PENDING_REVIEW
+        if is_reviewed and any(value is None for value in review_fields):
+            raise ValueError("reviewed action requires reviewer_id, review_note and reviewed_at")
+        if not is_reviewed and any(value is not None for value in review_fields):
+            raise ValueError("pending action cannot contain review fields")
+        if self.action is ReviewedAction.NONE and self.target is not None:
+            raise ValueError("none action cannot have a target")
+        if self.action is not ReviewedAction.NONE and self.target is None:
+            raise ValueError("reviewed action requires a target")
+        if self.action is not ReviewedAction.NONE and not self.evidence_snapshot:
+            raise ValueError("reviewed action requires an evidence snapshot")
+        return self
+
+
+class AdminActionDecisionRequestV3(ContractModel):
+    decision: ReviewDecision
+    note: str = Field(max_length=5000)
+
+
+class AdminActionDecisionResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    action_id: UUID
+    decision_id: UUID
+    action: ReviewedAction
+    status: Literal[AdminActionStatus.APPROVED, AdminActionStatus.REJECTED]
+    reviewed_at: datetime
+
+
+class AdminActionPageV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    items: list[AdminActionRecordV3]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class CampaignReviewerStatus(StrEnum):
+    PENDING_REVIEW = "pending_review"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
+class CampaignAggregateSignalV3(ContractModel):
+    signal: str
+    count: int = Field(ge=1)
+
+
+class CampaignSummaryV3(ContractModel):
+    campaign_id: UUID
+    hypothesis: str
+    window_started_at: datetime
+    window_ended_at: datetime
+    analysis_count: int = Field(ge=3)
+    aggregate_signals: list[CampaignAggregateSignalV3]
+    reviewer_status: CampaignReviewerStatus
+    clustering_version: str
+
+    @model_validator(mode="after")
+    def validate_window(self) -> Self:
+        if self.window_ended_at < self.window_started_at:
+            raise ValueError("campaign window must end after it starts")
+        return self
+
+
+class CampaignDetailV3(CampaignSummaryV3):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    evidence_refs: list[str] = Field(min_length=1)
+    registrable_domains: list[str]
+    redirect_targets: list[str]
+    reviewer_id: str | None = None
+    review_note: str | None = None
+    reviewed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_review(self) -> Self:
+        review_fields = (self.reviewer_id, self.review_note, self.reviewed_at)
+        is_reviewed = self.reviewer_status is not CampaignReviewerStatus.PENDING_REVIEW
+        if is_reviewed and any(value is None for value in review_fields):
+            raise ValueError("reviewed campaign requires reviewer_id, review_note and reviewed_at")
+        if not is_reviewed and any(value is not None for value in review_fields):
+            raise ValueError("pending campaign cannot contain review fields")
+        return self
+
+
+class CampaignPageV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    items: list[CampaignSummaryV3]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class MetricsWindowV3(ContractModel):
+    started_at: datetime
+    ended_at: datetime
+
+    @model_validator(mode="after")
+    def validate_window(self) -> Self:
+        if self.ended_at <= self.started_at:
+            raise ValueError("metrics window must end after it starts")
+        return self
+
+
+class LatencyMetricV3(ContractModel):
+    operation: str
+    count: int = Field(ge=0)
+    p50_ms: float | None = Field(default=None, ge=0)
+    p95_ms: float | None = Field(default=None, ge=0)
+    p99_ms: float | None = Field(default=None, ge=0)
+
+
+class CacheMetricV3(ContractModel):
+    provider: str
+    hits: int = Field(ge=0)
+    misses: int = Field(ge=0)
+    hit_rate: float | None = Field(default=None, ge=0, le=1)
+
+
+class UsageMetricV3(ContractModel):
+    provider: str
+    model: str | None = None
+    calls: int = Field(ge=0)
+    tokens: int = Field(ge=0)
+    estimated_cost_usd: float = Field(ge=0)
+    quota_used: float | None = Field(default=None, ge=0)
+    rate_limited: int = Field(ge=0)
+    timed_out: int = Field(ge=0)
+
+
+class RiskDistributionMetricV3(ContractModel):
+    risk_level: RiskLevel
+    count: int = Field(ge=0)
+
+
+class FeedbackMetricV3(ContractModel):
+    reports: int = Field(ge=0)
+    appeals: int = Field(ge=0)
+    appeals_upheld: int = Field(ge=0)
+    appeals_overturned: int = Field(ge=0)
+    appeals_inconclusive: int = Field(ge=0)
+    false_positive_rate: float | None = Field(default=None, ge=0, le=1)
+
+
+class OperationsMetricsResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    window: MetricsWindowV3
+    generated_at: datetime
+    latency: list[LatencyMetricV3]
+    cache: list[CacheMetricV3]
+    usage: list[UsageMetricV3]
+    risk_distribution: list[RiskDistributionMetricV3]
+    feedback: FeedbackMetricV3
 
 
 def risk_level_for_score(score: int) -> RiskLevel:

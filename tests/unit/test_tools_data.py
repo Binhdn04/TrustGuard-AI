@@ -367,6 +367,7 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
     assert persisted[0] == "user-1"
     assert persisted[2].status is AnalysisStatus.QUEUED
     assert persisted[2].case_status.value == "approved"
+    assert [item.step for item in persisted[3]] == ["queued", "review_approved"]
 
     with pytest.raises(sqlite3.IntegrityError):
         await repository.apply_decision(
@@ -546,9 +547,7 @@ async def test_v2_migration_quarantines_malformed_json_without_blocking_startup(
     assert loaded is not None
     assert loaded[2].status is AnalysisStatus.FAILED
     assert loaded[2].contract_version == "v2"
-    assert await repository.list_migration_errors() == [
-        (str(analysis_id), "JSONDecodeError", False)
-    ]
+    assert await repository.list_migration_errors() == [(str(analysis_id), "JSONDecodeError", False)]
     await repository.close()
 
 
@@ -565,9 +564,7 @@ async def test_analysis_filters_bind_injection_shaped_values(tmp_path):
         step="queued",
         occurred_at=created_at,
     )
-    await repository.create_analysis(
-        owner_id="user-1", request=request, response=response, event=event
-    )
+    await repository.create_analysis(owner_id="user-1", request=request, response=response, event=event)
 
     assert len(await repository.list_analysis_responses(owner_id="user-1")) == 1
     assert await repository.list_analysis_responses(owner_id="user-1' OR 1=1 --") == []

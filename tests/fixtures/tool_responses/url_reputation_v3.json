@@ -1,0 +1,126 @@
+{
+  "provider_no_hit_001": {
+    "status": "inconclusive",
+    "result": {
+      "normalized_url": "https://unknown.example/path",
+      "findings": [{
+        "provider": "fixture-primary",
+        "provider_version": "2026-08",
+        "normalized_url": "https://unknown.example/path",
+        "matched": false,
+        "verdict": "inconclusive",
+        "signals": ["no_known_match"],
+        "observed_at": "2026-08-07T13:00:00Z"
+      }],
+      "verdict": "inconclusive",
+      "provider_conflict": false,
+      "policy_version": "reputation-policy-v1"
+    },
+    "error": null,
+    "cache": {
+      "status": "miss",
+      "cache_key_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "stored_at": null,
+      "expires_at": null,
+      "bypass_reason": null
+    },
+    "usage": {
+      "usage_ref": "usage:reputation:no-hit:1",
+      "provider": "fixture-primary",
+      "provider_version": "2026-08",
+      "operation": "url_reputation_lookup",
+      "attempts": 1,
+      "network_calls": 1,
+      "latency_ms": 24.5,
+      "request_units": 1,
+      "response_units": 1,
+      "tokens": 0,
+      "estimated_cost_usd": 0,
+      "observed_at": "2026-08-07T13:00:00Z"
+    }
+  },
+  "provider_conflict_001": {
+    "status": "success",
+    "result": {
+      "normalized_url": "https://conflict.example/login",
+      "findings": [
+        {
+          "provider": "fixture-primary",
+          "provider_version": "2026-08",
+          "normalized_url": "https://conflict.example/login",
+          "matched": true,
+          "verdict": "malicious",
+          "signals": ["social_engineering"],
+          "observed_at": "2026-08-07T13:00:00Z"
+        },
+        {
+          "provider": "fixture-secondary",
+          "provider_version": "v3",
+          "normalized_url": "https://conflict.example/login",
+          "matched": true,
+          "verdict": "safe",
+          "signals": ["reviewed_allowlist"],
+          "observed_at": "2026-08-07T13:00:01Z"
+        }
+      ],
+      "verdict": "suspicious",
+      "provider_conflict": true,
+      "policy_version": "reputation-policy-v1"
+    },
+    "error": null,
+    "cache": {
+      "status": "miss",
+      "cache_key_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "stored_at": null,
+      "expires_at": null,
+      "bypass_reason": null
+    },
+    "usage": {
+      "usage_ref": "usage:reputation:conflict:1",
+      "provider": "fixture-cascade",
+      "provider_version": "reputation-policy-v1",
+      "operation": "url_reputation_cascade",
+      "attempts": 2,
+      "network_calls": 2,
+      "latency_ms": 51,
+      "request_units": 2,
+      "response_units": 2,
+      "tokens": 0,
+      "estimated_cost_usd": 0.002,
+      "observed_at": "2026-08-07T13:00:01Z"
+    }
+  },
+  "provider_429_001": {
+    "status": "failed",
+    "result": null,
+    "error": {
+      "tool": "url_reputation",
+      "code": "RATE_LIMITED",
+      "message": "Reputation provider rate limited the request.",
+      "retryable": true,
+      "provider": "fixture-primary",
+      "retry_after_ms": 30000
+    },
+    "cache": {
+      "status": "miss",
+      "cache_key_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "stored_at": null,
+      "expires_at": null,
+      "bypass_reason": null
+    },
+    "usage": {
+      "usage_ref": "usage:reputation:429:1",
+      "provider": "fixture-primary",
+      "provider_version": "2026-08",
+      "operation": "url_reputation_lookup",
+      "attempts": 1,
+      "network_calls": 1,
+      "latency_ms": 18,
+      "request_units": 1,
+      "response_units": 0,
+      "tokens": 0,
+      "estimated_cost_usd": 0,
+      "observed_at": "2026-08-07T13:00:00Z"
+    }
+  }
+}

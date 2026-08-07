@@ -234,8 +234,25 @@ class AgentState(TypedDict, total=False):
     scoring_version: str
 ```
 
-`WorkflowState` bổ sung summary, route, target, attempt/budget/deadline, blocked/blacklisted target và
-các field `llm_*`. Những field riêng này không đi vào `AnalysisResponse`.
+`WorkflowState` bổ sung summary, route, target, attempt/budget/deadline, blocked/blacklisted target,
+các field `llm_*` và các Wave 0 field riêng sau:
+
+```text
+provisional_warning  ProvisionalWarning | null
+active_warning       provisional | final
+step_transitions     LiveStepTransition[]
+tool_usage_refs      string[]
+campaign_features    CampaignFeatures
+campaign_hypotheses  CampaignHypothesis[]
+```
+
+`ProvisionalWarning` chỉ cho phép medium/high/critical, bắt buộc evidence refs và literal
+`is_provisional=true`. `LiveStepTransition` chỉ gồm stable step fields, status và UTC timestamp;
+không có rationale/trace. `CampaignFeatures` chỉ chứa registrable domain, redirect target và opaque
+claim feature refs; `CampaignHypothesis` luôn `reviewer_required=true` và
+`broad_warning_approved=false`. Những field riêng này và mọi `llm_*` không đi vào
+`AnalysisResponse`. Final action node đặt `active_warning=final` và xóa provisional warning để không
+có hai kết luận cùng active.
 
 `InvestigationStep` gồm đúng sáu field: `step_id`, `tool`, `target`, `reason_code`, `depends_on`,
 `status`. Không thêm free-form rationale hoặc model trace.
@@ -282,6 +299,9 @@ vì chưa có adapter mapping.
 - Fact-check chỉ ảnh hưởng điểm khi stance đã normalize và relevance đạt threshold.
 - Blacklist/malicious provider evidence có thể tạo malicious verdict và escalation theo rule.
 - Provider unavailable/no-hit/empty result phải tạo limitation khi làm giảm coverage.
+- LLM output schema không có quyền ghi `risk_score`, `risk_level`, `verdict`,
+  `recommended_action` hoặc `case_status`; extra field bị reject và deterministic output được giữ.
+- Provider no-hit hoặc timeout không có code path tạo verdict `safe`.
 
 ## 9. Fixture contract hiện tại
 
@@ -329,12 +349,15 @@ evidence requirement và safety invariant. Unit/integration/eval mặc định p
 Các endpoint này không được frontend product dùng và không có compatibility guarantee của analysis
 contract v2.
 
-## 11. Final contract v3 target — Wave 0
+## 11. Frozen contract v3 — Wave 0
 
-Phần này là contract đích của final product và được freeze trong Wave 0 trước khi bốn coding agents
-triển khai feature. Nó **chưa phải runtime hiện tại**, không thay đổi wire contract v2 và không được
-client gọi trước khi Pydantic/OpenAPI, migrations và contract tests v3 được merge. Release v3 đầu tiên
-giữ các read path v2 tương thích; breaking capability mới chỉ xuất hiện dưới `/api/v3`.
+Phần này là contract final product đã được freeze trong Wave 0. Pydantic source of truth nằm tại
+`src/models/schemas.py`, OpenAPI được phát từ `src/main.py`, và schema/migration plan nằm tại
+`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter đã có dưới `/api/v3` để client
+tích hợp sớm. WebSocket ticket, appeal, reviewed action, campaign và metrics đã có đầy đủ request/
+response schema và route trong OpenAPI nhưng chủ động trả 501 cho tới wave triển khai tương ứng;
+không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path v2 tương thích; capability mới chỉ
+xuất hiện dưới `/api/v3`.
 
 ### 11.0 Versioning và core routes
 
@@ -360,7 +383,7 @@ v2 create được đánh dấu deprecated khi v3 production-ready và không nh
 `GET /api/v3/analyses/{id}/events` vẫn là fallback và nguồn replay.
 
 Event v3 dùng envelope có `event_id`, `analysis_id`, `sequence`, `event_type`, `occurred_at` và
-payload typed. Event types dự kiến:
+payload typed. Event types đã freeze:
 
 ```text
 analysis_status | step_transition | provisional_warning | final_result | case_update | limitation
@@ -368,12 +391,12 @@ analysis_status | step_transition | provisional_warning | final_result | case_up
 
 `provisional_warning` bắt buộc có `risk_level`, `summary`, `evidence_refs` và
 `is_provisional: true`; không dùng verdict `safe`. `final_result` chỉ tham chiếu response đã persist.
-Sequence tăng đơn điệu trong một analysis; reconnect dùng `last_event_id` và event delivery có thể
-at-least-once nên client dedupe bằng `event_id`.
+Sequence tăng đơn điệu trong một analysis; polling/reconnect gửi lại opaque `next_cursor` dưới query
+`cursor`, và event delivery có thể at-least-once nên client dedupe bằng `event_id`.
 
 ### 11.2 Appeal và Human-in-the-loop
 
-API dự kiến:
+API đã freeze:
 
 | Method | Path | Quyền/hành vi |
 |---|---|---|
@@ -381,15 +404,16 @@ API dự kiến:
 | GET | `/api/v3/appeals/{id}` | Owner hoặc admin xem trạng thái/kết quả. |
 | GET | `/api/v3/admin/appeals` | Admin list queue có pagination/filter. |
 | POST | `/api/v3/admin/appeals/{id}/decision` | Admin uphold/overturn/inconclusive kèm note. |
+| GET | `/api/v3/admin/actions` và `/{id}` | Admin đọc proposal và immutable evidence snapshot. |
 | POST | `/api/v3/admin/actions/{id}/decision` | Duyệt/từ chối blacklist, block hoặc broad warning. |
 
-Planned action enum là `add_to_blacklist | disable_blacklist | block_domain |
+Reviewed action enum là `add_to_blacklist | disable_blacklist | block_domain |
 publish_broad_warning | none`. Mọi action ngoài `none` cần approved decision, reviewer, evidence
 snapshot, note, timestamp và audit. Overturn tạo record mới và giữ lịch sử, không xóa decision cũ.
 
 ### 11.3 Campaign và operations dashboard
 
-Admin-only read APIs dự kiến:
+Admin-only read APIs đã freeze:
 
 - `GET /api/v3/admin/campaigns` và `/api/v3/admin/campaigns/{id}` trả cluster hypothesis, time window, aggregate
   signals, evidence refs và reviewer status; không trả sender social graph/raw private messages.
@@ -401,6 +425,25 @@ cost, latency, cache status và outcome; target/raw prompt không thuộc public
 
 ### 11.4 Advanced tool contract
 
+Wave 0 freeze nằm tại `src/agents/tools/protocols.py` và `src/agents/tools/models.py`. Năm boundary
+provider-neutral là:
+
+```text
+UrlReputationProvider.lookup  -> NormalizedToolResult[UrlReputationFinding]
+UrlReputationCascade.assess   -> NormalizedToolResult[UrlReputationCascadeResult]
+RedirectResolver.resolve      -> NormalizedToolResult[RedirectResolutionResult]
+RdapProvider.lookup           -> NormalizedToolResult[DomainIntelligenceResult]
+FactCheckCorpus.search        -> NormalizedToolResult[FactCheckSearchResult]
+ScreenshotRenderer.render     -> NormalizedToolResult[ScreenshotResult]
+```
+
+Mọi boundary dùng cùng envelope gồm `status`, đúng một trong `result/error`, `cache` và `usage`.
+`cache` chỉ lộ SHA-256 cache-key hash, hit/miss/bypass và TTL; `usage` chỉ chứa provider/version,
+operation, attempts/network calls, latency, units/token và estimated cost. Không model nào có field
+raw provider body, request target, prompt, cookie hoặc credential. Cache hit bắt buộc có
+`network_calls=0`; 429 dùng `RATE_LIMITED` và optional `retry_after_ms`; provider no-hit bắt buộc là
+`inconclusive`, không được normalize thành `safe`.
+
 `ScreenshotRenderer` chỉ được thêm vào allowlist khi có sandbox implementation và security tests.
 Input là normalized public HTTP(S) URL đã consent; output chỉ gồm final URL, image/artifact reference,
 visible-text hash, render signals và observed time. Không trả cookie, credential, DOM/raw page body
@@ -411,6 +454,11 @@ time, embedding model/version và ingestion provenance. Vector similarity chỉ 
 ClaimEvidence stance vẫn phải đến từ normalized source metadata/reviewer, không suy ra từ similarity.
 
 ### 11.5 Fixture additions trước final v3 release gate
+
+Fixture Wave 0 đã có tại `tests/fixtures/tool_responses/`: consent/no-consent policy,
+`url_reputation_v3.json` (no-hit/conflict/429), `redirect_resolver.json` (public/private-hop/loop),
+`rdap_v3.json` (cache/429), và `screenshot_renderer.json` (credential/private-IP/redirect escape/
+download/timeout). Tất cả đều offline và validate qua đúng normalized envelope.
 
 - provisional → final upgrade, WebSocket reconnect/replay và duplicate event;
 - no-consent chứng minh không tạo provider/renderer client;

@@ -232,6 +232,12 @@ thay thế nó sau khi workflow hoàn tất. Mục tiêu p95 là 1 giây cho pro
 khi provider bình thường. WebSocket truyền cùng schema event với polling fallback; disconnect không
 hủy analysis và reconnect phải đọc lại event đã persist.
 
+Wave 0 tách bốn injectable boundary tại `src/agents/seams.py`: `ProgressSink`, `RiskEngine`,
+`ExplanationEngine` và `CampaignDetector`. Default risk/explanation chỉ bọc deterministic v2
+functions; default campaign detector và progress persistence là no-op. Planning loop đã phát typed
+transition qua sink boundary, còn durable persistence/replay thuộc Wave 1. Campaign detector chỉ có
+thể trả admin hypothesis với approval flags fail-closed; clustering thật thuộc Wave 2.
+
 ### 9.2 Provider, budget và cost routing
 
 - `UrlScanner` là protocol chung cho Google Safe Browsing/Web Risk hoặc VirusTotal. Provider no-hit
@@ -284,10 +290,10 @@ và phê duyệt, không online-learn trực tiếp.
 ```text
 src/
 ├── agents/          # state, graph, nodes, tool protocols/adapters
-├── api/             # v2 routes và dependency wiring
+├── api/             # v2 routes, frozen v3 contract routes và dependency wiring
 ├── services/        # application service + graph processor
 ├── repositories/    # SQLite persistence và fact-check corpus
-├── models/          # strict Pydantic v2 contract
+├── models/          # strict, separately versioned Pydantic v2/v3 contracts
 ├── core/            # auth và platform errors
 └── main.py          # FastAPI app
 frontend/src/        # Next.js UI, API clients, shared TS contract

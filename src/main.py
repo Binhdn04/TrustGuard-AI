@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api.dependencies import close_analysis_service
+from src.api.platform_v3 import router as platform_v3_router
 from src.api.routes import router
 from src.config import get_settings
 from src.core.errors import PlatformError
@@ -25,9 +26,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI20K Agent",
-    description="AI Agent built with LangGraph",
-    version="1.0.0",
+    title="TrustGuard AI",
+    description="Evidence-grounded risk analysis API",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -41,6 +42,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v2")
+app.include_router(platform_v3_router, prefix="/api/v3")
 
 
 @app.exception_handler(PlatformError)
