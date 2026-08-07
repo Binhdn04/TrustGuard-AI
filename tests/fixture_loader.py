@@ -6,6 +6,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.agents.tools.models import (
+    NormalizedToolResult,
+    RedirectResolutionResult,
+    ScreenshotResult,
+    ToolName,
+    UrlReputationCascadeResult,
+)
 from src.models import (
     CaseStatus,
     ClaimEvidence,
@@ -109,6 +116,20 @@ class DomainIntelligenceFixtureResponse(FixtureModel):
         return self
 
 
+class ToolPolicyFixture(FixtureModel):
+    consent_to_scan_urls: bool
+    requested_tools: list[ToolName]
+    allowed_tools: list[ToolName]
+
+    @model_validator(mode="after")
+    def enforce_consent(self) -> ToolPolicyFixture:
+        if not set(self.allowed_tools) <= set(self.requested_tools):
+            raise ValueError("allowed tools must be requested")
+        if not self.consent_to_scan_urls and self.allowed_tools:
+            raise ValueError("external tools require consent")
+        return self
+
+
 def load_analyses(path: Path = FIXTURE_ROOT / "analyses.jsonl") -> list[AnalysisFixture]:
     fixtures: list[AnalysisFixture] = []
     with path.open(encoding="utf-8") as stream:
@@ -148,3 +169,32 @@ def load_blacklist_responses() -> dict[str, BlacklistFixtureResponse]:
 def load_domain_intelligence_responses() -> dict[str, DomainIntelligenceFixtureResponse]:
     payload = _load_json(FIXTURE_ROOT / "tool_responses" / "domain_intelligence.json")
     return {key: DomainIntelligenceFixtureResponse.model_validate(value) for key, value in payload.items()}
+
+
+def load_tool_policy_responses() -> dict[str, ToolPolicyFixture]:
+    payload = _load_json(FIXTURE_ROOT / "tool_responses" / "tool_policy.json")
+    return {key: ToolPolicyFixture.model_validate(value) for key, value in payload.items()}
+
+
+def load_url_reputation_v3_responses() -> dict[str, NormalizedToolResult[UrlReputationCascadeResult]]:
+    payload = _load_json(FIXTURE_ROOT / "tool_responses" / "url_reputation_v3.json")
+    model = NormalizedToolResult[UrlReputationCascadeResult]
+    return {key: model.model_validate(value) for key, value in payload.items()}
+
+
+def load_redirect_resolver_responses() -> dict[str, NormalizedToolResult[RedirectResolutionResult]]:
+    payload = _load_json(FIXTURE_ROOT / "tool_responses" / "redirect_resolver.json")
+    model = NormalizedToolResult[RedirectResolutionResult]
+    return {key: model.model_validate(value) for key, value in payload.items()}
+
+
+def load_rdap_v3_responses() -> dict[str, NormalizedToolResult[DomainIntelligenceResult]]:
+    payload = _load_json(FIXTURE_ROOT / "tool_responses" / "rdap_v3.json")
+    model = NormalizedToolResult[DomainIntelligenceResult]
+    return {key: model.model_validate(value) for key, value in payload.items()}
+
+
+def load_screenshot_responses() -> dict[str, NormalizedToolResult[ScreenshotResult]]:
+    payload = _load_json(FIXTURE_ROOT / "tool_responses" / "screenshot_renderer.json")
+    model = NormalizedToolResult[ScreenshotResult]
+    return {key: model.model_validate(value) for key, value in payload.items()}

@@ -1,136 +1,211 @@
 # Contract and Fixtures — P-068
 
-**Document revision:** `v2.0` (wire field `contract_version: "v2"`, API path `/api/v2`)
-**Freeze date:** 2026-08-06
+**Document revision:** 2.1 — 2026-08-07
 
-> Đây là nguồn sự thật duy nhất cho API schema, AgentState, enum, tool interface, fixture và safety invariant.
+**Wire contract:** `contract_version: "v2"`, base path `/api/v2`
 
-## 1. Quy ước và enum
+**Source of truth in code:** `src/models/schemas.py`
 
-- JSON `snake_case`; timestamp UTC ISO 8601; ID là UUID do backend sinh.
-- Field kết quả chưa có khi analysis đang chạy dùng `null`/omitted theo schema; string có mặt không
-  được rỗng. Dữ liệu RDAP không có dùng `null`, không dùng chuỗi rỗng hoặc giá trị suy đoán.
-- Risk score là integer `[0,100]`. `domain_registration` là một giá trị bắt buộc của enum v2;
-  mọi consumer/UI của dự án phải dùng contract `/api/v2` và validate enum này trước khi server
-  phát domain-registration evidence. Vì v1 chưa production, không duy trì endpoint, payload hay
-  lớp tương thích v1.
+> Đây là mô tả contract đang được backend và TypeScript client triển khai. Nếu tài liệu và Pydantic
+> model khác nhau, model cùng contract tests thắng. v1 chưa production nên không có compatibility
+> layer.
 
-```python
-InputType = Literal["text", "url", "text_with_url"]
-AnalysisStatus = Literal["queued", "running", "completed", "failed"]
-RiskLevel = Literal["low", "medium", "high", "critical"]
-Verdict = Literal["safe", "suspicious", "malicious", "inconclusive"]
-EvidenceType = Literal[
-    "url_rule", "domain_reputation", "redirect", "blacklist",
-    "domain_registration", "fact_check", "official_source", "user_report"
-]
-InvestigationStepStatus = Literal["pending", "running", "completed", "skipped", "failed"]
-InvestigationTool = Literal[
-    "local_rules", "blacklist_lookup", "url_scanner", "redirect_resolver",
-    "domain_intelligence", "claim_retriever"
-]
-CaseStatus = Literal["not_required", "pending_review", "approved", "rejected"]
-RecommendedAction = Literal["allow", "show_caution", "do_not_open", "escalate_for_review"]
+## 1. Quy ước chung
+
+- JSON dùng `snake_case`; ID public là UUID; timestamp phải là UTC ISO 8601.
+- Pydantic contract dùng `extra="forbid"`; field ngoài schema bị từ chối.
+- String có mặt không được rỗng hoặc chỉ có whitespace, kể cả field optional khi được gửi.
+- Kết quả chưa có ở trạng thái `queued/running/failed` dùng `null`; `investigation_plan` mặc định
+  là mảng rỗng.
+- Completed response phải có đủ mọi result field và `risk_level` phải khớp `risk_score`.
+- Score là integer 0–100; confidence là number 0–1.
+- External evidence có `source`, `title`, `finding`, `observed_at`; `url` có thể `null`.
+
+## 2. Enum v2
+
+```text
+InputType               text | url | text_with_url
+AnalysisStatus          queued | running | completed | failed
+RiskLevel               low | medium | high | critical
+Verdict                 safe | suspicious | malicious | inconclusive
+EvidenceType            url_rule | domain_reputation | redirect | blacklist |
+                        domain_registration | fact_check | official_source | user_report
+InvestigationStepStatus pending | running | completed | skipped | failed
+InvestigationTool       local_rules | blacklist_lookup | url_scanner | redirect_resolver |
+                        domain_intelligence | claim_retriever
+ClaimStance             supports | refutes | mixed | unrated
+CaseStatus              not_required | pending_review | approved | rejected
+RecommendedAction       allow | show_caution | do_not_open | escalate_for_review
+ReviewDecision          approved | rejected
+ReviewAction            add_to_blacklist | none
 ```
 
-| Score | Level | Default action |
+| Score | Risk level | Default action |
 |---:|---|---|
 | 0–29 | `low` | `allow` |
 | 30–59 | `medium` | `show_caution` |
 | 60–84 | `high` | `do_not_open` |
 | 85–100 | `critical` | `escalate_for_review` |
 
-`verdict` biểu diễn kết luận từ evidence; `risk_level` chỉ là bucket của điểm. Provider failure có thể dẫn đến `inconclusive`, không tạo thêm risk level.
+`verdict` là kết luận từ evidence, không phải tên khác của risk bucket. Ví dụ score thấp vẫn có thể
+`inconclusive` khi không có đủ dữ liệu.
 
-## 2. Public API v2
+## 3. Public analysis API
 
-Đây là public contract duy nhất. Client dùng domain intelligence gọi `/api/v2`; không dùng content
-negotiation hay feature flag để phát schema/enum khác nhau cho cùng endpoint.
+Tất cả endpoint dưới đây yêu cầu `Authorization: Bearer <token>`. Dev defaults là
+`dev-user-token` và `dev-admin-token`; chúng không phải production credentials.
 
-### `POST /api/v2/analyses` — `202 Accepted`
+### `POST /api/v2/analyses` — 202
 
-```json
-{"message":"Tập đoàn X tặng quà tại https://example.com/claim","consent_to_scan_urls":true}
-```
-
-Validation: `message` dài 1–5.000 ký tự. Response:
+Request:
 
 ```json
 {
-  "contract_version":"v2",
-  "analysis_id":"550e8400-e29b-41d4-a716-446655440000",
-  "status":"queued",
-  "created_at":"2026-08-03T13:00:00Z"
+  "message": "Tập đoàn X tặng quà tại https://example.com/claim",
+  "consent_to_scan_urls": true
 }
 ```
 
-### `GET /api/v2/analyses/{analysis_id}` — `200 OK`
+`message` dài 1–5.000 ký tự sau khi áp dụng invariant không-whitespace. Response:
 
 ```json
 {
-  "contract_version":"v2",
-  "analysis_id":"550e8400-e29b-41d4-a716-446655440000",
-  "status":"completed",
-  "input_type":"text_with_url",
-  "normalized_urls":["https://example.com/claim"],
-  "claims":["Tập đoàn X đang tặng quà"],
-  "investigation_plan":[{
-    "step_id":"step-1",
-    "tool":"blacklist_lookup",
-    "target":"example.com",
-    "reason_code":"url_present",
-    "depends_on":[],
-    "status":"completed"
-  }],
-  "risk_score":78,
-  "risk_level":"high",
-  "verdict":"suspicious",
-  "recommended_action":"do_not_open",
-  "confidence":0.74,
-  "summary":"Liên kết có dấu hiệu mạo danh và chưa được nguồn chính thức xác nhận.",
-  "reasons":["Tên miền không thuộc danh sách chính thức."],
-  "evidence":[{
-    "type":"domain_registration",
-    "source":"iana-rdap",
-    "title":"Thông tin đăng ký domain",
-    "url":null,
-    "finding":"Domain được đăng ký 12 ngày trước; dữ liệu registrant bị redacted.",
-    "observed_at":"2026-08-03T13:00:00Z"
-  }],
-  "limitations":["Chưa đủ bằng chứng để kết luận chắc chắn là lừa đảo."],
-  "case_status":"not_required",
-  "scoring_version":"risk-v2",
-  "created_at":"2026-08-03T13:00:00Z",
-  "completed_at":"2026-08-03T13:00:09Z"
+  "contract_version": "v2",
+  "analysis_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "queued",
+  "created_at": "2026-08-07T09:00:00Z"
 }
 ```
 
-`investigation_plan` có mặt cho mọi analysis. Khi `queued`/`running`, các trường kết quả nullable.
-User chỉ đọc analysis của mình; admin đọc case đã escalate.
+Response chỉ xác nhận enqueue vào background task trong process; không có nghĩa workflow đã hoàn
+tất hoặc có durable queue.
 
-### Các endpoint còn lại
+### `GET /api/v2/analyses/{analysis_id}` — 200
 
-- `GET /api/v2/analyses`: lịch sử của user hiện tại.
-- `POST /api/v2/analyses/{analysis_id}/reports`: `{reason, comment?}`; chỉ tạo report.
-- `GET /api/v2/admin/cases`: review queue, role `security_admin`.
-- `POST /api/v2/admin/cases/{analysis_id}/decision`: `{decision: approved|rejected, action: add_to_blacklist|none, note}`.
-- `GET /api/v2/analyses/{analysis_id}/events`: polling fallback; WebSocket phát cùng event schema
-  `{analysis_id,status,step,occurred_at,step_id?,step_status?}`. Các field task-plan được áp dụng
-  nhất quán cho mọi producer và consumer v2.
-
-`investigation_plan` là task trace có cấu trúc để UI giải thích agent đang làm gì; không chứa
-chain-of-thought. `tool` chỉ nhận giá trị trong `InvestigationTool`.
-Mỗi `step_id` ổn định trong một analysis; `depends_on` là danh sách `step_id`, không phải tên tool.
-
-Error envelope:
+Completed example:
 
 ```json
-{"error":{"code":"VALIDATION_ERROR","message":"message must contain 1 to 5000 characters","retryable":false,"details":{}}}
+{
+  "contract_version": "v2",
+  "analysis_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "input_type": "text_with_url",
+  "normalized_urls": ["https://example.com/claim"],
+  "claims": ["Tập đoàn X đang tặng quà"],
+  "investigation_plan": [
+    {
+      "step_id": "step-15f2f4fdd850",
+      "tool": "blacklist_lookup",
+      "target": "example.com",
+      "reason_code": "url_present",
+      "depends_on": ["step-5b94155dab48"],
+      "status": "completed"
+    }
+  ],
+  "risk_score": 78,
+  "risk_level": "high",
+  "verdict": "suspicious",
+  "recommended_action": "do_not_open",
+  "confidence": 0.74,
+  "summary": "Liên kết có dấu hiệu đáng ngờ và chưa được nguồn chính thức xác nhận.",
+  "reasons": ["Tên miền không thuộc nguồn chính thức đã biết."],
+  "evidence": [
+    {
+      "type": "domain_registration",
+      "source": "iana-rdap/rdap-v1/psl-2026-08-06",
+      "title": "Thông tin đăng ký domain",
+      "url": null,
+      "finding": "registered_at=2026-07-26T09:00:00+00:00",
+      "observed_at": "2026-08-07T09:00:00Z"
+    }
+  ],
+  "limitations": ["Chưa đủ bằng chứng để kết luận chắc chắn."],
+  "case_status": "not_required",
+  "scoring_version": "risk-v2",
+  "created_at": "2026-08-07T09:00:00Z",
+  "completed_at": "2026-08-07T09:00:09Z"
+}
 ```
 
-Mã tối thiểu: `VALIDATION_ERROR` 422, `FORBIDDEN` 403, `NOT_FOUND` 404, `RATE_LIMITED` 429, `PROVIDER_TIMEOUT` 503, `INTERNAL_ERROR` 500.
+`step_id` là opaque, ổn định trong một analysis và hiện được derive deterministic từ tool/target.
+Consumer không được tự tính hoặc phụ thuộc vào giá trị hash cụ thể.
 
-## 3. AgentState và node contract
+### Các endpoint user khác
+
+| Method | Path | Response/behavior |
+|---|---|---|
+| GET | `/api/v2/analyses` | Danh sách analysis của principal hiện tại, mới nhất trước. |
+| GET | `/api/v2/analyses/{id}/events` | Mảng `AnalysisEvent` để polling. |
+| POST | `/api/v2/analyses/{id}/reports` | Tạo report; body `{reason, comment?}`, trả 201 receipt. |
+
+`AnalysisEvent`:
+
+```json
+{
+  "analysis_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "running",
+  "step": "url_scanner",
+  "occurred_at": "2026-08-07T09:00:04Z",
+  "step_id": "step-opaque",
+  "step_status": "completed"
+}
+```
+
+`step_id` và `step_status` là nullable. Hiện không có WebSocket endpoint. Processor phát step event
+sau khi graph trả plan cuối, nên event contract đúng nhưng timing chưa phải realtime transition.
+
+## 4. Admin API
+
+Tất cả endpoint yêu cầu role `security_admin`.
+
+| Method | Path | Contract |
+|---|---|---|
+| GET | `/api/v2/admin/cases` | Các analysis đang `pending_review`, cũ nhất trước. |
+| GET | `/api/v2/admin/reports?limit=50&offset=0` | `AnalysisReportRecord[]`; limit 1–100. |
+| GET | `/api/v2/admin/decisions?limit=50&offset=0` | `AdminDecisionAudit[]`; limit 1–100. |
+| GET | `/api/v2/admin/blacklist?query=&limit=50&offset=0` | `BlacklistEntry[]`; query tối đa 253 ký tự. |
+| POST | `/api/v2/admin/cases/{id}/decision` | Review case và optional blacklist write. |
+
+Decision request:
+
+```json
+{
+  "decision": "approved",
+  "action": "add_to_blacklist",
+  "note": "Evidence is sufficient."
+}
+```
+
+`add_to_blacklist` chỉ hợp lệ với `approved`. Analysis phải đang `pending_review`; trường hợp khác
+trả 409. SQLite implementation commit decision audit, case state, event, outbox và blacklist trong
+cùng transaction. Các domain hiện được lấy từ hostname trong `normalized_urls` của result và được
+IDNA-normalize; service chưa quy mọi subdomain về registrable domain/eTLD+1.
+
+## 5. Error contract
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed.",
+    "retryable": false,
+    "details": {}
+  }
+}
+```
+
+Các code public đã định nghĩa:
+
+```text
+VALIDATION_ERROR | FORBIDDEN | NOT_FOUND | RATE_LIMITED |
+PROVIDER_TIMEOUT | INTERNAL_ERROR
+```
+
+FastAPI request validation trả 422 envelope. `PlatformError` được map theo status do service cung
+cấp. Exception bất ngờ trong background processor không lộ raw detail; analysis chuyển `failed`.
+Legacy `/api/v2/chat` vẫn có thể trả FastAPI `detail` khi lỗi và không thuộc contract này.
+
+## 6. Public AgentState và private WorkflowState
 
 ```python
 class AgentState(TypedDict, total=False):
@@ -159,27 +234,30 @@ class AgentState(TypedDict, total=False):
     scoring_version: str
 ```
 
-`InvestigationStep` gồm `step_id: str`, `tool: InvestigationTool`, `target: str`,
-`reason_code: str`, `depends_on: list[str]`, `status: InvestigationStepStatus`. Không có field
-rationale tự do hoặc prompt/model trace.
+`WorkflowState` bổ sung summary, route, target, attempt/budget/deadline, blocked/blacklisted target,
+các field `llm_*` và các Wave 0 field riêng sau:
 
-| Node | Đọc | Ghi | Cấm |
-|---|---|---|---|
-| `classify_input` | message | input_type | External call |
-| `extract_indicators` | message | URLs, claims | Chấm điểm cuối |
-| `analyze_message` | message, extracted indicators | context, emotion, sender intent, scam indicators, claims | Quy kết ý đồ cho user; tạo evidence |
-| `normalize_and_check_rules` | URLs | normalized URLs, rule evidence | Truy cập URL đích |
-| `plan_tools` | semantic state, indicators | ordered task plan + reason codes | Lưu chain-of-thought; vượt allowlist/consent/SSRF/budget |
-| `plan_next_tool` | state/budget + proposal | route | Chọn tool ngoài allowlist |
-| `scan_urls` | URL + consent | findings/evidence/errors | Scan khi thiếu consent hoặc trước executor hard gate |
-| `inspect_domains` | registrable domains + consent | domain findings/evidence/errors | Tạo provider work trước hard gate; tra IP/public suffix; suy diễn field RDAP bị thiếu; bypass network guard/budget |
-| `verify_claims` | claims | findings/evidence/errors | Khẳng định không có nguồn |
-| `assess_risk` | structured evidence | score/level/verdict/confidence | Ghi blacklist, dùng LLM tự do làm điểm |
-| `review_assessment` | deterministic assessment/evidence | narrative, missing information, evidence indexes | Sửa score/verdict; thêm evidence |
-| `explain_result` / `generate_response` | assessment/evidence | summary/reasons/limitations | Thêm evidence không tồn tại; sửa action |
-| `route_action` | assessment | action/case status | Tự chặn domain |
+```text
+provisional_warning  ProvisionalWarning | null
+active_warning       provisional | final
+step_transitions     LiveStepTransition[]
+tool_usage_refs      string[]
+campaign_features    CampaignFeatures
+campaign_hypotheses  CampaignHypothesis[]
+```
 
-## 4. Tool interfaces
+`ProvisionalWarning` chỉ cho phép medium/high/critical, bắt buộc evidence refs và literal
+`is_provisional=true`. `LiveStepTransition` chỉ gồm stable step fields, status và UTC timestamp;
+không có rationale/trace. `CampaignFeatures` chỉ chứa registrable domain, redirect target và opaque
+claim feature refs; `CampaignHypothesis` luôn `reviewer_required=true` và
+`broad_warning_approved=false`. Những field riêng này và mọi `llm_*` không đi vào
+`AnalysisResponse`. Final action node đặt `active_warning=final` và xóa provisional warning để không
+có hai kết luận cùng active.
+
+`InvestigationStep` gồm đúng sáu field: `step_id`, `tool`, `target`, `reason_code`, `depends_on`,
+`status`. Không thêm free-form rationale hoặc model trace.
+
+## 7. Tool contracts
 
 ```python
 class UrlScanner(Protocol):
@@ -195,139 +273,197 @@ class DomainIntelligence(Protocol):
     async def lookup(self, domain: str) -> DomainIntelligenceResult: ...
 
 class BlacklistRepository(Protocol):
-    async def get(self, domain: str) -> BlacklistEntry | None: ...
+    async def get(self, domain: str) -> BlacklistLookupEntry | None: ...
     async def add_approved(self, domain: str, decision_id: str) -> None: ...
 ```
 
-Adapter trả model nội bộ, không truyền raw response. `UrlScanResult` tối thiểu có provider,
-normalized URL, verdict, signals, observed_at; field `redirect_chain` hiện có được giữ để tương
-thích nhưng provider reputation được phép trả rỗng. `RedirectResult` mới là nguồn sự thật cho
-redirect metadata. `ClaimEvidence` có source/title/url/finding/relevance/observed_at và
-`stance: supports|refutes|mixed|unrated`; scoring dùng stance đã chuẩn hóa,
-không dò keyword trong `finding`. `DomainIntelligenceResult` có `provider`, `domain`, nullable
-`registered_at`, nullable `expires_at`, nullable `registrar`, nullable `country`,
-`status`, `privacy_redacted`, `signals` và `observed_at`. `BlacklistEntry` tối thiểu có `domain`,
-`decision_id`, `source`, `added_at`, `active`. Không lưu RDAP entity/vCard, registrant
-name/email/phone/address hoặc raw response.
+Important model rules:
 
-### 4.1 Adapter profile hiện tại
+- `UrlScanResult`: provider, normalized URL, verdict, redirect chain, signals, observed time.
+- Provider no-hit phải là `inconclusive`, không phải `safe`.
+- `ClaimEvidence`: source/title/url/finding/relevance/stance/observed time; scoring dùng stance.
+- `DomainIntelligenceResult`: registration/expiry/registrar/country nullable, status, redaction,
+  signals và observed time; không có registrant entity/vCard/raw response.
+- `BlacklistLookupEntry`: domain, decision provenance, source, added time và active flag.
+- Adapter exception được normalize thành private `ToolError`; không trả raw provider payload.
 
-- URL reputation adapter hiện tại là Google Safe Browsing v4. Vì v4 đã deprecated, nó chỉ là
-  compatibility adapter tạm thời. Replacement giữ nguyên `UrlScanner` protocol:
-  `GoogleSafeBrowsingV5Scanner` gọi `GET /v5/urls:search` cho non-commercial;
-  `GoogleWebRiskScanner` gọi `GET /v1/uris:search` cho commercial. Threat match thành `malicious`;
-  no-hit luôn thành `inconclusive`, không phải `safe`, bất kể ví dụ provider gọi empty response là safe.
-- Cache phải theo response provider: Safe Browsing v5 áp dụng `cacheDuration` cho cả match/no-match;
-  Web Risk không giữ positive match quá `expireTime`. Cache key gồm provider + API version +
-  normalized URL; không dùng cache v4 sau cutover.
-- Fact-check production adapter: Google Fact Check Tools API. Chỉ các review có provenance được
-  chuyển thành `ClaimEvidence`; rating được map bằng bảng provider/versioned sang `stance`. Rating
-  không biết thành `unrated`, không đoán bằng chuỗi tự do. Mọi review từ API có type `fact_check`;
-  chỉ nguồn nằm trong official-source registry mới được type `official_source`. Adapter dùng
-  endpoint [`claims.search`](https://developers.google.com/fact-check/tools/api/reference/rest/v1alpha1/claims/search).
-- Offline fact-check adapter: corpus JSON gồm các bản ghi hợp lệ theo `ClaimEvidence`, tìm kiếm từ
-  khóa và xếp hạng deterministic.
-- Provider timeout/lỗi HTTP/lỗi payload được chuyển thành `ToolError`; message lỗi không chứa API
-  key, query string nhạy cảm hoặc raw response.
-- Domain intelligence MVP chỉ dùng RDAP-over-HTTPS với IANA bootstrap; WHOIS TCP không nằm trong
-  MVP. Target là registrable domain được suy ra bằng Public Suffix List đóng gói/versioned; IP
-  literal và public suffix bị skip. Tuổi domain được tính deterministic từ registration event;
-  dữ liệu thiếu/redacted không thành tín hiệu xấu. Timeout mặc định 5 giây; cache positive và
-  `not_found` bằng TTL riêng, không cache timeout/429/provider error như kết quả hợp lệ.
-- RDAP base URL lấy từ bootstrap vẫn là external target: chỉ HTTPS, validate DNS/public IP và
-  revalidate redirect. Response giới hạn kích thước và chỉ parse field allowlist.
-- URL reputation provider có endpoint cố định không fetch URL đích, nên không resolve DNS target.
-  `RedirectResolver` mới dùng `GuardedHttpClient`: URL tuyệt đối `http`/`https`, không credential,
-  port 80/443, mọi DNS answer public/global, revalidate từng hop, tối đa 5 redirect và 1 MB response.
-- Blacklist repository chuẩn hóa **registrable domain** bằng IDNA. `get()` phải trả provenance để
-  evidence không dựa vào boolean vô danh. `add_approved(domain,
-  decision_id)` chỉ thành công nếu repository đã có audit decision tương ứng với
-  `decision=approved` và `action=add_to_blacklist`.
+Redirect protocol có trong contract nhưng executor hiện đánh dấu `redirect_resolver` là unsupported
+vì chưa có adapter mapping.
 
-### 4.2 LLM contract
+## 8. Scoring invariants
 
-- Production model baseline: `gpt-4o-mini` (hiện vẫn supported, không nằm trong deprecation list tại
-  ngày freeze); temperature `0`, timeout 15 giây và tối đa một retry. Model ID/snapshot được inject
-  từ config, không hard-code trong node và không lưu object model trong AgentState/checkpoint.
-- Mọi call dùng Pydantic structured output. Bốn output nội bộ là `MessageAnalysis`,
-  `ToolPlan`, `AssessmentReview` và `GroundedResponse`. `ToolPlan` tối đa ba tool; planner không
-  sinh local rule/blacklist step.
-- `sender_intent` mô tả ý đồ có khả năng của người tạo/gửi nội dung được dán, không phải
-  ý đồ của user đang yêu cầu kiểm tra.
-- `ToolPlan.tools` chỉ nhận `url_scanner|domain_intelligence|claim_retriever`. Blacklist lookup
-  luôn do code lập lịch trước provider. Với mọi URL/domain lookup, executor phải kiểm tra
-  `consent_to_scan_urls is true` **trước** khi tạo task, fan-out, request hoặc provider client;
-  target sau đó vẫn phải qua SSRF, retry và budget. Khi không có consent, chỉ local
-  rules/blacklist và limitation được phép chạy. Code có thể bổ sung tool cần thiết bị model bỏ sót.
-- `AssessmentReview` tham chiếu evidence bằng zero-based index. Mỗi reason của
-  `GroundedResponse` là cặp `{evidence_index, text}`. Index không tồn tại bị loại bỏ;
-  response có evidence nhưng không còn reason hợp lệ sẽ bị thay bằng fallback.
-- Các field orchestration như `llm_context`, `llm_emotion`, `llm_sender_intent`,
-  `llm_tool_plan`, `llm_assessment`, `llm_*_evidence_indexes` và `llm_errors` là private
-  `WorkflowState`, không mở rộng public `AgentState` contract v2.
+- `SCORING_VERSION = "risk-v2"`.
+- Score chỉ dùng structured rule/tool findings, không dùng prose LLM.
+- RDAP signals bị cap tổng cộng 20 điểm; recent registration một mình giữ verdict inconclusive.
+- Privacy redaction không tăng điểm.
+- Fact-check chỉ ảnh hưởng điểm khi stance đã normalize và relevance đạt threshold.
+- Blacklist/malicious provider evidence có thể tạo malicious verdict và escalation theo rule.
+- Provider unavailable/no-hit/empty result phải tạo limitation khi làm giảm coverage.
+- LLM output schema không có quyền ghi `risk_score`, `risk_level`, `verdict`,
+  `recommended_action` hoặc `case_status`; extra field bị reject và deterministic output được giữ.
+- Provider no-hit hoặc timeout không có code path tạo verdict `safe`.
 
-## 5. Fixture chuẩn
+## 9. Fixture contract hiện tại
 
 ```text
 tests/fixtures/
-├── analyses.jsonl
-├── tool_responses/{url_scanner,domain_intelligence,claim_retriever,blacklist}.json
+├── analyses.jsonl                         # 12 scenarios
+├── tool_responses/url_scanner.json        # 6 records
+├── tool_responses/claim_retriever.json    # 3 records
+├── tool_responses/domain_intelligence.json# 3 records
+├── tool_responses/blacklist.json          # 2 records
 └── README.md
 ```
 
-Một dòng `analyses.jsonl`:
+12 analysis fixtures đang freeze:
 
-```json
-{
-  "id":"phishing_brand_001",
-  "request":{"message":"Nhận quà tại https://tapdoanx-qua.example/login","consent_to_scan_urls":true},
-  "mocks":{"url_scanner":"url_phishing_001","domain_intelligence":"domain_new_001","claim_retriever":"claim_none_001","blacklist":"domain_not_listed_001"},
-  "expected":{"input_type":"text_with_url","verdict":"malicious","risk_level":"critical","risk_score_min":85,"risk_score_max":100,"recommended_action":"escalate_for_review","case_status":"pending_review","required_evidence_types":["domain_reputation","url_rule"],"required_limitation":false}
-}
+| Fixture | Ý nghĩa chính |
+|---|---|
+| `safe_official_001` | Official domain, low/safe. |
+| `phishing_brand_001` | Look-alike/login, critical malicious. |
+| `short_url_redirect_001` | Redirect tới blacklist. |
+| `suspicious_claim_001` | Claim chưa xác nhận. |
+| `false_claim_001` | Fact-check refutes claim. |
+| `no_url_or_claim_001` | Không có indicator; inconclusive. |
+| `no_consent_001` | Không external URL work, có limitation. |
+| `provider_timeout_001` | Timeout không thành safe/500. |
+| `unicode_domain_001` | Punycode/homograph signal. |
+| `ssrf_private_ip_001` | Private/metadata target bị chặn. |
+| `empty_message_001` | API 422. |
+| `admin_review_001` | Approved decision và blacklist write. |
+
+Domain-intelligence fixture records đã có nhưng chưa được tham chiếu bởi 12 dòng
+`analyses.jsonl`. Các scenario RDAP mới, claim-only, subdomain/public suffix và blacklist memory hit
+hiện được kiểm tra chủ yếu bằng unit/agent tests, chưa phải frozen end-to-end fixture rows.
+
+Fixture tests không assert nguyên văn summary/reasons; chúng assert typed schema, enum, score range,
+evidence requirement và safety invariant. Unit/integration/eval mặc định phải inject fake hoặc
+`None`, không gọi network/OpenAI thật.
+
+## 10. Endpoint ngoài product contract
+
+- `GET /health` → process health cơ bản.
+- `POST /api/v2/chat` → starter/legacy graph.
+- `GET /api/v2/status` → starter agent status.
+
+Các endpoint này không được frontend product dùng và không có compatibility guarantee của analysis
+contract v2.
+
+## 11. Frozen contract v3 — Wave 0
+
+Phần này là contract final product đã được freeze trong Wave 0. Pydantic source of truth nằm tại
+`src/models/schemas.py`, OpenAPI được phát từ `src/main.py`, và schema/migration plan nằm tại
+`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter đã có dưới `/api/v3` để client
+tích hợp sớm. WebSocket ticket, appeal, reviewed action, campaign và metrics đã có đầy đủ request/
+response schema và route trong OpenAPI nhưng chủ động trả 501 cho tới wave triển khai tương ứng;
+không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path v2 tương thích; capability mới chỉ
+xuất hiện dưới `/api/v3`.
+
+### 11.0 Versioning và core routes
+
+Response v3 dùng `contract_version: "v3"`. Các analysis field v2 được giữ nguyên semantics; v3 bổ
+sung typed realtime/appeal/action/campaign/metrics resources thay vì nhét nullable field mới vào v2.
+
+| Method | Path | Hành vi v3 |
+|---|---|---|
+| POST | `/api/v3/analyses` | Tạo durable analysis, trả `202` sau transactional enqueue. |
+| GET | `/api/v3/analyses` | List analysis của principal hiện tại. |
+| GET | `/api/v3/analyses/{id}` | Trả state/result cuối, gồm plan/evidence/limitation như v2. |
+| GET | `/api/v3/analyses/{id}/events` | Poll/replay persisted typed events theo cursor. |
+| POST | `/api/v3/analyses/{id}/reports` | Tạo user report và receipt. |
+| POST | `/api/v3/ws-tickets` | Cấp ticket một lần, TTL ngắn, bound với principal/analysis. |
+
+Frontend final product chỉ tạo analysis mới qua v3. Các GET v2 được giữ trong compatibility window;
+v2 create được đánh dấu deprecated khi v3 production-ready và không nhận capability v3 mới.
+
+### 11.1 Realtime và cảnh báo hai pha
+
+Đích: `WS /api/v3/analyses/{analysis_id}/stream` dùng ticket ngắn hạn lấy từ
+`POST /api/v3/ws-tickets`. Server chỉ stream analysis mà principal có quyền đọc. Polling
+`GET /api/v3/analyses/{id}/events` vẫn là fallback và nguồn replay.
+
+Event v3 dùng envelope có `event_id`, `analysis_id`, `sequence`, `event_type`, `occurred_at` và
+payload typed. Event types đã freeze:
+
+```text
+analysis_status | step_transition | provisional_warning | final_result | case_update | limitation
 ```
 
-Không assert nguyên văn summary/reasons. Assert enum, khoảng điểm, evidence bắt buộc và invariant.
+`provisional_warning` bắt buộc có `risk_level`, `summary`, `evidence_refs` và
+`is_provisional: true`; không dùng verdict `safe`. `final_result` chỉ tham chiếu response đã persist.
+Sequence tăng đơn điệu trong một analysis; polling/reconnect gửi lại opaque `next_cursor` dưới query
+`cursor`, và event delivery có thể at-least-once nên client dedupe bằng `event_id`.
 
-| Fixture ID | Tình huống | Expected chính |
+### 11.2 Appeal và Human-in-the-loop
+
+API đã freeze:
+
+| Method | Path | Quyền/hành vi |
 |---|---|---|
-| `safe_official_001` | Domain chính thức | safe, low, allow |
-| `phishing_brand_001` | Look-alike + login | malicious, critical, pending review |
-| `short_url_redirect_001` | Redirect tới domain xấu | malicious, high/critical |
-| `suspicious_claim_001` | Khuyến mãi chưa xác nhận | suspicious, medium/high |
-| `false_claim_001` | Fact-check bác bỏ | malicious, high |
-| `no_url_or_claim_001` | Text không kiểm chứng được | inconclusive, không scan URL |
-| `no_consent_001` | URL, không consent | không external scan, có limitation |
-| `provider_timeout_001` | Scanner timeout | không 500/safe, có limitation |
-| `unicode_domain_001` | IDN/homograph | normalize an toàn, suspicious+ |
-| `ssrf_private_ip_001` | Private/metadata target | request bị chặn |
-| `empty_message_001` | Input rỗng | HTTP 422 |
-| `admin_review_001` | Approved review | audit + blacklist write |
-| `new_domain_001` | Domain mới đăng ký + brand look-alike | `domain_registration` evidence có provenance RDAP; riêng tuổi domain không đủ high+ |
-| `rdap_redacted_001` | RDAP ẩn thông tin | không suy diễn owner, có limitation nếu coverage bị ảnh hưởng |
-| `rdap_timeout_001` | Domain intelligence timeout | không 500/safe, workflow tiếp tục và không cache lỗi |
-| `rdap_subdomain_001` | URL có nhiều subdomain | chỉ lookup registrable domain một lần |
-| `rdap_ip_or_suffix_001` | URL host là IP/public suffix | skip RDAP, không tiêu tool call |
-| `claim_only_false_001` | Tin nhắn chỉ có claim đã bị bác bỏ | không gọi URL tool, fact-check evidence |
-| `blacklist_memory_hit_001` | Domain có approved blacklist entry | lookup-first, provenance đúng, có thể bỏ provider tốn phí |
+| POST | `/api/v3/analyses/{id}/appeals` | Owner tạo appeal với reason/comment; trả receipt. |
+| GET | `/api/v3/appeals/{id}` | Owner hoặc admin xem trạng thái/kết quả. |
+| GET | `/api/v3/admin/appeals` | Admin list queue có pagination/filter. |
+| POST | `/api/v3/admin/appeals/{id}/decision` | Admin uphold/overturn/inconclusive kèm note. |
+| GET | `/api/v3/admin/actions` và `/{id}` | Admin đọc proposal và immutable evidence snapshot. |
+| POST | `/api/v3/admin/actions/{id}/decision` | Duyệt/từ chối blacklist, block hoặc broad warning. |
 
-## 6. Safety invariants
+Reviewed action enum là `add_to_blacklist | disable_blacklist | block_domain |
+publish_broad_warning | none`. Mọi action ngoài `none` cần approved decision, reviewer, evidence
+snapshot, note, timestamp và audit. Overturn tạo record mới và giữ lịch sử, không xóa decision cũ.
 
-- Không external URL reputation/RDAP lookup khi consent là false; executor không được tạo task,
-  fan-out, request hoặc provider client trước khi kiểm tra hard gate này. Local rules/blacklist
-  vẫn chạy.
-- Không trả `safe` chỉ vì provider timeout, no-hit hoặc không có dữ liệu.
-- Không ghi blacklist nếu thiếu authenticated admin decision và audit record.
-- Chặn SSRF trước request và sau redirect/DNS resolution.
-- External evidence phải có source và `observed_at`; URL nguồn nếu loại evidence hỗ trợ citation.
-- Evidence ảnh hưởng điểm phải truy được tới signal và scoring version.
-- Fact-check score dùng normalized `stance` + relevance threshold; không phân loại nguồn/rating bằng keyword prose.
-- Log không chứa full message, token/API key, credential hoặc sensitive query string.
-- Unit/integration/eval mặc định không gọi provider thật.
-- Unit/integration/eval inject fake LLM hoặc `llm=None`; không gọi OpenAI thật.
-- LLM output không được trực tiếp tăng/giảm risk score, đổi verdict/action, tạo evidence,
-  bỏ qua consent/SSRF hoặc chọn tool ngoài allowlist.
-- LLM failure phải ghi limitation khi LLM đã được cấu hình và tiếp tục bằng extraction,
-  planning, scoring và explanation deterministic.
-- Không lưu hoặc trả chain-of-thought; chỉ trả kế hoạch tác vụ, reason code và trạng thái bước.
-- RDAP không lưu entity/vCard/PII registrant hoặc raw response; field thiếu/redacted không được coi là risk signal.
-- Mọi blacklist hit dùng để chấm điểm phải trỏ tới approved entry và audit decision còn hiệu lực.
+### 11.3 Campaign và operations dashboard
+
+Admin-only read APIs đã freeze:
+
+- `GET /api/v3/admin/campaigns` và `/api/v3/admin/campaigns/{id}` trả cluster hypothesis, time window, aggregate
+  signals, evidence refs và reviewer status; không trả sender social graph/raw private messages.
+- `GET /api/v3/admin/metrics` trả aggregate latency, cache hit, token/cost, provider call/429/timeout,
+  risk distribution, report/appeal và false-positive metrics theo time range.
+
+Campaign cluster không tự tạo broad warning. Metrics usage chứa provider/model, units, estimated
+cost, latency, cache status và outcome; target/raw prompt không thuộc public operations contract.
+
+### 11.4 Advanced tool contract
+
+Wave 0 freeze nằm tại `src/agents/tools/protocols.py` và `src/agents/tools/models.py`. Năm boundary
+provider-neutral là:
+
+```text
+UrlReputationProvider.lookup  -> NormalizedToolResult[UrlReputationFinding]
+UrlReputationCascade.assess   -> NormalizedToolResult[UrlReputationCascadeResult]
+RedirectResolver.resolve      -> NormalizedToolResult[RedirectResolutionResult]
+RdapProvider.lookup           -> NormalizedToolResult[DomainIntelligenceResult]
+FactCheckCorpus.search        -> NormalizedToolResult[FactCheckSearchResult]
+ScreenshotRenderer.render     -> NormalizedToolResult[ScreenshotResult]
+```
+
+Mọi boundary dùng cùng envelope gồm `status`, đúng một trong `result/error`, `cache` và `usage`.
+`cache` chỉ lộ SHA-256 cache-key hash, hit/miss/bypass và TTL; `usage` chỉ chứa provider/version,
+operation, attempts/network calls, latency, units/token và estimated cost. Không model nào có field
+raw provider body, request target, prompt, cookie hoặc credential. Cache hit bắt buộc có
+`network_calls=0`; 429 dùng `RATE_LIMITED` và optional `retry_after_ms`; provider no-hit bắt buộc là
+`inconclusive`, không được normalize thành `safe`.
+
+`ScreenshotRenderer` chỉ được thêm vào allowlist khi có sandbox implementation và security tests.
+Input là normalized public HTTP(S) URL đã consent; output chỉ gồm final URL, image/artifact reference,
+visible-text hash, render signals và observed time. Không trả cookie, credential, DOM/raw page body
+hoặc dữ liệu form. Renderer không đăng nhập, không tương tác và bị giới hạn redirect/time/body.
+
+Fact-check corpus record v3 cần source URL, publisher, claim, stance, language, published/updated
+time, embedding model/version và ingestion provenance. Vector similarity chỉ là retrieval score;
+ClaimEvidence stance vẫn phải đến từ normalized source metadata/reviewer, không suy ra từ similarity.
+
+### 11.5 Fixture additions trước final v3 release gate
+
+Fixture Wave 0 đã có tại `tests/fixtures/tool_responses/`: consent/no-consent policy,
+`url_reputation_v3.json` (no-hit/conflict/429), `redirect_resolver.json` (public/private-hop/loop),
+`rdap_v3.json` (cache/429), và `screenshot_renderer.json` (credential/private-IP/redirect escape/
+download/timeout). Tất cả đều offline và validate qua đúng normalized envelope.
+
+- provisional → final upgrade, WebSocket reconnect/replay và duplicate event;
+- no-consent chứng minh không tạo provider/renderer client;
+- conflicting reputation/fact-check, timeout, 429 và exhausted cost budget;
+- screenshot SSRF/redirect/download/cookie isolation;
+- appeal uphold/overturn và blacklist disable có immutable audit;
+- campaign cluster hypothesis không tự phát broad warning;
+- metrics aggregate không chứa raw message, URL query secret hoặc prompt.

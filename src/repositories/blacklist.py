@@ -156,9 +156,7 @@ class SQLiteBlacklistRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             for statement in statements:
                 self._connection.execute(statement)
-            rows = self._connection.execute(
-                "SELECT analysis_id, response_json, created_at FROM analyses"
-            ).fetchall()
+            rows = self._connection.execute("SELECT analysis_id, response_json, created_at FROM analyses").fetchall()
             for analysis_id, response_json, created_at in rows:
                 try:
                     payload = json.loads(response_json)
@@ -603,7 +601,10 @@ class SQLiteBlacklistRepository:
             if row is None:
                 return None
             event_rows = self._connection.execute(
-                "SELECT event_json FROM analysis_events WHERE analysis_id = ? ORDER BY event_id",
+                # event_id is the monotonic insertion key. This ordering is a
+                # contract: the v3 compatibility adapter derives stable
+                # per-analysis sequences from the returned append order.
+                "SELECT event_json FROM analysis_events WHERE analysis_id = ? ORDER BY event_id ASC",
                 (analysis_id,),
             ).fetchall()
         return (

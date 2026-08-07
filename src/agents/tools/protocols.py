@@ -4,6 +4,42 @@ from typing import Protocol
 
 from src.models import BlacklistLookupEntry, ClaimEvidence, DomainIntelligenceResult, UrlScanResult
 
+from .models import (
+    FactCheckSearchResult,
+    NormalizedToolResult,
+    RedirectResolutionResult,
+    ScreenshotResult,
+    UrlReputationCascadeResult,
+    UrlReputationFinding,
+)
+
+
+class UrlReputationProvider(Protocol):
+    provider: str
+    provider_version: str
+
+    async def lookup(self, normalized_url: str) -> NormalizedToolResult[UrlReputationFinding]: ...
+
+
+class UrlReputationCascade(Protocol):
+    async def assess(self, normalized_url: str) -> NormalizedToolResult[UrlReputationCascadeResult]: ...
+
+
+class RedirectResolver(Protocol):
+    async def resolve(self, normalized_url: str) -> NormalizedToolResult[RedirectResolutionResult]: ...
+
+
+class RdapProvider(Protocol):
+    async def lookup(self, domain: str) -> NormalizedToolResult[DomainIntelligenceResult]: ...
+
+
+class FactCheckCorpus(Protocol):
+    async def search(self, claim: str, limit: int = 5) -> NormalizedToolResult[FactCheckSearchResult]: ...
+
+
+class ScreenshotRenderer(Protocol):
+    async def render(self, normalized_url: str) -> NormalizedToolResult[ScreenshotResult]: ...
+
 
 class UrlScanner(Protocol):
     async def scan(self, normalized_url: str) -> UrlScanResult: ...

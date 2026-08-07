@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, TypedDict
 
+from src.agents.contracts import CampaignFeatures, CampaignHypothesis, LiveStepTransition, ProvisionalWarning
 from src.models import (
     CaseStatus,
     ClaimEvidence,
@@ -60,6 +61,12 @@ class WorkflowState(AgentState, total=False):
     deadline_at: datetime
     blocked_urls: list[str]
     blacklisted_domains: list[str]
+    provisional_warning: ProvisionalWarning | None
+    active_warning: Literal["provisional", "final"]
+    step_transitions: list[LiveStepTransition]
+    tool_usage_refs: list[str]
+    campaign_features: CampaignFeatures
+    campaign_hypotheses: list[CampaignHypothesis]
     llm_model: str
     llm_context: str
     llm_emotion: str
