@@ -156,9 +156,7 @@ class SQLiteBlacklistRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             for statement in statements:
                 self._connection.execute(statement)
-            rows = self._connection.execute(
-                "SELECT analysis_id, response_json, created_at FROM analyses"
-            ).fetchall()
+            rows = self._connection.execute("SELECT analysis_id, response_json, created_at FROM analyses").fetchall()
             for analysis_id, response_json, created_at in rows:
                 try:
                     payload = json.loads(response_json)

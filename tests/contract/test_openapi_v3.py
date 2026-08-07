@@ -38,9 +38,7 @@ def test_v2_openapi_contract_is_not_retyped_as_v3() -> None:
     schema = app.openapi()
     v2_detail = schema["paths"]["/api/v2/analyses/{analysis_id}"]["get"]
     v3_detail = schema["paths"]["/api/v3/analyses/{analysis_id}"]["get"]
-    assert v2_detail["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
-        "/AnalysisResponse"
-    )
+    assert v2_detail["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/AnalysisResponse")
     assert v3_detail["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/AnalysisResponseV3"
     )
