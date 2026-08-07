@@ -279,6 +279,25 @@ async def test_blacklist_requires_audited_approval(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_blacklist_preserves_subdomain_scope(tmp_path):
+    repository = SQLiteBlacklistRepository(tmp_path / "security.db")
+    await repository.record_decision(
+        decision_id="decision-1",
+        reviewer_id="admin-1",
+        decision="approved",
+        action="add_to_blacklist",
+        note="Evidence reviewed",
+    )
+
+    await repository.add_approved("Login.Sub.Example.COM.", "decision-1")
+
+    assert await repository.contains("login.sub.example.com") is True
+    assert await repository.contains("sub.example.com") is False
+    assert await repository.contains("example.com") is False
+    await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_security_repository_persists_admin_views_atomically(tmp_path):
     repository = SQLiteBlacklistRepository(tmp_path / "security.db")
     analysis_id = uuid4()
