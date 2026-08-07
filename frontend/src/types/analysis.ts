@@ -73,52 +73,6 @@ export interface AnalysisEvent {
   occurred_at: string;
 }
 
-export interface AnalysisReportRequest {
-  reason: string;
-  comment?: string;
-}
-
-export interface AnalysisReportResponse {
-  report_id: string;
-  analysis_id: string;
-  created_at: string;
-}
-
-export interface AnalysisReportRecord extends AnalysisReportResponse {
-  reporter_id: string;
-  reason: string;
-  comment: string | null;
-}
-
-export interface AdminDecisionRequest {
-  decision: "approved" | "rejected";
-  action: "add_to_blacklist" | "none";
-  note: string;
-}
-
-export interface AdminDecisionResponse {
-  decision_id: string;
-  analysis_id: string;
-  case_status: "approved" | "rejected";
-  reviewed_at: string;
-}
-
-export interface AdminDecisionAudit {
-  decision_id: string;
-  analysis_id: string | null;
-  reviewer_id: string;
-  decision: "approved" | "rejected";
-  action: "add_to_blacklist" | "none";
-  note: string;
-  decided_at: string;
-}
-
-export interface BlacklistEntry {
-  domain: string;
-  decision_id: string;
-  added_at: string;
-}
-
 export interface ErrorEnvelope {
   error: {
     code: string;
@@ -133,18 +87,4 @@ export interface AnalysisApi {
     request: AnalysisCreateRequest,
   ): Promise<AnalysisAcceptedResponse>;
   getAnalysis(analysisId: string): Promise<AnalysisResponse>;
-  listAnalyses(): Promise<AnalysisResponse[]>;
-  getAnalysisEvents(analysisId: string): Promise<AnalysisEvent[]>;
-  reportAnalysis(
-    analysisId: string,
-    request: AnalysisReportRequest,
-  ): Promise<AnalysisReportResponse>;
-  listAdminCases(): Promise<AnalysisResponse[]>;
-  listAdminReports(): Promise<AnalysisReportRecord[]>;
-  listAdminDecisions(): Promise<AdminDecisionAudit[]>;
-  listAdminBlacklist(): Promise<BlacklistEntry[]>;
-  decideAdminCase(
-    analysisId: string,
-    request: AdminDecisionRequest,
-  ): Promise<AdminDecisionResponse>;
 }

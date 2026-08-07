@@ -205,6 +205,14 @@ class DomainIntelligenceResult(ContractModel):
     observed_at: datetime
 
 
+class BlacklistLookupEntry(ContractModel):
+    domain: str
+    decision_id: str
+    source: str
+    added_at: datetime
+    active: bool
+
+
 class ToolError(ContractModel):
     tool: str
     code: str

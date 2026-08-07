@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from src.models import ClaimEvidence, DomainIntelligenceResult, UrlScanResult
+from src.models import BlacklistLookupEntry, ClaimEvidence, DomainIntelligenceResult, UrlScanResult
 
 
 class UrlScanner(Protocol):
@@ -18,6 +18,8 @@ class DomainIntelligence(Protocol):
 
 
 class BlacklistRepository(Protocol):
+    async def get(self, domain: str) -> BlacklistLookupEntry | None: ...
+
     async def contains(self, domain: str) -> bool: ...
 
     async def add_approved(self, domain: str, decision_id: str) -> None: ...

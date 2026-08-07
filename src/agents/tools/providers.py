@@ -7,9 +7,29 @@ import httpx
 
 from src.agents.tools.errors import ToolCallError
 from src.agents.tools.network import SsrfGuard
-from src.models import ClaimEvidence, UrlScanResult, Verdict
+from src.models import ClaimEvidence, ClaimStance, UrlScanResult, Verdict
 
-from .fact_check import normalize_claim_rating
+FACT_CHECK_RATING_MAP_VERSION = "google-fact-check-rating-v1"
+_FACT_CHECK_RATING_MAP = {
+    "true": ClaimStance.SUPPORTS,
+    "correct": ClaimStance.SUPPORTS,
+    "đúng": ClaimStance.SUPPORTS,
+    "false": ClaimStance.REFUTES,
+    "incorrect": ClaimStance.REFUTES,
+    "sai": ClaimStance.REFUTES,
+    "mostly false": ClaimStance.REFUTES,
+    "partly false": ClaimStance.MIXED,
+    "mixture": ClaimStance.MIXED,
+    "mixed": ClaimStance.MIXED,
+    "một phần đúng": ClaimStance.MIXED,
+}
+
+
+def map_google_fact_check_rating(rating: object) -> ClaimStance:
+    """Map only explicitly reviewed provider labels; never infer from prose."""
+    if not isinstance(rating, str):
+        return ClaimStance.UNRATED
+    return _FACT_CHECK_RATING_MAP.get(rating.strip().casefold(), ClaimStance.UNRATED)
 
 
 class GoogleSafeBrowsingScanner:
@@ -123,6 +143,12 @@ class GoogleFactCheckRetriever:
         for item in payload.get("claims", []):
             for review in item.get("claimReview", []):
                 publisher = review.get("publisher") or {}
+                review_url = review.get("url")
+                publisher_name = publisher.get("name")
+                if not isinstance(review_url, str) or not review_url.strip():
+                    continue
+                if not isinstance(publisher_name, str) or not publisher_name.strip():
+                    continue
                 title = str(review.get("title") or item.get("text") or "Fact-check result")
                 rating = str(review.get("textualRating") or "Fact-check source discusses this claim")
                 reviewed_at = review.get("reviewDate")
@@ -136,12 +162,12 @@ class GoogleFactCheckRetriever:
                     observed_at = datetime.now(UTC)
                 results.append(
                     ClaimEvidence(
-                        source=str(publisher.get("name") or "Google Fact Check Tools"),
+                        source=publisher_name,
                         title=title,
-                        url=review.get("url") or None,
+                        url=review_url,
                         finding=rating,
+                        stance=map_google_fact_check_rating(review.get("textualRating")),
                         relevance=1.0,
-                        stance=normalize_claim_rating(rating),
                         observed_at=observed_at.astimezone(UTC),
                     )
                 )
