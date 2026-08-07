@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
-from src.models import ClaimEvidence, ClaimStance, ToolError, UrlScanResult
+from src.models import (
+    BlacklistLookupEntry,
+    ClaimEvidence,
+    ClaimStance,
+    DomainIntelligenceResult,
+    ToolError,
+    UrlScanResult,
+)
 
 from .fact_check import normalize_claim_rating
 
@@ -72,6 +79,28 @@ class FakeClaimRetriever:
         ]
 
 
+class FakeDomainIntelligence:
+    """Offline domain intelligence selected by a fixture response ID."""
+
+    def __init__(
+        self,
+        responses: Mapping[str, DomainIntelligenceResult | ToolError],
+        response_id: str,
+    ) -> None:
+        self._responses = dict(responses)
+        self._response_id = response_id
+        self.calls: list[str] = []
+
+    async def lookup(self, domain: str) -> DomainIntelligenceResult:
+        self.calls.append(domain)
+        if self._response_id not in self._responses:
+            raise ValueError(f"Domain fixture response ID {self._response_id!r} is not configured")
+        result = self._responses[self._response_id]
+        if isinstance(result, ToolError):
+            raise FakeToolCallError(result)
+        return result.model_copy(update={"domain": domain}, deep=True)
+
+
 class FakeBlacklistRepository:
     """In-memory blacklist fake; it never accesses a database or provider."""
 
@@ -80,12 +109,12 @@ class FakeBlacklistRepository:
         self.approved_writes: list[tuple[str, str]] = []
         self.decisions: list[dict[str, str]] = []
 
-    async def get(self, domain: str) -> BlacklistEntry | None:
+    async def get(self, domain: str) -> BlacklistLookupEntry | None:
         normalized = domain.casefold()
         if normalized not in self._domains:
             return None
         decision_id = self._domains[normalized] or "fixture-approved"
-        return BlacklistEntry(
+        return BlacklistLookupEntry(
             domain=normalized,
             decision_id=decision_id,
             source="approved-blacklist",

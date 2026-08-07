@@ -97,13 +97,6 @@ class ReviewAction(StrEnum):
     NONE = "none"
 
 
-class ClaimStance(StrEnum):
-    SUPPORTS = "supports"
-    REFUTES = "refutes"
-    MIXED = "mixed"
-    UNRATED = "unrated"
-
-
 class ErrorCode(StrEnum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     FORBIDDEN = "FORBIDDEN"
@@ -194,7 +187,6 @@ class ClaimEvidence(ContractModel):
     title: str
     url: str | None = None
     finding: str
-    stance: ClaimStance
     relevance: float = Field(ge=0.0, le=1.0)
     stance: ClaimStance = ClaimStance.UNRATED
     observed_at: datetime
@@ -213,33 +205,7 @@ class DomainIntelligenceResult(ContractModel):
     observed_at: datetime
 
 
-class DomainIntelligenceResult(ContractModel):
-    provider: str
-    domain: str
-    registered_at: datetime | None = None
-    expires_at: datetime | None = None
-    registrar: str | None = None
-    country: str | None = None
-    status: list[str] = Field(default_factory=list)
-    privacy_redacted: bool = False
-    signals: list[str] = Field(default_factory=list)
-    observed_at: datetime
-
-
-class DomainIntelligenceResult(ContractModel):
-    provider: str
-    domain: str
-    registered_at: datetime | None = None
-    expires_at: datetime | None = None
-    registrar: str | None = None
-    country: str | None = None
-    status: list[str] = Field(default_factory=list)
-    privacy_redacted: bool
-    signals: list[str] = Field(default_factory=list)
-    observed_at: datetime
-
-
-class BlacklistEntry(ContractModel):
+class BlacklistLookupEntry(ContractModel):
     domain: str
     decision_id: str
     source: str

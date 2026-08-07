@@ -169,9 +169,7 @@ class RdapDomainIntelligence:
             observed_at=observed_at,
         )
 
-    def _normalize(
-        self, domain: str, payload: dict[str, Any], observed_at: datetime
-    ) -> DomainIntelligenceResult:
+    def _normalize(self, domain: str, payload: dict[str, Any], observed_at: datetime) -> DomainIntelligenceResult:
         registered_at: datetime | None = None
         expires_at: datetime | None = None
         events = payload.get("events")
@@ -186,11 +184,17 @@ class RdapDomainIntelligence:
                 elif action in {"expiration", "expiry", "expires"} and expires_at is None:
                     expires_at = date
         remarks = payload.get("remarks")
-        remark_text = " ".join(
-            str(description)
-            for remark in remarks if isinstance(remark, dict)
-            for description in remark.get("description", []) if isinstance(description, str)
-        ) if isinstance(remarks, list) else ""
+        remark_text = (
+            " ".join(
+                str(description)
+                for remark in remarks
+                if isinstance(remark, dict)
+                for description in remark.get("description", [])
+                if isinstance(description, str)
+            )
+            if isinstance(remarks, list)
+            else ""
+        )
         privacy_redacted = any(word in remark_text.casefold() for word in ("redact", "privacy", "restricted"))
         status = sorted({str(item) for item in payload.get("status", []) if isinstance(item, str) and item.strip()})
         signals: list[str] = []

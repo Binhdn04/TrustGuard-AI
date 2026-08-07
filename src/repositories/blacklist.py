@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST
 from src.models import (
     AdminDecisionAudit,
     AnalysisCreateRequest,
@@ -14,12 +15,10 @@ from src.models import (
     AnalysisReportRecord,
     AnalysisResponse,
     BlacklistEntry,
+    BlacklistLookupEntry,
     ReviewAction,
     ReviewDecision,
 )
-
-from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST
-from src.models import BlacklistEntry
 
 
 def normalize_domain(domain: str) -> str:
@@ -111,7 +110,7 @@ class SQLiteBlacklistRepository:
             self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
         self._connection.commit()
 
-    async def get(self, domain: str) -> BlacklistEntry | None:
+    async def get(self, domain: str) -> BlacklistLookupEntry | None:
         normalized = normalize_domain(domain)
         async with self._lock:
             row = self._connection.execute(
@@ -126,7 +125,7 @@ class SQLiteBlacklistRepository:
             ).fetchone()
         if row is None:
             return None
-        return BlacklistEntry(
+        return BlacklistLookupEntry(
             domain=row[0],
             decision_id=row[1],
             source=row[2],

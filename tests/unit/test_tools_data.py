@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -11,7 +13,12 @@ from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fact_check import normalize_claim_rating
 from src.agents.tools.fakes import FakeClaimRetriever
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
-from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
+from src.agents.tools.providers import (
+    GoogleFactCheckRetriever,
+    GoogleSafeBrowsingScanner,
+    map_google_fact_check_rating,
+)
+from src.agents.tools.rdap import RdapDomainIntelligence
 from src.models import (
     AnalysisCreateRequest,
     AnalysisEvent,
@@ -21,8 +28,6 @@ from src.models import (
     ClaimStance,
     Verdict,
 )
-from src.agents.tools.rdap import RdapDomainIntelligence
-from src.models import ClaimEvidence, ClaimStance, Verdict
 from src.repositories import JsonFactCheckRepository, SQLiteBlacklistRepository
 
 
@@ -154,15 +159,18 @@ async def test_rdap_normalizes_registrable_domain_redaction_and_caches():
             return httpx.Response(200, json={"services": [[["com"], ["https://rdap.example/"]]]})
         assert host == "rdap.example"
         assert request.url.path == "/domain/example.com"
-        return httpx.Response(200, json={
-            "events": [
-                {"eventAction": "registration", "eventDate": "2026-07-26T13:00:00Z"},
-                {"eventAction": "expiration", "eventDate": "2027-07-26T13:00:00Z"},
-            ],
-            "status": ["active"],
-            "remarks": [{"description": ["Registrant data redacted for privacy"]}],
-            "entities": [{"vcardArray": ["vcard", [["email", {}, "text", "secret@example.com"]]]}],
-        })
+        return httpx.Response(
+            200,
+            json={
+                "events": [
+                    {"eventAction": "registration", "eventDate": "2026-07-26T13:00:00Z"},
+                    {"eventAction": "expiration", "eventDate": "2027-07-26T13:00:00Z"},
+                ],
+                "status": ["active"],
+                "remarks": [{"description": ["Registrant data redacted for privacy"]}],
+                "entities": [{"vcardArray": ["vcard", [["email", {}, "text", "secret@example.com"]]]}],
+            },
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         adapter = RdapDomainIntelligence(
@@ -214,11 +222,6 @@ def test_rdap_skips_ip_and_public_suffix():
     assert adapter.registrable_domain("127.0.0.1") is None
     assert adapter.registrable_domain("com") is None
     assert adapter.registrable_domain("a.b.example.co.uk") == "example.co.uk"
-
-
-def test_fact_check_rating_mapping_does_not_infer_from_prose():
-    assert normalize_claim_rating("False") is ClaimStance.REFUTES
-    assert normalize_claim_rating("The review says this is false") is ClaimStance.UNRATED
 
 
 def test_fact_check_rating_mapping_does_not_infer_from_prose():
