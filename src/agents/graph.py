@@ -20,8 +20,14 @@ from src.agents.nodes.risk import assess_risk
 from src.agents.nodes.rules import build_rule_check_node
 from src.agents.nodes.tools import build_inspect_domains_node, build_scan_urls_node, build_verify_claims_node
 from src.agents.state import LegacyAgentState, WorkflowState
-from src.agents.tools.protocols import BlacklistRepository, ClaimRetriever, DomainIntelligence, UrlScanner
-from src.models import InvestigationStepStatus, InvestigationTool
+from src.agents.tools.protocols import (
+    BlacklistRepository,
+    ClaimRetriever,
+    DomainIntelligence,
+    ToolExecutionLedger,
+    UrlScanner,
+)
+from src.models import InvestigationStepStatus, InvestigationTool, ToolError
 
 
 async def _classify_node(state: WorkflowState) -> dict:
@@ -88,10 +94,21 @@ def _build_planning_loop_node(
     claim_retriever: ClaimRetriever | None,
     blacklist: BlacklistRepository | None,
     domain_intelligence: DomainIntelligence | None = None,
+    execution_ledger: ToolExecutionLedger | None = None,
 ):
     scan_node = build_scan_urls_node(url_scanner, blacklist)
     claim_node = build_verify_claims_node(claim_retriever)
     domain_node = build_inspect_domains_node(domain_intelligence)
+
+    def provider_for(tool: InvestigationTool) -> str:
+        adapter = {
+            InvestigationTool.URL_SCANNER: url_scanner,
+            InvestigationTool.DOMAIN_INTELLIGENCE: domain_intelligence,
+            InvestigationTool.CLAIM_RETRIEVER: claim_retriever,
+        }[tool]
+        if adapter is None:
+            return "not-configured"
+        return str(getattr(adapter, "provider", f"{type(adapter).__module__}.{type(adapter).__qualname__}"))
 
     async def run_step(step, snapshot: WorkflowState) -> dict:
         unit = dict(snapshot)
@@ -152,7 +169,38 @@ def _build_planning_loop_node(
                 gated.append(step)
 
             remaining = working["max_tool_calls"] - working["tool_calls_used"]
-            selected = gated[:remaining]
+            selected = []
+            selected_providers: list[str] = []
+            for step in gated[:remaining]:
+                provider = provider_for(step.tool)
+                analysis_id = working.get("analysis_id")
+                if execution_ledger is not None and analysis_id:
+                    try:
+                        claimed = await execution_ledger.claim_tool_execution(
+                            str(analysis_id), step.step_id, step.target, provider
+                        )
+                    except Exception:
+                        errors = list(working.get("errors", []))
+                        errors.append(
+                            ToolError(
+                                tool=step.tool.value,
+                                code="EXECUTION_LEDGER_ERROR",
+                                message="Tool execution could not be claimed",
+                                retryable=True,
+                            )
+                        )
+                        working["errors"] = errors
+                        working["investigation_plan"] = transition_step(
+                            working["investigation_plan"], step.step_id, InvestigationStepStatus.FAILED
+                        )
+                        continue
+                    if not claimed:
+                        working["investigation_plan"] = transition_step(
+                            working["investigation_plan"], step.step_id, InvestigationStepStatus.SKIPPED
+                        )
+                        continue
+                selected.append(step)
+                selected_providers.append(provider)
             if not selected:
                 limitations = list(working.get("limitations", []))
                 limitations.append("Vòng lặp công cụ dừng vì không còn bước vượt qua policy gate.")
@@ -166,7 +214,7 @@ def _build_planning_loop_node(
 
             snapshot: WorkflowState = dict(working)
             results = await asyncio.gather(*(run_step(step, snapshot) for step in selected))
-            for step, update in zip(selected, results, strict=True):
+            for step, provider, update in zip(selected, selected_providers, results, strict=True):
                 base_error_count = len(snapshot.get("errors", []))
                 _merge_tool_result(working, snapshot, update)
                 new_errors = list(update.get("errors", []))[base_error_count:]
@@ -185,6 +233,15 @@ def _build_planning_loop_node(
                     else InvestigationStepStatus.COMPLETED
                 )
                 working["investigation_plan"] = transition_step(working["investigation_plan"], step.step_id, status)
+                analysis_id = working.get("analysis_id")
+                if execution_ledger is not None and analysis_id:
+                    await execution_ledger.finish_tool_execution(
+                        str(analysis_id),
+                        step.step_id,
+                        step.target,
+                        provider,
+                        "failed" if new_errors else "completed",
+                    )
 
         return {
             key: working[key]
@@ -213,6 +270,7 @@ def build_graph(
     domain_intelligence: DomainIntelligence | None = None,
     claim_retriever: ClaimRetriever | None = None,
     blacklist: BlacklistRepository | None = None,
+    execution_ledger: ToolExecutionLedger | None = None,
     llm: Any | None = None,
 ):
     """Build the injectable v2 analysis workflow."""
@@ -222,9 +280,17 @@ def build_graph(
     graph.add_node("analyze_message", build_analyze_message_node(llm))
     graph.add_node("normalize_and_check_rules", build_rule_check_node(blacklist))
     graph.add_node("plan_tools", build_plan_tools_node(llm))
+    if execution_ledger is None and hasattr(blacklist, "claim_tool_execution"):
+        execution_ledger = blacklist  # type: ignore[assignment]
     graph.add_node(
         "planning_loop",
-        _build_planning_loop_node(url_scanner, claim_retriever, blacklist, domain_intelligence),
+        _build_planning_loop_node(
+            url_scanner,
+            claim_retriever,
+            blacklist,
+            domain_intelligence,
+            execution_ledger,
+        ),
     )
     graph.add_node("assess_risk", _assess_node)
     graph.add_node("review_assessment", build_review_assessment_node(llm))

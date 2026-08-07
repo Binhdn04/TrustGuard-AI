@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST
 from src.models import (
@@ -16,8 +17,11 @@ from src.models import (
     AnalysisResponse,
     BlacklistEntry,
     BlacklistLookupEntry,
+    Evidence,
+    InvestigationStep,
     ReviewAction,
     ReviewDecision,
+    ToolError,
 )
 
 
@@ -103,12 +107,95 @@ class SQLiteBlacklistRepository:
                 occurred_at TEXT NOT NULL,
                 FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
             );
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
             """
         )
         columns = {row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()}
         if "analysis_id" not in columns:
             self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
+        self._apply_migrations()
         self._connection.commit()
+
+    def _apply_migrations(self) -> None:
+        """Apply additive SQLite migrations to existing vertical-slice databases."""
+        applied = {row[0] for row in self._connection.execute("SELECT version FROM schema_migrations")}
+        if 2 not in applied:
+            self._connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_steps (
+                    analysis_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    step_json TEXT NOT NULL,
+                    PRIMARY KEY (analysis_id, step_id),
+                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
+                );
+                CREATE TABLE IF NOT EXISTS analysis_evidence (
+                    analysis_id TEXT NOT NULL,
+                    evidence_index INTEGER NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    PRIMARY KEY (analysis_id, evidence_index),
+                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
+                );
+                CREATE TABLE IF NOT EXISTS analysis_errors (
+                    analysis_id TEXT NOT NULL,
+                    error_index INTEGER NOT NULL,
+                    error_json TEXT NOT NULL,
+                    PRIMARY KEY (analysis_id, error_index),
+                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
+                );
+                CREATE TABLE IF NOT EXISTS tool_executions (
+                    analysis_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),
+                    attempt_count INTEGER NOT NULL DEFAULT 1,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (analysis_id, step_id, target, provider),
+                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
+                );
+                CREATE TABLE IF NOT EXISTS outbox_events (
+                    outbox_id TEXT PRIMARY KEY,
+                    event_key TEXT NOT NULL UNIQUE,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    published_at TEXT
+                );
+                """
+            )
+            # v1 was never public, but local demo databases may contain its JSON.
+            # Upgrade those rows in place and backfill normalized v2 artifacts.
+            rows = self._connection.execute("SELECT analysis_id, response_json FROM analyses").fetchall()
+            for analysis_id, response_json in rows:
+                payload = json.loads(response_json)
+                payload["contract_version"] = "v2"
+                payload.setdefault("investigation_plan", [])
+                upgraded_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                self._connection.execute(
+                    "UPDATE analyses SET response_json = ? WHERE analysis_id = ?",
+                    (upgraded_json, analysis_id),
+                )
+                for step in payload.get("investigation_plan") or []:
+                    self._connection.execute(
+                        """INSERT OR REPLACE INTO analysis_steps(analysis_id, step_id, step_json)
+                           VALUES (?, ?, ?)""",
+                        (analysis_id, step["step_id"], json.dumps(step, ensure_ascii=False)),
+                    )
+                for index, evidence in enumerate(payload.get("evidence") or []):
+                    self._connection.execute(
+                        """INSERT OR REPLACE INTO analysis_evidence(
+                               analysis_id, evidence_index, evidence_json
+                           ) VALUES (?, ?, ?)""",
+                        (analysis_id, index, json.dumps(evidence, ensure_ascii=False)),
+                    )
+            self._connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
 
     async def get(self, domain: str) -> BlacklistLookupEntry | None:
         normalized = normalize_domain(domain)
@@ -198,6 +285,62 @@ class SQLiteBlacklistRepository:
                 self._connection.rollback()
                 raise
 
+    async def apply_review_decision(
+        self,
+        *,
+        decision_id: str,
+        analysis_id: str,
+        reviewer_id: str,
+        decision: str,
+        action: str,
+        note: str,
+        domains: tuple[str, ...] | list[str],
+        response: AnalysisResponse,
+        event: AnalysisEvent,
+    ) -> None:
+        """Atomically persist audit, blacklist writes, case state, event and outbox."""
+        normalized_domains = sorted({normalize_domain(domain) for domain in domains})
+        values = (decision_id.strip(), analysis_id.strip(), reviewer_id.strip(), decision, action, note.strip())
+        if not all(values):
+            raise ValueError("all review decision fields are required")
+        if action == "add_to_blacklist" and decision != "approved":
+            raise ValueError("blacklist action requires an approved decision")
+        if action != "add_to_blacklist" and normalized_domains:
+            raise ValueError("blacklist domains require add_to_blacklist action")
+        now = event.occurred_at.isoformat()
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN")
+                self._connection.execute(
+                    """INSERT INTO admin_decisions(
+                           decision_id, analysis_id, reviewer_id, decision, action, note, decided_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (*values, now),
+                )
+                for domain in normalized_domains:
+                    self._connection.execute(
+                        """INSERT INTO blacklist(domain, decision_id, added_at)
+                           VALUES (?, ?, ?) ON CONFLICT(domain) DO NOTHING""",
+                        (domain, values[0], now),
+                    )
+                cursor = self._connection.execute(
+                    "UPDATE analyses SET response_json = ?, case_status = ? WHERE analysis_id = ?",
+                    (response.model_dump_json(), response.case_status.value, analysis_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError("analysis is not persisted")
+                self._insert_event(event)
+                self._insert_outbox(
+                    event_key=f"admin-decision:{decision_id}",
+                    event_type="admin.decision.applied",
+                    payload={"analysis_id": analysis_id, "decision_id": decision_id, "action": action},
+                    created_at=event.occurred_at,
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
     async def record_report(
         self,
         *,
@@ -246,6 +389,12 @@ class SQLiteBlacklistRepository:
                     ),
                 )
                 self._insert_event(event)
+                self._insert_outbox(
+                    event_key=f"analysis-queued:{response.analysis_id}",
+                    event_type="analysis.queued",
+                    payload={"analysis_id": str(response.analysis_id), "status": response.status.value},
+                    created_at=event.occurred_at,
+                )
                 self._connection.commit()
             except Exception:
                 self._connection.rollback()
@@ -267,7 +416,161 @@ class SQLiteBlacklistRepository:
                 )
                 if cursor.rowcount != 1:
                     raise LookupError("analysis is not persisted")
+                self._replace_analysis_artifacts(response, [])
                 self._insert_event(event)
+                self._insert_event_outbox(event)
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def append_analysis_event(self, event: AnalysisEvent) -> None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN")
+                self._insert_event(event)
+                self._insert_event_outbox(event)
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def complete_analysis(
+        self,
+        response: AnalysisResponse,
+        event: AnalysisEvent,
+        errors: list[ToolError],
+    ) -> None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN")
+                cursor = self._connection.execute(
+                    "UPDATE analyses SET response_json = ?, case_status = ? WHERE analysis_id = ?",
+                    (
+                        response.model_dump_json(),
+                        response.case_status.value if response.case_status else None,
+                        str(response.analysis_id),
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError("analysis is not persisted")
+                self._replace_analysis_artifacts(response, errors)
+                self._insert_event(event)
+                self._insert_event_outbox(event)
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def _replace_analysis_artifacts(self, response: AnalysisResponse, errors: list[ToolError]) -> None:
+        analysis_id = str(response.analysis_id)
+        self._connection.execute("DELETE FROM analysis_steps WHERE analysis_id = ?", (analysis_id,))
+        self._connection.execute("DELETE FROM analysis_evidence WHERE analysis_id = ?", (analysis_id,))
+        self._connection.execute("DELETE FROM analysis_errors WHERE analysis_id = ?", (analysis_id,))
+        self._connection.executemany(
+            "INSERT INTO analysis_steps(analysis_id, step_id, step_json) VALUES (?, ?, ?)",
+            [(analysis_id, step.step_id, step.model_dump_json()) for step in response.investigation_plan],
+        )
+        self._connection.executemany(
+            "INSERT INTO analysis_evidence(analysis_id, evidence_index, evidence_json) VALUES (?, ?, ?)",
+            [
+                (analysis_id, index, evidence.model_dump_json())
+                for index, evidence in enumerate(response.evidence or [])
+            ],
+        )
+        self._connection.executemany(
+            "INSERT INTO analysis_errors(analysis_id, error_index, error_json) VALUES (?, ?, ?)",
+            [(analysis_id, index, error.model_dump_json()) for index, error in enumerate(errors)],
+        )
+
+    async def claim_tool_execution(
+        self,
+        analysis_id: str,
+        step_id: str,
+        target: str,
+        provider: str,
+    ) -> bool:
+        """Claim one provider call before work is created; completed/running claims dedupe."""
+        now = datetime.now(UTC)
+        key = (analysis_id, step_id, target, provider)
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN")
+                row = self._connection.execute(
+                    """SELECT status, attempt_count FROM tool_executions
+                       WHERE analysis_id = ? AND step_id = ? AND target = ? AND provider = ?""",
+                    key,
+                ).fetchone()
+                if row is None:
+                    attempt = 1
+                    self._connection.execute(
+                        """INSERT INTO tool_executions(
+                               analysis_id, step_id, target, provider, status, attempt_count, updated_at
+                           ) VALUES (?, ?, ?, ?, 'running', ?, ?)""",
+                        (*key, attempt, now.isoformat()),
+                    )
+                elif row[0] == "failed":
+                    attempt = int(row[1]) + 1
+                    self._connection.execute(
+                        """UPDATE tool_executions SET status = 'running', attempt_count = ?, updated_at = ?
+                           WHERE analysis_id = ? AND step_id = ? AND target = ? AND provider = ?""",
+                        (attempt, now.isoformat(), *key),
+                    )
+                else:
+                    self._connection.rollback()
+                    return False
+                self._insert_outbox(
+                    event_key=f"tool-claimed:{analysis_id}:{step_id}:{target}:{provider}:{attempt}",
+                    event_type="tool.execution.claimed",
+                    payload={
+                        "analysis_id": analysis_id,
+                        "step_id": step_id,
+                        "target": target,
+                        "provider": provider,
+                        "attempt": attempt,
+                    },
+                    created_at=now,
+                )
+                self._connection.commit()
+                return True
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def finish_tool_execution(
+        self,
+        analysis_id: str,
+        step_id: str,
+        target: str,
+        provider: str,
+        status: str,
+    ) -> None:
+        if status not in {"completed", "failed", "skipped"}:
+            raise ValueError("tool execution status must be terminal")
+        now = datetime.now(UTC)
+        key = (analysis_id, step_id, target, provider)
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN")
+                cursor = self._connection.execute(
+                    """UPDATE tool_executions SET status = ?, updated_at = ?
+                       WHERE analysis_id = ? AND step_id = ? AND target = ? AND provider = ?""",
+                    (status, now.isoformat(), *key),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError("tool execution was not claimed")
+                self._insert_outbox(
+                    event_key=f"tool-finished:{analysis_id}:{step_id}:{target}:{provider}:{status}:{now.isoformat()}",
+                    event_type="tool.execution.finished",
+                    payload={
+                        "analysis_id": analysis_id,
+                        "step_id": step_id,
+                        "target": target,
+                        "provider": provider,
+                        "status": status,
+                    },
+                    created_at=now,
+                )
                 self._connection.commit()
             except Exception:
                 self._connection.rollback()
@@ -317,12 +620,75 @@ class SQLiteBlacklistRepository:
             rows = self._connection.execute(sql, parameters).fetchall()
         return [AnalysisResponse.model_validate_json(row[0]) for row in rows]
 
+    async def load_analysis_artifacts(self, analysis_id: str) -> dict[str, list]:
+        """Read normalized v2 artifacts for recovery, audit and tests."""
+        async with self._lock:
+            step_rows = self._connection.execute(
+                "SELECT step_json FROM analysis_steps WHERE analysis_id = ? ORDER BY rowid", (analysis_id,)
+            ).fetchall()
+            evidence_rows = self._connection.execute(
+                """SELECT evidence_json FROM analysis_evidence
+                   WHERE analysis_id = ? ORDER BY evidence_index""",
+                (analysis_id,),
+            ).fetchall()
+            error_rows = self._connection.execute(
+                "SELECT error_json FROM analysis_errors WHERE analysis_id = ? ORDER BY error_index",
+                (analysis_id,),
+            ).fetchall()
+        return {
+            "investigation_plan": [InvestigationStep.model_validate_json(row[0]) for row in step_rows],
+            "evidence": [Evidence.model_validate_json(row[0]) for row in evidence_rows],
+            "errors": [ToolError.model_validate_json(row[0]) for row in error_rows],
+        }
+
+    async def list_tool_executions(self, analysis_id: str) -> list[tuple[str, str, str, str, int]]:
+        async with self._lock:
+            return self._connection.execute(
+                """SELECT step_id, target, provider, status, attempt_count FROM tool_executions
+                   WHERE analysis_id = ? ORDER BY step_id, target, provider""",
+                (analysis_id,),
+            ).fetchall()
+
+    async def list_outbox_events(self) -> list[tuple[str, str, str | None]]:
+        async with self._lock:
+            return self._connection.execute(
+                "SELECT event_key, event_type, published_at FROM outbox_events ORDER BY created_at, rowid"
+            ).fetchall()
+
     def _insert_event(self, event: AnalysisEvent) -> None:
         self._connection.execute(
             """
             INSERT INTO analysis_events(analysis_id, event_json, occurred_at) VALUES (?, ?, ?)
             """,
             (str(event.analysis_id), event.model_dump_json(), event.occurred_at.isoformat()),
+        )
+
+    def _insert_event_outbox(self, event: AnalysisEvent) -> None:
+        self._insert_outbox(
+            event_key=(
+                f"analysis-event:{event.analysis_id}:{event.step}:"
+                f"{event.step_id or '-'}:{event.step_status.value if event.step_status else '-'}:"
+                f"{event.occurred_at.isoformat()}"
+            ),
+            event_type="analysis.progressed",
+            payload=event.model_dump(mode="json"),
+            created_at=event.occurred_at,
+        )
+
+    def _insert_outbox(
+        self,
+        *,
+        event_key: str,
+        event_type: str,
+        payload: dict,
+        created_at: datetime,
+    ) -> None:
+        self._connection.execute(
+            """INSERT INTO outbox_events(
+                   outbox_id, event_key, event_type, payload_json, created_at
+               ) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(event_key) DO NOTHING""",
+            (str(uuid4()), event_key, event_type, json.dumps(payload, ensure_ascii=False), created_at.isoformat()),
         )
 
     async def list_reports(self, *, limit: int, offset: int) -> list[AnalysisReportRecord]:

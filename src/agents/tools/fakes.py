@@ -24,6 +24,8 @@ class FakeToolCallError(RuntimeError):
 class FakeUrlScanner:
     """Offline URL scanner selected by a fixture response ID."""
 
+    provider = "fixture-url-reputation"
+
     def __init__(
         self,
         responses: Mapping[str, UrlScanResult | ToolError],
@@ -47,6 +49,8 @@ class FakeUrlScanner:
 
 class FakeClaimRetriever:
     """Offline claim retriever selected by a fixture response ID."""
+
+    provider = "fixture-fact-check"
 
     def __init__(
         self,
@@ -82,6 +86,8 @@ class FakeClaimRetriever:
 class FakeDomainIntelligence:
     """Offline domain intelligence selected by a fixture response ID."""
 
+    provider = "fixture-rdap"
+
     def __init__(
         self,
         responses: Mapping[str, DomainIntelligenceResult | ToolError],
@@ -108,6 +114,7 @@ class FakeBlacklistRepository:
         self._domains = {domain.casefold(): None for domain in domains}
         self.approved_writes: list[tuple[str, str]] = []
         self.decisions: list[dict[str, str]] = []
+        self.tool_executions: dict[tuple[str, str, str, str], str] = {}
 
     async def get(self, domain: str) -> BlacklistLookupEntry | None:
         normalized = domain.casefold()
@@ -172,3 +179,39 @@ class FakeBlacklistRepository:
         self.decisions[-1]["analysis_id"] = analysis_id or ""
         for domain in domains:
             await self.add_approved(domain, decision_id)
+
+    async def apply_review_decision(
+        self,
+        *,
+        decision_id: str,
+        analysis_id: str,
+        reviewer_id: str,
+        decision: str,
+        action: str,
+        note: str,
+        domains: Sequence[str],
+        response,
+        event,
+    ) -> None:
+        await self.apply_decision(
+            decision_id=decision_id,
+            analysis_id=analysis_id,
+            reviewer_id=reviewer_id,
+            decision=decision,
+            action=action,
+            note=note,
+            domains=domains,
+        )
+
+    async def claim_tool_execution(self, analysis_id: str, step_id: str, target: str, provider: str) -> bool:
+        key = (analysis_id, step_id, target, provider)
+        status = self.tool_executions.get(key)
+        if status in {"running", "completed"}:
+            return False
+        self.tool_executions[key] = "running"
+        return True
+
+    async def finish_tool_execution(
+        self, analysis_id: str, step_id: str, target: str, provider: str, status: str
+    ) -> None:
+        self.tool_executions[(analysis_id, step_id, target, provider)] = status

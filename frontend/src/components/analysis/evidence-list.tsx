@@ -6,6 +6,7 @@ const typeLabels: Record<Evidence["type"], string> = {
   domain_reputation: "Domain reputation",
   redirect: "Redirect",
   blacklist: "Blacklist",
+  domain_registration: "Đăng ký tên miền",
   fact_check: "Fact-check",
   official_source: "Nguồn chính thức",
   user_report: "Báo cáo người dùng",

@@ -36,6 +36,7 @@ class GoogleSafeBrowsingScanner:
     """Google Safe Browsing v4 adapter; raw provider data never leaves this class."""
 
     endpoint = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
+    provider = "google-safe-browsing-v4"
 
     def __init__(
         self,
@@ -110,6 +111,7 @@ class GoogleFactCheckRetriever:
     """Google Fact Check Tools API adapter with normalized ClaimEvidence output."""
 
     endpoint = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+    provider = "google-fact-check-tools-v1alpha1"
 
     def __init__(self, api_key: str, *, client: httpx.AsyncClient | None = None, timeout: float = 10.0) -> None:
         if not api_key.strip():

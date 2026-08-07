@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-CONTRACT_VERSION = "v1"
+CONTRACT_VERSION = "v2"
 SCORING_VERSION = "risk-v2"
 
 
@@ -131,13 +131,13 @@ class ContractModel(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Legacy starter endpoint request. Prefer AnalysisCreateRequest for v1."""
+    """Legacy starter endpoint request. Prefer AnalysisCreateRequest for v2."""
 
     message: str = Field(..., min_length=1, max_length=5000, description="Tin nhắn từ user")
 
 
 class ChatResponse(BaseModel):
-    """Legacy starter endpoint response. Not part of the analysis v1 contract."""
+    """Legacy starter endpoint response. Not part of the analysis v2 contract."""
 
     response: str = Field(..., description="Phản hồi từ agent")
     analysis: str = Field(default="", description="Phân tích nội bộ")
@@ -149,7 +149,7 @@ class AnalysisCreateRequest(ContractModel):
 
 
 class AnalysisAcceptedResponse(ContractModel):
-    contract_version: Literal["v1"] = CONTRACT_VERSION
+    contract_version: Literal["v2"] = CONTRACT_VERSION
     analysis_id: UUID
     status: Literal[AnalysisStatus.QUEUED] = AnalysisStatus.QUEUED
     created_at: datetime
@@ -221,7 +221,7 @@ class ToolError(ContractModel):
 
 
 class AnalysisResponse(ContractModel):
-    contract_version: Literal["v1"] = CONTRACT_VERSION
+    contract_version: Literal["v2"] = CONTRACT_VERSION
     analysis_id: UUID
     status: AnalysisStatus
     input_type: InputType | None = None

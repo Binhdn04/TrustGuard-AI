@@ -24,7 +24,7 @@ describe("HttpAnalysisApi", () => {
     await new HttpAnalysisApi("http://backend.test").listAnalyses();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v1/analyses",
+      "http://backend.test/api/v2/analyses",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer dev-user-token",
@@ -49,7 +49,7 @@ describe("HttpAnalysisApi", () => {
     await new HttpAnalysisApi("http://backend.test").listAdminCases();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v1/admin/cases",
+      "http://backend.test/api/v2/admin/cases",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer dev-admin-token",
@@ -79,7 +79,7 @@ describe("HttpAnalysisApi", () => {
       if (resource === "blacklist") await api.listAdminBlacklist();
 
       expect(fetchMock).toHaveBeenCalledWith(
-        `http://backend.test/api/v1/admin/${resource}`,
+        `http://backend.test/api/v2/admin/${resource}`,
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: "Bearer dev-admin-token",
@@ -109,7 +109,7 @@ describe("HttpAnalysisApi", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v1/analyses/analysis-1/reports",
+      "http://backend.test/api/v2/analyses/analysis-1/reports",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
