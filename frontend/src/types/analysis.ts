@@ -135,18 +135,3 @@ export interface ErrorEnvelope {
   };
 }
 
-export interface AnalysisApi {
-  createAnalysis(
-    request: AnalysisCreateRequest,
-  ): Promise<AnalysisAcceptedResponse>;
-  getAnalysis(analysisId: string): Promise<AnalysisResponse>;
-  listAnalyses(): Promise<AnalysisResponse[]>;
-  listAdminCases(): Promise<AnalysisResponse[]>;
-  listAdminReports(): Promise<AnalysisReportResponse[]>;
-  listAdminDecisions(): Promise<AdminDecisionAudit[]>;
-  listAdminBlacklist(): Promise<BlacklistEntry[]>;
-  reportAnalysis(
-    analysisId: string,
-    request: AnalysisReportRequest,
-  ): Promise<AnalysisReportResponse>;
-}

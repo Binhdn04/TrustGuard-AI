@@ -1,6 +1,4 @@
 import type {
-  AnalysisAcceptedResponse,
-  AnalysisApi,
   AnalysisCreateRequest,
   AnalysisResponse,
   AnalysisReportResponse,
@@ -9,11 +7,20 @@ import type {
   Evidence,
   InputType,
 } from "@/types/analysis";
+import type {
+  AnalysisAcceptedResponseV3,
+  AnalysisEventPageV3,
+  AnalysisEventV3,
+  AnalysisReportResponseV3,
+  AnalysisResponseV3,
+} from "@/types/generated/api-v3";
+
+import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
 
 interface MockRecord {
   request: AnalysisCreateRequest;
   createdAt: string;
-  polls: number;
+  eventPolls: number;
 }
 
 const records = new Map<string, MockRecord>();
@@ -28,9 +35,9 @@ function inputTypeFor(message: string): InputType {
 function runningResponse(
   analysisId: string,
   createdAt: string,
-): AnalysisResponse {
+): AnalysisResponseV3 {
   return {
-    contract_version: "v2",
+    contract_version: "v3",
     analysis_id: analysisId,
     status: "running",
     input_type: null,
@@ -67,18 +74,18 @@ function evidence(
 function completedResponse(
   analysisId: string,
   record: MockRecord,
-): AnalysisResponse {
+): AnalysisResponseV3 {
   const { message } = record.request;
   const normalizedUrls = message.match(URL_PATTERN) ?? [];
   const normalizedMessage = message.toLocaleLowerCase("vi");
   const observedAt = new Date().toISOString();
   const base = {
-    contract_version: "v2" as const,
+    contract_version: "v3" as const,
     analysis_id: analysisId,
     status: "completed" as const,
     input_type: inputTypeFor(message),
     normalized_urls: normalizedUrls,
-    claims: [] as string[],
+    claims: inputTypeFor(message) === "url" ? [] : [message],
     investigation_plan: [
       {
         step_id: "step-mock-local",
@@ -93,6 +100,56 @@ function completedResponse(
     created_at: record.createdAt,
     completed_at: observedAt,
   };
+
+  if (normalizedMessage.includes("nước chanh") || normalizedMessage.includes("ung thư")) {
+    return {
+      ...base,
+      risk_score: 70,
+      risk_level: "high",
+      verdict: "malicious",
+      recommended_action: "show_caution",
+      confidence: 0.9,
+      summary: "Các nguồn kiểm chứng y khoa bác bỏ phát biểu rằng nước chanh có thể chữa khỏi ung thư.",
+      reasons: ["Nguồn fact-check có nhãn đánh giá rõ ràng và liên quan trực tiếp đến phát biểu."],
+      evidence: [
+        evidence(
+          "fact_check",
+          "WHO Fact Check",
+          "Không có thực phẩm đơn lẻ nào chữa khỏi ung thư",
+          "False",
+          observedAt,
+          "https://www.who.int/health-topics/cancer",
+        ),
+      ],
+      limitations: ["Kết quả demo sử dụng fixture, không thay thế tư vấn y khoa."],
+      case_status: "pending_review",
+    };
+  }
+
+  if (normalizedMessage.includes("xe máy") && normalizedMessage.includes("2027")) {
+    return {
+      ...base,
+      risk_score: 45,
+      risk_level: "medium",
+      verdict: "inconclusive",
+      recommended_action: "show_caution",
+      confidence: 0.76,
+      summary: "Phát biểu diễn giải quá rộng so với phạm vi và lộ trình được công bố.",
+      reasons: ["Nguồn liên quan cho thấy chính sách có phạm vi và điều kiện cụ thể."],
+      evidence: [
+        evidence(
+          "fact_check",
+          "Fixture Fact Check Việt Nam",
+          "Lộ trình hạn chế phương tiện không đồng nghĩa cấm hoàn toàn trên cả nước.",
+          "Mixed",
+          observedAt,
+          "https://example.com/fact-check/xe-may-2027",
+        ),
+      ],
+      limitations: ["Cần đối chiếu văn bản chính sách mới nhất khi backend corpus được triển khai."],
+      case_status: "not_required",
+    };
+  }
 
   if (normalizedMessage.includes("official.example/security")) {
     return {
@@ -170,8 +227,8 @@ function completedResponse(
       verdict: "inconclusive",
       recommended_action: "allow",
       confidence: 0.42,
-      summary: "Chưa tìm thấy URL hoặc tuyên bố đủ rõ để kiểm chứng.",
-      reasons: ["Nội dung không chứa chỉ dấu có thể đối chiếu tự động."],
+      summary: "Chưa tìm thấy nguồn đủ rõ để kiểm chứng phát biểu.",
+      reasons: ["Kho dữ liệu mô phỏng chưa có nguồn liên quan trực tiếp."],
       evidence: [],
       limitations: ["Không đủ bằng chứng để kết luận nội dung là an toàn."],
       case_status: "not_required",
@@ -206,33 +263,121 @@ function completedResponse(
 export class MockAnalysisApi implements AnalysisApi {
   async createAnalysis(
     request: AnalysisCreateRequest,
-  ): Promise<AnalysisAcceptedResponse> {
+  ): Promise<AnalysisAcceptedResponseV3> {
     const analysisId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
-    records.set(analysisId, { request, createdAt, polls: 0 });
+    records.set(analysisId, { request, createdAt, eventPolls: 0 });
     return {
-      contract_version: "v2",
+      contract_version: "v3",
       analysis_id: analysisId,
       status: "queued",
       created_at: createdAt,
     };
   }
 
-  async getAnalysis(analysisId: string): Promise<AnalysisResponse> {
+  async getAnalysis(analysisId: string): Promise<AnalysisResponseV3> {
     const record = records.get(analysisId);
     if (!record) throw new Error("Không tìm thấy phiên phân tích.");
 
-    record.polls += 1;
-    if (record.polls < 2) return runningResponse(analysisId, record.createdAt);
+    if (record.eventPolls < 2) return runningResponse(analysisId, record.createdAt);
     return completedResponse(analysisId, record);
   }
 
-  async listAnalyses(): Promise<AnalysisResponse[]> {
-    return Promise.all([...records.keys()].map((analysisId) => this.getAnalysis(analysisId)));
+  async listAnalyses(): Promise<AnalysisResponseV3[]> {
+    return [...records.entries()].map(([analysisId, record]) => completedResponse(analysisId, record));
+  }
+
+  async getAnalysisEvents(
+    analysisId: string,
+    query: AnalysisEventQuery = {},
+  ): Promise<AnalysisEventPageV3> {
+    const record = records.get(analysisId);
+    if (!record) throw new Error("Không tìm thấy phiên phân tích.");
+    record.eventPolls += 1;
+
+    const occurredAt = new Date().toISOString();
+    const events: AnalysisEventV3[] = [
+      {
+        event_id: `${analysisId}:event:1`,
+        analysis_id: analysisId,
+        sequence: 1,
+        event_type: "analysis_status",
+        occurred_at: occurredAt,
+        payload: { status: "running" },
+      },
+      {
+        event_id: `${analysisId}:event:2`,
+        analysis_id: analysisId,
+        sequence: 2,
+        event_type: "step_transition",
+        occurred_at: occurredAt,
+        payload: {
+          step_id: "step-mock-local",
+          tool: "local_rules",
+          target: "message",
+          reason_code: "input_validation",
+          depends_on: [],
+          status: "completed",
+        },
+      },
+      {
+        event_id: `${analysisId}:event:3`,
+        analysis_id: analysisId,
+        sequence: 3,
+        event_type: "step_transition",
+        occurred_at: occurredAt,
+        payload: {
+          step_id: "step-mock-claim",
+          tool: "claim_retriever",
+          target: record.request.message,
+          reason_code: "claim_requires_verification",
+          depends_on: ["step-mock-local"],
+          status: "running",
+        },
+      },
+      {
+        event_id: `${analysisId}:event:4`,
+        analysis_id: analysisId,
+        sequence: 4,
+        event_type: "step_transition",
+        occurred_at: occurredAt,
+        payload: {
+          step_id: "step-mock-claim",
+          tool: "claim_retriever",
+          target: record.request.message,
+          reason_code: "claim_requires_verification",
+          depends_on: ["step-mock-local"],
+          status: "completed",
+        },
+      },
+      {
+        event_id: `${analysisId}:event:5`,
+        analysis_id: analysisId,
+        sequence: 5,
+        event_type: "final_result",
+        occurred_at: occurredAt,
+        payload: { result_ref: `analysis:${analysisId}:result`, status: "completed" },
+      },
+    ];
+    const availableSequence = record.eventPolls === 1 ? 3 : events.length;
+    const afterSequence = Number(query.cursor ?? 0);
+    const page = events
+      .filter((event) => event.sequence > afterSequence && event.sequence <= availableSequence)
+      .slice(0, query.limit ?? 100);
+    return {
+      contract_version: "v3",
+      events: page,
+      next_cursor: page.length > 0 ? String(page.at(-1)?.sequence) : query.cursor ?? null,
+    };
   }
 
   async listAdminCases(): Promise<AnalysisResponse[]> {
-    return (await this.listAnalyses()).filter((item) => item.case_status === "pending_review");
+    return (await this.listAnalyses())
+      .filter((item) => item.case_status === "pending_review")
+      .map((item) => ({
+        ...item,
+        contract_version: "v2" as const,
+      }));
   }
 
   async listAdminReports(): Promise<AnalysisReportResponse[]> {
@@ -247,9 +392,10 @@ export class MockAnalysisApi implements AnalysisApi {
     return [];
   }
 
-  async reportAnalysis(analysisId: string): Promise<AnalysisReportResponse> {
+  async reportAnalysis(analysisId: string): Promise<AnalysisReportResponseV3> {
     if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
     return {
+      contract_version: "v3",
       report_id: crypto.randomUUID(),
       analysis_id: analysisId,
       created_at: new Date().toISOString(),

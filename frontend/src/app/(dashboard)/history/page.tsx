@@ -129,7 +129,7 @@ export default function HistoryPage() {
                   
                   <div className="space-y-2 flex-1 pr-4">
                     <p className="text-sm font-medium text-foreground line-clamp-2">
-                      "{item.content}"
+                      &quot;{item.content}&quot;
                     </p>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                       <span>{new Date(item.date).toLocaleDateString("vi-VN")}</span>

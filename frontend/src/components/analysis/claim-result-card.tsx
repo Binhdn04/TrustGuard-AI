@@ -1,6 +1,6 @@
 import { ExternalLink, ShieldCheck, ShieldAlert, AlertTriangle, HelpCircle, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ClaimResult } from "@/types/analysis";
+import type { ClaimResult } from "@/types/analysis-view-model";
 
 interface ClaimResultCardProps {
   claim: ClaimResult;

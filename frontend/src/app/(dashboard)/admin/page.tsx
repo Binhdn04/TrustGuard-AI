@@ -86,12 +86,12 @@ export default function AdminPage() {
                   <div className="flex-1 space-y-4">
                     <div>
                       <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1">Nội dung gốc</h4>
-                      <p className="text-sm font-medium">"{review.originalContent}"</p>
+                      <p className="text-sm font-medium">&quot;{review.originalContent}&quot;</p>
                     </div>
                     
                     <div className="p-3 bg-muted/50 rounded-xl border border-border">
                       <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1 flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Claim được trích xuất</h4>
-                      <p className="text-sm font-medium">"{review.extractedClaim}"</p>
+                      <p className="text-sm font-medium">&quot;{review.extractedClaim}&quot;</p>
                       
                       <div className="mt-3 flex items-center gap-4">
                         <div>

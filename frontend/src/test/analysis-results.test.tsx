@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { FactCheckSummary } from "@/components/analysis/fact-check-summary";
 import { LinkSafetyPanel } from "@/components/analysis/link-safety-panel";
-import type { FactCheckResult, LinkSafetyResult } from "@/types/analysis";
+import type { FactCheckResult, LinkSafetyResult } from "@/types/analysis-view-model";
 
 describe("Kết quả phân tích", () => {
   it("Fact-check là phần đầu tiên của kết quả và render multiple claims", () => {

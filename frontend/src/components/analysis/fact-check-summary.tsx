@@ -1,6 +1,6 @@
 import { ShieldCheck, ShieldAlert, AlertTriangle, HelpCircle, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { FactCheckResult } from "@/types/analysis";
+import type { FactCheckResult } from "@/types/analysis-view-model";
 import { ClaimResultCard } from "./claim-result-card";
 
 interface FactCheckSummaryProps {

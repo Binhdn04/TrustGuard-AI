@@ -24,7 +24,7 @@ describe("HttpAnalysisApi", () => {
     await new HttpAnalysisApi("http://backend.test").listAnalyses();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v2/analyses",
+      "http://backend.test/api/v3/analyses",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer dev-user-token",
@@ -109,7 +109,7 @@ describe("HttpAnalysisApi", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://backend.test/api/v2/analyses/analysis-1/reports",
+      "http://backend.test/api/v3/analyses/analysis-1/reports",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({

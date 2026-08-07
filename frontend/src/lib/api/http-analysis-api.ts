@@ -1,7 +1,4 @@
 import type {
-  AnalysisAcceptedResponse,
-  AnalysisApi,
-  AnalysisCreateRequest,
   AdminDecisionAudit,
   AnalysisResponse,
   AnalysisReportRequest,
@@ -9,13 +6,27 @@ import type {
   BlacklistEntry,
   ErrorEnvelope,
 } from "@/types/analysis";
+import type {
+  AnalysisAcceptedResponseV3,
+  AnalysisCreateRequestV3,
+  AnalysisEventPageV3,
+  AnalysisReportResponseV3,
+  AnalysisResponseV3,
+} from "@/types/generated/api-v3";
+
+import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
 
 const DEFAULT_API_URL = "http://localhost:8000";
 
 function authHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
-  const stored = window.localStorage.getItem("ai_protect_user");
-  const role = stored ? (JSON.parse(stored) as { role?: string }).role : "user";
+  let role = "user";
+  try {
+    const stored = window.localStorage.getItem("ai_protect_user");
+    role = stored ? (JSON.parse(stored) as { role?: string }).role ?? "user" : "user";
+  } catch {
+    window.localStorage.removeItem("ai_protect_user");
+  }
   return {
     Authorization:
       role === "security_admin"
@@ -60,29 +71,44 @@ export class HttpAnalysisApi implements AnalysisApi {
   }
 
   async createAnalysis(
-    request: AnalysisCreateRequest,
-  ): Promise<AnalysisAcceptedResponse> {
-    const response = await fetch(`${this.baseUrl}/api/v2/analyses`, {
+    request: AnalysisCreateRequestV3,
+  ): Promise<AnalysisAcceptedResponseV3> {
+    const response = await fetch(`${this.baseUrl}/api/v3/analyses`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(request),
     });
-    return readJson<AnalysisAcceptedResponse>(response);
+    return readJson<AnalysisAcceptedResponseV3>(response);
   }
 
-  async getAnalysis(analysisId: string): Promise<AnalysisResponse> {
+  async getAnalysis(analysisId: string): Promise<AnalysisResponseV3> {
     const response = await fetch(
-      `${this.baseUrl}/api/v2/analyses/${encodeURIComponent(analysisId)}`,
+      `${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}`,
       { headers: { Accept: "application/json", ...authHeaders() } },
     );
-    return readJson<AnalysisResponse>(response);
+    return readJson<AnalysisResponseV3>(response);
   }
 
-  async listAnalyses(): Promise<AnalysisResponse[]> {
-    const response = await fetch(`${this.baseUrl}/api/v2/analyses`, {
+  async listAnalyses(): Promise<AnalysisResponseV3[]> {
+    const response = await fetch(`${this.baseUrl}/api/v3/analyses`, {
       headers: { Accept: "application/json", ...authHeaders() },
     });
-    return readJson<AnalysisResponse[]>(response);
+    return readJson<AnalysisResponseV3[]>(response);
+  }
+
+  async getAnalysisEvents(
+    analysisId: string,
+    query: AnalysisEventQuery = {},
+  ): Promise<AnalysisEventPageV3> {
+    const search = new URLSearchParams();
+    if (query.cursor) search.set("cursor", query.cursor);
+    if (query.limit !== undefined) search.set("limit", String(query.limit));
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const response = await fetch(
+      `${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}/events${suffix}`,
+      { headers: { Accept: "application/json", ...authHeaders() } },
+    );
+    return readJson<AnalysisEventPageV3>(response);
   }
 
   async listAdminCases(): Promise<AnalysisResponse[]> {
@@ -104,16 +130,16 @@ export class HttpAnalysisApi implements AnalysisApi {
   async reportAnalysis(
     analysisId: string,
     request: AnalysisReportRequest,
-  ): Promise<AnalysisReportResponse> {
+  ): Promise<AnalysisReportResponseV3> {
     const response = await fetch(
-      `${this.baseUrl}/api/v2/analyses/${encodeURIComponent(analysisId)}/reports`,
+      `${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}/reports`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(request),
       },
     );
-    return readJson<AnalysisReportResponse>(response);
+    return readJson<AnalysisReportResponseV3>(response);
   }
 
   private async getAdminResource<T>(resource: string): Promise<T> {

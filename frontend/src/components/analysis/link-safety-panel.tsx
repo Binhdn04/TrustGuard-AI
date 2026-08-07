@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link2, ShieldCheck, AlertTriangle, ShieldAlert, ChevronDown, Activity, Globe, Link as LinkIcon, Loader2, AlertCircle, HelpCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { LinkSafetyResult, UrlAssessment } from "@/types/analysis";
+import type { LinkSafetyResult, UrlAssessment } from "@/types/analysis-view-model";
 
 interface LinkSafetyPanelProps {
   result: LinkSafetyResult;
