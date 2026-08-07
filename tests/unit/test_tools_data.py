@@ -516,6 +516,67 @@ async def test_v2_migration_upgrades_existing_v1_analysis_json(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_v2_migration_quarantines_malformed_json_without_blocking_startup(tmp_path):
+    database = tmp_path / "malformed.db"
+    analysis_id = uuid4()
+    created_at = datetime.now(UTC)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """CREATE TABLE analyses (
+               analysis_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
+               request_json TEXT NOT NULL, response_json TEXT NOT NULL,
+               case_status TEXT, created_at TEXT NOT NULL)"""
+    )
+    connection.execute(
+        """INSERT INTO analyses(
+               analysis_id, owner_id, request_json, response_json, case_status, created_at
+           ) VALUES (?, 'user-1', ?, ?, NULL, ?)""",
+        (
+            str(analysis_id),
+            '{"message":"legacy","consent_to_scan_urls":false}',
+            "{malformed-json",
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = SQLiteBlacklistRepository(database)
+    loaded = await repository.load_analysis(str(analysis_id))
+    assert loaded is not None
+    assert loaded[2].status is AnalysisStatus.FAILED
+    assert loaded[2].contract_version == "v2"
+    assert await repository.list_migration_errors() == [
+        (str(analysis_id), "JSONDecodeError", False)
+    ]
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_analysis_filters_bind_injection_shaped_values(tmp_path):
+    repository = SQLiteBlacklistRepository(tmp_path / "security.db")
+    analysis_id = uuid4()
+    created_at = datetime.now(UTC)
+    request = AnalysisCreateRequest(message="safe", consent_to_scan_urls=False)
+    response = AnalysisResponse(analysis_id=analysis_id, status="queued", created_at=created_at)
+    event = AnalysisEvent(
+        analysis_id=analysis_id,
+        status="queued",
+        step="queued",
+        occurred_at=created_at,
+    )
+    await repository.create_analysis(
+        owner_id="user-1", request=request, response=response, event=event
+    )
+
+    assert len(await repository.list_analysis_responses(owner_id="user-1")) == 1
+    assert await repository.list_analysis_responses(owner_id="user-1' OR 1=1 --") == []
+    assert await repository.list_analysis_responses(case_status="pending_review' OR 1=1 --") == []
+    assert len(await repository.list_analysis_responses()) == 1
+    await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_offline_fact_check_repository_is_ranked_and_copied():
     corpus = JsonFactCheckRepository(
         [

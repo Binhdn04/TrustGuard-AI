@@ -100,12 +100,16 @@ def _build_planning_loop_node(
     claim_node = build_verify_claims_node(claim_retriever)
     domain_node = build_inspect_domains_node(domain_intelligence)
 
-    def provider_for(tool: InvestigationTool) -> str:
-        adapter = {
-            InvestigationTool.URL_SCANNER: url_scanner,
-            InvestigationTool.DOMAIN_INTELLIGENCE: domain_intelligence,
-            InvestigationTool.CLAIM_RETRIEVER: claim_retriever,
-        }[tool]
+    adapters = {
+        InvestigationTool.URL_SCANNER: url_scanner,
+        InvestigationTool.DOMAIN_INTELLIGENCE: domain_intelligence,
+        InvestigationTool.CLAIM_RETRIEVER: claim_retriever,
+    }
+
+    def provider_for(tool: InvestigationTool) -> str | None:
+        if tool not in adapters:
+            return None
+        adapter = adapters[tool]
         if adapter is None:
             return "not-configured"
         return str(getattr(adapter, "provider", f"{type(adapter).__module__}.{type(adapter).__qualname__}"))
@@ -173,6 +177,21 @@ def _build_planning_loop_node(
             selected_providers: list[str] = []
             for step in gated[:remaining]:
                 provider = provider_for(step.tool)
+                if provider is None:
+                    errors = list(working.get("errors", []))
+                    errors.append(
+                        ToolError(
+                            tool=step.tool.value,
+                            code="UNSUPPORTED_TOOL",
+                            message="Investigation tool is not supported by this executor",
+                            retryable=False,
+                        )
+                    )
+                    working["errors"] = errors
+                    working["investigation_plan"] = transition_step(
+                        working["investigation_plan"], step.step_id, InvestigationStepStatus.FAILED
+                    )
+                    continue
                 analysis_id = working.get("analysis_id")
                 if execution_ledger is not None and analysis_id:
                     try:

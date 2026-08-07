@@ -116,86 +116,95 @@ class SQLiteBlacklistRepository:
         columns = {row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()}
         if "analysis_id" not in columns:
             self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
-        self._apply_migrations()
         self._connection.commit()
+        self._apply_migrations()
 
     def _apply_migrations(self) -> None:
         """Apply additive SQLite migrations to existing vertical-slice databases."""
         applied = {row[0] for row in self._connection.execute("SELECT version FROM schema_migrations")}
-        if 2 not in applied:
-            self._connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS analysis_steps (
-                    analysis_id TEXT NOT NULL,
-                    step_id TEXT NOT NULL,
-                    step_json TEXT NOT NULL,
-                    PRIMARY KEY (analysis_id, step_id),
-                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
-                );
-                CREATE TABLE IF NOT EXISTS analysis_evidence (
-                    analysis_id TEXT NOT NULL,
-                    evidence_index INTEGER NOT NULL,
-                    evidence_json TEXT NOT NULL,
-                    PRIMARY KEY (analysis_id, evidence_index),
-                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
-                );
-                CREATE TABLE IF NOT EXISTS analysis_errors (
-                    analysis_id TEXT NOT NULL,
-                    error_index INTEGER NOT NULL,
-                    error_json TEXT NOT NULL,
-                    PRIMARY KEY (analysis_id, error_index),
-                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
-                );
-                CREATE TABLE IF NOT EXISTS tool_executions (
-                    analysis_id TEXT NOT NULL,
-                    step_id TEXT NOT NULL,
-                    target TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),
-                    attempt_count INTEGER NOT NULL DEFAULT 1,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (analysis_id, step_id, target, provider),
-                    FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
-                );
-                CREATE TABLE IF NOT EXISTS outbox_events (
-                    outbox_id TEXT PRIMARY KEY,
-                    event_key TEXT NOT NULL UNIQUE,
-                    event_type TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    published_at TEXT
-                );
-                """
-            )
-            # v1 was never public, but local demo databases may contain its JSON.
-            # Upgrade those rows in place and backfill normalized v2 artifacts.
-            rows = self._connection.execute("SELECT analysis_id, response_json FROM analyses").fetchall()
-            for analysis_id, response_json in rows:
-                payload = json.loads(response_json)
-                payload["contract_version"] = "v2"
-                payload.setdefault("investigation_plan", [])
-                upgraded_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if 2 in applied:
+            return
+        statements = (
+            """CREATE TABLE IF NOT EXISTS analysis_steps (
+                analysis_id TEXT NOT NULL, step_id TEXT NOT NULL, step_json TEXT NOT NULL,
+                PRIMARY KEY (analysis_id, step_id),
+                FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id))""",
+            """CREATE TABLE IF NOT EXISTS analysis_evidence (
+                analysis_id TEXT NOT NULL, evidence_index INTEGER NOT NULL, evidence_json TEXT NOT NULL,
+                PRIMARY KEY (analysis_id, evidence_index),
+                FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id))""",
+            """CREATE TABLE IF NOT EXISTS analysis_errors (
+                analysis_id TEXT NOT NULL, error_index INTEGER NOT NULL, error_json TEXT NOT NULL,
+                PRIMARY KEY (analysis_id, error_index),
+                FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id))""",
+            """CREATE TABLE IF NOT EXISTS tool_executions (
+                analysis_id TEXT NOT NULL, step_id TEXT NOT NULL, target TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),
+                attempt_count INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL,
+                PRIMARY KEY (analysis_id, step_id, target, provider),
+                FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id))""",
+            """CREATE TABLE IF NOT EXISTS outbox_events (
+                outbox_id TEXT PRIMARY KEY, event_key TEXT NOT NULL UNIQUE,
+                event_type TEXT NOT NULL, payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL, published_at TEXT)""",
+            """CREATE TABLE IF NOT EXISTS analysis_migration_errors (
+                analysis_id TEXT PRIMARY KEY, error_code TEXT NOT NULL,
+                hidden INTEGER NOT NULL CHECK (hidden IN (0, 1)), recorded_at TEXT NOT NULL)""",
+        )
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            for statement in statements:
+                self._connection.execute(statement)
+            rows = self._connection.execute(
+                "SELECT analysis_id, response_json, created_at FROM analyses"
+            ).fetchall()
+            for analysis_id, response_json, created_at in rows:
+                try:
+                    payload = json.loads(response_json)
+                    if not isinstance(payload, dict):
+                        raise ValueError("analysis response must be a JSON object")
+                    payload["contract_version"] = "v2"
+                    payload.setdefault("investigation_plan", [])
+                    upgraded = AnalysisResponse.model_validate(payload)
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                    self._quarantine_analysis_migration(analysis_id, created_at, exc)
+                    continue
                 self._connection.execute(
                     "UPDATE analyses SET response_json = ? WHERE analysis_id = ?",
-                    (upgraded_json, analysis_id),
+                    (upgraded.model_dump_json(), analysis_id),
                 )
-                for step in payload.get("investigation_plan") or []:
-                    self._connection.execute(
-                        """INSERT OR REPLACE INTO analysis_steps(analysis_id, step_id, step_json)
-                           VALUES (?, ?, ?)""",
-                        (analysis_id, step["step_id"], json.dumps(step, ensure_ascii=False)),
-                    )
-                for index, evidence in enumerate(payload.get("evidence") or []):
-                    self._connection.execute(
-                        """INSERT OR REPLACE INTO analysis_evidence(
-                               analysis_id, evidence_index, evidence_json
-                           ) VALUES (?, ?, ?)""",
-                        (analysis_id, index, json.dumps(evidence, ensure_ascii=False)),
-                    )
+                self._replace_analysis_artifacts(upgraded, [])
             self._connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)",
                 (datetime.now(UTC).isoformat(),),
             )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _quarantine_analysis_migration(self, analysis_id: str, created_at: str, exc: Exception) -> None:
+        try:
+            identifier = UUID(analysis_id)
+            timestamp = datetime.fromisoformat(created_at).astimezone(UTC)
+        except (TypeError, ValueError):
+            self._record_migration_error(analysis_id, exc, hidden=True)
+            return
+        self._record_migration_error(analysis_id, exc, hidden=False)
+        failed = AnalysisResponse(analysis_id=identifier, status="failed", created_at=timestamp)
+        self._connection.execute(
+            "UPDATE analyses SET response_json = ?, case_status = NULL WHERE analysis_id = ?",
+            (failed.model_dump_json(), analysis_id),
+        )
+
+    def _record_migration_error(self, analysis_id: str, exc: Exception, *, hidden: bool) -> None:
+        self._connection.execute(
+            """INSERT OR REPLACE INTO analysis_migration_errors(
+                   analysis_id, error_code, hidden, recorded_at
+               ) VALUES (?, ?, ?, ?)""",
+            (analysis_id, type(exc).__name__, int(hidden), datetime.now(UTC).isoformat()),
+        )
 
     async def get(self, domain: str) -> BlacklistLookupEntry | None:
         normalized = normalize_domain(domain)
@@ -582,7 +591,13 @@ class SQLiteBlacklistRepository:
     ) -> tuple[str, AnalysisCreateRequest, AnalysisResponse, list[AnalysisEvent]] | None:
         async with self._lock:
             row = self._connection.execute(
-                "SELECT owner_id, request_json, response_json FROM analyses WHERE analysis_id = ?",
+                """SELECT owner_id, request_json, response_json FROM analyses
+                   WHERE analysis_id = ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM analysis_migration_errors AS migration_error
+                         WHERE migration_error.analysis_id = analyses.analysis_id
+                           AND migration_error.hidden = 1
+                     )""",
                 (analysis_id,),
             ).fetchone()
             if row is None:
@@ -604,18 +619,38 @@ class SQLiteBlacklistRepository:
         owner_id: str | None = None,
         case_status: str | None = None,
     ) -> list[AnalysisResponse]:
-        clauses: list[str] = []
-        parameters: list[str] = []
-        if owner_id is not None:
-            clauses.append("owner_id = ?")
-            parameters.append(owner_id)
-        if case_status is not None:
-            clauses.append("case_status = ?")
-            parameters.append(case_status)
-        sql = "SELECT response_json FROM analyses"
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY created_at DESC"
+        if owner_id is not None and case_status is not None:
+            sql = """SELECT response_json FROM analyses
+                WHERE owner_id = ? AND case_status = ? AND NOT EXISTS (
+                    SELECT 1 FROM analysis_migration_errors AS migration_error
+                    WHERE migration_error.analysis_id = analyses.analysis_id
+                      AND migration_error.hidden = 1
+                )
+                ORDER BY created_at DESC"""
+            parameters = (owner_id, case_status)
+        elif owner_id is not None:
+            sql = """SELECT response_json FROM analyses
+                WHERE owner_id = ? AND NOT EXISTS (
+                    SELECT 1 FROM analysis_migration_errors AS migration_error
+                    WHERE migration_error.analysis_id = analyses.analysis_id
+                      AND migration_error.hidden = 1
+                ) ORDER BY created_at DESC"""
+            parameters = (owner_id,)
+        elif case_status is not None:
+            sql = """SELECT response_json FROM analyses
+                WHERE case_status = ? AND NOT EXISTS (
+                    SELECT 1 FROM analysis_migration_errors AS migration_error
+                    WHERE migration_error.analysis_id = analyses.analysis_id
+                      AND migration_error.hidden = 1
+                ) ORDER BY created_at DESC"""
+            parameters = (case_status,)
+        else:
+            sql = """SELECT response_json FROM analyses WHERE NOT EXISTS (
+                SELECT 1 FROM analysis_migration_errors AS migration_error
+                WHERE migration_error.analysis_id = analyses.analysis_id
+                  AND migration_error.hidden = 1
+            ) ORDER BY created_at DESC"""
+            parameters = ()
         async with self._lock:
             rows = self._connection.execute(sql, parameters).fetchall()
         return [AnalysisResponse.model_validate_json(row[0]) for row in rows]
@@ -654,6 +689,14 @@ class SQLiteBlacklistRepository:
             return self._connection.execute(
                 "SELECT event_key, event_type, published_at FROM outbox_events ORDER BY created_at, rowid"
             ).fetchall()
+
+    async def list_migration_errors(self) -> list[tuple[str, str, bool]]:
+        async with self._lock:
+            rows = self._connection.execute(
+                """SELECT analysis_id, error_code, hidden
+                   FROM analysis_migration_errors ORDER BY analysis_id"""
+            ).fetchall()
+        return [(analysis_id, error_code, bool(hidden)) for analysis_id, error_code, hidden in rows]
 
     def _insert_event(self, event: AnalysisEvent) -> None:
         self._connection.execute(
