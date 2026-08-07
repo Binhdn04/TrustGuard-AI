@@ -1,110 +1,58 @@
-# Architecture Document
+# TrustGuard AI — Architecture Entry Point
 
-## System Overview
+Tài liệu kiến trúc canonical nằm tại [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md). File này
+tóm tắt boundary quan trọng để README, slide và reviewer không nhầm kiến trúc đích với runtime hiện
+tại.
 
-[Tóm tắt 2-3 câu về kiến trúc hệ thống]
-
-## Architecture Diagram
-
-```mermaid
-graph TB
-    subgraph Frontend
-        UI[React/Next.js UI]
-    end
-
-    subgraph Backend[FastAPI Backend]
-        API[API Routes]
-        Agent[LangGraph Agent]
-        LLM[LLM Service]
-        Tools[Agent Tools]
-    end
-
-    subgraph Data[Data Layer]
-        DB[(Database)]
-        Vector[Vector Store]
-    end
-
-    UI -->|HTTP/REST| API
-    API --> Agent
-    Agent --> LLM
-    Agent --> Tools
-    Agent --> Vector
-    Tools --> DB
-    API --> DB
-```
-
-## Components
-
-### 1. Frontend (React/Next.js)
-- **Purpose:** [mô tả]
-- **Key Features:** [danh sách]
-- **State Management:** [approach]
-
-### 2. Backend (FastAPI)
-- **Purpose:** [mô tả]
-- **API Design:** RESTful
-- **Authentication:** [JWT/None]
-
-### 3. AI Agent (LangGraph)
-- **Agent Type:** [ReAct / Plan-and-Execute / Custom]
-- **State:** [mô tả state schema]
-- **Nodes:** [danh sách nodes]
-- **Tools:** [danh sách tools]
-- **Flow:**
+## Kiến trúc hiện tại
 
 ```mermaid
-graph LR
-    START --> A[Node A]
-    A --> B{Decision}
-    B -->|Yes| C[Node C]
-    B -->|No| D[Node D]
-    C --> E[END]
-    D --> E
+flowchart LR
+    UI[Next.js/React UI] -. chưa nối dashboard .-> API[FastAPI /api/v2]
+    API --> Task[In-process background task]
+    Task --> Agent[LangGraph workflow]
+    Agent --> Risk[Deterministic Risk Engine]
+    Agent --> Tools[Local rules / blacklist / provider adapters]
+    API --> SQLite[(SQLite)]
+    Agent -. optional .-> LLM[GPT-4o-mini]
 ```
 
-### 4. Database
-- **Type:** [PostgreSQL / SQLite]
-- **Tables:** [danh sách]
-- **Migrations:** Alembic
+Backend vertical slice, contract v2, SQLite repository và agent workflow đã tồn tại. Frontend chính
+vẫn còn simulation/hard-coded data; progress event hiện được đọc bằng polling và chưa phản ánh mọi
+transition theo thời gian thực.
 
-### 5. Vector Store
-- **Type:** [ChromaDB / FAISS / Pinecone]
-- **Embeddings:** [model]
-- **Purpose:** [RAG / similarity search]
-
-## Data Flow
-
-1. User gửi request từ Frontend
-2. API route nhận và validate input
-3. Agent xử lý qua LangGraph pipeline
-4. LLM generate response
-5. Tools thực thi actions (nếu cần)
-6. Response trả về Frontend
-
-## Deployment Architecture
+## Kiến trúc đích
 
 ```mermaid
-graph LR
-    subgraph Docker
-        FE[Frontend Container]
-        BE[Backend Container]
-        DB_C[Database Container]
-    end
-    FE --> BE --> DB_C
+flowchart TB
+    Chat[React chat + inline warning] <-->|HTTPS / WSS| API[FastAPI /api/v3]
+    API --> DB[(PostgreSQL + pgvector)]
+    API --> Redis[(Redis)]
+    Worker[Durable LangGraph worker] --> DB
+    Worker --> Redis
+    Worker --> Rules[Rules + approved blacklist + cache]
+    Worker --> Reputation[GSB / Web Risk / VirusTotal]
+    Worker --> Domain[RDAP-first WHOIS + redirects]
+    Worker --> Facts[Fact-check retriever + trusted corpus]
+    Worker --> LLM[GPT-4o-mini]
+    Worker -. advanced, consented .-> Shot[Sandbox screenshot renderer]
+    Admin[Security Admin] --> API
+    API --> Audit[Review + appeal + audit]
 ```
 
-## Security
+Đường xử lý ưu tiên local rule, approved blacklist và cached reputation để tạo cảnh báo sơ bộ. Các
+provider lookup và LLM chỉ chạy khi policy, consent, budget và coverage yêu cầu. Risk Engine hợp nhất
+structured evidence; LLM chỉ hỗ trợ ngữ cảnh và diễn giải grounded.
 
-- API keys stored in `.env` (never commit)
-- Input validation via Pydantic
-- Rate limiting on API endpoints
-- CORS configured for frontend domain
+`/api/v2` là contract runtime hiện tại và được giữ read-compatible trong release v3 đầu tiên;
+frontend final product dùng `/api/v3`.
 
-## Design Decisions
+## Trust boundaries
 
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Framework | FastAPI | Async, auto-docs, type-safe |
-| Agent | LangGraph | Flexible state management |
-| Database | [choice] | [reason] |
-| Frontend | Next.js | [reason] |
+- User chỉ gửi message/URL đã chọn; hệ thống không đọc nền toàn bộ hội thoại và không phá E2E.
+- URL/domain lookup và screenshot cần consent; dữ liệu gửi provider phải được tối thiểu hóa.
+- Redirect/screenshot chạy sau SSRF guard, trong môi trường cô lập, không cookie hay credential.
+- Individual warning được hiển thị ngay; domain block và broad warning luôn chờ admin phê duyệt.
+- Redis là broker/cache/event fan-out, không phải source of truth; PostgreSQL giữ state và audit.
+
+Xem tài liệu canonical để biết lifecycle, contract boundary, hiện trạng adapter và roadmap migration.

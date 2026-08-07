@@ -1,157 +1,137 @@
-# PRODUCT REQUIREMENTS DOCUMENT
+# PRODUCT REQUIREMENTS DOCUMENT — TRUSTGUARD AI
 
 ## 1. Mục tiêu
 
-Xây dựng AI Agent giúp người dùng đánh giá nhanh một tin nhắn hoặc URL đáng ngờ trong dưới một phút bằng quy trình có bằng chứng, giải thích rõ lý do cảnh báo và hỗ trợ Human-in-the-Loop đối với các trường hợp rủi ro cao.
-
----
+Xây dựng AI Agent giúp người dùng đánh giá URL hoặc tin nhắn đáng ngờ bằng quy trình có bằng chứng,
+cảnh báo inline hai pha và Human-in-the-loop cho mọi hành động ảnh hưởng nhiều người.
 
 ## 2. Persona
 
 ### User
 
-- Dán tin nhắn hoặc URL cần kiểm tra.
-- Xem kết quả phân tích và mức độ rủi ro.
-- Xem lịch sử phân tích.
-- Gửi phản hồi nếu AI cảnh báo sai.
+- Chủ động chọn message/URL cần phân tích và cấp/từ chối consent external lookup.
+- Xem cảnh báo sơ bộ, tiến trình, kết luận cuối, evidence và limitation.
+- Xem lịch sử, gửi report và appeal khi cho rằng cảnh báo sai.
 
 ### Security Admin
 
-- Xem các trường hợp rủi ro cao.
-- Xác nhận kết quả phân tích.
-- Quản lý danh sách domain chính thức và blacklist.
+- Review case, report, appeal, campaign hypothesis và evidence snapshot.
+- Quản lý blacklist có provenance/lifecycle.
+- Phê duyệt/từ chối block domain và broad warning với note/audit.
 
----
+## 3. User flow
 
-## 3. User Stories
+1. User đăng nhập, chọn nội dung cần kiểm tra và xem disclosure.
+2. Agent extract URL, claim, brand, requested action và social-engineering signals.
+3. Rule, approved blacklist và reputation cache tạo provisional warning có nhãn đang xác minh.
+4. Policy planner gọi URL reputation, guarded redirect, RDAP-first WHOIS và fact-check theo consent,
+   SSRF guard, deadline, quota và cost budget.
+5. Risk Engine chấm điểm deterministic; GPT-4o-mini chỉ review coverage và viết giải thích grounded.
+6. UI cập nhật final warning, evidence, limitation và recommendation.
+7. Critical/conflicting/user-reported case vào admin queue; warning cá nhân vẫn hiện ngay.
+8. Mọi blacklist/block/broad warning chỉ có hiệu lực sau admin approval và audit.
 
-- Là người dùng, tôi muốn biết tin nhắn có dấu hiệu lừa đảo hay không.
-- Là người dùng, tôi muốn biết AI dựa trên những bằng chứng nào để đưa ra cảnh báo.
-- Là người dùng, tôi muốn biết giới hạn của kết quả thay vì khẳng định tuyệt đối.
-- Là người dùng, tôi muốn báo cáo khi AI cảnh báo sai.
-- Là Security Admin, tôi muốn xem các trường hợp nghiêm trọng để xác nhận và xử lý.
+## 4. Functional requirements
 
----
+### FR-01 — Authentication và RBAC
 
-## 4. User Flow
+- Hai vai trò `user` và `security_admin`; production không dùng demo token.
+- User chỉ đọc analysis/appeal của mình; admin endpoint yêu cầu role tương ứng.
 
-1. Người dùng đăng nhập.
-2. Nhập tin nhắn hoặc URL cần kiểm tra.
-3. AI phân tích nội dung và trích xuất các thông tin cần thiết.
-4. AI kiểm tra độ uy tín của URL, domain và đối chiếu với các nguồn xác thực.
-5. AI đánh giá mức độ rủi ro và tạo báo cáo.
-6. Hiển thị cảnh báo cùng lời giải thích.
-7. Nếu rủi ro rất cao hoặc kết quả chưa đủ chắc chắn, hệ thống chuyển sang Security Admin xem xét.
-8. Lưu lịch sử và cho phép người dùng gửi phản hồi.
+### FR-02 — Consent và input privacy
 
----
+- Nhận URL hoặc message 1–5.000 ký tự do user chủ động gửi.
+- Consent riêng cho URL/domain lookup và screenshot; từ chối consent vẫn cho phép local analysis.
+- Không đọc nền toàn bộ conversation, không phá E2E, không log raw message/OTP/secret.
 
-## 5. Functional Requirements
+### FR-03 — Extraction và plan
 
-### FR-01 Authentication
+- Extract URL, claim, brand, requested action, urgency và scam indicators.
+- Công khai plan/status ở mức task trace; không công khai chain-of-thought/prompt/model trace.
+- Tool ngoài allowlist hoặc vượt consent/budget không được chạy dù LLM đề xuất.
 
-- Hỗ trợ hai vai trò:
-  - User
-  - Security Admin
+### FR-04 — URL/domain investigation
 
-### FR-02 Input Analysis
+- Normalize URL/IDNA, kiểm tra look-alike, blacklist, reputation và redirect.
+- Dùng adapter GSB/Web Risk hoặc VirusTotal; no-hit là `inconclusive`, không phải `safe`.
+- RDAP-first cho WHOIS metadata công khai; không lưu registrant entity/private record.
+- Chặn private/local/metadata IP trước kết nối và revalidate mỗi redirect.
 
-- Cho phép nhập văn bản hoặc URL.
-- Không chấp nhận dữ liệu rỗng.
+### FR-05 — Claim verification
 
-### FR-03 Information Extraction
+- Fact-check qua provider và, ở pha nâng cao, trusted pgvector corpus có source/version/citation.
+- Similarity chỉ dùng retrieval; stance/verdict không được suy ra từ embedding distance.
+- Không có nguồn hoặc nguồn mâu thuẫn phải trả limitation/inconclusive phù hợp.
 
-AI tự động trích xuất các thông tin quan trọng như:
+### FR-06 — Risk và warning
 
-- URL
-- Thương hiệu được nhắc đến
-- Hành động được yêu cầu (đăng nhập, chuyển tiền...)
-- Dấu hiệu khẩn cấp
-- Nội dung cần xác minh
+- Score/verdict/action được tính deterministic từ structured evidence và scoring version.
+- Provisional warning từ local/blacklist/cache phải có nhãn đang xác minh.
+- Final warning gồm score, risk level, verdict, confidence, reasons, evidence, limitations và action.
+- URL đáng ngờ không là anchor bấm trực tiếp.
 
-### FR-04 URL & Domain Verification
+### FR-07 — Realtime
 
-Hệ thống kiểm tra:
+- Progress/final event qua WebSocket; polling endpoint là fallback/replay.
+- Disconnect không hủy analysis; reconnect dedupe event bằng ID/cursor.
 
-- URL Reputation
-- Domain Information
-- Domain chính thức của thương hiệu
-- URL rút gọn hoặc đáng ngờ
+### FR-08 — History, report và appeal
 
-### FR-05 Risk Assessment
+- User xem lịch sử và gửi report.
+- Pha nâng cao hỗ trợ appeal receipt, status, reviewer decision và notification.
+- Feedback không tự thay đổi score/model/blacklist; chỉ vào evaluation/review workflow.
 
-AI tổng hợp các tín hiệu để:
+### FR-09 — Admin và Human-in-the-loop
 
-- Chấm điểm rủi ro
-- Phân loại mức cảnh báo
-- Giải thích nguyên nhân
+- Admin xem evidence/audit trước decision.
+- `add_to_blacklist`, `disable_blacklist`, `block_domain` và `publish_broad_warning` cần approved
+  decision; overturn tạo corrective record, không xóa lịch sử.
 
-### FR-06 Grounded Report
+### FR-10 — Campaign và operations
 
-Báo cáo phải bao gồm:
+- Pha nâng cao cluster theo domain/redirect/claim/time-window và chỉ tạo admin hypothesis.
+- Không lưu social graph hay suy diễn sender identity.
+- Dashboard aggregate trend, false-positive, appeal, latency, cache, token/cost, quota và 429/timeout.
 
-- Mức độ rủi ro
-- Các dấu hiệu phát hiện
-- Bằng chứng từ các nguồn kiểm tra
-- Khuyến nghị cho người dùng
-- Giới hạn của kết quả
+### FR-11 — Screenshot renderer
 
-### FR-07 Fact-check
+- Pha nâng cao, chỉ chạy khi consent và static evidence chưa đủ.
+- Sandbox không cookie, login, credential hoặc persistent state; có SSRF, redirect, time, body và
+  download limits.
 
-- Nếu nội dung là một tuyên bố có thể kiểm chứng, AI sẽ tìm kiếm kết quả fact-check từ các nguồn tin cậy.
-- Nếu không có đủ dữ liệu, hệ thống phải trả về trạng thái **chưa đủ bằng chứng** thay vì tự suy diễn.
+## 5. Non-functional requirements
 
-### FR-08 History
+- Provisional warning p95 ≤ 1 giây khi local/cache có signal; final p95 ≤ 10 giây khi provider bình
+  thường. Timeout trả result giới hạn trong deadline.
+- Deterministic fallback khi LLM/provider lỗi; không bịa evidence hoặc trả 500 chỉ do LLM.
+- Precision/recall/false-positive đo trên versioned evaluation set; release threshold được chốt sau
+  baseline thay vì đặt số tùy ý.
+- Tool/token/cost budget, bounded retries, cache và rate limiting áp dụng theo analysis/principal.
+- PostgreSQL là source of truth; Redis chỉ làm broker/cache/event fan-out.
+- Secret chỉ ở server; operational metrics không chứa raw private input.
 
-- Người dùng có thể xem lại lịch sử các lần phân tích.
+## 6. Acceptance criteria
 
-### FR-09 Feedback
+- URL/claim được extract và plan/tool routing đúng policy.
+- Không consent thì không tạo external client/request; limitation vẫn rõ.
+- Provider no-hit/timeout/429 không tạo verdict safe.
+- Cùng evidence/scoring version luôn cho cùng score/verdict/action.
+- User thấy provisional → progress → final qua WebSocket hoặc polling fallback.
+- Cảnh báo cá nhân hiển thị ngay; wide action không thể bypass admin approval/audit.
+- Fact-check có citation; screenshot/campaign chỉ bật khi đạt privacy/security gates.
+- Report/appeal có ownership, receipt và immutable review history.
+- Dashboard vận hành không lộ raw message, URL secret hoặc prompt.
 
-Người dùng có thể gửi phản hồi:
+## 7. Trạng thái triển khai final product
 
-- Cảnh báo hữu ích
-- Cảnh báo sai
-- Xác nhận lừa đảo
-- Chưa đủ kết luận
+- **Đã có:** backend contract v2, LangGraph vertical slice, deterministic scoring, SQLite repository,
+  report/admin-decision APIs và fake adapters offline.
+- **Core workstream bắt buộc:** frontend HTTP integration, RDAP/redirect runtime wiring, production
+  reputation cascade, live progress/WebSocket, PostgreSQL/Redis worker path, OIDC và Railway.
+- **Intelligence workstream bắt buộc:** pgvector corpus, screenshot renderer, campaign detection,
+  cost/trend dashboard, appeal và calibrated learning.
+- **Contract migration:** `/api/v2` là baseline hiện tại; final frontend dùng `/api/v3`, đồng thời
+  giữ v2 read-compatible trong release v3 đầu tiên.
 
-### FR-10 Escalation
-
-Hệ thống chuyển sang Security Admin khi:
-
-- Mức rủi ro rất cao.
-- Kết quả giữa các nguồn mâu thuẫn.
-- Người dùng báo cáo.
-- Chưa đủ bằng chứng nhưng có nhiều tín hiệu nguy hiểm.
-
-### FR-11 Admin Review
-
-Security Admin có thể:
-
-- Xác nhận lừa đảo.
-- Đánh dấu cảnh báo sai.
-- Đánh dấu chưa đủ kết luận.
-- Quản lý danh sách domain chính thức và blacklist.
-
----
-
-## 6. Non-functional Requirements
-
-- Thời gian phản hồi dưới **10 giây**.
-- Không lưu hoặc hiển thị thông tin nhạy cảm như mật khẩu hoặc OTP.
-- Người dùng chỉ xem được lịch sử của mình.
-- Mỗi cảnh báo phải kèm theo lý do và giới hạn của kết quả.
-- Không khẳng định một URL hoặc nội dung **an toàn tuyệt đối**.
-- Hệ thống có cơ chế xử lý khi các dịch vụ bên ngoài không phản hồi.
-
----
-
-## 7. Acceptance Criteria
-
-- AI phát hiện được URL và các dấu hiệu đáng ngờ.
-- Kiểm tra được độ uy tín của URL và domain.
-- Sinh được báo cáo có giải thích rõ ràng.
-- Hiển thị khuyến nghị phù hợp với từng mức rủi ro.
-- Các trường hợp rủi ro cao được chuyển cho Security Admin để xem xét.
-- Phân quyền User và Security Admin hoạt động đúng.
-- Lưu được lịch sử phân tích và phản hồi người dùng.
-- Demo hoàn chỉnh luồng từ nhập dữ liệu đến hiển thị cảnh báo và xử lý Human-in-the-Loop.
+Không release một bản MVP riêng. Final release chỉ qua gate khi cả hai workstream, privacy/security
+tests và Human-in-the-loop backend gate đều hoàn tất.
