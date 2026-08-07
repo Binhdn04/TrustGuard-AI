@@ -24,8 +24,12 @@ from src.models import (
     AnalysisEvent,
     AnalysisResponse,
     AnalysisStatus,
+    CaseStatus,
     ClaimEvidence,
     ClaimStance,
+    Evidence,
+    InvestigationStep,
+    ToolError,
     Verdict,
 )
 from src.repositories import JsonFactCheckRepository, SQLiteBlacklistRepository
@@ -332,7 +336,14 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
         comment="Please verify the provider result.",
         created_at=created_at,
     )
-    await repository.apply_decision(
+    reviewed_response = response.model_copy(update={"case_status": CaseStatus.APPROVED})
+    review_event = AnalysisEvent(
+        analysis_id=analysis_id,
+        status=AnalysisStatus.QUEUED,
+        step="review_approved",
+        occurred_at=created_at,
+    )
+    await repository.apply_review_decision(
         decision_id=str(decision_id),
         analysis_id=str(analysis_id),
         reviewer_id="admin-1",
@@ -340,6 +351,8 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
         action="add_to_blacklist",
         note="Evidence reviewed",
         domains=["Bad.Example", "second.example"],
+        response=reviewed_response,
+        event=review_event,
     )
 
     reports = await repository.list_reports(limit=50, offset=0)
@@ -353,6 +366,7 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
     assert persisted is not None
     assert persisted[0] == "user-1"
     assert persisted[2].status is AnalysisStatus.QUEUED
+    assert persisted[2].case_status.value == "approved"
 
     with pytest.raises(sqlite3.IntegrityError):
         await repository.apply_decision(
@@ -367,6 +381,198 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
 
     blacklist_after_failure = await repository.list_blacklist(query=None, limit=50, offset=0)
     assert "must-not-be-written.example" not in {entry.domain for entry in blacklist_after_failure}
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_persists_artifacts_dedupes_tools_and_writes_outbox(tmp_path):
+    repository = SQLiteBlacklistRepository(tmp_path / "security.db")
+    analysis_id = uuid4()
+    created_at = datetime.now(UTC)
+    request = AnalysisCreateRequest(message="Check https://bad.example", consent_to_scan_urls=True)
+    queued = AnalysisResponse(analysis_id=analysis_id, status="queued", created_at=created_at)
+    queued_event = AnalysisEvent(
+        analysis_id=analysis_id,
+        status="queued",
+        step="queued",
+        occurred_at=created_at,
+    )
+    await repository.create_analysis(owner_id="user-1", request=request, response=queued, event=queued_event)
+
+    step = InvestigationStep(
+        step_id="step-url",
+        tool="url_scanner",
+        target="https://bad.example",
+        reason_code="url_reputation_needed",
+        status="completed",
+    )
+    evidence = Evidence(
+        type="domain_reputation",
+        source="fixture-provider",
+        title="Reputation",
+        finding="Provider marked the URL as malicious.",
+        observed_at=created_at,
+    )
+    error = ToolError(
+        tool="domain_intelligence",
+        code="PROVIDER_TIMEOUT",
+        message="RDAP timed out",
+        retryable=True,
+    )
+    completed = AnalysisResponse(
+        analysis_id=analysis_id,
+        status="completed",
+        input_type="url",
+        normalized_urls=["https://bad.example"],
+        claims=[],
+        investigation_plan=[step],
+        risk_score=90,
+        risk_level="critical",
+        verdict="malicious",
+        recommended_action="escalate_for_review",
+        confidence=0.9,
+        summary="Malicious URL.",
+        reasons=["Provider evidence."],
+        evidence=[evidence],
+        limitations=["RDAP unavailable."],
+        case_status="pending_review",
+        scoring_version="risk-v2",
+        created_at=created_at,
+        completed_at=created_at,
+    )
+    completed_event = AnalysisEvent(
+        analysis_id=analysis_id,
+        status="completed",
+        step="completed",
+        occurred_at=created_at,
+    )
+    await repository.complete_analysis(completed, completed_event, [error])
+
+    assert await repository.claim_tool_execution(str(analysis_id), step.step_id, step.target, "fixture-provider")
+    assert not await repository.claim_tool_execution(str(analysis_id), step.step_id, step.target, "fixture-provider")
+    await repository.finish_tool_execution(str(analysis_id), step.step_id, step.target, "fixture-provider", "completed")
+    assert not await repository.claim_tool_execution(str(analysis_id), step.step_id, step.target, "fixture-provider")
+
+    artifacts = await repository.load_analysis_artifacts(str(analysis_id))
+    assert artifacts == {
+        "investigation_plan": [step],
+        "evidence": [evidence],
+        "errors": [error],
+    }
+    executions = await repository.list_tool_executions(str(analysis_id))
+    assert executions == [(step.step_id, step.target, "fixture-provider", "completed", 1)]
+    outbox = await repository.list_outbox_events()
+    assert {event_type for _, event_type, _ in outbox} >= {
+        "analysis.queued",
+        "analysis.progressed",
+        "tool.execution.claimed",
+        "tool.execution.finished",
+    }
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_upgrades_existing_v1_analysis_json(tmp_path):
+    database = tmp_path / "legacy.db"
+    analysis_id = uuid4()
+    created_at = datetime.now(UTC)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """CREATE TABLE analyses (
+               analysis_id TEXT PRIMARY KEY,
+               owner_id TEXT NOT NULL,
+               request_json TEXT NOT NULL,
+               response_json TEXT NOT NULL,
+               case_status TEXT,
+               created_at TEXT NOT NULL
+           )"""
+    )
+    connection.execute(
+        """INSERT INTO analyses(
+               analysis_id, owner_id, request_json, response_json, case_status, created_at
+           ) VALUES (?, ?, ?, ?, NULL, ?)""",
+        (
+            str(analysis_id),
+            "user-1",
+            '{"message":"legacy","consent_to_scan_urls":false}',
+            (
+                '{"contract_version":"v1","analysis_id":"'
+                + str(analysis_id)
+                + '","status":"queued","investigation_plan":[],"created_at":"'
+                + created_at.isoformat()
+                + '"}'
+            ),
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = SQLiteBlacklistRepository(database)
+    loaded = await repository.load_analysis(str(analysis_id))
+    assert loaded is not None
+    assert loaded[2].contract_version == "v2"
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_migration_quarantines_malformed_json_without_blocking_startup(tmp_path):
+    database = tmp_path / "malformed.db"
+    analysis_id = uuid4()
+    created_at = datetime.now(UTC)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """CREATE TABLE analyses (
+               analysis_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
+               request_json TEXT NOT NULL, response_json TEXT NOT NULL,
+               case_status TEXT, created_at TEXT NOT NULL)"""
+    )
+    connection.execute(
+        """INSERT INTO analyses(
+               analysis_id, owner_id, request_json, response_json, case_status, created_at
+           ) VALUES (?, 'user-1', ?, ?, NULL, ?)""",
+        (
+            str(analysis_id),
+            '{"message":"legacy","consent_to_scan_urls":false}',
+            "{malformed-json",
+            created_at.isoformat(),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    repository = SQLiteBlacklistRepository(database)
+    loaded = await repository.load_analysis(str(analysis_id))
+    assert loaded is not None
+    assert loaded[2].status is AnalysisStatus.FAILED
+    assert loaded[2].contract_version == "v2"
+    assert await repository.list_migration_errors() == [
+        (str(analysis_id), "JSONDecodeError", False)
+    ]
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_analysis_filters_bind_injection_shaped_values(tmp_path):
+    repository = SQLiteBlacklistRepository(tmp_path / "security.db")
+    analysis_id = uuid4()
+    created_at = datetime.now(UTC)
+    request = AnalysisCreateRequest(message="safe", consent_to_scan_urls=False)
+    response = AnalysisResponse(analysis_id=analysis_id, status="queued", created_at=created_at)
+    event = AnalysisEvent(
+        analysis_id=analysis_id,
+        status="queued",
+        step="queued",
+        occurred_at=created_at,
+    )
+    await repository.create_analysis(
+        owner_id="user-1", request=request, response=response, event=event
+    )
+
+    assert len(await repository.list_analysis_responses(owner_id="user-1")) == 1
+    assert await repository.list_analysis_responses(owner_id="user-1' OR 1=1 --") == []
+    assert await repository.list_analysis_responses(case_status="pending_review' OR 1=1 --") == []
+    assert len(await repository.list_analysis_responses()) == 1
     await repository.close()
 
 

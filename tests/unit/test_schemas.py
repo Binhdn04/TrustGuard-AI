@@ -70,7 +70,7 @@ def test_analysis_request_accepts_contract_boundaries() -> None:
 def test_accepted_response_serializes_contract_version_and_utc() -> None:
     response = AnalysisAcceptedResponse(analysis_id=ANALYSIS_ID, created_at=NOW)
     assert response.model_dump(mode="json") == {
-        "contract_version": "v1",
+        "contract_version": "v2",
         "analysis_id": str(ANALYSIS_ID),
         "status": "queued",
         "created_at": "2026-08-03T13:00:00Z",

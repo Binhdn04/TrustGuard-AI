@@ -1,4 +1,4 @@
-export const CONTRACT_VERSION = "v1" as const;
+export const CONTRACT_VERSION = "v2" as const;
 
 export type InputType = "text" | "url" | "text_with_url";
 export type AnalysisStatus = "queued" | "running" | "completed" | "failed";
@@ -9,6 +9,7 @@ export type EvidenceType =
   | "domain_reputation"
   | "redirect"
   | "blacklist"
+  | "domain_registration"
   | "fact_check"
   | "official_source"
   | "user_report";
@@ -22,6 +23,28 @@ export type RecommendedAction =
   | "show_caution"
   | "do_not_open"
   | "escalate_for_review";
+export type InvestigationStepStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "skipped"
+  | "failed";
+export type InvestigationTool =
+  | "local_rules"
+  | "blacklist_lookup"
+  | "url_scanner"
+  | "redirect_resolver"
+  | "domain_intelligence"
+  | "claim_retriever";
+
+export interface InvestigationStep {
+  step_id: string;
+  tool: InvestigationTool;
+  target: string;
+  reason_code: string;
+  depends_on: string[];
+  status: InvestigationStepStatus;
+}
 
 export interface AnalysisCreateRequest {
   message: string;
@@ -51,6 +74,7 @@ export interface AnalysisResponse {
   input_type: InputType | null;
   normalized_urls: string[] | null;
   claims: string[] | null;
+  investigation_plan: InvestigationStep[];
   risk_score: number | null;
   risk_level: RiskLevel | null;
   verdict: Verdict | null;
@@ -71,6 +95,35 @@ export interface AnalysisEvent {
   status: AnalysisStatus;
   step: string;
   occurred_at: string;
+  step_id?: string | null;
+  step_status?: InvestigationStepStatus | null;
+}
+
+export interface AnalysisReportRequest {
+  reason: string;
+  comment?: string;
+}
+
+export interface AnalysisReportResponse {
+  report_id: string;
+  analysis_id: string;
+  created_at: string;
+}
+
+export interface AdminDecisionAudit {
+  decision_id: string;
+  analysis_id: string | null;
+  reviewer_id: string;
+  decision: "approved" | "rejected";
+  action: "add_to_blacklist" | "none";
+  note: string;
+  decided_at: string;
+}
+
+export interface BlacklistEntry {
+  domain: string;
+  decision_id: string;
+  added_at: string;
 }
 
 export interface ErrorEnvelope {
@@ -87,4 +140,13 @@ export interface AnalysisApi {
     request: AnalysisCreateRequest,
   ): Promise<AnalysisAcceptedResponse>;
   getAnalysis(analysisId: string): Promise<AnalysisResponse>;
+  listAnalyses(): Promise<AnalysisResponse[]>;
+  listAdminCases(): Promise<AnalysisResponse[]>;
+  listAdminReports(): Promise<AnalysisReportResponse[]>;
+  listAdminDecisions(): Promise<AdminDecisionAudit[]>;
+  listAdminBlacklist(): Promise<BlacklistEntry[]>;
+  reportAnalysis(
+    analysisId: string,
+    request: AnalysisReportRequest,
+  ): Promise<AnalysisReportResponse>;
 }

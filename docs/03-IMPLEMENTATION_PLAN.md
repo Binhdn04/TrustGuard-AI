@@ -117,32 +117,6 @@ phản hồi cuối. LLM output không được tính như evidence hoặc tự 
 | Hải — API/Platform | `src/api/**`, `src/services/**`, `src/models/**`, `src/core/**`, deploy | API v2, persistence orchestration, demo auth/RBAC, Docker và deployment | Bình, Hiếu     |
 | Hiếu — Frontend/QA | frontend/API client, `tests/**`, `eval/**`                              | User/admin UI, fixtures, contract/integration/eval runner và demo script               | Bình, Hải      |
 
-## 5. Trạng thái Tools/Data (Duc)
-
-Phần Tools/Data hiện dùng profile triển khai sau:
-
-- Fake URL scanner, claim retriever và blacklist repository chạy hoàn toàn offline cho CI.
-- Provider hiện có gồm deprecated Google Safe Browsing v4 và Google Fact Check Tools API, được inject vào graph
-  khi có `GOOGLE_SAFE_BROWSING_API_KEY` hoặc `GOOGLE_FACT_CHECK_API_KEY`.
-- Google Safe Browsing no-hit trả `inconclusive`; hệ thống không dùng thiếu hit làm bằng chứng
-  `safe`.
-- `SsrfGuard` kiểm tra scheme, credential, port và toàn bộ DNS answers. `GuardedHttpClient` kiểm
-  tra lại từng redirect và giới hạn redirect/response size.
-- Blacklist vertical slice dùng SQLite. Ghi blacklist yêu cầu trước đó phải lưu audit decision
-  `approved + add_to_blacklist`; domain được chuẩn hóa IDNA.
-- Fact-check repository offline dùng corpus JSON có provenance và ranking deterministic. Đây là
-  fallback/công cụ CI, không thay thế provider thật trong demo production.
-- Cấu hình provider nằm server-side; browser và AgentState không nhận API key hoặc raw provider
-  response.
-- URL reputation production phải chuyển sang Web Risk/provider được hỗ trợ nếu sản phẩm có mục
-  đích thương mại; giữ Safe Browsing v4 chỉ như compatibility adapter trong lúc migration.
-- Domain intelligence dùng RDAP-over-HTTPS, IANA bootstrap, Public Suffix List versioned, cache có
-  TTL và không lưu RDAP entity/vCard/registrant PII.
-
-Các lựa chọn trên cụ thể hóa wire contract v2. V2 phát `domain_registration` với provenance RDAP.
-Rollout theo thứ tự: deploy consumer/UI v2, kiểm thử contract v2, rồi bật producer/endpoint v2.
-Không triển khai endpoint hoặc serializer v1. PostgreSQL vẫn là đích deployment chung; SQLite là
-database tương đương được cho phép cho vertical slice Tools/Data.
 
 ## 7. Task chi tiết theo module
 

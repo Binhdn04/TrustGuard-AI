@@ -1,1 +1,1 @@
-"""Contract v1 tests."""
+"""Contract v2 tests."""

@@ -3,6 +3,9 @@ import type {
   AnalysisApi,
   AnalysisCreateRequest,
   AnalysisResponse,
+  AnalysisReportResponse,
+  AdminDecisionAudit,
+  BlacklistEntry,
   Evidence,
   InputType,
 } from "@/types/analysis";
@@ -27,12 +30,13 @@ function runningResponse(
   createdAt: string,
 ): AnalysisResponse {
   return {
-    contract_version: "v1",
+    contract_version: "v2",
     analysis_id: analysisId,
     status: "running",
     input_type: null,
     normalized_urls: null,
     claims: null,
+    investigation_plan: [],
     risk_score: null,
     risk_level: null,
     verdict: null,
@@ -69,13 +73,23 @@ function completedResponse(
   const normalizedMessage = message.toLocaleLowerCase("vi");
   const observedAt = new Date().toISOString();
   const base = {
-    contract_version: "v1" as const,
+    contract_version: "v2" as const,
     analysis_id: analysisId,
     status: "completed" as const,
     input_type: inputTypeFor(message),
     normalized_urls: normalizedUrls,
     claims: [] as string[],
-    scoring_version: "risk-v1",
+    investigation_plan: [
+      {
+        step_id: "step-mock-local",
+        tool: "local_rules" as const,
+        target: "message",
+        reason_code: "input_validation",
+        depends_on: [] as string[],
+        status: "completed" as const,
+      },
+    ],
+    scoring_version: "risk-v2",
     created_at: record.createdAt,
     completed_at: observedAt,
   };
@@ -197,7 +211,7 @@ export class MockAnalysisApi implements AnalysisApi {
     const createdAt = new Date().toISOString();
     records.set(analysisId, { request, createdAt, polls: 0 });
     return {
-      contract_version: "v1",
+      contract_version: "v2",
       analysis_id: analysisId,
       status: "queued",
       created_at: createdAt,
@@ -211,6 +225,35 @@ export class MockAnalysisApi implements AnalysisApi {
     record.polls += 1;
     if (record.polls < 2) return runningResponse(analysisId, record.createdAt);
     return completedResponse(analysisId, record);
+  }
+
+  async listAnalyses(): Promise<AnalysisResponse[]> {
+    return Promise.all([...records.keys()].map((analysisId) => this.getAnalysis(analysisId)));
+  }
+
+  async listAdminCases(): Promise<AnalysisResponse[]> {
+    return (await this.listAnalyses()).filter((item) => item.case_status === "pending_review");
+  }
+
+  async listAdminReports(): Promise<AnalysisReportResponse[]> {
+    return [];
+  }
+
+  async listAdminDecisions(): Promise<AdminDecisionAudit[]> {
+    return [];
+  }
+
+  async listAdminBlacklist(): Promise<BlacklistEntry[]> {
+    return [];
+  }
+
+  async reportAnalysis(analysisId: string): Promise<AnalysisReportResponse> {
+    if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
+    return {
+      report_id: crypto.randomUUID(),
+      analysis_id: analysisId,
+      created_at: new Date().toISOString(),
+    };
   }
 }
 

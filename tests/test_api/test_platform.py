@@ -25,7 +25,7 @@ def platform_service():
 
 @pytest.mark.asyncio
 async def test_analysis_api_requires_auth_and_uses_error_envelope(client, platform_service):
-    response = await client.get("/api/v1/analyses")
+    response = await client.get("/api/v2/analyses")
 
     assert response.status_code == 403
     assert response.json() == {
@@ -41,46 +41,46 @@ async def test_analysis_api_requires_auth_and_uses_error_envelope(client, platfo
 @pytest.mark.asyncio
 async def test_create_get_list_report_and_poll_events(client, platform_service):
     created = await client.post(
-        "/api/v1/analyses",
+        "/api/v2/analyses",
         headers=USER_HEADERS,
         json={"message": "Kiểm tra https://example.com", "consent_to_scan_urls": True},
     )
 
     assert created.status_code == 202
     accepted = created.json()
-    assert accepted["contract_version"] == "v1"
+    assert accepted["contract_version"] == "v2"
     assert accepted["status"] == "queued"
 
     analysis_id = accepted["analysis_id"]
-    detail = await client.get(f"/api/v1/analyses/{analysis_id}", headers=USER_HEADERS)
+    detail = await client.get(f"/api/v2/analyses/{analysis_id}", headers=USER_HEADERS)
     assert detail.status_code == 200
     assert detail.json()["status"] == "queued"
 
-    listing = await client.get("/api/v1/analyses", headers=USER_HEADERS)
+    listing = await client.get("/api/v2/analyses", headers=USER_HEADERS)
     assert [item["analysis_id"] for item in listing.json()] == [analysis_id]
 
-    events = await client.get(f"/api/v1/analyses/{analysis_id}/events", headers=USER_HEADERS)
+    events = await client.get(f"/api/v2/analyses/{analysis_id}/events", headers=USER_HEADERS)
     assert events.status_code == 200
     assert events.json()[0]["step"] == "queued"
 
     report = await client.post(
-        f"/api/v1/analyses/{analysis_id}/reports",
+        f"/api/v2/analyses/{analysis_id}/reports",
         headers=USER_HEADERS,
         json={"reason": "Kết quả cần được kiểm tra lại."},
     )
     assert report.status_code == 201
     assert report.json()["analysis_id"] == analysis_id
 
-    admin_reports = await client.get("/api/v1/admin/reports", headers=ADMIN_HEADERS)
+    admin_reports = await client.get("/api/v2/admin/reports", headers=ADMIN_HEADERS)
     assert admin_reports.status_code == 200
     assert admin_reports.json()[0]["analysis_id"] == analysis_id
     assert admin_reports.json()[0]["reason"]
 
 
 @pytest.mark.asyncio
-async def test_contract_validation_returns_v1_error_envelope(client, platform_service):
+async def test_contract_validation_returns_v2_error_envelope(client, platform_service):
     response = await client.post(
-        "/api/v1/analyses",
+        "/api/v2/analyses",
         headers=USER_HEADERS,
         json={"message": "   ", "consent_to_scan_urls": True},
     )
@@ -92,20 +92,20 @@ async def test_contract_validation_returns_v1_error_envelope(client, platform_se
 
 @pytest.mark.asyncio
 async def test_regular_user_cannot_access_admin_queue(client, platform_service):
-    response = await client.get("/api/v1/admin/cases", headers=USER_HEADERS)
+    response = await client.get("/api/v2/admin/cases", headers=USER_HEADERS)
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
 
     for endpoint in ("reports", "decisions", "blacklist"):
-        admin_data = await client.get(f"/api/v1/admin/{endpoint}", headers=USER_HEADERS)
+        admin_data = await client.get(f"/api/v2/admin/{endpoint}", headers=USER_HEADERS)
         assert admin_data.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_admin_can_review_escalated_case(client, platform_service):
     created = await client.post(
-        "/api/v1/analyses",
+        "/api/v2/analyses",
         headers=USER_HEADERS,
         json={"message": "https://phishing.example/login", "consent_to_scan_urls": True},
     )
@@ -142,28 +142,28 @@ async def test_admin_can_review_escalated_case(client, platform_service):
     )
     await platform_service.persist_result(result.analysis_id, result)
 
-    queue = await client.get("/api/v1/admin/cases", headers=ADMIN_HEADERS)
+    queue = await client.get("/api/v2/admin/cases", headers=ADMIN_HEADERS)
     assert queue.status_code == 200
     assert queue.json()[0]["analysis_id"] == accepted["analysis_id"]
 
     decision = await client.post(
-        f"/api/v1/admin/cases/{accepted['analysis_id']}/decision",
+        f"/api/v2/admin/cases/{accepted['analysis_id']}/decision",
         headers=ADMIN_HEADERS,
         json={"decision": "approved", "action": "none", "note": "Evidence is sufficient."},
     )
     assert decision.status_code == 200
     assert decision.json()["case_status"] == "approved"
 
-    decision_log = await client.get("/api/v1/admin/decisions", headers=ADMIN_HEADERS)
+    decision_log = await client.get("/api/v2/admin/decisions", headers=ADMIN_HEADERS)
     assert decision_log.status_code == 200
     assert decision_log.json()[0]["analysis_id"] == accepted["analysis_id"]
     assert decision_log.json()[0]["note"] == "Evidence is sufficient."
 
-    blacklist = await client.get("/api/v1/admin/blacklist", headers=ADMIN_HEADERS)
+    blacklist = await client.get("/api/v2/admin/blacklist", headers=ADMIN_HEADERS)
     assert blacklist.status_code == 200
     assert blacklist.json() == []
 
-    queue_after = await client.get("/api/v1/admin/cases", headers=ADMIN_HEADERS)
+    queue_after = await client.get("/api/v2/admin/cases", headers=ADMIN_HEADERS)
     assert queue_after.json() == []
 
 
@@ -197,7 +197,7 @@ async def test_post_runs_graph_and_exposes_completed_result_to_admin(client):
 
     try:
         created = await client.post(
-            "/api/v1/analyses",
+            "/api/v2/analyses",
             headers=USER_HEADERS,
             json={
                 "message": "Nhận quà tại https://tapdoanx-qua.example/login",
@@ -210,7 +210,7 @@ async def test_post_runs_graph_and_exposes_completed_result_to_admin(client):
         detail = None
         for _ in range(100):
             await asyncio.sleep(0.01)
-            detail = await client.get(f"/api/v1/analyses/{analysis_id}", headers=USER_HEADERS)
+            detail = await client.get(f"/api/v2/analyses/{analysis_id}", headers=USER_HEADERS)
             if detail.json()["status"] == "completed":
                 break
 
@@ -222,14 +222,17 @@ async def test_post_runs_graph_and_exposes_completed_result_to_admin(client):
         assert payload["case_status"] == "pending_review"
         assert {item["type"] for item in payload["evidence"]} >= {"url_rule", "domain_reputation"}
 
-        events = await client.get(f"/api/v1/analyses/{analysis_id}/events", headers=USER_HEADERS)
-        assert [item["status"] for item in events.json()] == ["queued", "running", "completed"]
+        events = await client.get(f"/api/v2/analyses/{analysis_id}/events", headers=USER_HEADERS)
+        payload_events = events.json()
+        assert [item["status"] for item in payload_events[:2]] == ["queued", "running"]
+        assert payload_events[-1]["status"] == "completed"
+        assert any(item["step_id"] and item["step_status"] for item in payload_events)
 
-        queue = await client.get("/api/v1/admin/cases", headers=ADMIN_HEADERS)
+        queue = await client.get("/api/v2/admin/cases", headers=ADMIN_HEADERS)
         assert [item["analysis_id"] for item in queue.json()] == [analysis_id]
 
         decision = await client.post(
-            f"/api/v1/admin/cases/{analysis_id}/decision",
+            f"/api/v2/admin/cases/{analysis_id}/decision",
             headers=ADMIN_HEADERS,
             json={
                 "decision": "approved",
