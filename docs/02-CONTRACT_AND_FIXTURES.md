@@ -234,8 +234,25 @@ class AgentState(TypedDict, total=False):
     scoring_version: str
 ```
 
-`WorkflowState` bổ sung summary, route, target, attempt/budget/deadline, blocked/blacklisted target và
-các field `llm_*`. Những field riêng này không đi vào `AnalysisResponse`.
+`WorkflowState` bổ sung summary, route, target, attempt/budget/deadline, blocked/blacklisted target,
+các field `llm_*` và các Wave 0 field riêng sau:
+
+```text
+provisional_warning  ProvisionalWarning | null
+active_warning       provisional | final
+step_transitions     LiveStepTransition[]
+tool_usage_refs      string[]
+campaign_features    CampaignFeatures
+campaign_hypotheses  CampaignHypothesis[]
+```
+
+`ProvisionalWarning` chỉ cho phép medium/high/critical, bắt buộc evidence refs và literal
+`is_provisional=true`. `LiveStepTransition` chỉ gồm stable step fields, status và UTC timestamp;
+không có rationale/trace. `CampaignFeatures` chỉ chứa registrable domain, redirect target và opaque
+claim feature refs; `CampaignHypothesis` luôn `reviewer_required=true` và
+`broad_warning_approved=false`. Những field riêng này và mọi `llm_*` không đi vào
+`AnalysisResponse`. Final action node đặt `active_warning=final` và xóa provisional warning để không
+có hai kết luận cùng active.
 
 `InvestigationStep` gồm đúng sáu field: `step_id`, `tool`, `target`, `reason_code`, `depends_on`,
 `status`. Không thêm free-form rationale hoặc model trace.
@@ -282,6 +299,9 @@ vì chưa có adapter mapping.
 - Fact-check chỉ ảnh hưởng điểm khi stance đã normalize và relevance đạt threshold.
 - Blacklist/malicious provider evidence có thể tạo malicious verdict và escalation theo rule.
 - Provider unavailable/no-hit/empty result phải tạo limitation khi làm giảm coverage.
+- LLM output schema không có quyền ghi `risk_score`, `risk_level`, `verdict`,
+  `recommended_action` hoặc `case_status`; extra field bị reject và deterministic output được giữ.
+- Provider no-hit hoặc timeout không có code path tạo verdict `safe`.
 
 ## 9. Fixture contract hiện tại
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from src.agents.contracts import LiveStepTransition
 from src.agents.nodes.example_node import analyze_node, respond_node
 from src.agents.nodes.explanation import explain_result, route_action
 from src.agents.nodes.extraction import classify_input, extract_indicators
@@ -19,6 +21,16 @@ from src.agents.nodes.planning import build_investigation_plan, plan_next_tool, 
 from src.agents.nodes.risk import assess_risk
 from src.agents.nodes.rules import build_rule_check_node
 from src.agents.nodes.tools import build_inspect_domains_node, build_scan_urls_node, build_verify_claims_node
+from src.agents.seams import (
+    CampaignDetector,
+    ExplanationEngine,
+    FunctionExplanationEngine,
+    FunctionRiskEngine,
+    NullCampaignDetector,
+    NullProgressSink,
+    ProgressSink,
+    RiskEngine,
+)
 from src.agents.state import LegacyAgentState, WorkflowState
 from src.agents.tools.protocols import (
     BlacklistRepository,
@@ -38,16 +50,12 @@ async def _extract_node(state: WorkflowState) -> dict:
     return extract_indicators(state)
 
 
-async def _assess_node(state: WorkflowState) -> dict:
-    return assess_risk(state)
-
-
-async def _explain_node(state: WorkflowState) -> dict:
-    return explain_result(state)
-
-
 async def _action_node(state: WorkflowState) -> dict:
-    return route_action(state)
+    return {
+        **route_action(state),
+        "active_warning": "final",
+        "provisional_warning": None,
+    }
 
 
 def _deadline_reached(state: WorkflowState) -> bool:
@@ -65,15 +73,8 @@ def _ready_steps(state: WorkflowState):
     ]
 
 
-def _skip_pending(plan):
-    for step in list(plan):
-        if step.status is InvestigationStepStatus.PENDING:
-            plan = transition_step(plan, step.step_id, InvestigationStepStatus.SKIPPED)
-    return plan
-
-
 def _merge_tool_result(working: WorkflowState, base: WorkflowState, update: dict) -> None:
-    for key in ("url_findings", "domain_findings", "claim_findings", "evidence", "errors"):
+    for key in ("url_findings", "domain_findings", "claim_findings", "evidence", "errors", "tool_usage_refs"):
         before = list(base.get(key, []))
         produced = list(update.get(key, before))[len(before) :]
         working[key] = list(working.get(key, [])) + produced  # type: ignore[literal-required]
@@ -95,7 +96,10 @@ def _build_planning_loop_node(
     blacklist: BlacklistRepository | None,
     domain_intelligence: DomainIntelligence | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
+    progress_sink: ProgressSink | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ):
+    progress_sink = progress_sink or NullProgressSink()
     scan_node = build_scan_urls_node(url_scanner, blacklist)
     claim_node = build_verify_claims_node(claim_retriever)
     domain_node = build_inspect_domains_node(domain_intelligence)
@@ -129,23 +133,60 @@ def _build_planning_loop_node(
         """Run bounded independent work in parallel after executor hard gates."""
         working: WorkflowState = dict(state)
         working["investigation_plan"] = build_investigation_plan(working)
+        working.setdefault("step_transitions", [])
+        working.setdefault("tool_usage_refs", [])
         working.setdefault("tool_calls_used", 0)
         working.setdefault("tool_attempts", {})
         working.setdefault("max_tool_calls", 6)
         working.setdefault("max_tool_retries", 1)
+
+        async def record_transition(step, *, force: bool = False) -> None:
+            transitions = list(working.get("step_transitions", []))
+            if not force and transitions:
+                previous = next((item for item in reversed(transitions) if item.step_id == step.step_id), None)
+                if previous is not None and previous.status is step.status:
+                    return
+            transition = LiveStepTransition(
+                step_id=step.step_id,
+                tool=step.tool,
+                target=step.target,
+                reason_code=step.reason_code,
+                depends_on=list(step.depends_on),
+                status=step.status,
+                occurred_at=clock(),
+            )
+            transitions.append(transition)
+            working["step_transitions"] = transitions
+            await progress_sink.emit(transition.model_copy(deep=True))
+
+        async def set_step_status(step_id: str, status: InvestigationStepStatus) -> None:
+            before = next(step for step in working["investigation_plan"] if step.step_id == step_id)
+            working["investigation_plan"] = transition_step(working["investigation_plan"], step_id, status)
+            after = next(step for step in working["investigation_plan"] if step.step_id == step_id)
+            if after.status is not before.status:
+                await record_transition(after)
+
+        for step in working["investigation_plan"]:
+            if not any(item.step_id == step.step_id for item in working["step_transitions"]):
+                await record_transition(step, force=True)
+
+        async def skip_pending() -> None:
+            for step in list(working["investigation_plan"]):
+                if step.status is InvestigationStepStatus.PENDING:
+                    await set_step_status(step.step_id, InvestigationStepStatus.SKIPPED)
 
         while True:
             decision = plan_next_tool(working)
             if decision.get("next_tool") == "assess":
                 if "limitations" in decision:
                     working["limitations"] = decision["limitations"]
-                    working["investigation_plan"] = _skip_pending(working["investigation_plan"])
+                    await skip_pending()
                 break
             if _deadline_reached(working):
                 limitations = list(working.get("limitations", []))
                 limitations.append("Đã hết thời gian dành cho việc gọi công cụ.")
                 working["limitations"] = list(dict.fromkeys(limitations))
-                working["investigation_plan"] = _skip_pending(working["investigation_plan"])
+                await skip_pending()
                 break
 
             ready = _ready_steps(working)
@@ -161,14 +202,10 @@ def _build_planning_loop_node(
                 # work that fails this gate never reaches asyncio.gather.
                 if step.tool in {InvestigationTool.URL_SCANNER, InvestigationTool.DOMAIN_INTELLIGENCE}:
                     if working.get("consent_to_scan_urls") is not True:
-                        working["investigation_plan"] = transition_step(
-                            working["investigation_plan"], step.step_id, InvestigationStepStatus.SKIPPED
-                        )
+                        await set_step_status(step.step_id, InvestigationStepStatus.SKIPPED)
                         continue
                     if step.tool is InvestigationTool.URL_SCANNER and step.target in working.get("blocked_urls", []):
-                        working["investigation_plan"] = transition_step(
-                            working["investigation_plan"], step.step_id, InvestigationStepStatus.SKIPPED
-                        )
+                        await set_step_status(step.step_id, InvestigationStepStatus.SKIPPED)
                         continue
                 gated.append(step)
 
@@ -188,9 +225,7 @@ def _build_planning_loop_node(
                         )
                     )
                     working["errors"] = errors
-                    working["investigation_plan"] = transition_step(
-                        working["investigation_plan"], step.step_id, InvestigationStepStatus.FAILED
-                    )
+                    await set_step_status(step.step_id, InvestigationStepStatus.FAILED)
                     continue
                 analysis_id = working.get("analysis_id")
                 if execution_ledger is not None and analysis_id:
@@ -209,14 +244,10 @@ def _build_planning_loop_node(
                             )
                         )
                         working["errors"] = errors
-                        working["investigation_plan"] = transition_step(
-                            working["investigation_plan"], step.step_id, InvestigationStepStatus.FAILED
-                        )
+                        await set_step_status(step.step_id, InvestigationStepStatus.FAILED)
                         continue
                     if not claimed:
-                        working["investigation_plan"] = transition_step(
-                            working["investigation_plan"], step.step_id, InvestigationStepStatus.SKIPPED
-                        )
+                        await set_step_status(step.step_id, InvestigationStepStatus.SKIPPED)
                         continue
                 selected.append(step)
                 selected_providers.append(provider)
@@ -227,9 +258,7 @@ def _build_planning_loop_node(
                 working["next_tool"] = "assess"
                 break
             for step in selected:
-                working["investigation_plan"] = transition_step(
-                    working["investigation_plan"], step.step_id, InvestigationStepStatus.RUNNING
-                )
+                await set_step_status(step.step_id, InvestigationStepStatus.RUNNING)
 
             snapshot: WorkflowState = dict(working)
             results = await asyncio.gather(*(run_step(step, snapshot) for step in selected))
@@ -251,7 +280,7 @@ def _build_planning_loop_node(
                     if new_errors
                     else InvestigationStepStatus.COMPLETED
                 )
-                working["investigation_plan"] = transition_step(working["investigation_plan"], step.step_id, status)
+                await set_step_status(step.step_id, status)
                 analysis_id = working.get("analysis_id")
                 if execution_ledger is not None and analysis_id:
                     await execution_ledger.finish_tool_execution(
@@ -276,6 +305,8 @@ def _build_planning_loop_node(
                 "evidence",
                 "errors",
                 "limitations",
+                "step_transitions",
+                "tool_usage_refs",
             )
             if key in working
         }
@@ -290,6 +321,11 @@ def build_graph(
     claim_retriever: ClaimRetriever | None = None,
     blacklist: BlacklistRepository | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
+    progress_sink: ProgressSink | None = None,
+    risk_engine: RiskEngine | None = None,
+    explanation_engine: ExplanationEngine | None = None,
+    campaign_detector: CampaignDetector | None = None,
+    progress_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     llm: Any | None = None,
 ):
     """Build the injectable v2 analysis workflow."""
@@ -309,11 +345,27 @@ def build_graph(
             blacklist,
             domain_intelligence,
             execution_ledger,
+            progress_sink,
+            progress_clock,
         ),
     )
-    graph.add_node("assess_risk", _assess_node)
+    risk_engine = risk_engine or FunctionRiskEngine(assess_risk)
+    explanation_engine = explanation_engine or FunctionExplanationEngine(explain_result)
+    campaign_detector = campaign_detector or NullCampaignDetector()
+
+    async def detect_campaign(state: WorkflowState) -> dict:
+        return await campaign_detector.detect(state)
+
+    async def assess_with_engine(state: WorkflowState) -> dict:
+        return risk_engine.assess(state)
+
+    async def explain_with_engine(state: WorkflowState) -> dict:
+        return explanation_engine.explain(state)
+
+    graph.add_node("detect_campaign", detect_campaign)
+    graph.add_node("assess_risk", assess_with_engine)
     graph.add_node("review_assessment", build_review_assessment_node(llm))
-    graph.add_node("explain_result", _explain_node)
+    graph.add_node("explain_result", explain_with_engine)
     graph.add_node("route_action", _action_node)
     graph.add_node("generate_response", build_generate_response_node(llm))
 
@@ -323,7 +375,8 @@ def build_graph(
     graph.add_edge("analyze_message", "normalize_and_check_rules")
     graph.add_edge("normalize_and_check_rules", "plan_tools")
     graph.add_edge("plan_tools", "planning_loop")
-    graph.add_edge("planning_loop", "assess_risk")
+    graph.add_edge("planning_loop", "detect_campaign")
+    graph.add_edge("detect_campaign", "assess_risk")
     graph.add_edge("assess_risk", "review_assessment")
     graph.add_edge("review_assessment", "explain_result")
     graph.add_edge("explain_result", "route_action")
