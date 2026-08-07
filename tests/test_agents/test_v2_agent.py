@@ -279,3 +279,27 @@ async def test_reputation_and_rdap_run_after_gate_and_can_overlap() -> None:
         if step.tool in {InvestigationTool.URL_SCANNER, InvestigationTool.DOMAIN_INTELLIGENCE}
     ]
     assert all(step.status is InvestigationStepStatus.COMPLETED for step in external)
+
+
+@pytest.mark.asyncio
+async def test_executor_fails_unsupported_investigation_tool_without_key_error() -> None:
+    plan = []
+    step = ensure_step(
+        plan,
+        tool=InvestigationTool.REDIRECT_RESOLVER,
+        target="https://example.com",
+        reason_code="redirect_observation_needed",
+    )
+    graph = build_graph()
+
+    result = await graph.ainvoke(
+        {
+            "message": "Kiểm tra nội dung này",
+            "consent_to_scan_urls": False,
+            "investigation_plan": plan,
+        }
+    )
+
+    persisted_step = next(item for item in result["investigation_plan"] if item.step_id == step.step_id)
+    assert persisted_step.status is InvestigationStepStatus.FAILED
+    assert any(error.code == "UNSUPPORTED_TOOL" for error in result["errors"])

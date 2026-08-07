@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -25,9 +26,12 @@ from src.models import (
     BlacklistEntry,
     CaseStatus,
     ErrorCode,
+    InvestigationStep,
     ReviewAction,
     ReviewDecision,
+    ToolError,
 )
+from src.services.processor import ProcessedAnalysis
 
 
 class AnalysisProcessor(Protocol):
@@ -36,7 +40,8 @@ class AnalysisProcessor(Protocol):
         analysis_id: UUID,
         request: AnalysisCreateRequest,
         created_at: datetime,
-    ) -> AnalysisResponse: ...
+        progress: Callable[[InvestigationStep], Awaitable[None]] | None = None,
+    ) -> ProcessedAnalysis: ...
 
 
 @dataclass(slots=True)
@@ -150,7 +155,12 @@ class AnalysisService:
         if processor is None:
             return
         try:
-            result = await processor.process(analysis_id, request, created_at)
+            result = await processor.process(
+                analysis_id,
+                request,
+                created_at,
+                progress=lambda step: self._record_step_progress(analysis_id, step),
+            )
         except Exception:
             failed_at = datetime.now(UTC)
             failed_event = AnalysisEvent(
@@ -172,7 +182,25 @@ class AnalysisService:
                 failed_response = record.response.model_copy(deep=True)
             await self._persist_state(failed_response, failed_event)
             return
-        await self.persist_result(analysis_id, result)
+        await self.persist_result(analysis_id, result.response, errors=result.errors)
+
+    async def _record_step_progress(self, analysis_id: UUID, step: InvestigationStep) -> None:
+        event = AnalysisEvent(
+            analysis_id=analysis_id,
+            status=AnalysisStatus.RUNNING,
+            step=step.tool.value,
+            step_id=step.step_id,
+            step_status=step.status,
+            occurred_at=datetime.now(UTC),
+        )
+        async with self._lock:
+            record = self._records.get(analysis_id)
+            if record is None:
+                return
+            record.events.append(event)
+        persist_event = getattr(self._blacklist, "append_analysis_event", None)
+        if persist_event is not None:
+            await persist_event(event)
 
     async def list_for(self, principal: Principal) -> list[AnalysisResponse]:
         list_responses = getattr(self._blacklist, "list_analysis_responses", None)
@@ -335,37 +363,6 @@ class AnalysisService:
                         retryable=True,
                     )
 
-            apply_decision = getattr(blacklist, "apply_decision", None)
-            if apply_decision is not None:
-                domains = tuple(
-                    sorted(domain for domain in {urlsplit(url).hostname for url in normalized_urls} if domain)
-                )
-                await apply_decision(
-                    decision_id=str(decision_id),
-                    analysis_id=str(analysis_id),
-                    reviewer_id=principal.user_id,
-                    decision=request.decision.value,
-                    action=request.action.value,
-                    note=request.note,
-                    domains=domains if request.action is ReviewAction.ADD_TO_BLACKLIST else (),
-                )
-            elif blacklist is not None:
-                record_decision = getattr(blacklist, "record_decision", None)
-                if record_decision is not None:
-                    await record_decision(
-                        decision_id=str(decision_id),
-                        reviewer_id=principal.user_id,
-                        decision=request.decision.value,
-                        action=request.action.value,
-                        note=request.note,
-                    )
-
-            if request.action is ReviewAction.ADD_TO_BLACKLIST and apply_decision is None:
-                assert blacklist is not None
-                domains = {urlsplit(url).hostname for url in normalized_urls}
-                for domain in sorted(item for item in domains if item):
-                    await blacklist.add_approved(domain, str(decision_id))
-
             case_status = CaseStatus.APPROVED if request.decision is ReviewDecision.APPROVED else CaseStatus.REJECTED
             response = AdminDecisionResponse(
                 decision_id=decision_id,
@@ -375,15 +372,40 @@ class AnalysisService:
             )
             async with self._lock:
                 record = self._records[analysis_id]
-                record.response = record.response.model_copy(update={"case_status": case_status})
+                reviewed_analysis = record.response.model_copy(update={"case_status": case_status})
                 review_event = AnalysisEvent(
                     analysis_id=analysis_id,
-                    status=record.response.status,
+                    status=reviewed_analysis.status,
                     step=f"review_{case_status.value}",
                     occurred_at=reviewed_at,
                 )
+
+            domains = tuple(sorted(domain for domain in {urlsplit(url).hostname for url in normalized_urls} if domain))
+            apply_review = getattr(blacklist, "apply_review_decision", None)
+            if apply_review is None and blacklist is not None:
+                raise PlatformError(
+                    status_code=503,
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message="Repository does not support atomic admin decisions.",
+                    retryable=True,
+                )
+            if apply_review is not None:
+                await apply_review(
+                    decision_id=str(decision_id),
+                    analysis_id=str(analysis_id),
+                    reviewer_id=principal.user_id,
+                    decision=request.decision.value,
+                    action=request.action.value,
+                    note=request.note,
+                    domains=domains if request.action is ReviewAction.ADD_TO_BLACKLIST else (),
+                    response=reviewed_analysis,
+                    event=review_event,
+                )
+
+            async with self._lock:
+                record = self._records[analysis_id]
+                record.response = reviewed_analysis
                 record.events.append(review_event)
-                reviewed_analysis = record.response.model_copy(deep=True)
                 record.decisions.append(
                     _DecisionRecord(
                         reviewer_id=principal.user_id,
@@ -391,10 +413,15 @@ class AnalysisService:
                         receipt=response,
                     )
                 )
-            await self._persist_state(reviewed_analysis, review_event)
         return response.model_copy(deep=True)
 
-    async def persist_result(self, analysis_id: UUID, result: AnalysisResponse) -> None:
+    async def persist_result(
+        self,
+        analysis_id: UUID,
+        result: AnalysisResponse,
+        *,
+        errors: list[ToolError] | None = None,
+    ) -> None:
         """Processor integration seam; validates ID and appends progress."""
         if result.analysis_id != analysis_id:
             raise ValueError("processor result analysis_id does not match")
@@ -410,7 +437,11 @@ class AnalysisService:
                 raise self._not_found()
             record.response = result.model_copy(deep=True)
             record.events.append(event)
-        await self._persist_state(result, event)
+        persist_result = getattr(self._blacklist, "complete_analysis", None)
+        if persist_result is not None:
+            await persist_result(result, event, errors or [])
+        else:
+            await self._persist_state(result, event)
 
     async def _ensure_record(self, analysis_id: UUID) -> None:
         async with self._lock:

@@ -17,6 +17,14 @@ class DomainIntelligence(Protocol):
     async def lookup(self, domain: str) -> DomainIntelligenceResult: ...
 
 
+class ToolExecutionLedger(Protocol):
+    async def claim_tool_execution(self, analysis_id: str, step_id: str, target: str, provider: str) -> bool: ...
+
+    async def finish_tool_execution(
+        self, analysis_id: str, step_id: str, target: str, provider: str, status: str
+    ) -> None: ...
+
+
 class BlacklistRepository(Protocol):
     async def get(self, domain: str) -> BlacklistLookupEntry | None: ...
 

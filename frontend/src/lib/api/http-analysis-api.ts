@@ -2,11 +2,27 @@ import type {
   AnalysisAcceptedResponse,
   AnalysisApi,
   AnalysisCreateRequest,
-  AnalysisViewModel,
+  AdminDecisionAudit,
+  AnalysisResponse,
+  AnalysisReportRequest,
+  AnalysisReportResponse,
+  BlacklistEntry,
   ErrorEnvelope,
 } from "@/types/analysis";
 
 const DEFAULT_API_URL = "http://localhost:8000";
+
+function authHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const stored = window.localStorage.getItem("ai_protect_user");
+  const role = stored ? (JSON.parse(stored) as { role?: string }).role : "user";
+  return {
+    Authorization:
+      role === "security_admin"
+        ? "Bearer dev-admin-token"
+        : "Bearer dev-user-token",
+  };
+}
 
 export class ApiError extends Error {
   constructor(
@@ -46,19 +62,64 @@ export class HttpAnalysisApi implements AnalysisApi {
   async createAnalysis(
     request: AnalysisCreateRequest,
   ): Promise<AnalysisAcceptedResponse> {
-    const response = await fetch(`${this.baseUrl}/api/v1/analyses`, {
+    const response = await fetch(`${this.baseUrl}/api/v2/analyses`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(request),
     });
     return readJson<AnalysisAcceptedResponse>(response);
   }
 
-  async getAnalysis(analysisId: string): Promise<AnalysisViewModel> {
+  async getAnalysis(analysisId: string): Promise<AnalysisResponse> {
     const response = await fetch(
-      `${this.baseUrl}/api/v1/analyses/${encodeURIComponent(analysisId)}`,
-      { headers: { Accept: "application/json" } },
+      `${this.baseUrl}/api/v2/analyses/${encodeURIComponent(analysisId)}`,
+      { headers: { Accept: "application/json", ...authHeaders() } },
     );
-    return readJson<AnalysisViewModel>(response);
+    return readJson<AnalysisResponse>(response);
+  }
+
+  async listAnalyses(): Promise<AnalysisResponse[]> {
+    const response = await fetch(`${this.baseUrl}/api/v2/analyses`, {
+      headers: { Accept: "application/json", ...authHeaders() },
+    });
+    return readJson<AnalysisResponse[]>(response);
+  }
+
+  async listAdminCases(): Promise<AnalysisResponse[]> {
+    return this.getAdminResource<AnalysisResponse[]>("cases");
+  }
+
+  async listAdminReports(): Promise<AnalysisReportResponse[]> {
+    return this.getAdminResource<AnalysisReportResponse[]>("reports");
+  }
+
+  async listAdminDecisions(): Promise<AdminDecisionAudit[]> {
+    return this.getAdminResource<AdminDecisionAudit[]>("decisions");
+  }
+
+  async listAdminBlacklist(): Promise<BlacklistEntry[]> {
+    return this.getAdminResource<BlacklistEntry[]>("blacklist");
+  }
+
+  async reportAnalysis(
+    analysisId: string,
+    request: AnalysisReportRequest,
+  ): Promise<AnalysisReportResponse> {
+    const response = await fetch(
+      `${this.baseUrl}/api/v2/analyses/${encodeURIComponent(analysisId)}/reports`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(request),
+      },
+    );
+    return readJson<AnalysisReportResponse>(response);
+  }
+
+  private async getAdminResource<T>(resource: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/v2/admin/${resource}`, {
+      headers: { Accept: "application/json", ...authHeaders() },
+    });
+    return readJson<T>(response);
   }
 }
