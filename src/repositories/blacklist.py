@@ -42,7 +42,7 @@ def normalize_domain(domain: str) -> str:
     registrable = DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(normalized)
     if registrable is None:
         raise ValueError("domain must be registrable and cannot be an IP or public suffix")
-    return registrable
+    return normalized
 
 
 class SQLiteBlacklistRepository:
