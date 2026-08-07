@@ -18,21 +18,11 @@ import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
 
 const DEFAULT_API_URL = "http://localhost:8000";
 
-function authHeaders(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  let role = "user";
-  try {
-    const stored = window.localStorage.getItem("ai_protect_user");
-    role = stored ? (JSON.parse(stored) as { role?: string }).role ?? "user" : "user";
-  } catch {
-    window.localStorage.removeItem("ai_protect_user");
-  }
-  return {
-    Authorization:
-      role === "security_admin"
-        ? "Bearer dev-admin-token"
-        : "Bearer dev-user-token",
-  };
+type AccessTokenProvider = () => string | null | undefined;
+
+function authHeaders(getAccessToken?: AccessTokenProvider): Record<string, string> {
+  const token = getAccessToken?.()?.trim();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export class ApiError extends Error {
@@ -66,8 +56,15 @@ async function readJson<T>(response: Response): Promise<T> {
 export class HttpAnalysisApi implements AnalysisApi {
   private readonly baseUrl: string;
 
-  constructor(baseUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL) {
+  constructor(
+    baseUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL,
+    private readonly getAccessToken?: AccessTokenProvider,
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+  }
+
+  private requestHeaders(headers: Record<string, string>): Record<string, string> {
+    return { ...headers, ...authHeaders(this.getAccessToken) };
   }
 
   async createAnalysis(
@@ -75,7 +72,8 @@ export class HttpAnalysisApi implements AnalysisApi {
   ): Promise<AnalysisAcceptedResponseV3> {
     const response = await fetch(`${this.baseUrl}/api/v3/analyses`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      credentials: "include",
+      headers: this.requestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
     return readJson<AnalysisAcceptedResponseV3>(response);
@@ -84,14 +82,18 @@ export class HttpAnalysisApi implements AnalysisApi {
   async getAnalysis(analysisId: string): Promise<AnalysisResponseV3> {
     const response = await fetch(
       `${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}`,
-      { headers: { Accept: "application/json", ...authHeaders() } },
+      {
+        credentials: "include",
+        headers: this.requestHeaders({ Accept: "application/json" }),
+      },
     );
     return readJson<AnalysisResponseV3>(response);
   }
 
   async listAnalyses(): Promise<AnalysisResponseV3[]> {
     const response = await fetch(`${this.baseUrl}/api/v3/analyses`, {
-      headers: { Accept: "application/json", ...authHeaders() },
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
     });
     return readJson<AnalysisResponseV3[]>(response);
   }
@@ -106,7 +108,10 @@ export class HttpAnalysisApi implements AnalysisApi {
     const suffix = search.size > 0 ? `?${search.toString()}` : "";
     const response = await fetch(
       `${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}/events${suffix}`,
-      { headers: { Accept: "application/json", ...authHeaders() } },
+      {
+        credentials: "include",
+        headers: this.requestHeaders({ Accept: "application/json" }),
+      },
     );
     return readJson<AnalysisEventPageV3>(response);
   }
@@ -135,7 +140,8 @@ export class HttpAnalysisApi implements AnalysisApi {
       `${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}/reports`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        headers: this.requestHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(request),
       },
     );
@@ -144,7 +150,8 @@ export class HttpAnalysisApi implements AnalysisApi {
 
   private async getAdminResource<T>(resource: string): Promise<T> {
     const response = await fetch(`${this.baseUrl}/api/v2/admin/${resource}`, {
-      headers: { Accept: "application/json", ...authHeaders() },
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
     });
     return readJson<T>(response);
   }

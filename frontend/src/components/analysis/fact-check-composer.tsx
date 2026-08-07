@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, useEffect, useMemo } from "react";
+import { useState, type FormEvent, useMemo } from "react";
 import { ShieldCheck, Search, Link as LinkIcon, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,18 +28,15 @@ export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComp
 
   const hasUrls = detectedUrls.length > 0;
 
-  // Reset consent if there are no URLs
-  useEffect(() => {
-    if (!hasUrls) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setConsent(false);
-    }
-  }, [hasUrls]);
+  const updateContent = (nextContent: string) => {
+    setContent(nextContent);
+    if (!/https?:\/\/[^\s]+/iu.test(nextContent)) setConsent(false);
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
-    onSubmit(content.trim(), consent);
+    onSubmit(content.trim(), hasUrls && consent);
   };
 
   return (
@@ -65,7 +62,7 @@ export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComp
           <div className="relative rounded-xl bg-card overflow-hidden flex flex-col">
             <textarea
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onChange={(e) => updateContent(e.target.value)}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
               placeholder="Ví dụ: “Uống nước chanh có thể chữa khỏi ung thư…”"
@@ -102,7 +99,7 @@ export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComp
               key={index}
               type="button"
               disabled={isLoading}
-              onClick={() => setContent(example)}
+              onClick={() => updateContent(example)}
               className="px-3 py-1.5 rounded-full bg-secondary/50 border border-border text-xs font-medium text-secondary-foreground hover:bg-secondary hover:border-primary/30 transition-colors disabled:opacity-50"
             >
               Mẫu {index + 1}

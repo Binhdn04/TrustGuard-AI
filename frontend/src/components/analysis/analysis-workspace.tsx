@@ -160,11 +160,13 @@ export function AnalysisWorkspace() {
       let eventPollingAvailable = true;
 
       const poll = async () => {
-        if (generation !== generationRef.current) return;
+        const isCurrent = () => generation === generationRef.current;
+        if (!isCurrent()) return;
         try {
           if (eventPollingAvailable) {
             try {
               const page = await api.getAnalysisEvents(accepted.analysis_id, { cursor, limit: 100 });
+              if (!isCurrent()) return;
               cursor = page.next_cursor;
               setSteps((current) => page.events.reduce(applyEvent, current));
               if (page.events.some((event) => event.event_type === "provisional_warning")) {
@@ -179,13 +181,14 @@ export function AnalysisWorkspace() {
                 setUiState("investigating");
               }
             } catch {
+              if (!isCurrent()) return;
               eventPollingAvailable = false;
               setTransport("polling_fallback");
             }
           }
 
           const response = await api.getAnalysis(accepted.analysis_id);
-          if (generation !== generationRef.current) return;
+          if (!isCurrent()) return;
           setSteps((current) => mergePlan(current, response.investigation_plan));
           setViewModel(
             mapAnalysisResponseToViewModel(response, {
@@ -215,10 +218,11 @@ export function AnalysisWorkspace() {
             return;
           }
 
-          if (uiState === "queued") setUiState("investigating");
+          setUiState((current) => current === "queued" ? "investigating" : current);
+          if (!isCurrent()) return;
           pollTimerRef.current = setTimeout(poll, 1_500);
         } catch (pollError) {
-          if (generation !== generationRef.current) return;
+          if (!isCurrent()) return;
           setError(errorMessage(pollError));
           setUiState("failed");
           setTransport("disconnected");

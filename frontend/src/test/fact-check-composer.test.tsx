@@ -50,4 +50,18 @@ describe("FactCheckComposer", () => {
     
     expect(handleSubmit).toHaveBeenCalledWith("Nội dung có link https://example.com", true);
   });
+
+  it("Xóa URL sẽ thu hồi consent trước đó", () => {
+    const handleSubmit = vi.fn();
+    render(<FactCheckComposer onSubmit={handleSubmit} />);
+
+    const textarea = screen.getByPlaceholderText(/Ví dụ:/i);
+    fireEvent.change(textarea, { target: { value: "Link https://example.com" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.change(textarea, { target: { value: "Không còn link" } });
+    fireEvent.change(textarea, { target: { value: "Link mới https://example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: /phân tích/i }));
+
+    expect(handleSubmit).toHaveBeenCalledWith("Link mới https://example.org", false);
+  });
 });

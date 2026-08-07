@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,12 @@ class Settings(BaseSettings):
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
+
+    @model_validator(mode="after")
+    def reject_demo_auth_in_production(self) -> "Settings":
+        if self.app_env == "production" and self.demo_auth_enabled:
+            raise ValueError("DEMO_AUTH_ENABLED must be false in production")
+        return self
 
 
 @lru_cache
