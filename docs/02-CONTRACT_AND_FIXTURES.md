@@ -329,12 +329,15 @@ evidence requirement và safety invariant. Unit/integration/eval mặc định p
 Các endpoint này không được frontend product dùng và không có compatibility guarantee của analysis
 contract v2.
 
-## 11. Final contract v3 target — Wave 0
+## 11. Frozen contract v3 — Wave 0
 
-Phần này là contract đích của final product và được freeze trong Wave 0 trước khi bốn coding agents
-triển khai feature. Nó **chưa phải runtime hiện tại**, không thay đổi wire contract v2 và không được
-client gọi trước khi Pydantic/OpenAPI, migrations và contract tests v3 được merge. Release v3 đầu tiên
-giữ các read path v2 tương thích; breaking capability mới chỉ xuất hiện dưới `/api/v3`.
+Phần này là contract final product đã được freeze trong Wave 0. Pydantic source of truth nằm tại
+`src/models/schemas.py`, OpenAPI được phát từ `src/main.py`, và schema/migration plan nằm tại
+`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter đã có dưới `/api/v3` để client
+tích hợp sớm. WebSocket ticket, appeal, reviewed action, campaign và metrics đã có đầy đủ request/
+response schema và route trong OpenAPI nhưng chủ động trả 501 cho tới wave triển khai tương ứng;
+không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path v2 tương thích; capability mới chỉ
+xuất hiện dưới `/api/v3`.
 
 ### 11.0 Versioning và core routes
 
@@ -360,7 +363,7 @@ v2 create được đánh dấu deprecated khi v3 production-ready và không nh
 `GET /api/v3/analyses/{id}/events` vẫn là fallback và nguồn replay.
 
 Event v3 dùng envelope có `event_id`, `analysis_id`, `sequence`, `event_type`, `occurred_at` và
-payload typed. Event types dự kiến:
+payload typed. Event types đã freeze:
 
 ```text
 analysis_status | step_transition | provisional_warning | final_result | case_update | limitation
@@ -368,12 +371,12 @@ analysis_status | step_transition | provisional_warning | final_result | case_up
 
 `provisional_warning` bắt buộc có `risk_level`, `summary`, `evidence_refs` và
 `is_provisional: true`; không dùng verdict `safe`. `final_result` chỉ tham chiếu response đã persist.
-Sequence tăng đơn điệu trong một analysis; reconnect dùng `last_event_id` và event delivery có thể
-at-least-once nên client dedupe bằng `event_id`.
+Sequence tăng đơn điệu trong một analysis; polling/reconnect gửi lại opaque `next_cursor` dưới query
+`cursor`, và event delivery có thể at-least-once nên client dedupe bằng `event_id`.
 
 ### 11.2 Appeal và Human-in-the-loop
 
-API dự kiến:
+API đã freeze:
 
 | Method | Path | Quyền/hành vi |
 |---|---|---|
@@ -381,15 +384,16 @@ API dự kiến:
 | GET | `/api/v3/appeals/{id}` | Owner hoặc admin xem trạng thái/kết quả. |
 | GET | `/api/v3/admin/appeals` | Admin list queue có pagination/filter. |
 | POST | `/api/v3/admin/appeals/{id}/decision` | Admin uphold/overturn/inconclusive kèm note. |
+| GET | `/api/v3/admin/actions` và `/{id}` | Admin đọc proposal và immutable evidence snapshot. |
 | POST | `/api/v3/admin/actions/{id}/decision` | Duyệt/từ chối blacklist, block hoặc broad warning. |
 
-Planned action enum là `add_to_blacklist | disable_blacklist | block_domain |
+Reviewed action enum là `add_to_blacklist | disable_blacklist | block_domain |
 publish_broad_warning | none`. Mọi action ngoài `none` cần approved decision, reviewer, evidence
 snapshot, note, timestamp và audit. Overturn tạo record mới và giữ lịch sử, không xóa decision cũ.
 
 ### 11.3 Campaign và operations dashboard
 
-Admin-only read APIs dự kiến:
+Admin-only read APIs đã freeze:
 
 - `GET /api/v3/admin/campaigns` và `/api/v3/admin/campaigns/{id}` trả cluster hypothesis, time window, aggregate
   signals, evidence refs và reviewer status; không trả sender social graph/raw private messages.

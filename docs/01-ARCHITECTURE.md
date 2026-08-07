@@ -284,10 +284,10 @@ và phê duyệt, không online-learn trực tiếp.
 ```text
 src/
 ├── agents/          # state, graph, nodes, tool protocols/adapters
-├── api/             # v2 routes và dependency wiring
+├── api/             # v2 routes, frozen v3 contract routes và dependency wiring
 ├── services/        # application service + graph processor
 ├── repositories/    # SQLite persistence và fact-check corpus
-├── models/          # strict Pydantic v2 contract
+├── models/          # strict, separately versioned Pydantic v2/v3 contracts
 ├── core/            # auth và platform errors
 └── main.py          # FastAPI app
 frontend/src/        # Next.js UI, API clients, shared TS contract
