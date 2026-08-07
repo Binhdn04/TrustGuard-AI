@@ -1,99 +1,123 @@
 "use client";
 
-import { useState } from "react";
-import { SmartInput } from "./smart-input";
-import { ProgressStepper, AnalysisStep } from "./progress-stepper";
-import { VerdictCard, RiskLevel } from "./verdict-card";
-import { Shield } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Shield, AlertCircle, RefreshCw } from "lucide-react";
+import { FactCheckComposer } from "./fact-check-composer";
+import { AnalysisProgress, type ProgressStep } from "./analysis-progress";
+import { FactCheckSummary } from "./fact-check-summary";
+import { LinkSafetyPanel } from "./link-safety-panel";
+import { getAnalysisApi } from "@/lib/api/analysis-api";
+import type { AnalysisViewModel } from "@/types/analysis";
+
+const INITIAL_STEPS: ProgressStep[] = [
+  { id: "extract", label: "Đang xác định các phát biểu cần kiểm chứng", status: "pending", visible: true },
+  { id: "search", label: "Đang tìm nguồn fact-check", status: "pending", visible: true },
+  { id: "verify", label: "Đang đối chiếu bằng chứng", status: "pending", visible: true },
+  { id: "summarize", label: "Đang tổng hợp kết luận", status: "pending", visible: true },
+  { id: "scan_urls", label: "Đang kiểm tra liên kết đính kèm", status: "pending", visible: false },
+];
 
 export function AnalysisWorkspace() {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showResult, setShowResult] = useState(false);
+  const [viewModel, setViewModel] = useState<AnalysisViewModel | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<ProgressStep[]>(INITIAL_STEPS);
   
-  const [steps, setSteps] = useState<AnalysisStep[]>([
-    { id: "extract", label: "Phân tách dữ liệu", status: "pending", description: "Trích xuất URL và các tuyên bố từ tin nhắn" },
-    { id: "scan", label: "Quét URL & Domain", status: "pending", description: "Kiểm tra danh sách đen và VirusTotal" },
-    { id: "fact-check", label: "Xác minh thông tin", status: "pending", description: "Đối chiếu với cơ sở dữ liệu tin giả" },
-    { id: "score", label: "Đánh giá rủi ro", status: "pending", description: "Tính điểm dựa trên bằng chứng thu thập được" },
-  ]);
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null);
 
-  const [verdict, setVerdict] = useState<{
-    score: number;
-    level: RiskLevel;
-    reason: string;
-    recommendation: string;
-    limitations?: string[];
-  } | null>(null);
-
-  const simulateAnalysis = (content: string, hasConsent: boolean) => {
-    setIsAnalyzing(true);
-    setShowResult(false);
-    
-    // Reset steps
-    setSteps(steps.map(s => ({ ...s, status: "pending" })));
-
-    // Step 1: Extract
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => s.id === "extract" ? { ...s, status: "running" } : s));
-    }, 500);
-
-    // Step 2: Scan
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => {
-        if (s.id === "extract") return { ...s, status: "completed" };
-        if (s.id === "scan") return { ...s, status: "running" };
-        return s;
-      }));
-    }, 1500);
-
-    // Step 3: Fact-check
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => {
-        if (s.id === "scan") return { ...s, status: "completed" };
-        if (s.id === "fact-check") return { ...s, status: "running" };
-        return s;
-      }));
-    }, 3000);
-
-    // Step 4: Score
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => {
-        if (s.id === "fact-check") return { ...s, status: "completed" };
-        if (s.id === "score") return { ...s, status: "running" };
-        return s;
-      }));
-    }, 4500);
-
-    // Finish
-    setTimeout(() => {
-      setSteps(prev => prev.map(s => s.id === "score" ? { ...s, status: "completed" } : s));
-      setIsAnalyzing(false);
-      setShowResult(true);
-
-      // Mock result based on content length or some random logic for demo
-      const isDangerous = content.includes("http") || content.toLowerCase().includes("trúng thưởng");
-      
-      if (isDangerous) {
-        setVerdict({
-          score: 85,
-          level: "MALICIOUS",
-          reason: "Đường dẫn trỏ đến một tên miền (Domain) mới đăng ký cách đây 2 ngày và bị gắn cờ lừa đảo (phishing) bởi 3 công cụ bảo mật trên VirusTotal. Tin nhắn dùng chiêu trò mạo danh thương hiệu.",
-          recommendation: "Tuyệt đối KHÔNG NHẤP VÀO LINK hoặc cung cấp thông tin cá nhân. Hãy xóa tin nhắn này ngay lập tức.",
-          limitations: hasConsent ? undefined : ["Không thể quét link chi tiết vì người dùng không cấp quyền (Consent) quét bên ngoài."]
-        });
-      } else {
-        setVerdict({
-          score: 15,
-          level: "SAFE",
-          reason: "Nội dung tin nhắn và các đường link đính kèm không có dấu hiệu lừa đảo. Không tìm thấy trong danh sách đen.",
-          recommendation: "Tin nhắn này an toàn để đọc. Tuy nhiên, luôn cảnh giác với các yêu cầu chuyển tiền hoặc thông tin nhạy cảm.",
-        });
-      }
-    }, 6000);
+  const clearPolling = () => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
   };
 
+  // Cleanup polling on unmount
+  useEffect(() => clearPolling, []);
+
+  const simulateProgress = (hasConsent: boolean, hasUrl: boolean) => {
+    // Show URL scan step if needed
+    setSteps(INITIAL_STEPS.map(s => {
+      if (s.id === "scan_urls") {
+        return { ...s, visible: hasUrl && hasConsent };
+      }
+      return s;
+    }));
+
+    // Simulating the progress sequence for visual effect
+    const sequence = [
+      { id: "extract", delay: 0 },
+      { id: "search", delay: 1000 },
+      { id: "verify", delay: 2000 },
+      { id: "summarize", delay: 3500 },
+    ];
+    
+    if (hasUrl && hasConsent) {
+      sequence.push({ id: "scan_urls", delay: 4500 });
+    }
+
+    sequence.forEach(({ id, delay }, i) => {
+      setTimeout(() => {
+        setSteps(prev => prev.map(s => {
+          if (s.id === id) return { ...s, status: "running" };
+          const previousId = i > 0 ? sequence[i - 1].id : null;
+          if (previousId && s.id === previousId) return { ...s, status: "completed" };
+          return s;
+        }));
+      }, delay);
+    });
+  };
+
+  const startAnalysis = async (content: string, consentToScanUrls: boolean) => {
+    setError(null);
+    setViewModel(null);
+    clearPolling();
+    
+    const hasUrl = /https?:\/\/[^\s]+/giu.test(content);
+    simulateProgress(consentToScanUrls, hasUrl);
+
+    try {
+      const api = getAnalysisApi();
+      const accepted = await api.createAnalysis({ message: content, consent_to_scan_urls: consentToScanUrls });
+      setActiveAnalysisId(accepted.analysis_id);
+      pollAnalysis(accepted.analysis_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi kết nối với máy chủ.");
+    }
+  };
+
+  const pollAnalysis = async (id: string) => {
+    try {
+      const api = getAnalysisApi();
+      const result = await api.getAnalysis(id);
+      
+      if (result.status === "completed" || result.status === "failed") {
+        // Complete all steps if finished
+        setSteps(prev => prev.map(s => ({ ...s, status: "completed" })));
+        setViewModel(result);
+        setActiveAnalysisId(null);
+      } else {
+        setViewModel(result); // Update partial state (running)
+        pollTimerRef.current = setTimeout(() => pollAnalysis(id), 1500);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Mất kết nối khi đang lấy kết quả.");
+      setActiveAnalysisId(null);
+    }
+  };
+
+  const resetWorkspace = () => {
+    setViewModel(null);
+    setError(null);
+    setSteps(INITIAL_STEPS);
+    clearPolling();
+    setActiveAnalysisId(null);
+  };
+
+  const isRunning = activeAnalysisId !== null || (viewModel && viewModel.status === "running");
+
   return (
-    <div className="min-h-screen py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen py-12 px-4 sm:px-6 lg:px-8 bg-background">
       <div className="max-w-4xl mx-auto space-y-12">
         
         {/* Header Section */}
@@ -102,46 +126,55 @@ export function AnalysisWorkspace() {
             <Shield className="w-8 h-8 text-primary" />
           </div>
           <h1 className="text-4xl font-extrabold tracking-tight text-foreground">
-            AI PROTECT <span className="text-primary">Scanner</span>
+            Fact-Check <span className="text-primary">AI</span>
           </h1>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Hệ thống nhận diện tin giả và cảnh báo đường link lừa đảo theo thời gian thực.
-          </p>
         </div>
 
-        {/* Input Section */}
-        {!isAnalyzing && !showResult && (
-          <div className="fade-in">
-            <SmartInput onSubmit={simulateAnalysis} isLoading={isAnalyzing} />
+        {/* Error State */}
+        {error && (
+          <div className="max-w-2xl mx-auto p-4 rounded-xl border border-rose-200 bg-rose-50 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-rose-800">Lỗi phân tích</h3>
+              <p className="text-sm text-rose-700 mt-1">{error}</p>
+            </div>
+            <button 
+              onClick={resetWorkspace}
+              className="text-sm px-3 py-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-100 font-medium"
+            >
+              Thử lại
+            </button>
           </div>
         )}
 
-        {/* Progress Section */}
-        {isAnalyzing && (
-          <div className="fade-in">
-            <ProgressStepper steps={steps} />
-          </div>
+        {/* Input Phase */}
+        {!isRunning && !viewModel?.factCheck && !error && (
+          <FactCheckComposer onSubmit={startAnalysis} />
         )}
 
-        {/* Result Section */}
-        {showResult && verdict && (
-          <div className="fade-in space-y-8">
-            <VerdictCard {...verdict} />
+        {/* Progress Phase */}
+        {isRunning && (
+          <AnalysisProgress steps={steps} />
+        )}
+
+        {/* Result Phase */}
+        {viewModel?.factCheck && !isRunning && (
+          <div className="space-y-6">
+            <FactCheckSummary result={viewModel.factCheck} />
             
-            <div className="text-center">
+            <LinkSafetyPanel result={viewModel.linkSafety} />
+
+            <div className="flex justify-center pt-8 pb-4">
               <button
-                onClick={() => {
-                  setShowResult(false);
-                  setVerdict(null);
-                }}
-                className="px-6 py-2 rounded-full border border-border text-foreground hover:bg-secondary transition-colors"
+                onClick={resetWorkspace}
+                className="flex items-center gap-2 px-6 py-3 rounded-full border border-border bg-background text-foreground hover:bg-muted font-medium transition-colors shadow-sm"
               >
+                <RefreshCw className="w-4 h-4" />
                 Kiểm tra tin nhắn khác
               </button>
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

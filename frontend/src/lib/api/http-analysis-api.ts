@@ -2,7 +2,7 @@ import type {
   AnalysisAcceptedResponse,
   AnalysisApi,
   AnalysisCreateRequest,
-  AnalysisResponse,
+  AnalysisViewModel,
   ErrorEnvelope,
 } from "@/types/analysis";
 
@@ -54,11 +54,11 @@ export class HttpAnalysisApi implements AnalysisApi {
     return readJson<AnalysisAcceptedResponse>(response);
   }
 
-  async getAnalysis(analysisId: string): Promise<AnalysisResponse> {
+  async getAnalysis(analysisId: string): Promise<AnalysisViewModel> {
     const response = await fetch(
       `${this.baseUrl}/api/v1/analyses/${encodeURIComponent(analysisId)}`,
       { headers: { Accept: "application/json" } },
     );
-    return readJson<AnalysisResponse>(response);
+    return readJson<AnalysisViewModel>(response);
   }
 }
