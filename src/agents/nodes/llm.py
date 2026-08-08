@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -13,6 +14,7 @@ from src.agents.state import WorkflowState
 
 LLM_MODEL = "gpt-4o-mini"
 AllowedTool = Literal["url_scanner", "domain_intelligence", "claim_retriever"]
+logger = logging.getLogger(__name__)
 
 
 class _StrictOutput(BaseModel):

@@ -55,6 +55,9 @@ from src.models import (
     FinalResultEventV3,
     InvestigationTool,
     OperationsMetricsResponseV3,
+    ReportStatus,
+    ReviewQueueDecisionRequest,
+    ReviewQueueItem,
     StepTransitionEventPayload,
     StepTransitionEventV3,
     WebSocketTicketRequestV3,
@@ -251,6 +254,20 @@ async def report_analysis_v3(
 ) -> AnalysisReportResponseV3:
     receipt = await service.report(analysis_id, request, principal)
     return AnalysisReportResponseV3.model_validate(receipt.model_dump())
+
+
+@router.get(
+    "/analyses/{analysis_id}/reports",
+    response_model=list[AnalysisReportResponseV3],
+    responses=_COMMON_ERRORS,
+)
+async def list_reports_v3(
+    analysis_id: UUID,
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> list[AnalysisReportResponseV3]:
+    reports = await service.list_reports_by_analysis(analysis_id, principal)
+    return [AnalysisReportResponseV3.model_validate(r.model_dump()) for r in reports]
 
 
 @router.post(
@@ -460,3 +477,80 @@ async def get_operations_metrics_v3(
     del from_, to
     require_security_admin(principal)
     _planned_feature()
+
+
+@router.get("/admin/review-queue", response_model=list[ReviewQueueItem], responses=_PLANNED_ERRORS)
+async def list_review_queue_items_v3(
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> list[ReviewQueueItem]:
+    require_security_admin(principal)
+    return await service.list_review_queue_items()
+
+
+@router.post(
+    "/admin/review-queue/{item_id}/start-review",
+    responses=_PLANNED_ERRORS,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def start_review_v3(
+    item_id: UUID,
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> None:
+    require_security_admin(principal)
+    item_key = str(item_id)
+    item = await service.get_review_queue_item(item_key)
+    if not item:
+        raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Item not found", retryable=False)
+    if item.status is not ReportStatus.SUBMITTED:
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report is no longer awaiting review.",
+            retryable=False,
+        )
+    if not await service.start_review_queue_item(item_key, principal.user_id):
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report review state changed. Refresh and try again.",
+            retryable=False,
+        )
+
+
+@router.post(
+    "/admin/review-queue/{item_id}/decision",
+    responses=_PLANNED_ERRORS,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def decide_review_queue_item_v3(
+    item_id: UUID,
+    request: ReviewQueueDecisionRequest,
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> None:
+    require_security_admin(principal)
+    item_key = str(item_id)
+    item = await service.get_review_queue_item(item_key)
+    if not item:
+        raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Item not found", retryable=False)
+    if item.status is not ReportStatus.REVIEWING:
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report must be in reviewing state before a decision.",
+            retryable=False,
+        )
+    if not await service.decide_review_queue_item(
+        item_key,
+        decision=request.decision,
+        reviewer_id=principal.user_id,
+        note=request.note,
+    ):
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report review state changed. Refresh and try again.",
+            retryable=False,
+        )

@@ -1,10 +1,14 @@
 import type {
   AdminDecisionAudit,
+  AdminDecisionRequest,
+  AdminDecisionResponse,
   AnalysisResponse,
   AnalysisReportRequest,
   AnalysisReportResponse,
   BlacklistEntry,
   ErrorEnvelope,
+  ReviewQueueItem,
+  ReviewQueueDecisionRequest,
 } from "@/types/analysis";
 import type {
   AnalysisAcceptedResponseV3,
@@ -12,6 +16,7 @@ import type {
   AnalysisEventPageV3,
   AnalysisReportResponseV3,
   AnalysisResponseV3,
+  WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
 import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
@@ -116,6 +121,16 @@ export class HttpAnalysisApi implements AnalysisApi {
     return readJson<AnalysisEventPageV3>(response);
   }
 
+  async createWebSocketTicket(analysisId: string): Promise<WebSocketTicketResponseV3> {
+    const response = await fetch(`${this.baseUrl}/api/v3/ws-tickets`, {
+      method: "POST",
+      credentials: "include",
+      headers: this.requestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ analysis_id: analysisId }),
+    });
+    return readJson<WebSocketTicketResponseV3>(response);
+  }
+
   async listAdminCases(): Promise<AnalysisResponse[]> {
     return this.getAdminResource<AnalysisResponse[]>("cases");
   }
@@ -132,6 +147,22 @@ export class HttpAnalysisApi implements AnalysisApi {
     return this.getAdminResource<BlacklistEntry[]>("blacklist");
   }
 
+  async decideAdminCase(
+    analysisId: string,
+    request: AdminDecisionRequest,
+  ): Promise<AdminDecisionResponse> {
+    const response = await fetch(
+      `${this.baseUrl}/api/v2/admin/cases/${encodeURIComponent(analysisId)}/decision`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: this.requestHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(request),
+      },
+    );
+    return readJson<AdminDecisionResponse>(response);
+  }
+
   async reportAnalysis(
     analysisId: string,
     request: AnalysisReportRequest,
@@ -146,6 +177,59 @@ export class HttpAnalysisApi implements AnalysisApi {
       },
     );
     return readJson<AnalysisReportResponseV3>(response);
+  }
+
+  async listReports(analysisId: string): Promise<AnalysisReportResponse[]> {
+    const response = await fetch(`${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}/reports`, {
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
+    });
+    return readJson<AnalysisReportResponse[]>(response);
+  }
+
+  async listReviewQueueItems(): Promise<ReviewQueueItem[]> {
+    const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue`, {
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
+    });
+    return readJson<ReviewQueueItem[]>(response);
+  }
+
+  async startReviewQueueItem(itemId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue/${encodeURIComponent(itemId)}/start-review`, {
+      method: "POST",
+      credentials: "include",
+      headers: this.requestHeaders({}),
+    });
+    if (!response.ok) {
+      const payload = await response.json();
+      const error = (payload as ErrorEnvelope).error;
+      throw new ApiError(
+        error?.message ?? "Không thể bắt đầu xem xét.",
+        error?.code ?? "HTTP_ERROR",
+        error?.retryable ?? response.status >= 500,
+        response.status,
+      );
+    }
+  }
+
+  async decideReviewQueueItem(itemId: string, request: ReviewQueueDecisionRequest): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue/${encodeURIComponent(itemId)}/decision`, {
+      method: "POST",
+      credentials: "include",
+      headers: this.requestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const payload = await response.json();
+      const error = (payload as ErrorEnvelope).error;
+      throw new ApiError(
+        error?.message ?? "Không thể lưu quyết định.",
+        error?.code ?? "HTTP_ERROR",
+        error?.retryable ?? response.status >= 500,
+        response.status,
+      );
+    }
   }
 
   private async getAdminResource<T>(resource: string): Promise<T> {

@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from src.core.auth import Principal, UserRole
+from src.core.errors import PlatformError
 from src.core.logging import redact
 from src.core.rate_limit import MemoryRateLimiter
 from src.models import AnalysisCreateRequest
@@ -36,6 +37,25 @@ async def test_memory_rate_limit_is_scoped_by_principal() -> None:
     assert await limiter.allow("user:a", 2)
     assert not await limiter.allow("user:a", 2)
     assert await limiter.allow("user:b", 2)
+
+
+@pytest.mark.asyncio
+async def test_report_listing_authorization_is_enforced_in_service() -> None:
+    service = AnalysisService()
+    owner = Principal("owner-1", UserRole.USER)
+    accepted = await service.create(
+        AnalysisCreateRequest(message="Owner-only report list", consent_to_scan_urls=False),
+        owner,
+    )
+
+    with pytest.raises(PlatformError) as error:
+        await service.list_reports_by_analysis(
+            accepted.analysis_id,
+            Principal("other-user", UserRole.USER),
+        )
+
+    assert error.value.status_code == 403
+    await service.aclose()
 
 
 def test_structured_log_redaction_recurses() -> None:

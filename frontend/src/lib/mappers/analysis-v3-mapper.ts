@@ -3,6 +3,7 @@ import type { Evidence, Verdict } from "@/types/analysis";
 import type {
   AnalysisViewModel,
   ClaimResult,
+  ClaimStance,
   FactCheckResult,
   LinkSafetyResult,
 } from "@/types/analysis-view-model";
@@ -22,22 +23,60 @@ export interface AnalysisMappingContext {
   consentToScanUrls: boolean;
 }
 
+function stanceFromFinding(finding: string): ClaimStance {
+  const normalized = finding.trim().toLowerCase();
+  if (/\b(false|refute|refuted|incorrect|misleading)\b|sai|bác bỏ|tin giả/iu.test(normalized)) {
+    return "refutes";
+  }
+  if (/\b(mixed|partly|partially)\b|một phần|gây hiểu lầm/iu.test(normalized)) {
+    return "mixed";
+  }
+  if (/\b(true|supported|confirmed|correct)\b|xác nhận|chính xác/iu.test(normalized)) {
+    return "supports";
+  }
+  return "unrated";
+}
 
+function combineStances(stances: ClaimStance[]): ClaimStance {
+  const rated = stances.filter((stance) => stance !== "unrated");
+  if (rated.length === 0) return "unrated";
+  return rated.every((stance) => stance === rated[0]) ? rated[0] : "mixed";
+}
 
 function mapFactCheck(response: AnalysisResponseV3): FactCheckResult | null {
   if (response.status !== "completed") return null;
 
+  const factEvidence = (response.evidence ?? []).filter(
+    (item) => item.type === "fact_check" || item.type === "official_source",
+  );
+  const overallStance = combineStances(
+    factEvidence.map((item) => stanceFromFinding(item.finding)),
+  );
+  const sources = factEvidence
+    .filter((item): item is Evidence & { url: string } => Boolean(item.url))
+    .map((item, index) => ({
+      id: `${response.analysis_id}:source:${index}`,
+      publisher: item.source,
+      title: item.title,
+      url: item.url,
+      finding: item.finding,
+      relevance: response.confidence ?? 0,
+      observedAt: item.observed_at,
+      official: item.type === "official_source",
+    }));
+
   const claims = (response.claims ?? []).map<ClaimResult>((claim, index) => ({
     id: `${response.analysis_id}:claim:${index}`,
     text: claim,
-    stance: "unrated",
-    confidence: null,
-    explanation: "Chưa có dữ liệu đánh giá chi tiết cho claim này.",
-    sources: [],
+    stance: overallStance,
+    confidence: response.confidence,
+    explanation:
+      response.reasons?.[index] ?? response.summary ?? "Chưa có giải thích cho phát biểu này.",
+    sources,
   }));
 
   return {
-    overallStance: "unrated",
+    overallStance,
     summary: response.summary ?? "Chưa có bản tóm tắt kết quả.",
     confidence: response.confidence,
     claims,

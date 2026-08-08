@@ -1,28 +1,22 @@
-import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { expect, test } from "@playwright/test";
 
-test.describe("Admin Dashboard", () => {
-  test.beforeEach(async ({ page }) => {
-    // Navigate to login and click mock admin login
-    await page.goto("/login");
-    await page.getByRole("button", { name: /Quyền Admin/i }).click();
-    await page.waitForURL("**/");
-    await page.goto("/admin");
-    await expect(page).toHaveURL("/admin");
-  });
+import { installAdminReviewFlow } from "../../fixtures/analysis-mocks";
 
-  test("should display admin dashboard and pass accessibility checks", async ({ page }) => {
-    // Wait for the admin content to load
-    await expect(page.getByRole("heading", { name: /Admin Workspace/i })).toBeVisible();
+test("critical case → admin approval → blacklist entry", async ({ page }) => {
+  await installAdminReviewFlow(page);
+  await page.goto("/login");
+  await page.getByRole("button", { name: /Quyền Admin/i }).click();
+  await page.waitForURL("**/");
+  await page.goto("/admin");
 
-    // Check tabs visibility
-    await expect(page.getByRole("button", { name: /Fact-check Review/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /URL Security/i })).toBeVisible();
+  await page.getByRole("tab", { name: "URL Security" }).click();
+  await expect(page.getByText("tapdoanx-qua.example", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Blacklist" }).click();
+  await page.getByLabel("Ghi chú reviewer").fill("Đã đối chiếu evidence snapshot và xác nhận domain giả mạo.");
+  await page.getByRole("button", { name: "Xác nhận" }).click();
+  await expect(page.getByText(/Không có URL đang chờ duyệt/i)).toBeVisible();
 
-    // Accessibility check
-    const accessibilityScanResults = await new AxeBuilder({ page })
-      .disableRules(['color-contrast', 'heading-order'])
-      .analyze();
-    expect(accessibilityScanResults.violations).toEqual([]);
-  });
+  const accessibility = await new AxeBuilder({ page }).analyze();
+  expect(accessibility.violations).toEqual([]);
 });

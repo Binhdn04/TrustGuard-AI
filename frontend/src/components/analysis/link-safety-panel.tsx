@@ -32,7 +32,7 @@ export function LinkSafetyPanel({ result }: LinkSafetyPanelProps) {
             <div className={cn(
               "p-2 rounded-lg shrink-0",
               hasMalicious ? "bg-rose-100 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400" :
-              result.status === "failed" ? "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-400" :
+              result.status === "failed" ? "bg-muted text-muted-foreground" :
               "bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400"
             )}>
               <Link2 className="w-5 h-5 sm:w-6 sm:h-6" />

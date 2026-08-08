@@ -98,6 +98,18 @@ class ReviewAction(StrEnum):
     NONE = "none"
 
 
+class ReportStatus(StrEnum):
+    SUBMITTED = "submitted"
+    REVIEWING = "reviewing"
+    PROCESSED = "processed"
+
+
+class ReportReviewDecision(StrEnum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    DISMISSED = "dismissed"
+
+
 class ErrorCode(StrEnum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     FORBIDDEN = "FORBIDDEN"
@@ -292,6 +304,7 @@ class AnalysisReportRequest(ContractModel):
 class AnalysisReportResponse(ContractModel):
     report_id: UUID
     analysis_id: UUID
+    status: ReportStatus = ReportStatus.SUBMITTED
     created_at: datetime
 
 
@@ -299,6 +312,28 @@ class AnalysisReportRecord(AnalysisReportResponse):
     reporter_id: str
     reason: str
     comment: str | None = None
+
+
+class ReviewQueueItem(ContractModel):
+    item_id: UUID
+    report_id: UUID
+    analysis_id: UUID
+    status: ReportStatus
+    reason: str
+    comment: str | None = None
+    analysis_content: str | None = None
+    evidence_snapshot: list[Evidence] = Field(default_factory=list)
+    decision: ReportReviewDecision | None = None
+    reviewer_id: str | None = None
+    reviewer_note: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReviewQueueDecisionRequest(ContractModel):
+    decision: ReportReviewDecision
+    note: str
 
 
 class AdminDecisionRequest(ContractModel):

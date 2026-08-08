@@ -14,7 +14,12 @@ from src.models import (
     AnalysisCreateRequest,
     AnalysisEvent,
     AnalysisReportRecord,
+    AnalysisReportResponse,
     AnalysisResponse,
+    Evidence,
+    ReportReviewDecision,
+    ReportStatus,
+    ReviewQueueItem,
     ToolError,
 )
 
@@ -413,9 +418,10 @@ class PostgresPlatformRepository:
         reason: str,
         comment: str | None,
         created_at: datetime,
+        evidence_snapshot: list[Evidence],
     ) -> None:
         pool = await self._get_pool()
-        async with pool.acquire() as connection:
+        async with pool.acquire() as connection, connection.transaction():
             await connection.execute(
                 """INSERT INTO analysis_reports(
                        id,analysis_id,reporter_id,reason,comment,created_at
@@ -427,13 +433,26 @@ class PostgresPlatformRepository:
                 comment,
                 created_at,
             )
+            await connection.execute(
+                """INSERT INTO review_queue_items(
+                       id,report_id,analysis_id,status,evidence_snapshot,created_at,updated_at
+                   ) VALUES($1,$2,$3,$4,$5::jsonb,$6,$6)""",
+                uuid4(),
+                UUID(report_id),
+                UUID(analysis_id),
+                ReportStatus.SUBMITTED.value,
+                json.dumps([item.model_dump(mode="json") for item in evidence_snapshot]),
+                created_at,
+            )
 
     async def list_reports(self, *, limit: int, offset: int) -> list[AnalysisReportRecord]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
-                """SELECT id,analysis_id,reporter_id,reason,comment,created_at
-                   FROM analysis_reports ORDER BY created_at DESC LIMIT $1 OFFSET $2""",
+                """SELECT r.id,r.analysis_id,r.reporter_id,r.reason,r.comment,r.created_at,q.status
+                   FROM analysis_reports r
+                   LEFT JOIN review_queue_items q ON q.report_id=r.id
+                   ORDER BY r.created_at DESC LIMIT $1 OFFSET $2""",
                 limit,
                 offset,
             )
@@ -445,9 +464,121 @@ class PostgresPlatformRepository:
                 reason=row["reason"],
                 comment=row["comment"],
                 created_at=row["created_at"],
+                status=ReportStatus(row["status"] or ReportStatus.SUBMITTED.value),
             )
             for row in rows
         ]
+
+    async def list_reports_by_analysis(self, analysis_id: str) -> list[AnalysisReportResponse]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT r.id,r.analysis_id,r.created_at,q.status
+                   FROM analysis_reports r
+                   LEFT JOIN review_queue_items q ON q.report_id=r.id
+                   WHERE r.analysis_id=$1 ORDER BY r.created_at DESC""",
+                UUID(analysis_id),
+            )
+        return [
+            AnalysisReportResponse(
+                report_id=row["id"],
+                analysis_id=row["analysis_id"],
+                created_at=row["created_at"],
+                status=ReportStatus(row["status"] or ReportStatus.SUBMITTED.value),
+            )
+            for row in rows
+        ]
+
+    async def list_review_queue_items(self) -> list[ReviewQueueItem]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT q.id,q.report_id,q.analysis_id,q.status,q.evidence_snapshot,
+                          q.decision,q.reviewer_id,q.reviewer_note,q.reviewed_at,
+                          q.created_at,q.updated_at,r.reason,r.comment,
+                          pgp_sym_decrypt(a.input_ciphertext,$1)::jsonb ->> 'message' AS analysis_content
+                   FROM review_queue_items q
+                   JOIN analysis_reports r ON r.id=q.report_id
+                   JOIN analyses a ON a.id=q.analysis_id
+                   ORDER BY q.created_at ASC""",
+                self._encryption_key,
+            )
+        return [self._review_queue_item(row) for row in rows]
+
+    async def get_review_queue_item(self, item_id: str) -> ReviewQueueItem | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """SELECT q.id,q.report_id,q.analysis_id,q.status,q.evidence_snapshot,
+                          q.decision,q.reviewer_id,q.reviewer_note,q.reviewed_at,
+                          q.created_at,q.updated_at,r.reason,r.comment,
+                          pgp_sym_decrypt(a.input_ciphertext,$2)::jsonb ->> 'message' AS analysis_content
+                   FROM review_queue_items q
+                   JOIN analysis_reports r ON r.id=q.report_id
+                   JOIN analyses a ON a.id=q.analysis_id
+                   WHERE q.id=$1""",
+                UUID(item_id),
+                self._encryption_key,
+            )
+        return self._review_queue_item(row) if row is not None else None
+
+    async def start_review_queue_item(self, item_id: str, reviewer_id: str) -> bool:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            result = await connection.execute(
+                """UPDATE review_queue_items
+                   SET status=$2,reviewer_id=$3,updated_at=now()
+                   WHERE id=$1 AND status=$4""",
+                UUID(item_id),
+                ReportStatus.REVIEWING.value,
+                reviewer_id,
+                ReportStatus.SUBMITTED.value,
+            )
+        return result == "UPDATE 1"
+
+    async def decide_review_queue_item(
+        self,
+        item_id: str,
+        *,
+        decision: ReportReviewDecision,
+        reviewer_id: str,
+        note: str,
+    ) -> bool:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            result = await connection.execute(
+                """UPDATE review_queue_items
+                   SET status=$2,decision=$3,reviewer_id=$4,reviewer_note=$5,
+                       reviewed_at=now(),updated_at=now()
+                   WHERE id=$1 AND status=$6""",
+                UUID(item_id),
+                ReportStatus.PROCESSED.value,
+                decision.value,
+                reviewer_id,
+                note.strip(),
+                ReportStatus.REVIEWING.value,
+            )
+        return result == "UPDATE 1"
+
+    @staticmethod
+    def _review_queue_item(row) -> ReviewQueueItem:
+        snapshot = _json_value(row["evidence_snapshot"])
+        return ReviewQueueItem(
+            item_id=row["id"],
+            report_id=row["report_id"],
+            analysis_id=row["analysis_id"],
+            status=ReportStatus(row["status"]),
+            reason=row["reason"],
+            comment=row["comment"],
+            analysis_content=row["analysis_content"],
+            evidence_snapshot=[Evidence.model_validate(item) for item in snapshot],
+            decision=ReportReviewDecision(row["decision"]) if row["decision"] else None,
+            reviewer_id=row["reviewer_id"],
+            reviewer_note=row["reviewer_note"],
+            reviewed_at=row["reviewed_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     async def close(self) -> None:
         if self._owns_pool and self._pool is not None:

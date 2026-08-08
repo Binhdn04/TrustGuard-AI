@@ -27,8 +27,10 @@ from src.models import (
     CaseStatus,
     ErrorCode,
     InvestigationStep,
+    ReportReviewDecision,
     ReviewAction,
     ReviewDecision,
+    ReviewQueueItem,
     ToolError,
 )
 from src.services.processor import ProcessedAnalysis
@@ -262,7 +264,7 @@ class AnalysisService:
         request: AnalysisReportRequest,
         principal: Principal,
     ) -> AnalysisReportResponse:
-        await self.get_for(analysis_id, principal)
+        analysis = await self.get_for(analysis_id, principal)
         receipt = AnalysisReportResponse(
             report_id=uuid4(),
             analysis_id=analysis_id,
@@ -277,6 +279,7 @@ class AnalysisService:
                 reason=request.reason,
                 comment=request.comment,
                 created_at=receipt.created_at,
+                evidence_snapshot=analysis.evidence or [],
             )
         async with self._lock:
             self._records[analysis_id].reports.append(
@@ -304,6 +307,56 @@ class AnalysisService:
                 ]
             return sorted(reports, key=lambda item: item.created_at, reverse=True)[offset : offset + limit]
         return await list_reports(limit=limit, offset=offset)
+
+    async def list_reports_by_analysis(
+        self,
+        analysis_id: UUID,
+        principal: Principal,
+    ) -> list[AnalysisReportResponse]:
+        await self.get_for(analysis_id, principal)
+        list_reports_by_analysis = getattr(self._blacklist, "list_reports_by_analysis", None)
+        if list_reports_by_analysis is None:
+            async with self._lock:
+                if analysis_id not in self._records:
+                    return []
+                return [report.receipt.model_copy(deep=True) for report in self._records[analysis_id].reports]
+        return await list_reports_by_analysis(str(analysis_id))
+
+    async def list_review_queue_items(self) -> list[ReviewQueueItem]:
+        list_review_queue_items = getattr(self._blacklist, "list_review_queue_items", None)
+        if list_review_queue_items is None:
+            return []
+        return await list_review_queue_items()
+
+    async def get_review_queue_item(self, item_id: str) -> ReviewQueueItem | None:
+        get_review_queue_item = getattr(self._blacklist, "get_review_queue_item", None)
+        if get_review_queue_item is None:
+            return None
+        return await get_review_queue_item(item_id)
+
+    async def start_review_queue_item(self, item_id: str, reviewer_id: str) -> bool:
+        start_review = getattr(self._blacklist, "start_review_queue_item", None)
+        if start_review is None:
+            return False
+        return await start_review(item_id, reviewer_id)
+
+    async def decide_review_queue_item(
+        self,
+        item_id: str,
+        *,
+        decision: ReportReviewDecision,
+        reviewer_id: str,
+        note: str,
+    ) -> bool:
+        decide_review = getattr(self._blacklist, "decide_review_queue_item", None)
+        if decide_review is None:
+            return False
+        return await decide_review(
+            item_id,
+            decision=decision,
+            reviewer_id=reviewer_id,
+            note=note,
+        )
 
     async def list_decisions(self, *, limit: int, offset: int) -> list[AdminDecisionAudit]:
         list_decisions = getattr(self._blacklist, "list_decisions", None)
