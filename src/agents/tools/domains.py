@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 from pathlib import Path
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 PSL_VERSION = "2026-08-06"
 _DEFAULT_PSL = Path(__file__).with_name("public_suffix_list.dat")
@@ -73,3 +74,54 @@ class PublicSuffixList:
 
 
 DEFAULT_PUBLIC_SUFFIX_LIST = PublicSuffixList()
+
+
+def canonicalize_registrable_domain(
+    value: str,
+    *,
+    suffix_list: PublicSuffixList = DEFAULT_PUBLIC_SUFFIX_LIST,
+) -> str:
+    """Return the shared IDNA eTLD+1 representation used by provider targets.
+
+    ``value`` may be a hostname or an absolute URL.  IP literals and public
+    suffixes are deliberately rejected: neither is a registrable domain.
+    """
+
+    candidate = value.strip()
+    if "://" in candidate:
+        try:
+            host = urlsplit(candidate).hostname
+        except ValueError as exc:
+            raise ValueError("target is not a valid URL") from exc
+        if host is None:
+            raise ValueError("URL must contain a hostname")
+        candidate = host
+    registrable = suffix_list.registrable_domain(candidate)
+    if registrable is None:
+        raise ValueError("target must contain a registrable domain")
+    return registrable
+
+
+def canonicalize_url(value: str) -> str:
+    """Canonicalize an HTTP(S) URL without retaining credentials/fragments."""
+
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("URL is invalid") from exc
+    scheme = parsed.scheme.casefold()
+    if scheme not in {"http", "https"} or parsed.hostname is None:
+        raise ValueError("only absolute HTTP(S) URLs are supported")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URLs containing credentials are not supported")
+    host = normalize_hostname(parsed.hostname)
+    if ":" in host:
+        authority = f"[{host}]"
+    else:
+        authority = host
+    default_port = 443 if scheme == "https" else 80
+    if port is not None and port != default_port:
+        authority = f"{authority}:{port}"
+    path = parsed.path or "/"
+    return urlunsplit(SplitResult(scheme, authority, path, parsed.query, ""))

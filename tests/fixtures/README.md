@@ -15,3 +15,7 @@ The `mocks` values reference records in `tool_responses/`:
 
 All timestamps and provider payloads are synthetic. Tests must not replace these
 records with live provider calls or raw provider responses.
+
+Wave 1 extends the executable matrix in `tests/unit/test_tools_data_wave1.py`: claim-only input is
+kept in `analyses.jsonl`; domain cases cover subdomain/eTLD+1, public suffix, IDNA and IP literals;
+provider cases cover memory hits and disagreement; redirect cases cover loops and private hops.

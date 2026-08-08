@@ -106,10 +106,15 @@ class GuardedHttpClient:
     async def get(self, url: str, **kwargs: object) -> tuple[httpx.Response, list[str]]:
         current = url
         chain = [url]
+        visited = {url}
         request_headers = dict(kwargs.pop("headers", {}) or {})
         request_extensions = dict(kwargs.pop("extensions", {}) or {})
         for redirect_number in range(self._guard.policy.max_redirects + 1):
-            target = await self._guard.validate(current)
+            try:
+                target = await self._guard.validate(current)
+            except ToolCallError as exc:
+                exc.network_calls = redirect_number
+                raise
             # Connect to the exact DNS answer that was checked.  The original
             # hostname is retained for HTTP routing and TLS SNI/certificate
             # verification, eliminating the validation/request DNS race.
@@ -129,11 +134,23 @@ class GuardedHttpClient:
                 if redirect_number >= self._guard.policy.max_redirects:
                     raise ToolCallError("url_scanner", "TOO_MANY_REDIRECTS", "Redirect limit exceeded")
                 current = urljoin(current, location)
+                if current in visited:
+                    error = ToolCallError("redirect_resolver", "REDIRECT_LOOP", "Redirect chain contains a loop")
+                    error.network_calls = redirect_number + 1
+                    raise error
+                visited.add(current)
                 chain.append(current)
                 continue
             content_length = response.headers.get("content-length")
-            if content_length and int(content_length) > self._guard.policy.max_response_bytes:
-                raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
+            if content_length:
+                try:
+                    advertised_size = int(content_length)
+                except ValueError as exc:
+                    raise ToolCallError(
+                        "url_scanner", "PROVIDER_ERROR", "Response has an invalid content length"
+                    ) from exc
+                if advertised_size > self._guard.policy.max_response_bytes:
+                    raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
             if len(response.content) > self._guard.policy.max_response_bytes:
                 raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
             return response, chain

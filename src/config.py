@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    google_web_risk_api_key: str = ""
+    virustotal_api_key: str = ""
+    reputation_secondary_enabled: bool = True
+    reputation_max_network_calls: int = Field(default=4, ge=1, le=20)
     google_safe_browsing_api_key: str = ""
     google_fact_check_api_key: str = ""
 

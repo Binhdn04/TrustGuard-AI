@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urljoin
+from uuid import uuid4
 
 import httpx
 
 from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST, PSL_VERSION, PublicSuffixList
 from src.agents.tools.errors import ToolCallError
+from src.agents.tools.models import (
+    CacheMetadata,
+    CacheStatus,
+    NormalizedToolError,
+    NormalizedToolResult,
+    ToolErrorCode,
+    ToolName,
+    ToolResultStatus,
+    UsageMetadata,
+)
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
 from src.models import DomainIntelligenceResult
 
@@ -224,3 +237,132 @@ class RdapDomainIntelligence:
     async def aclose(self) -> None:
         if self._owns_client and self._client is not None:
             await self._client.aclose()
+
+
+class NormalizedRdapProvider:
+    """v3 envelope over the compatibility RDAP adapter.
+
+    Both this wrapper and ``RdapDomainIntelligence`` are lazy: constructing
+    either one creates no HTTP client or network task.  Consent remains an
+    executor policy and must be checked before calling ``lookup``.
+    """
+
+    provider_version = f"{RDAP_SCHEMA_VERSION}/psl-{PSL_VERSION}"
+
+    def __init__(
+        self,
+        adapter: RdapDomainIntelligence | None = None,
+        *,
+        timeout: float = 5.0,
+        cache_ttl: timedelta = timedelta(hours=24),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._adapter = adapter
+        self._timeout = timeout
+        self._cache_ttl = cache_ttl
+        self._clock = clock
+        self._cache: dict[str, tuple[DomainIntelligenceResult, datetime, datetime]] = {}
+
+    @property
+    def provider(self) -> str:
+        return f"iana-rdap/{self.provider_version}"
+
+    def _get_adapter(self) -> RdapDomainIntelligence:
+        if self._adapter is None:
+            self._adapter = RdapDomainIntelligence(timeout=self._timeout, clock=self._clock)
+        return self._adapter
+
+    async def lookup(self, domain: str) -> NormalizedToolResult[DomainIntelligenceResult]:
+        started = time.perf_counter()
+        try:
+            registrable = DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(domain)
+        except ValueError as exc:
+            return self._failure(started, ToolErrorCode.INVALID_TARGET, str(exc), retryable=False, attempts=0, calls=0)
+        if registrable is None:
+            return self._failure(
+                started,
+                ToolErrorCode.INVALID_TARGET,
+                "RDAP lookup requires a registrable domain.",
+                retryable=False,
+                attempts=0,
+                calls=0,
+            )
+        now = self._clock()
+        cached = self._cache.get(registrable)
+        key_hash = hashlib.sha256(f"rdap\0{self.provider_version}\0{registrable}".encode()).hexdigest()
+        if cached is not None and cached[2] > now:
+            return NormalizedToolResult(
+                status=ToolResultStatus.SUCCESS,
+                result=cached[0].model_copy(deep=True),
+                cache=CacheMetadata(
+                    status=CacheStatus.HIT,
+                    cache_key_hash=key_hash,
+                    stored_at=cached[1],
+                    expires_at=cached[2],
+                ),
+                usage=self._usage(started, attempts=0, calls=0),
+            )
+        try:
+            result = await self._get_adapter().lookup(registrable)
+        except ToolCallError as exc:
+            code = {
+                "RATE_LIMITED": ToolErrorCode.RATE_LIMITED,
+                "PROVIDER_TIMEOUT": ToolErrorCode.PROVIDER_TIMEOUT,
+            }.get(exc.error.code, ToolErrorCode.PROVIDER_ERROR)
+            return self._failure(
+                started,
+                code,
+                exc.error.message,
+                retryable=exc.error.retryable,
+                attempts=1,
+                calls=1,
+            )
+        stored_at = self._clock()
+        self._cache[registrable] = (result.model_copy(deep=True), stored_at, stored_at + self._cache_ttl)
+        return NormalizedToolResult(
+            status=ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS,
+            result=result,
+            cache=CacheMetadata(status=CacheStatus.MISS, cache_key_hash=key_hash),
+            usage=self._usage(started, attempts=1, calls=1),
+        )
+
+    def _usage(self, started: float, *, attempts: int, calls: int) -> UsageMetadata:
+        return UsageMetadata(
+            usage_ref=f"usage:rdap:{uuid4()}",
+            provider=self.provider,
+            provider_version=self.provider_version,
+            operation="rdap_lookup",
+            attempts=attempts,
+            network_calls=calls,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            request_units=calls,
+            response_units=1 if calls else 0,
+            observed_at=self._clock(),
+        )
+
+    def _failure(
+        self,
+        started: float,
+        code: ToolErrorCode,
+        message: str,
+        *,
+        retryable: bool,
+        attempts: int,
+        calls: int,
+    ) -> NormalizedToolResult[DomainIntelligenceResult]:
+        return NormalizedToolResult(
+            status=ToolResultStatus.BLOCKED if code is ToolErrorCode.INVALID_TARGET else ToolResultStatus.FAILED,
+            error=NormalizedToolError(
+                tool=ToolName.RDAP,
+                code=code,
+                message=message,
+                retryable=retryable,
+                provider=self.provider,
+            ),
+            cache=CacheMetadata(status=CacheStatus.BYPASS, bypass_reason="invalid_or_failed_lookup"),
+            usage=self._usage(started, attempts=attempts, calls=calls),
+        )
+
+    async def aclose(self) -> None:
+        if self._adapter is not None:
+            await self._adapter.aclose()
