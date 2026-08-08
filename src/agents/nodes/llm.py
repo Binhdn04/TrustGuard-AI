@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Literal
 
@@ -11,6 +12,7 @@ from src.agents.state import WorkflowState
 
 LLM_MODEL = "gpt-4o-mini"
 AllowedTool = Literal["url_scanner", "domain_intelligence", "claim_retriever"]
+logger = logging.getLogger(__name__)
 
 
 class _StrictOutput(BaseModel):
@@ -68,7 +70,13 @@ async def _invoke_structured(llm: Any, schema: type[_StrictOutput], messages: li
     return result if isinstance(result, schema) else schema.model_validate(result)
 
 
-def _failure_update(state: WorkflowState, stage: str) -> dict:
+def _failure_update(state: WorkflowState, stage: str, error: Exception) -> dict:
+    logger.warning(
+        "llm_stage_failed stage=%s error_type=%s status_code=%s",
+        stage,
+        type(error).__name__,
+        getattr(error, "status_code", None),
+    )
     errors = list(state.get("llm_errors", []))
     errors.append(stage)
     limitations = list(state.get("limitations", []))
@@ -102,8 +110,8 @@ def build_analyze_message_node(llm: Any | None):
                     HumanMessage(content=state.get("message", "")),
                 ],
             )
-        except Exception:
-            return _failure_update(state, "phân tích ngữ nghĩa")
+        except Exception as error:
+            return _failure_update(state, "phân tích ngữ nghĩa", error)
 
         claims = list(state.get("claims", []))
         for claim in result.claims:
@@ -152,8 +160,8 @@ def build_plan_tools_node(llm: Any | None):
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
             )
-        except Exception:
-            return _failure_update(state, "lập kế hoạch tool")
+        except Exception as error:
+            return _failure_update(state, "lập kế hoạch tool", error)
 
         # The schema enforces the allowlist. The executor intentionally ignores
         # model-supplied targets when constructing executable work and derives
@@ -210,8 +218,8 @@ def build_review_assessment_node(llm: Any | None):
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
             )
-        except Exception:
-            return _failure_update(state, "review đánh giá")
+        except Exception as error:
+            return _failure_update(state, "review đánh giá", error)
 
         valid_indexes = [index for index in result.evidence_indexes if 0 <= index < len(evidence)]
         return {
@@ -258,8 +266,8 @@ def build_generate_response_node(llm: Any | None):
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
             )
-        except Exception:
-            return _failure_update(state, "tạo phản hồi")
+        except Exception as error:
+            return _failure_update(state, "tạo phản hồi", error)
 
         valid_reasons = [reason for reason in result.reasons if 0 <= reason.evidence_index < len(evidence)]
         indexes = [reason.evidence_index for reason in valid_reasons]

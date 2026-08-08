@@ -1,169 +1,150 @@
 "use client";
 
-import { useState } from "react";
-import { ShieldCheck, ShieldAlert, AlertTriangle, HelpCircle, Search, Filter } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Filter,
+  HelpCircle,
+  Loader2,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
+
+import { getAnalysisApi } from "@/lib/api/analysis-api";
+import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
 import { cn } from "@/lib/utils";
+import type { AnalysisResponseV3 } from "@/types/generated/api-v3";
+import type { ClaimStance } from "@/types/analysis-view-model";
 
-// Mock data for History
-const MOCK_HISTORY = [
-  {
-    id: "h1",
-    content: "Việt Nam sẽ cấm hoàn toàn xe máy từ năm 2027.",
-    stance: "refutes",
-    claimsCount: 1,
-    sourcesCount: 1,
-    hasUrlWarning: false,
-    date: "2024-03-15T10:30:00Z",
-  },
-  {
-    id: "h2",
-    content: "Uống nước chanh mỗi ngày có thể chữa khỏi ung thư và các bệnh khác.",
-    stance: "mixed",
-    claimsCount: 2,
-    sourcesCount: 1,
-    hasUrlWarning: false,
-    date: "2024-03-14T15:20:00Z",
-  },
-  {
-    id: "h3",
-    content: "Nhận quà trúng thưởng tại https://tapdoanx-qua.example/login",
-    stance: "refutes",
-    claimsCount: 1,
-    sourcesCount: 0,
-    hasUrlWarning: true,
-    date: "2024-03-14T09:15:00Z",
-  },
-  {
-    id: "h4",
-    content: "Uống đủ 2 lít nước mỗi ngày tốt cho sức khỏe.",
-    stance: "supports",
-    claimsCount: 1,
-    sourcesCount: 1,
-    hasUrlWarning: false,
-    date: "2024-03-13T11:45:00Z",
-  },
-  {
-    id: "h5",
-    content: "Người ngoài hành tinh vừa đáp xuống bãi cỏ nhà tôi sáng nay.",
-    stance: "unrated",
-    claimsCount: 1,
-    sourcesCount: 0,
-    hasUrlWarning: false,
-    date: "2024-03-12T08:00:00Z",
+type FilterType = "all" | ClaimStance | "url_warning";
+
+function displayForStance(stance: ClaimStance) {
+  switch (stance) {
+    case "supports":
+      return { label: "Được xác nhận", icon: ShieldCheck, color: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20" };
+    case "refutes":
+      return { label: "Bị bác bỏ", icon: ShieldAlert, color: "text-rose-700 dark:text-rose-300 bg-rose-500/10 border-rose-500/20" };
+    case "mixed":
+      return { label: "Đúng một phần", icon: AlertTriangle, color: "text-amber-600 bg-amber-500/10 border-amber-500/20" };
+    default:
+      return { label: "Chưa rõ", icon: HelpCircle, color: "text-muted-foreground bg-muted/50 border-border" };
   }
-];
-
-type FilterType = "all" | "supports" | "refutes" | "mixed" | "unrated" | "url_warning";
+}
 
 export default function HistoryPage() {
+  const [items, setItems] = useState<AnalysisResponseV3[]>([]);
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const filteredHistory = MOCK_HISTORY.filter(item => {
-    // Text search
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setItems(await getAnalysisApi().listAnalyses());
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Không thể tải lịch sử kiểm chứng.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void getAnalysisApi().listAnalyses()
+      .then((response) => { if (active) setItems(response); })
+      .catch((loadError: unknown) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Không thể tải lịch sử kiểm chứng.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  const history = useMemo(() => items.map((response) => {
+    const originalContent = response.claims?.join(" ") || response.summary || `Phân tích ${response.analysis_id}`;
+    const view = mapAnalysisResponseToViewModel(response, {
+      originalContent,
+      consentToScanUrls: true,
+    });
+    return {
+      id: response.analysis_id,
+      content: originalContent,
+      stance: view.factCheck?.overallStance ?? "unrated",
+      claimsCount: response.claims?.length ?? 0,
+      sourcesCount: (response.evidence ?? []).filter((evidence) => evidence.type === "fact_check" || evidence.type === "official_source").length,
+      hasUrlWarning: Boolean(response.normalized_urls?.length) && (response.verdict === "malicious" || response.verdict === "suspicious"),
+      urls: response.normalized_urls ?? [],
+      date: response.completed_at ?? response.created_at,
+      status: response.status,
+    };
+  }), [items]);
+
+  const filteredHistory = history.filter((item) => {
     if (search && !item.content.toLowerCase().includes(search.toLowerCase())) return false;
-    
-    // Stance/Warning filter
     if (activeFilter === "all") return true;
     if (activeFilter === "url_warning") return item.hasUrlWarning;
     return item.stance === activeFilter;
   });
 
-  const getStanceDisplay = (stance: string) => {
-    switch(stance) {
-      case "supports": return { label: "Được xác nhận", icon: ShieldCheck, color: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20" };
-      case "refutes": return { label: "Bị bác bỏ", icon: ShieldAlert, color: "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20" };
-      case "mixed": return { label: "Mixed", icon: AlertTriangle, color: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20" };
-      default: return { label: "Chưa rõ", icon: HelpCircle, color: "text-slate-600 dark:text-slate-400 bg-slate-500/10 border-slate-500/20" };
-    }
-  };
-
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Lịch sử kiểm chứng</h1>
-        <p className="text-muted-foreground mt-2">Xem lại các nội dung bạn đã kiểm tra.</p>
+        <h1 className="text-3xl font-bold">Lịch sử kiểm chứng</h1>
+        <p className="mt-2 text-muted-foreground">Dữ liệu được tải từ các phiên phân tích của tài khoản hiện tại.</p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
-        {/* Search */}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input 
-            type="text"
-            placeholder="Tìm kiếm nội dung..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-xl border border-border bg-background text-sm outline-none focus:border-primary transition-colors"
-          />
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input aria-label="Tìm kiếm lịch sử" placeholder="Tìm kiếm nội dung…" value={search} onChange={(event) => setSearch(event.target.value)} className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-4 text-sm outline-none focus:border-primary" />
         </div>
-        
-        {/* Filter Dropdown (Simple native select for demo) */}
-        <div className="relative w-full sm:w-48 shrink-0">
-          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-          <select 
-            value={activeFilter}
-            onChange={(e) => setActiveFilter(e.target.value as FilterType)}
-            className="w-full pl-9 pr-4 py-2 rounded-xl border border-border bg-background text-sm outline-none focus:border-primary appearance-none cursor-pointer"
-          >
+        <div className="relative w-full shrink-0 sm:w-52">
+          <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <select aria-label="Lọc lịch sử" value={activeFilter} onChange={(event) => setActiveFilter(event.target.value as FilterType)} className="w-full appearance-none rounded-xl border border-border bg-background py-2 pl-9 pr-4 text-sm">
             <option value="all">Tất cả kết quả</option>
             <option value="supports">Được xác nhận</option>
             <option value="refutes">Bị bác bỏ</option>
-            <option value="mixed">Mixed</option>
+            <option value="mixed">Đúng một phần</option>
             <option value="unrated">Chưa đủ bằng chứng</option>
-            <option value="url_warning">Có URL nguy hiểm</option>
+            <option value="url_warning">Có URL cảnh báo</option>
           </select>
         </div>
       </div>
 
-      {/* List */}
-      <div className="space-y-4">
-        {filteredHistory.length > 0 ? (
-          filteredHistory.map((item) => {
-            const display = getStanceDisplay(item.stance);
+      {loading && <div aria-live="polite" className="flex justify-center py-16"><Loader2 className="size-7 animate-spin text-primary" /></div>}
+      {error && (
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+          {error} <button type="button" onClick={() => void load()} className="ml-2 font-bold underline">Thử lại</button>
+        </div>
+      )}
+      {!loading && !error && (
+        <div className="space-y-4">
+          {filteredHistory.map((item) => {
+            const display = displayForStance(item.stance);
             const Icon = display.icon;
-            
             return (
-              <div key={item.id} className="p-4 sm:p-5 rounded-2xl border border-border bg-card hover:border-border/80 hover:shadow-sm transition-all cursor-pointer">
-                <div className="flex flex-col sm:flex-row gap-4 justify-between items-start">
-                  
-                  <div className="space-y-2 flex-1 pr-4">
-                    <p className="text-sm font-medium text-foreground line-clamp-2">
-                      &quot;{item.content}&quot;
+              <article key={item.id} className="rounded-2xl border border-border bg-card p-5">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <p className="line-clamp-2 text-sm font-medium">&quot;{item.content}&quot;</p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(item.date).toLocaleDateString("vi-VN")} · {item.claimsCount} claim · {item.sourcesCount} nguồn · {item.status}
                     </p>
-                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      <span>{new Date(item.date).toLocaleDateString("vi-VN")}</span>
-                      <span>•</span>
-                      <span>{item.claimsCount} claim</span>
-                      <span>•</span>
-                      <span>{item.sourcesCount} nguồn</span>
-                    </div>
+                    {item.urls.map((url) => <p key={url} className="break-all text-xs text-muted-foreground">URL: {url}</p>)}
                   </div>
-
-                  <div className="flex flex-wrap sm:flex-col items-end gap-2 shrink-0">
-                    <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border", display.color)}>
-                      <Icon className="w-3.5 h-3.5" />
-                      {display.label}
-                    </span>
-                    
-                    {item.hasUrlWarning && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border border-rose-500/20 bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        URL Nguy hiểm
-                      </span>
-                    )}
+                  <div className="flex flex-wrap gap-2">
+                    <span className={cn("inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold", display.color)}><Icon className="size-3.5" />{display.label}</span>
+                    {item.hasUrlWarning && <span className="inline-flex items-center gap-1.5 rounded-md border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-700 dark:text-rose-300"><AlertTriangle className="size-3.5" />URL cảnh báo</span>}
                   </div>
-                  
                 </div>
-              </div>
+              </article>
             );
-          })
-        ) : (
-          <div className="text-center py-12 px-4 border border-dashed rounded-2xl border-border bg-muted/10">
-            <p className="text-muted-foreground">Không tìm thấy kết quả nào phù hợp.</p>
-          </div>
-        )}
-      </div>
+          })}
+          {filteredHistory.length === 0 && <div className="rounded-2xl border border-dashed border-border py-12 text-center text-muted-foreground">Chưa có kết quả phù hợp.</div>}
+        </div>
+      )}
     </div>
   );
 }

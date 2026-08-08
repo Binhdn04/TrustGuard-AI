@@ -137,13 +137,13 @@ export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComp
                   <div className="relative flex items-center justify-center w-5 h-5 mt-0.5 border rounded border-input bg-background group-hover:border-primary transition-colors">
                     <input
                       type="checkbox"
-                      className="peer sr-only"
+                      className="peer absolute inset-0 z-10 size-full cursor-pointer opacity-0"
                       checked={consent}
                       onChange={(e) => setConsent(e.target.checked)}
                       disabled={isLoading}
                     />
                     <div className={cn(
-                      "absolute inset-0 bg-primary rounded opacity-0 peer-checked:opacity-100 transition-opacity flex items-center justify-center"
+                      "pointer-events-none absolute inset-0 bg-primary rounded opacity-0 peer-checked:opacity-100 transition-opacity flex items-center justify-center"
                     )}>
                       <ShieldCheck className="w-3.5 h-3.5 text-primary-foreground" />
                     </div>

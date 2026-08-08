@@ -104,11 +104,34 @@ export interface AnalysisReportRequest {
   comment?: string;
 }
 
+export type ReportStatus = "submitted" | "reviewing" | "processed";
+export type ReportReviewDecision = "approved" | "rejected" | "dismissed";
+
 export interface AnalysisReportResponse {
   report_id: string;
   analysis_id: string;
+  status: ReportStatus;
   created_at: string;
 }
+
+export interface ReviewQueueItem {
+  item_id: string;
+  report_id: string;
+  analysis_id: string;
+  status: ReportStatus;
+  reason: string;
+  comment?: string;
+  analysis_content?: string;
+  evidence_snapshot: Evidence[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReviewQueueDecisionRequest {
+  decision: ReportReviewDecision;
+  note: string;
+}
+
 
 export interface AdminDecisionAudit {
   decision_id: string;
@@ -119,6 +142,20 @@ export interface AdminDecisionAudit {
   note: string;
   decided_at: string;
 }
+
+export interface AdminDecisionRequest {
+  decision: "approved" | "rejected";
+  action: "add_to_blacklist" | "none";
+  note: string;
+}
+
+export interface AdminDecisionResponse {
+  decision_id: string;
+  analysis_id: string;
+  case_status: "approved" | "rejected";
+  reviewed_at: string;
+}
+
 
 export interface BlacklistEntry {
   domain: string;

@@ -1,6 +1,6 @@
 # Contract and Fixtures — P-068
 
-**Document revision:** 2.1 — 2026-08-07
+**Document revision:** 2.2 — 2026-08-08
 
 **Wire contract:** `contract_version: "v2"`, base path `/api/v2`
 
@@ -38,6 +38,8 @@ CaseStatus              not_required | pending_review | approved | rejected
 RecommendedAction       allow | show_caution | do_not_open | escalate_for_review
 ReviewDecision          approved | rejected
 ReviewAction            add_to_blacklist | none
+ReportStatus            submitted | reviewing | processed
+ReportReviewDecision    approved | rejected | dismissed
 ```
 
 | Score | Risk level | Default action |
@@ -165,6 +167,16 @@ Tất cả endpoint yêu cầu role `security_admin`.
 | GET | `/api/v2/admin/decisions?limit=50&offset=0` | `AdminDecisionAudit[]`; limit 1–100. |
 | GET | `/api/v2/admin/blacklist?query=&limit=50&offset=0` | `BlacklistEntry[]`; query tối đa 253 ký tự. |
 | POST | `/api/v2/admin/cases/{id}/decision` | Review case và optional blacklist write. |
+
+**API v3 bổ sung (đang hoạt động):**
+
+| Method | Path | Contract |
+|---|---|---|
+| GET | `/api/v3/admin/review-queue` | `ReviewQueueItem[]`; danh sách user reports đang chờ duyệt. |
+| POST | `/api/v3/admin/review-queue/{item_id}/start` | Chuyển report sang trạng thái `reviewing`. |
+| POST | `/api/v3/admin/review-queue/{item_id}/decision` | Admin ghi quyết định `approved/rejected/dismissed` kèm `note`. Trả 409 nếu đã xử lý. |
+
+`ReviewQueueItem` trả về các trường bổ sung: `reason` (lý do user báo cáo), `comment` (ghi chú thêm của user), `analysis_content` (nội dung tin nhắn gốc user đã phân tích — trích từ `request_json` của analysis).
 
 Decision request:
 

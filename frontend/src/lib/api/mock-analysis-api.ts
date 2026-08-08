@@ -1,9 +1,14 @@
 import type {
   AnalysisCreateRequest,
-  AnalysisResponse,
-  AnalysisReportResponse,
   AdminDecisionAudit,
+  AdminDecisionRequest,
+  AdminDecisionResponse,
+  AnalysisResponse,
+  AnalysisReportRequest,
+  AnalysisReportResponse,
   BlacklistEntry,
+  ReviewQueueItem,
+  ReviewQueueDecisionRequest,
   Evidence,
   InputType,
 } from "@/types/analysis";
@@ -13,6 +18,7 @@ import type {
   AnalysisEventV3,
   AnalysisReportResponseV3,
   AnalysisResponseV3,
+  WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
 import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
@@ -371,6 +377,10 @@ export class MockAnalysisApi implements AnalysisApi {
     };
   }
 
+  async createWebSocketTicket(): Promise<WebSocketTicketResponseV3> {
+    throw new Error("Mock adapter uses polling and does not expose WebSocket tickets.");
+  }
+
   async listAdminCases(): Promise<AnalysisResponse[]> {
     return (await this.listAnalyses())
       .filter((item) => item.case_status === "pending_review")
@@ -392,6 +402,19 @@ export class MockAnalysisApi implements AnalysisApi {
     return [];
   }
 
+  async decideAdminCase(
+    analysisId: string,
+    request: AdminDecisionRequest,
+  ): Promise<AdminDecisionResponse> {
+    if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
+    return {
+      decision_id: crypto.randomUUID(),
+      analysis_id: analysisId,
+      case_status: request.decision,
+      reviewed_at: new Date().toISOString(),
+    };
+  }
+
   async reportAnalysis(analysisId: string): Promise<AnalysisReportResponseV3> {
     if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
     return {
@@ -400,6 +423,22 @@ export class MockAnalysisApi implements AnalysisApi {
       analysis_id: analysisId,
       created_at: new Date().toISOString(),
     };
+  }
+
+  async listReports(analysisId: string): Promise<AnalysisReportResponse[]> {
+    return [];
+  }
+
+  async listReviewQueueItems(): Promise<ReviewQueueItem[]> {
+    return [];
+  }
+
+  async startReviewQueueItem(itemId: string): Promise<void> {
+    return;
+  }
+
+  async decideReviewQueueItem(itemId: string, request: ReviewQueueDecisionRequest): Promise<void> {
+    return;
   }
 }
 

@@ -241,7 +241,7 @@ class AnalysisService:
         request: AnalysisReportRequest,
         principal: Principal,
     ) -> AnalysisReportResponse:
-        await self.get_for(analysis_id, principal)
+        analysis = await self.get_for(analysis_id, principal)
         receipt = AnalysisReportResponse(
             report_id=uuid4(),
             analysis_id=analysis_id,
@@ -256,6 +256,7 @@ class AnalysisService:
                 reason=request.reason,
                 comment=request.comment,
                 created_at=receipt.created_at,
+                evidence_snapshot=analysis.evidence or [],
             )
         async with self._lock:
             self._records[analysis_id].reports.append(
@@ -283,6 +284,37 @@ class AnalysisService:
                 ]
             return sorted(reports, key=lambda item: item.created_at, reverse=True)[offset : offset + limit]
         return await list_reports(limit=limit, offset=offset)
+
+    async def list_reports_by_analysis(self, analysis_id: UUID) -> list[AnalysisReportResponse]:
+        list_reports_by_analysis = getattr(self._blacklist, "list_reports_by_analysis", None)
+        if list_reports_by_analysis is None:
+            async with self._lock:
+                if analysis_id not in self._records:
+                    return []
+                return [
+                    report.receipt.model_copy(deep=True)
+                    for report in self._records[analysis_id].reports
+                ]
+        return await list_reports_by_analysis(str(analysis_id))
+
+    async def list_review_queue_items(self) -> list:
+        # returns list[ReviewQueueItem]
+        list_review_queue_items = getattr(self._blacklist, "list_review_queue_items", None)
+        if list_review_queue_items is None:
+            return []
+        return await list_review_queue_items()
+
+    async def get_review_queue_item(self, item_id: str):
+        get_review_queue_item = getattr(self._blacklist, "get_review_queue_item", None)
+        if get_review_queue_item is None:
+            return None
+        return await get_review_queue_item(item_id)
+
+    async def update_review_queue_item_status(self, item_id: str, status) -> None:
+        update_review_queue_item_status = getattr(self._blacklist, "update_review_queue_item_status", None)
+        if update_review_queue_item_status is not None:
+            await update_review_queue_item_status(item_id, status)
+
 
     async def list_decisions(self, *, limit: int, offset: int) -> list[AdminDecisionAudit]:
         list_decisions = getattr(self._blacklist, "list_decisions", None)

@@ -9,6 +9,10 @@ import { cn } from "@/lib/utils";
 export default function LoginPage() {
   const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
+  const oidcLoginUrl = process.env.NEXT_PUBLIC_OIDC_LOGIN_URL;
+  const demoAuthEnabled = Boolean(
+    process.env.NEXT_PUBLIC_DEMO_USER_TOKEN && process.env.NEXT_PUBLIC_DEMO_ADMIN_TOKEN,
+  );
 
   const mockLogin = (role: "user" | "security_admin") => {
     setIsLoading(true);
@@ -61,23 +65,26 @@ export default function LoginPage() {
 
         <button
           type="button"
-          disabled={isLoading}
+          disabled={isLoading || !oidcLoginUrl}
+          onClick={() => {
+            if (oidcLoginUrl) window.location.assign(oidcLoginUrl);
+          }}
           className="w-full flex items-center justify-center py-2.5 px-4 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
           Đăng nhập <ArrowRight className="w-4 h-4 ml-2" />
         </button>
       </form>
 
-      <div className="relative">
+      {demoAuthEnabled && <div className="relative">
         <div className="absolute inset-0 flex items-center">
           <span className="w-full border-t border-border" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
           <span className="bg-background px-2 text-muted-foreground">Demo MVP Login (Bỏ qua mật khẩu)</span>
         </div>
-      </div>
+      </div>}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {demoAuthEnabled && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <button
           onClick={() => mockLogin("user")}
           disabled={isLoading}
@@ -100,7 +107,7 @@ export default function LoginPage() {
           <ShieldAlert className="w-5 h-5 mr-2 text-amber-500" />
           <span className="text-sm font-medium">Quyền Admin</span>
         </button>
-      </div>
+      </div>}
 
       <p className="text-center text-sm text-muted-foreground">
         Chưa có tài khoản?{" "}

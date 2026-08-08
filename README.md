@@ -94,12 +94,12 @@ capability, không tạo một điểm dừng MVP. Việc triển khai được 
 Yêu cầu Python 3.11+, Node.js 20+ và npm.
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cp .env.example .env
-uvicorn src.main:app --reload --port 8000
+uv run uvicorn src.main:app --reload --port 8000
 ```
+
+Nếu không dùng `uv`, có thể tạo virtualenv và cài `requirements.txt` bằng `pip` như trước.
 
 Ở terminal khác:
 

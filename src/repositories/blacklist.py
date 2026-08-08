@@ -22,6 +22,9 @@ from src.models import (
     ReviewAction,
     ReviewDecision,
     ToolError,
+    ReviewQueueItem,
+    ReportStatus,
+    ReportReviewDecision,
 )
 
 
@@ -110,6 +113,17 @@ class SQLiteBlacklistRepository:
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS review_queue_items (
+                item_id TEXT PRIMARY KEY,
+                report_id TEXT NOT NULL UNIQUE,
+                analysis_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('submitted', 'reviewing', 'processed')),
+                evidence_snapshot_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (report_id) REFERENCES analysis_reports(report_id),
+                FOREIGN KEY (analysis_id) REFERENCES analyses(analysis_id)
             );
             """
         )
@@ -357,6 +371,7 @@ class SQLiteBlacklistRepository:
         reason: str,
         comment: str | None,
         created_at: datetime,
+        evidence_snapshot: list[Evidence],
     ) -> None:
         async with self._lock:
             self._connection.execute(
@@ -367,7 +382,90 @@ class SQLiteBlacklistRepository:
                 """,
                 (report_id, analysis_id, reporter_id, reason.strip(), comment, created_at.isoformat()),
             )
+            self._connection.execute(
+                """
+                INSERT INTO review_queue_items(
+                    item_id, report_id, analysis_id, status, evidence_snapshot_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    report_id,
+                    analysis_id,
+                    ReportStatus.SUBMITTED.value,
+                    json.dumps([e.model_dump() for e in evidence_snapshot]),
+                    created_at.isoformat(),
+                    created_at.isoformat(),
+                ),
+            )
             self._connection.commit()
+
+    async def list_review_queue_items(self) -> list[ReviewQueueItem]:
+        async with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT r.item_id, r.report_id, r.analysis_id, r.status, r.evidence_snapshot_json, r.created_at, r.updated_at, a.reason, a.comment, an.request_json
+                FROM review_queue_items r
+                JOIN analysis_reports a ON r.report_id = a.report_id
+                JOIN analyses an ON r.analysis_id = an.analysis_id
+                ORDER BY r.created_at ASC
+                """
+            ).fetchall()
+            return [
+                ReviewQueueItem(
+                    item_id=UUID(row[0]),
+                    report_id=UUID(row[1]),
+                    analysis_id=UUID(row[2]),
+                    status=ReportStatus(row[3]),
+                    evidence_snapshot=[Evidence.model_validate(e) for e in json.loads(row[4])],
+                    created_at=datetime.fromisoformat(row[5]),
+                    updated_at=datetime.fromisoformat(row[6]),
+                    reason=row[7],
+                    comment=row[8],
+                    analysis_content=json.loads(row[9]).get("message"),
+                )
+                for row in rows
+            ]
+
+    async def get_review_queue_item(self, item_id: str) -> ReviewQueueItem | None:
+        async with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT r.item_id, r.report_id, r.analysis_id, r.status, r.evidence_snapshot_json, r.created_at, r.updated_at, a.reason, a.comment, an.request_json
+                FROM review_queue_items r
+                JOIN analysis_reports a ON r.report_id = a.report_id
+                JOIN analyses an ON r.analysis_id = an.analysis_id
+                WHERE r.item_id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return ReviewQueueItem(
+                item_id=UUID(row[0]),
+                report_id=UUID(row[1]),
+                analysis_id=UUID(row[2]),
+                status=ReportStatus(row[3]),
+                evidence_snapshot=[Evidence.model_validate(e) for e in json.loads(row[4])],
+                created_at=datetime.fromisoformat(row[5]),
+                updated_at=datetime.fromisoformat(row[6]),
+                reason=row[7],
+                comment=row[8],
+                analysis_content=json.loads(row[9]).get("message"),
+            )
+
+    async def update_review_queue_item_status(self, item_id: str, status: ReportStatus) -> None:
+        async with self._lock:
+            self._connection.execute(
+                """
+                UPDATE review_queue_items
+                SET status = ?, updated_at = ?
+                WHERE item_id = ?
+                """,
+                (status.value, datetime.now(UTC).isoformat(), item_id),
+            )
+            self._connection.commit()
+
 
     async def create_analysis(
         self,
@@ -752,6 +850,28 @@ class SQLiteBlacklistRepository:
                 reason=row[3],
                 comment=row[4],
                 created_at=datetime.fromisoformat(row[5]),
+            )
+            for row in rows
+        ]
+
+    async def list_reports_by_analysis(self, analysis_id: str) -> list[AnalysisReportResponse]:
+        async with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT r.report_id, r.analysis_id, r.created_at, q.status
+                FROM analysis_reports r
+                LEFT JOIN review_queue_items q ON r.report_id = q.report_id
+                WHERE r.analysis_id = ?
+                ORDER BY r.created_at DESC
+                """,
+                (analysis_id,),
+            ).fetchall()
+        return [
+            AnalysisReportResponse(
+                report_id=UUID(row[0]),
+                analysis_id=UUID(row[1]),
+                created_at=datetime.fromisoformat(row[2]),
+                status=ReportStatus(row[3] or ReportStatus.SUBMITTED.value),
             )
             for row in rows
         ]

@@ -42,9 +42,9 @@ export function FactCheckSummary({ result }: FactCheckSummaryProps) {
         return {
           title: "Chưa Đủ Cơ Sở Kết Luận",
           description: "Không tìm thấy đủ bằng chứng để xác minh tính đúng sai của thông tin này.",
-          color: "text-slate-500 dark:text-slate-400",
-          bg: "bg-slate-500/10",
-          border: "border-slate-500/30",
+          color: "text-muted-foreground",
+          bg: "bg-muted/50",
+          border: "border-border",
           icon: HelpCircle,
         };
     }

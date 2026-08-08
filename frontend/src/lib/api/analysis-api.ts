@@ -8,7 +8,9 @@ let client: AnalysisApi | undefined;
 export function getAnalysisApi(): AnalysisApi {
   if (client) return client;
 
-  const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API !== "false";
+  // Production API is the default. The in-memory adapter is opt-in for
+  // isolated component development only.
+  const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === "true";
   client = useMockApi ? new MockAnalysisApi() : new HttpAnalysisApi();
   return client;
 }

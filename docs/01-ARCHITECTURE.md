@@ -1,6 +1,6 @@
 # Architecture — P-068
 
-**Snapshot:** 2026-08-07
+**Snapshot:** 2026-08-08
 
 **Phạm vi:** Kiến trúc đang tồn tại trong repository; topology đích được ghi riêng ở phần 9
 
@@ -141,7 +141,8 @@ Các nhóm bảng chính:
 
 - `analyses`, `analysis_events`, `analysis_steps`, `analysis_evidence`, `analysis_errors`;
 - `tool_executions`, `outbox_events`, `analysis_migration_errors`;
-- `analysis_reports`, `admin_decisions`, `blacklist`, `schema_migrations`.
+- `analysis_reports`, `admin_decisions`, `blacklist`, `schema_migrations`;
+- `review_queue_items` — mỗi user report tạo một item liên kết với `report_id` và `analysis_id`, lưu `evidence_snapshot_json` và `status` (`submitted` → `reviewing` → `processed`).
 
 Completed result thay thế step/evidence/error artifacts trong transaction. Admin review dùng
 `apply_review_decision` để cập nhật audit, blacklist, analysis state, event và outbox nguyên tử.
@@ -170,16 +171,15 @@ contract. Không nên dùng hai endpoint này cho product flow.
 
 Frontend là Next.js 16/React 19. Repository có:
 
-- type v2 đồng bộ với backend;
-- `HttpAnalysisApi` cho create/get/list/report và admin list;
-- `MockAnalysisApi`, form consent, result/evidence/recommendation/report components và polling-style
-  tests;
-- dashboard `AnalysisWorkspace` cũ tự chạy timer sáu giây và tự sinh verdict;
-- history/admin pages dùng mảng hard-coded; admin buttons chưa gọi API decision;
+- type v2/v3 đồng bộ với backend;
+- `HttpAnalysisApi` cho create/get/list/report, admin list, review-queue list/start/decision;
+- `MockAnalysisApi`, form consent, result/evidence/recommendation/report components và polling-style tests;
+- dashboard `AnalysisWorkspace` gọi API thật qua v3, có polling fallback;
+- history page lấy dữ liệu từ `GET /api/v3/analyses`;
+- admin page có ba tab: Fact-check Review, URL Security và **User Reports** (hiển đầy đủ lý do, ghi chú và nội dung gốc từ review-queue API v3);
 - auth context và login chỉ lưu mock role trong local storage.
 
-`NEXT_PUBLIC_USE_MOCK_API` mặc định chọn mock trừ khi đặt chính xác `false`, nhưng dashboard chính
-hiện không gọi cả mock lẫn HTTP abstraction.
+`NEXT_PUBLIC_USE_MOCK_API` mặc định chọn mock trừ khi đặt chính xác `false`. Dashboard chính đã được nối vào `HttpAnalysisApi` khi flag `false`.
 
 ## 9. Final production topology
 

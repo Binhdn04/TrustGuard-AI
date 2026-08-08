@@ -4,8 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, RefreshCw, Shield } from "lucide-react";
 
 import { getAnalysisApi } from "@/lib/api/analysis-api";
+import {
+  subscribeToAnalysisEvents,
+  type AnalysisEventSubscription,
+} from "@/lib/api/analysis-event-stream";
 import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
-import type { AnalysisEventV3 } from "@/types/generated/api-v3";
+import type { AnalysisEventV3, ProvisionalWarningEventV3 } from "@/types/generated/api-v3";
 import type { InvestigationStep, InvestigationTool } from "@/types/analysis";
 import type {
   AnalysisTransportState,
@@ -13,10 +17,14 @@ import type {
   AnalysisViewModel,
 } from "@/types/analysis-view-model";
 
+import { AnalysisLimitations } from "./analysis-limitations";
 import { AnalysisProgress, type ProgressStep, type ProgressStepId } from "./analysis-progress";
+import { AnalysisReportForm } from "./analysis-report-form";
 import { FactCheckComposer } from "./fact-check-composer";
 import { FactCheckSummary } from "./fact-check-summary";
 import { LinkSafetyPanel } from "./link-safety-panel";
+import { LiveInvestigationPlan } from "./live-investigation-plan";
+import { ProvisionalWarningBanner } from "./provisional-warning-banner";
 
 const INITIAL_STEPS: ProgressStep[] = [
   { id: "extract", label: "Xác định các phát biểu cần kiểm chứng", status: "pending", visible: true },
@@ -58,12 +66,8 @@ function applyStepTransition(
   const id = TOOL_STEP[tool];
   if (!id) return steps;
   let next = updateStep(steps, id, status);
-  if (tool === "local_rules" && status === "completed") {
-    next = updateStep(next, "search", "running");
-  }
-  if (tool === "claim_retriever" && status === "running") {
-    next = updateStep(next, "extract", "completed");
-  }
+  if (tool === "local_rules" && status === "completed") next = updateStep(next, "search", "running");
+  if (tool === "claim_retriever" && status === "running") next = updateStep(next, "extract", "completed");
   if (tool === "claim_retriever" && status === "completed") {
     next = updateStep(next, "verify", "completed");
     next = updateStep(next, "summarize", "running");
@@ -88,11 +92,10 @@ function applyEvent(steps: ProgressStep[], event: AnalysisEventV3): ProgressStep
   return steps;
 }
 
-function mergePlan(steps: ProgressStep[], plan: InvestigationStep[]): ProgressStep[] {
-  return plan.reduce(
-    (current, step) => applyStepTransition(current, step.tool, step.status),
-    steps,
-  );
+function upsertLiveStep(current: InvestigationStep[], next: InvestigationStep): InvestigationStep[] {
+  const index = current.findIndex((step) => step.step_id === next.step_id);
+  if (index < 0) return [...current, next];
+  return current.map((step, itemIndex) => (itemIndex === index ? next : step));
 }
 
 function errorMessage(error: unknown): string {
@@ -105,46 +108,52 @@ export function AnalysisWorkspace() {
   const [viewModel, setViewModel] = useState<AnalysisViewModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [steps, setSteps] = useState<ProgressStep[]>(INITIAL_STEPS);
+  const [livePlan, setLivePlan] = useState<InvestigationStep[]>([]);
+  const [provisional, setProvisional] = useState<ProvisionalWarningEventV3["payload"] | null>(null);
+  const [liveLimitations, setLiveLimitations] = useState<string[]>([]);
   const [uiState, setUiState] = useState<AnalysisUiState>("idle");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subscriptionRef = useRef<AnalysisEventSubscription | null>(null);
   const generationRef = useRef(0);
 
-  const clearPolling = useCallback(() => {
-    if (pollTimerRef.current !== null) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
+  const stopRuntime = useCallback(() => {
+    if (detailTimerRef.current !== null) clearTimeout(detailTimerRef.current);
+    detailTimerRef.current = null;
+    subscriptionRef.current?.stop();
+    subscriptionRef.current = null;
   }, []);
 
-  useEffect(() => {
-    return () => {
-      generationRef.current += 1;
-      clearPolling();
-    };
-  }, [clearPolling]);
+  useEffect(() => () => {
+    generationRef.current += 1;
+    stopRuntime();
+  }, [stopRuntime]);
 
   const resetWorkspace = useCallback(() => {
     generationRef.current += 1;
-    clearPolling();
+    stopRuntime();
     setViewModel(null);
     setError(null);
     setSteps(INITIAL_STEPS);
+    setLivePlan([]);
+    setProvisional(null);
+    setLiveLimitations([]);
     setUiState("idle");
     setTransport("disconnected");
-  }, [clearPolling]);
+  }, [stopRuntime]);
 
   const startAnalysis = async (content: string, consentToScanUrls: boolean) => {
     generationRef.current += 1;
     const generation = generationRef.current;
-    clearPolling();
+    stopRuntime();
     setError(null);
     setViewModel(null);
+    setLivePlan([]);
+    setProvisional(null);
+    setLiveLimitations([]);
     setUiState("submitting");
     setTransport("connecting");
-
-    const hasUrl = /https?:\/\/[^\s]+/giu.test(content);
-    setSteps(initialSteps(hasUrl, consentToScanUrls));
+    setSteps(initialSteps(/https?:\/\/[^\s]+/giu.test(content), consentToScanUrls));
 
     try {
       const api = getAnalysisApi();
@@ -153,85 +162,79 @@ export function AnalysisWorkspace() {
         consent_to_scan_urls: consentToScanUrls,
       });
       if (generation !== generationRef.current) return;
-
       setUiState("queued");
-      setTransport("polling_fallback");
-      let cursor: string | null = null;
-      let eventPollingAvailable = true;
 
-      const poll = async () => {
-        if (generation !== generationRef.current) return;
-        try {
-          if (eventPollingAvailable) {
-            try {
-              const page = await api.getAnalysisEvents(accepted.analysis_id, { cursor, limit: 100 });
-              cursor = page.next_cursor;
-              setSteps((current) => page.events.reduce(applyEvent, current));
-              if (page.events.some((event) => event.event_type === "provisional_warning")) {
-                setUiState("provisional");
-              } else if (
-                page.events.some(
-                  (event) =>
-                    event.event_type === "step_transition" ||
-                    (event.event_type === "analysis_status" && event.payload.status === "running"),
-                )
-              ) {
-                setUiState("investigating");
-              }
-            } catch {
-              eventPollingAvailable = false;
-              setTransport("polling_fallback");
+      subscriptionRef.current = subscribeToAnalysisEvents(api, accepted.analysis_id, {
+        onTransportChange: setTransport,
+        onEvents(events) {
+          if (generation !== generationRef.current) return;
+          setSteps((current) => events.reduce(applyEvent, current));
+          for (const event of events) {
+            if (event.event_type === "provisional_warning") {
+              setProvisional(event.payload);
+              setUiState("provisional");
+            } else if (event.event_type === "step_transition") {
+              setLivePlan((current) => upsertLiveStep(current, event.payload));
+              setUiState((current) => (current === "provisional" ? current : "investigating"));
+            } else if (event.event_type === "analysis_status" && event.payload.status === "running") {
+              setUiState((current) => (current === "provisional" ? current : "investigating"));
+            } else if (event.event_type === "limitation") {
+              setLiveLimitations((current) =>
+                current.includes(event.payload.message) ? current : [...current, event.payload.message],
+              );
             }
           }
+        },
+      });
 
+      const pollDetail = async (): Promise<void> => {
+        if (generation !== generationRef.current) return;
+        try {
           const response = await api.getAnalysis(accepted.analysis_id);
           if (generation !== generationRef.current) return;
-          setSteps((current) => mergePlan(current, response.investigation_plan));
-          setViewModel(
-            mapAnalysisResponseToViewModel(response, {
-              originalContent: content,
-              consentToScanUrls,
-            }),
+          if (response.investigation_plan.length > 0) setLivePlan(response.investigation_plan);
+          setSteps((current) =>
+            response.investigation_plan.reduce(
+              (next, step) => applyStepTransition(next, step.tool, step.status),
+              current,
+            ),
           );
+          setViewModel(mapAnalysisResponseToViewModel(response, { originalContent: content, consentToScanUrls }));
 
           if (response.status === "completed") {
-            setSteps((current) =>
-              current.map((step) =>
-                step.status === "skipped" || step.status === "failed"
-                  ? step
-                  : { ...step, status: "completed" },
-              ),
-            );
+            setProvisional(null);
+            setSteps((current) => current.map((step) =>
+              step.status === "skipped" || step.status === "failed"
+                ? step
+                : { ...step, status: "completed" },
+            ));
             setUiState("final");
-            setTransport("disconnected");
-            clearPolling();
+            stopRuntime();
             return;
           }
           if (response.status === "failed") {
+            setProvisional(null);
             setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
             setUiState("failed");
-            setTransport("disconnected");
-            clearPolling();
+            stopRuntime();
             return;
           }
-
-          if (uiState === "queued") setUiState("investigating");
-          pollTimerRef.current = setTimeout(poll, 1_500);
+          setUiState((current) => current === "queued" ? "investigating" : current);
+          detailTimerRef.current = setTimeout(() => void pollDetail(), 1_500);
         } catch (pollError) {
           if (generation !== generationRef.current) return;
           setError(errorMessage(pollError));
           setUiState("failed");
-          setTransport("disconnected");
-          clearPolling();
+          stopRuntime();
         }
       };
 
-      void poll();
+      void pollDetail();
     } catch (submitError) {
       if (generation !== generationRef.current) return;
       setError(errorMessage(submitError));
       setUiState("failed");
-      setTransport("disconnected");
+      stopRuntime();
     }
   };
 
@@ -239,9 +242,9 @@ export function AnalysisWorkspace() {
 
   return (
     <div className="min-h-screen bg-background px-4 py-12 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-4xl space-y-12">
+      <div className="mx-auto max-w-4xl space-y-8">
         <div className="space-y-4 text-center">
-          <div className="mb-4 inline-flex items-center justify-center rounded-full bg-primary/10 p-3">
+          <div className="inline-flex items-center justify-center rounded-full bg-primary/10 p-3">
             <Shield className="size-8 text-primary" />
           </div>
           <h1 className="text-4xl font-extrabold tracking-tight text-foreground">
@@ -256,40 +259,37 @@ export function AnalysisWorkspace() {
               <h2 className="text-sm font-bold text-rose-800">Lỗi phân tích</h2>
               <p className="mt-1 text-sm text-rose-700">{error}</p>
             </div>
-            <button
-              type="button"
-              onClick={resetWorkspace}
-              className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100"
-            >
+            <button type="button" onClick={resetWorkspace} className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
               Thử lại
             </button>
           </div>
         )}
 
-        {uiState === "idle" && !error && (
-          <FactCheckComposer onSubmit={startAnalysis} isLoading={false} />
-        )}
+        {uiState === "idle" && !error && <FactCheckComposer onSubmit={startAnalysis} isLoading={false} />}
+
+        {provisional && uiState !== "final" && <ProvisionalWarningBanner warning={provisional} />}
 
         {isBusy && (
-          <AnalysisProgress
-            steps={steps}
-            phase={uiState as Exclude<AnalysisUiState, "idle" | "final" | "failed">}
-            transport={transport}
-          />
+          <>
+            <AnalysisProgress
+              steps={steps}
+              phase={uiState as Exclude<AnalysisUiState, "idle" | "final" | "failed">}
+              transport={transport}
+            />
+            <LiveInvestigationPlan steps={livePlan} />
+            <AnalysisLimitations limitations={liveLimitations} />
+          </>
         )}
 
         {uiState === "final" && viewModel?.factCheck && (
           <div className="space-y-6">
             <FactCheckSummary result={viewModel.factCheck} />
             <LinkSafetyPanel result={viewModel.linkSafety} />
-            <div className="flex justify-center pb-4 pt-8">
-              <button
-                type="button"
-                onClick={resetWorkspace}
-                className="flex items-center gap-2 rounded-full border border-border bg-background px-6 py-3 font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
-              >
-                <RefreshCw className="size-4" />
-                Kiểm tra nội dung khác
+            <AnalysisLimitations limitations={viewModel.limitations} />
+            <AnalysisReportForm analysisId={viewModel.id} />
+            <div className="flex justify-center pb-4 pt-4">
+              <button type="button" onClick={resetWorkspace} className="flex items-center gap-2 rounded-full border border-border bg-background px-6 py-3 font-medium text-foreground shadow-sm hover:bg-muted">
+                <RefreshCw className="size-4" /> Kiểm tra nội dung khác
               </button>
             </div>
           </div>
