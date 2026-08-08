@@ -6,7 +6,11 @@ from src.agents.tools.fakes import (
     FakeToolCallError,
     FakeUrlScanner,
 )
-from src.agents.tools.integration import build_domain_intelligence_adapter, build_provider_adapters
+from src.agents.tools.integration import (
+    build_domain_intelligence_adapter,
+    build_provider_adapters,
+    build_v3_tools_data_adapters,
+)
 from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
@@ -40,6 +44,14 @@ from src.agents.tools.protocols import (
 )
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
 from src.agents.tools.rdap import RdapDomainIntelligence
+from src.agents.tools.rdap_v3 import NormalizedRdapProvider
+from src.agents.tools.redirects import GuardedRedirectResolver
+from src.agents.tools.reputation import (
+    GoogleWebRiskProvider,
+    UrlReputationService,
+    VirusTotalUrlProvider,
+    canonicalize_url,
+)
 
 __all__ = [
     "BlacklistRepository",
@@ -76,6 +88,7 @@ __all__ = [
     "GoogleFactCheckRetriever",
     "GoogleSafeBrowsingScanner",
     "RdapDomainIntelligence",
+    "NormalizedRdapProvider",
     "GuardedHttpClient",
     "SsrfGuard",
     "SsrfPolicy",
@@ -83,4 +96,10 @@ __all__ = [
     "UnsafeUrlError",
     "build_provider_adapters",
     "build_domain_intelligence_adapter",
+    "build_v3_tools_data_adapters",
+    "GuardedRedirectResolver",
+    "GoogleWebRiskProvider",
+    "UrlReputationService",
+    "VirusTotalUrlProvider",
+    "canonicalize_url",
 ]
