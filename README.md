@@ -5,8 +5,8 @@ TrustGuard AI lập kế hoạch điều tra, thu thập bằng chứng từ rul
 điểm rủi ro deterministic rồi giải thích cảnh báo bằng ngôn ngữ dễ hiểu.
 
 > **Trạng thái:** Wave 1 platform backend đã có PostgreSQL/Alembic, durable job + transactional
-> outbox, v3 event replay/WebSocket ticket và OIDC/JWT. Dashboard, history và admin UI vẫn cần nối
-> end-to-end; screenshot, campaign detection và appeal thuộc các wave sau. `/api/v2` được giữ tương
+> outbox, v3 event replay/WebSocket ticket và OIDC/JWT. Dashboard, history và admin UI mặc định gọi
+> API thật; screenshot, campaign detection và appeal thuộc các wave sau. `/api/v2` được giữ tương
 > thích trong release v3 đầu tiên.
 
 ## Sản phẩm giải quyết gì?
@@ -54,11 +54,11 @@ evidence hoặc tự sửa kết luận.
 |---|---|---|
 | LLM | OpenAI `gpt-4o-mini` | Đã có, optional theo API key |
 | Orchestration | LangGraph: extract → scan → verify → score → warn/escalate | Đã có vertical slice |
-| URL reputation | Google Safe Browsing hiện tại; adapter đích hỗ trợ GSB/Web Risk hoặc VirusTotal | Một phần |
-| Domain intelligence | RDAP-first/WHOIS; guarded redirect | Adapter RDAP có, chưa wire mặc định |
+| URL reputation | Google Web Risk primary, VirusTotal policy-gated secondary | Đã wire; fake adapters mặc định trong test |
+| Domain intelligence | RDAP-first/WHOIS; guarded redirect | Đã wire lazy sau consent |
 | Fact-check | Google Fact Check + fact-check corpus | Provider có; pgvector thuộc final scope |
-| Backend | FastAPI `/api/v2` hiện tại → `/api/v3` final contract | v2 đã có; v3 triển khai theo Wave 0–3 |
-| Frontend | Next.js/React với warning banner | UI có, chưa nối end-to-end |
+| Backend | FastAPI `/api/v3` + `/api/v2` compatibility | Product path v3 đang hoạt động |
+| Frontend | Next.js/React với warning banner | Dashboard/history/admin gọi API thật |
 | Realtime | Persisted event polling + ticketed WebSocket | Wave 1 backend đã có |
 | Data | PostgreSQL/pgvector source of truth + Redis delivery | Wave 1 core schema/job/outbox đã có |
 | Deploy | Docker → Railway | Docker có; Railway thuộc final scope |
@@ -99,6 +99,9 @@ cp .env.example .env
 uv run uvicorn src.main:app --reload --port 8000
 ```
 
+`.env.example` mặc định dùng SQLite để lệnh trên chạy ngay mà không cần Docker. Nếu chọn PostgreSQL,
+hãy chạy PostgreSQL/Redis, thay `DATABASE_URL`, rồi chạy `uv run alembic upgrade head` trước khi mở API.
+
 Nếu không dùng `uv`, có thể tạo virtualenv và cài `requirements.txt` bằng `pip` như trước.
 
 Ở terminal khác:
@@ -116,7 +119,11 @@ Docker Compose chạy `alembic upgrade head` trước backend. Khi `DATABASE_URL
 PostgreSQL làm source of truth và worker tự reclaim lease hết hạn; Redis chỉ đánh thức/phân phối
 event. SQLite vẫn là default offline nếu cấu hình `DATABASE_URL=sqlite:///...`.
 
-Import dữ liệu development SQLite sau revision `0003_durable_jobs`:
+SQLite file thực tế lấy từ `SECURITY_DATABASE_PATH`. PostgreSQL hiện hỗ trợ durable analysis và
+user-report review queue; v2 admin decision/approved blacklist vẫn chỉ hoàn chỉnh ở SQLite.
+
+Import dữ liệu development SQLite sau khi đã chạy `alembic upgrade head` (head hiện tại là
+`0004_review_queue`):
 
 ```bash
 python scripts/import_sqlite_to_postgres.py ./data/security.db \

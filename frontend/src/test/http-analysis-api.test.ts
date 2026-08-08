@@ -27,7 +27,10 @@ describe("HttpAnalysisApi", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await new HttpAnalysisApi("http://backend.test").listAnalyses();
+    await new HttpAnalysisApi(
+      "http://backend.test",
+      () => window.localStorage.getItem("ai_protect_access_token"),
+    ).listAnalyses();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://backend.test/api/v3/analyses",
@@ -72,7 +75,10 @@ describe("HttpAnalysisApi", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await new HttpAnalysisApi("http://backend.test").listAnalyses();
+    await new HttpAnalysisApi(
+      "http://backend.test",
+      () => window.localStorage.getItem("ai_protect_access_token"),
+    ).listAnalyses();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://backend.test/api/v3/analyses",

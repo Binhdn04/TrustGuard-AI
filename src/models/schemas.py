@@ -110,7 +110,6 @@ class ReportReviewDecision(StrEnum):
     DISMISSED = "dismissed"
 
 
-
 class ErrorCode(StrEnum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     FORBIDDEN = "FORBIDDEN"
@@ -324,6 +323,10 @@ class ReviewQueueItem(ContractModel):
     comment: str | None = None
     analysis_content: str | None = None
     evidence_snapshot: list[Evidence] = Field(default_factory=list)
+    decision: ReportReviewDecision | None = None
+    reviewer_id: str | None = None
+    reviewer_note: str | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -331,7 +334,6 @@ class ReviewQueueItem(ContractModel):
 class ReviewQueueDecisionRequest(ContractModel):
     decision: ReportReviewDecision
     note: str
-
 
 
 class AdminDecisionRequest(ContractModel):

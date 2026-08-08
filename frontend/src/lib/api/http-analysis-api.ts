@@ -124,7 +124,8 @@ export class HttpAnalysisApi implements AnalysisApi {
   async createWebSocketTicket(analysisId: string): Promise<WebSocketTicketResponseV3> {
     const response = await fetch(`${this.baseUrl}/api/v3/ws-tickets`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders(this.getAccessToken) },
+      credentials: "include",
+      headers: this.requestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ analysis_id: analysisId }),
     });
     return readJson<WebSocketTicketResponseV3>(response);
@@ -154,7 +155,8 @@ export class HttpAnalysisApi implements AnalysisApi {
       `${this.baseUrl}/api/v2/admin/cases/${encodeURIComponent(analysisId)}/decision`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders(this.getAccessToken) },
+        credentials: "include",
+        headers: this.requestHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(request),
       },
     );
@@ -179,14 +181,16 @@ export class HttpAnalysisApi implements AnalysisApi {
 
   async listReports(analysisId: string): Promise<AnalysisReportResponse[]> {
     const response = await fetch(`${this.baseUrl}/api/v3/analyses/${encodeURIComponent(analysisId)}/reports`, {
-      headers: { Accept: "application/json", ...authHeaders(this.getAccessToken) },
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
     });
     return readJson<AnalysisReportResponse[]>(response);
   }
 
   async listReviewQueueItems(): Promise<ReviewQueueItem[]> {
     const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue`, {
-      headers: { Accept: "application/json", ...authHeaders(this.getAccessToken) },
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
     });
     return readJson<ReviewQueueItem[]>(response);
   }
@@ -194,7 +198,8 @@ export class HttpAnalysisApi implements AnalysisApi {
   async startReviewQueueItem(itemId: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue/${encodeURIComponent(itemId)}/start-review`, {
       method: "POST",
-      headers: { ...authHeaders(this.getAccessToken) },
+      credentials: "include",
+      headers: this.requestHeaders({}),
     });
     if (!response.ok) {
       const payload = await response.json();
@@ -211,7 +216,8 @@ export class HttpAnalysisApi implements AnalysisApi {
   async decideReviewQueueItem(itemId: string, request: ReviewQueueDecisionRequest): Promise<void> {
     const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue/${encodeURIComponent(itemId)}/decision`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders(this.getAccessToken) },
+      credentials: "include",
+      headers: this.requestHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(request),
     });
     if (!response.ok) {

@@ -123,6 +123,10 @@ export interface ReviewQueueItem {
   comment?: string;
   analysis_content?: string;
   evidence_snapshot: Evidence[];
+  decision?: ReportReviewDecision;
+  reviewer_id?: string;
+  reviewer_note?: string;
+  reviewed_at?: string;
   created_at: string;
   updated_at: string;
 }

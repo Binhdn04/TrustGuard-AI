@@ -30,10 +30,15 @@ Hosted production không được cấu hình hai demo token trên. Thay vào đ
 
 - Tạo/đọc/list/report analysis qua REST v3.
 - Xin WebSocket ticket và nối event stream; reconnect có cursor/dedupe, tự động fallback sang polling nếu stream chưa sẵn sàng.
-- Hiển thị consent disclosure, provisional warning, live plan, final result, limitations và report.
+- UI hỗ trợ consent disclosure, provisional warning, live plan, final result, limitations và report.
 - History lấy từ REST, không dùng dữ liệu product hard-coded.
 - Admin queue và blacklist lấy từ REST; quyết định dùng endpoint v2 tương thích trong thời gian admin-action v3 còn là `501`.
+- User report đi vào review queue v3; admin phải nhận review trước khi quyết định, và UI xử lý 409/double-submit bằng cách tải lại state.
 - URL do người dùng gửi luôn được hiển thị dưới dạng text, không phải liên kết có thể bấm.
+
+Giới hạn runtime hiện tại: backend chưa persist/emit `provisional_warning` và live step transition ngay
+trong planning loop; provisional banner/live transition đang được kiểm tra bằng fixture và sẽ hoạt động
+với dữ liệu thật sau khi progress/provisional sink được wire vào repository.
 
 ## Kiểm tra chất lượng
 

@@ -415,7 +415,11 @@ export class MockAnalysisApi implements AnalysisApi {
     };
   }
 
-  async reportAnalysis(analysisId: string): Promise<AnalysisReportResponseV3> {
+  async reportAnalysis(
+    analysisId: string,
+    request: AnalysisReportRequest,
+  ): Promise<AnalysisReportResponseV3> {
+    void request;
     if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
     return {
       contract_version: "v3",
@@ -425,7 +429,8 @@ export class MockAnalysisApi implements AnalysisApi {
     };
   }
 
-  async listReports(analysisId: string): Promise<AnalysisReportResponse[]> {
+  async listReports(_analysisId: string): Promise<AnalysisReportResponse[]> {
+    void _analysisId;
     return [];
   }
 
@@ -433,11 +438,17 @@ export class MockAnalysisApi implements AnalysisApi {
     return [];
   }
 
-  async startReviewQueueItem(itemId: string): Promise<void> {
+  async startReviewQueueItem(_itemId: string): Promise<void> {
+    void _itemId;
     return;
   }
 
-  async decideReviewQueueItem(itemId: string, request: ReviewQueueDecisionRequest): Promise<void> {
+  async decideReviewQueueItem(
+    _itemId: string,
+    _request: ReviewQueueDecisionRequest,
+  ): Promise<void> {
+    void _itemId;
+    void _request;
     return;
   }
 }

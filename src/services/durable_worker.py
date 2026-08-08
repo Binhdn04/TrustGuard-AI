@@ -31,7 +31,18 @@ class DurableAnalysisWorker:
 
     async def run(self) -> None:
         while not self._stopping.is_set():
-            job = await self._repository.claim_job(self._worker_id, self._lease_seconds)
+            try:
+                job = await self._repository.claim_job(self._worker_id, self._lease_seconds)
+            except Exception as exc:
+                logger.warning(
+                    "analysis_job_claim_failed",
+                    extra={"failure_code": type(exc).__name__},
+                )
+                try:
+                    await asyncio.wait_for(self._stopping.wait(), timeout=self._idle_seconds)
+                except TimeoutError:
+                    pass
+                continue
             if job is None:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self._idle_seconds)
@@ -114,7 +125,18 @@ class OutboxPublisher:
 
     async def run(self) -> None:
         while not self._stopping.is_set():
-            published = await self.publish_once()
+            try:
+                published = await self.publish_once()
+            except Exception as exc:
+                logger.warning(
+                    "outbox_publish_failed",
+                    extra={"failure_code": type(exc).__name__},
+                )
+                try:
+                    await asyncio.wait_for(self._stopping.wait(), timeout=1.0)
+                except TimeoutError:
+                    pass
+                continue
             if published == 0:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=0.5)

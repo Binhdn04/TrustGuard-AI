@@ -153,8 +153,9 @@ Consumer không được tự tính hoặc phụ thuộc vào giá trị hash c�
 }
 ```
 
-`step_id` và `step_status` là nullable. Hiện không có WebSocket endpoint. Processor phát step event
-sau khi graph trả plan cuối, nên event contract đúng nhưng timing chưa phải realtime transition.
+`step_id` và `step_status` là nullable cho event legacy. WebSocket và polling replay cùng event
+sequence/cursor, nhưng runtime hiện chuyển plan cuối thành step event sau `ainvoke`; progress sink trong
+planning loop chưa được inject vào persistence nên transition chưa thật sự live.
 
 ## 4. Admin API
 
@@ -172,13 +173,24 @@ Tất cả endpoint yêu cầu role `security_admin`.
 
 | Method | Path | Contract |
 |---|---|---|
-| GET | `/api/v3/admin/review-queue` | `ReviewQueueItem[]`; danh sách user reports đang chờ duyệt. |
-| POST | `/api/v3/admin/review-queue/{item_id}/start` | Chuyển report sang trạng thái `reviewing`. |
-| POST | `/api/v3/admin/review-queue/{item_id}/decision` | Admin ghi quyết định `approved/rejected/dismissed` kèm `note`. Trả 409 nếu đã xử lý. |
+| GET | `/api/v3/admin/review-queue` | `ReviewQueueItem[]`; danh sách user reports kèm state và audit fields, gồm cả item đã xử lý. |
+| POST | `/api/v3/admin/review-queue/{item_id}/start-review` | Atomically chuyển report từ `submitted` sang `reviewing`; trả 409 nếu state đã đổi. |
+| POST | `/api/v3/admin/review-queue/{item_id}/decision` | Chỉ nhận report đang `reviewing`; lưu `approved/rejected/dismissed`, reviewer và `note`, rồi chuyển `processed`. Trả 409 nếu state đã đổi. |
 
-`ReviewQueueItem` trả về các trường bổ sung: `reason` (lý do user báo cáo), `comment` (ghi chú thêm của user), `analysis_content` (nội dung tin nhắn gốc user đã phân tích — trích từ `request_json` của analysis).
+`ReviewQueueItem` trả về `reason`, `comment`, `analysis_content`, immutable `evidence_snapshot` và audit
+fields `decision`, `reviewer_id`, `reviewer_note`, `reviewed_at`. PostgreSQL lưu cùng contract qua
+migration `0004_review_queue`; SQLite tự thêm các cột audit khi mở database dev cũ.
 
-Decision request:
+Review-queue decision request:
+
+```json
+{
+  "decision": "dismissed",
+  "note": "Evidence does not support the report."
+}
+```
+
+V2 admin-case decision request:
 
 ```json
 {
@@ -365,11 +377,10 @@ contract v2.
 
 Phần này là contract final product đã được freeze trong Wave 0. Pydantic source of truth nằm tại
 `src/models/schemas.py`, OpenAPI được phát từ `src/main.py`, và schema/migration plan nằm tại
-`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter đã có dưới `/api/v3` để client
-tích hợp sớm. WebSocket ticket, appeal, reviewed action, campaign và metrics đã có đầy đủ request/
-response schema và route trong OpenAPI nhưng chủ động trả 501 cho tới wave triển khai tương ứng;
-không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path v2 tương thích; capability mới chỉ
-xuất hiện dưới `/api/v3`.
+`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter, event replay, WebSocket ticket
+và stream đã hoạt động dưới `/api/v3`. Appeal, reviewed action, campaign và metrics đã có schema/route
+trong OpenAPI nhưng chủ động trả 501; không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path
+v2 tương thích; capability mới chỉ xuất hiện dưới `/api/v3`.
 
 ### 11.0 Versioning và core routes
 
@@ -378,7 +389,7 @@ sung typed realtime/appeal/action/campaign/metrics resources thay vì nhét null
 
 | Method | Path | Hành vi v3 |
 |---|---|---|
-| POST | `/api/v3/analyses` | Tạo durable analysis, trả `202` sau transactional enqueue. |
+| POST | `/api/v3/analyses` | PostgreSQL: transactional durable enqueue; SQLite dev/test: in-process execution. Cả hai trả `202`. |
 | GET | `/api/v3/analyses` | List analysis của principal hiện tại. |
 | GET | `/api/v3/analyses/{id}` | Trả state/result cuối, gồm plan/evidence/limitation như v2. |
 | GET | `/api/v3/analyses/{id}/events` | Poll/replay persisted typed events theo cursor. |
@@ -390,7 +401,7 @@ v2 create được đánh dấu deprecated khi v3 production-ready và không nh
 
 ### 11.1 Realtime và cảnh báo hai pha
 
-Đích: `WS /api/v3/analyses/{analysis_id}/stream` dùng ticket ngắn hạn lấy từ
+Hiện tại, `WS /api/v3/analyses/{analysis_id}/stream` dùng ticket ngắn hạn lấy từ
 `POST /api/v3/ws-tickets`. Server chỉ stream analysis mà principal có quyền đọc. Polling
 `GET /api/v3/analyses/{id}/events` vẫn là fallback và nguồn replay.
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from functools import lru_cache
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher
 
 from fastapi import Depends, Header, Request
 
@@ -14,7 +17,6 @@ from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
 from src.services.analysis import AnalysisService
-from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher
 from src.services.processor import LangGraphAnalysisProcessor
 from src.services.realtime import (
     MemoryEventNotifier,
@@ -67,11 +69,24 @@ async def start_durable_worker() -> None:
     service = get_analysis_service()
     if not isinstance(service.repository, PostgresPlatformRepository):
         return
+    try:
+        from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher  # noqa: PLC0415
+    except ImportError:
+        if get_settings().app_env == "production":
+            raise
+        return
     settings = get_settings()
     _worker = DurableAnalysisWorker(service.repository, service, lease_seconds=settings.job_lease_seconds)
     _worker_task = asyncio.create_task(_worker.run(), name="durable-analysis-worker")
-    _outbox = OutboxPublisher(service.repository, settings.redis_url)
-    _outbox_task = asyncio.create_task(_outbox.run(), name="transactional-outbox-publisher")
+    try:
+        _outbox = OutboxPublisher(service.repository, settings.redis_url)
+        _outbox_task = asyncio.create_task(_outbox.run(), name="transactional-outbox-publisher")
+    except Exception:
+        import logging
+
+        if settings.app_env == "production":
+            raise
+        logging.getLogger(__name__).warning("OutboxPublisher skipped: redis not available")
 
 
 async def stop_durable_worker() -> None:
@@ -95,10 +110,10 @@ async def stop_durable_worker() -> None:
 @lru_cache
 def get_ticket_manager() -> WebSocketTicketManager:
     settings = get_settings()
-    # Redis is required for shared production tickets. Tests/development stay
-    # offline unless the application is configured for PostgreSQL runtime.
+    # Redis is required for shared production tickets. Tests/development use
+    # the single-process store so local PostgreSQL does not require Redis.
     store = None
-    if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+    if settings.app_env == "production":
         try:
             store = RedisTicketStore(settings.redis_url)
         except (ImportError, RuntimeError):
@@ -118,7 +133,7 @@ async def close_ticket_manager() -> None:
 @lru_cache
 def get_event_notifier():
     settings = get_settings()
-    if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+    if settings.app_env == "production":
         try:
             return RedisEventNotifier(settings.redis_url)
         except (ImportError, RuntimeError):
@@ -160,7 +175,7 @@ def get_authenticator() -> ConfiguredAuthenticator:
 @lru_cache
 def get_rate_limiter():
     settings = get_settings()
-    if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+    if settings.app_env == "production":
         try:
             return RedisRateLimiter(settings.redis_url)
         except (ImportError, RuntimeError):

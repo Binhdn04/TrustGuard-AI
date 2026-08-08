@@ -87,6 +87,7 @@ export async function installAdminReviewFlow(page: Page) {
 
   await page.route("**/api/v2/admin/cases", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(reviewed ? [] : [review]) }));
   await page.route("**/api/v2/admin/blacklist", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(reviewed ? [{ domain: "tapdoanx-qua.example", decision_id: "40000000-0000-4000-8000-000000000001", added_at: v3.completed_at }] : []) }));
+  await page.route("**/api/v3/admin/review-queue", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route(`**/api/v2/admin/cases/${ANALYSIS_ID}/decision`, async (route) => {
     const payload = route.request().postDataJSON() as { note?: string; action?: string };
     if (!payload.note || payload.action !== "add_to_blacklist") return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "VALIDATION_ERROR", message: "invalid decision", retryable: false, details: {} } }) });

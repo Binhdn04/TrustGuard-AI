@@ -335,6 +335,7 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
         reason="Evidence needs another review",
         comment="Please verify the provider result.",
         created_at=created_at,
+        evidence_snapshot=[],
     )
     reviewed_response = response.model_copy(update={"case_status": CaseStatus.APPROVED})
     review_event = AnalysisEvent(

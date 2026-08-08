@@ -1,35 +1,12 @@
 "use client";
 
-import { CheckCircle2, Circle, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Loader2 } from "lucide-react";
 import type {
   AnalysisTransportState,
   AnalysisUiState,
 } from "@/types/analysis-view-model";
 
-export type ProgressStepId = 
-  | "extract" 
-  | "search" 
-  | "verify" 
-  | "summarize" 
-  | "scan_urls";
-
-export type ProgressStepStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "skipped"
-  | "failed";
-
-export interface ProgressStep {
-  id: ProgressStepId;
-  label: string;
-  status: ProgressStepStatus;
-  visible: boolean;
-}
-
 interface AnalysisProgressProps {
-  steps: ProgressStep[];
   phase: Exclude<AnalysisUiState, "idle" | "final" | "failed">;
   transport: AnalysisTransportState;
 }
@@ -39,14 +16,6 @@ const phaseLabels: Record<AnalysisProgressProps["phase"], string> = {
   queued: "Yêu cầu đang chờ xử lý",
   provisional: "Đã có cảnh báo sơ bộ, hệ thống vẫn đang kiểm chứng",
   investigating: "Đang kiểm chứng thông tin",
-};
-
-const statusLabels: Record<ProgressStepStatus, string> = {
-  pending: "Chờ",
-  running: "Đang xử lý",
-  completed: "Hoàn thành",
-  skipped: "Bỏ qua",
-  failed: "Không hoàn tất",
 };
 
 export function AnalysisProgress({ phase, transport }: AnalysisProgressProps) {

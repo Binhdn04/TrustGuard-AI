@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, RefreshCw, Shield } from "lucide-react";
 
 import { getAnalysisApi } from "@/lib/api/analysis-api";
+import {
+  subscribeToAnalysisEvents,
+  type AnalysisEventSubscription,
+} from "@/lib/api/analysis-event-stream";
 import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
 import type { AnalysisEventV3, ProvisionalWarningEventV3 } from "@/types/generated/api-v3";
-import type { InvestigationStep, InvestigationTool } from "@/types/analysis";
+import type { InvestigationStep } from "@/types/analysis";
 import type {
   AnalysisTransportState,
   AnalysisUiState,
@@ -14,79 +18,13 @@ import type {
 } from "@/types/analysis-view-model";
 
 import { AnalysisLimitations } from "./analysis-limitations";
-import { AnalysisProgress, type ProgressStep, type ProgressStepId } from "./analysis-progress";
+import { AnalysisProgress } from "./analysis-progress";
 import { AnalysisReportForm } from "./analysis-report-form";
 import { FactCheckComposer } from "./fact-check-composer";
 import { FactCheckSummary } from "./fact-check-summary";
 import { LinkSafetyPanel } from "./link-safety-panel";
 import { LiveInvestigationPlan } from "./live-investigation-plan";
 import { ProvisionalWarningBanner } from "./provisional-warning-banner";
-
-const INITIAL_STEPS: ProgressStep[] = [
-  { id: "extract", label: "Xác định các phát biểu cần kiểm chứng", status: "pending", visible: true },
-  { id: "search", label: "Tìm nguồn fact-check", status: "pending", visible: true },
-  { id: "verify", label: "Đối chiếu bằng chứng", status: "pending", visible: true },
-  { id: "summarize", label: "Tổng hợp kết luận", status: "pending", visible: true },
-  { id: "scan_urls", label: "Kiểm tra liên kết đính kèm", status: "pending", visible: false },
-];
-
-const TOOL_STEP: Partial<Record<InvestigationTool, ProgressStepId>> = {
-  local_rules: "extract",
-  claim_retriever: "search",
-  url_scanner: "scan_urls",
-  redirect_resolver: "scan_urls",
-  domain_intelligence: "scan_urls",
-  blacklist_lookup: "scan_urls",
-};
-
-function initialSteps(hasUrl: boolean, consent: boolean): ProgressStep[] {
-  return INITIAL_STEPS.map((step) => ({
-    ...step,
-    visible: step.id !== "scan_urls" || (hasUrl && consent),
-  }));
-}
-
-function updateStep(
-  steps: ProgressStep[],
-  id: ProgressStepId,
-  status: ProgressStep["status"],
-): ProgressStep[] {
-  return steps.map((step) => (step.id === id ? { ...step, status } : step));
-}
-
-function applyStepTransition(
-  steps: ProgressStep[],
-  tool: InvestigationTool,
-  status: ProgressStep["status"],
-): ProgressStep[] {
-  const id = TOOL_STEP[tool];
-  if (!id) return steps;
-  let next = updateStep(steps, id, status);
-  if (tool === "local_rules" && status === "completed") next = updateStep(next, "search", "running");
-  if (tool === "claim_retriever" && status === "running") next = updateStep(next, "extract", "completed");
-  if (tool === "claim_retriever" && status === "completed") {
-    next = updateStep(next, "verify", "completed");
-    next = updateStep(next, "summarize", "running");
-  }
-  return next;
-}
-
-function applyEvent(steps: ProgressStep[], event: AnalysisEventV3): ProgressStep[] {
-  if (event.event_type === "analysis_status" && event.payload.status === "running") {
-    return updateStep(steps, "extract", "running");
-  }
-  if (event.event_type === "step_transition") {
-    return applyStepTransition(steps, event.payload.tool, event.payload.status);
-  }
-  if (event.event_type === "final_result") {
-    return steps.map((step) =>
-      step.status === "skipped" || step.status === "failed"
-        ? step
-        : { ...step, status: "completed" },
-    );
-  }
-  return steps;
-}
 
 function upsertLiveStep(current: InvestigationStep[], next: InvestigationStep): InvestigationStep[] {
   const index = current.findIndex((step) => step.step_id === next.step_id);
@@ -103,18 +41,20 @@ function errorMessage(error: unknown): string {
 export function AnalysisWorkspace() {
   const [viewModel, setViewModel] = useState<AnalysisViewModel | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [steps, setSteps] = useState<ProgressStep[]>(INITIAL_STEPS);
   const [livePlan, setLivePlan] = useState<InvestigationStep[]>([]);
   const [provisional, setProvisional] = useState<ProvisionalWarningEventV3["payload"] | null>(null);
   const [liveLimitations, setLiveLimitations] = useState<string[]>([]);
   const [uiState, setUiState] = useState<AnalysisUiState>("idle");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventSubscriptionRef = useRef<AnalysisEventSubscription | null>(null);
   const generationRef = useRef(0);
 
   const stopRuntime = useCallback(() => {
     if (pollTimerRef.current !== null) clearTimeout(pollTimerRef.current);
     pollTimerRef.current = null;
+    eventSubscriptionRef.current?.stop();
+    eventSubscriptionRef.current = null;
   }, []);
 
   useEffect(() => () => {
@@ -127,7 +67,6 @@ export function AnalysisWorkspace() {
     stopRuntime();
     setViewModel(null);
     setError(null);
-    setSteps(INITIAL_STEPS);
     setLivePlan([]);
     setProvisional(null);
     setLiveLimitations([]);
@@ -146,7 +85,6 @@ export function AnalysisWorkspace() {
     setLiveLimitations([]);
     setUiState("submitting");
     setTransport("connecting");
-    setSteps(initialSteps(/https?:\/\/[^\s]+/giu.test(content), consentToScanUrls));
 
     try {
       const api = getAnalysisApi();
@@ -157,83 +95,62 @@ export function AnalysisWorkspace() {
       if (generation !== generationRef.current) return;
       setUiState("queued");
 
-      const poll = async () => {
+      const handleEvents = (events: AnalysisEventV3[]) => {
+        if (generation !== generationRef.current) return;
+        for (const event of events) {
+          if (event.event_type === "provisional_warning") {
+            setProvisional(event.payload);
+            setUiState("provisional");
+          } else if (event.event_type === "step_transition") {
+            setLivePlan((current) => upsertLiveStep(current, event.payload));
+            setUiState((current) => (current === "provisional" ? current : "investigating"));
+          } else if (event.event_type === "analysis_status" && event.payload.status === "running") {
+            setUiState((current) => (current === "provisional" ? current : "investigating"));
+          } else if (event.event_type === "limitation") {
+            setLiveLimitations((current) =>
+              current.includes(event.payload.message) ? current : [...current, event.payload.message],
+            );
+          }
+        }
+      };
+
+      eventSubscriptionRef.current = subscribeToAnalysisEvents(
+        api,
+        accepted.analysis_id,
+        {
+          onEvents: handleEvents,
+          onTransportChange: (nextTransport) => {
+            if (generation === generationRef.current) setTransport(nextTransport);
+          },
+        },
+      );
+
+      const pollDetail = async () => {
         const isCurrent = () => generation === generationRef.current;
         if (!isCurrent()) return;
         try {
-          if (eventPollingAvailable) {
-            try {
-              const page = await api.getAnalysisEvents(accepted.analysis_id, { cursor, limit: 100 });
-              if (!isCurrent()) return;
-              cursor = page.next_cursor;
-              setSteps((current) => page.events.reduce(applyEvent, current));
-              for (const event of page.events) {
-                if (event.event_type === "provisional_warning") {
-                  setProvisional(event.payload);
-                  setUiState("provisional");
-                } else if (event.event_type === "step_transition") {
-                  setLivePlan((current) => upsertLiveStep(current, event.payload));
-                  setUiState((current) => (current === "provisional" ? current : "investigating"));
-                } else if (event.event_type === "analysis_status" && event.payload.status === "running") {
-                  setUiState((current) => (current === "provisional" ? current : "investigating"));
-                } else if (event.event_type === "limitation") {
-                  setLiveLimitations((current) =>
-                    current.includes(event.payload.message) ? current : [...current, event.payload.message],
-                  );
-                }
-              }
-            } catch {
-              if (!isCurrent()) return;
-              eventPollingAvailable = false;
-              setTransport("polling_fallback");
-            }
+          const response = await api.getAnalysis(accepted.analysis_id);
+          if (!isCurrent()) return;
+          if (response.investigation_plan.length > 0) setLivePlan(response.investigation_plan);
+          setViewModel(mapAnalysisResponseToViewModel(response, { originalContent: content, consentToScanUrls }));
+
+          if (response.status === "completed") {
+            setProvisional(null);
+            setUiState("final");
+            stopRuntime();
+            return;
+          }
+          if (response.status === "failed") {
+            setProvisional(null);
+            setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
+            setUiState("failed");
+            stopRuntime();
+            return;
           }
 
-          const pollDetail = async (): Promise<void> => {
-            if (!isCurrent()) return;
-            try {
-              const response = await api.getAnalysis(accepted.analysis_id);
-              if (!isCurrent()) return;
-              if (response.investigation_plan.length > 0) setLivePlan(response.investigation_plan);
-              setSteps((current) =>
-                response.investigation_plan.reduce(
-                  (next, step) => applyStepTransition(next, step.tool, step.status),
-                  current,
-                ),
-              );
-              setViewModel(mapAnalysisResponseToViewModel(response, { originalContent: content, consentToScanUrls }));
-
-              if (response.status === "completed") {
-                setProvisional(null);
-                setSteps((current) => current.map((step) =>
-                  step.status === "skipped" || step.status === "failed"
-                    ? step
-                    : { ...step, status: "completed" },
-                ));
-                setUiState("final");
-                stopRuntime();
-                return;
-              }
-              if (response.status === "failed") {
-                setProvisional(null);
-                setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
-                setUiState("failed");
-                stopRuntime();
-                return;
-              }
-
-              setUiState((current) => current === "queued" ? "investigating" : current);
-              if (!isCurrent()) return;
-              pollTimerRef.current = setTimeout(poll, 1_500);
-            } catch (pollError) {
-              if (!isCurrent()) return;
-              setError(errorMessage(pollError));
-              setUiState("failed");
-              stopRuntime();
-            }
-          };
-
-          void pollDetail();
+          setUiState((current) => current === "queued" ? "investigating" : current);
+          if (!isCurrent()) return;
+          pollTimerRef.current = setTimeout(() => void pollDetail(), 1_500);
         } catch (pollError) {
           if (!isCurrent()) return;
           setError(errorMessage(pollError));
@@ -242,7 +159,7 @@ export function AnalysisWorkspace() {
         }
       };
 
-      void poll();
+      void pollDetail();
     } catch (submitError) {
       if (generation !== generationRef.current) return;
       setError(errorMessage(submitError));
@@ -285,7 +202,6 @@ export function AnalysisWorkspace() {
         {isBusy && (
           <>
             <AnalysisProgress
-              steps={steps}
               phase={uiState as Exclude<AnalysisUiState, "idle" | "final" | "failed">}
               transport={transport}
             />

@@ -49,6 +49,7 @@ export default function AdminPage() {
   const [note, setNote] = useState("");
   const [submittingIds, setSubmittingIds] = useState<Set<string>>(new Set());
   const [caseErrors, setCaseErrors] = useState<Record<string, string>>({});
+  const [reportErrors, setReportErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,19 +146,19 @@ export default function AdminPage() {
     if (!pendingReport || !note.trim() || submittingIds.has(pendingReport.report.item_id)) return;
     const itemId = pendingReport.report.item_id;
     setSubmittingIds((current) => new Set(current).add(itemId));
+    setReportErrors((current) => ({ ...current, [itemId]: "" }));
     try {
       await getAnalysisApi().decideReviewQueueItem(itemId, {
         ...pendingReport.request,
         note: note.trim(),
       });
-      setReports((current) => current.filter((item) => item.item_id !== itemId));
       setPendingReport(null);
       await load();
     } catch (error) {
       const message = error instanceof ApiError && error.status === 409
         ? "Report đã được xử lý."
         : error instanceof Error ? error.message : "Không thể lưu quyết định.";
-      alert(message);
+      setReportErrors((current) => ({ ...current, [itemId]: message }));
       setPendingReport(null);
       if (error instanceof ApiError && error.status === 409) await load();
     } finally {
@@ -170,11 +171,24 @@ export default function AdminPage() {
   };
 
   const startReportReview = async (itemId: string) => {
+    if (submittingIds.has(itemId)) return;
+    setSubmittingIds((current) => new Set(current).add(itemId));
+    setReportErrors((current) => ({ ...current, [itemId]: "" }));
     try {
-        await getAnalysisApi().startReviewQueueItem(itemId);
-        await load();
+      await getAnalysisApi().startReviewQueueItem(itemId);
+      await load();
     } catch (error) {
-        alert("Lỗi start review");
+      const message = error instanceof ApiError && error.status === 409
+        ? "Report đã được reviewer khác nhận xử lý. Dữ liệu vừa được tải lại."
+        : error instanceof Error ? error.message : "Không thể bắt đầu review.";
+      setReportErrors((current) => ({ ...current, [itemId]: message }));
+      if (error instanceof ApiError && error.status === 409) await load();
+    } finally {
+      setSubmittingIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
     }
   };
 
@@ -292,10 +306,17 @@ export default function AdminPage() {
                       {(report.evidence_snapshot ?? []).map((evidence, index) => <p key={`${evidence.type}:${index}`} className="mt-2 text-xs"><strong>{evidence.source}</strong>: {evidence.finding}</p>)}
                       {(report.evidence_snapshot?.length ?? 0) === 0 && <p className="mt-2 text-xs text-muted-foreground">Không có evidence.</p>}
                     </div>
+                    {report.status === "processed" && report.decision && (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                        <p><strong>Decision:</strong> {report.decision}</p>
+                        {report.reviewer_note && <p className="mt-1"><strong>Reviewer note:</strong> {report.reviewer_note}</p>}
+                      </div>
+                    )}
+                    {reportErrors[report.item_id] && <p role="alert" className="text-sm font-medium text-rose-600">{reportErrors[report.item_id]}</p>}
                   </div>
                   <div className="flex shrink-0 flex-row gap-2 md:flex-col">
                     {report.status === "submitted" && (
-                      <button disabled={submitting} onClick={() => startReportReview(report.item_id)} className="flex items-center justify-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-600 disabled:opacity-50">Start Review</button>
+                      <button disabled={submitting} onClick={() => void startReportReview(report.item_id)} className="flex items-center justify-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-600 disabled:opacity-50">Start Review</button>
                     )}
                     {report.status === "reviewing" && (
                       <>
@@ -329,12 +350,12 @@ export default function AdminPage() {
       )}
 
       {pendingReport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="decision-title">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="report-decision-title">
           <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
-            <h2 id="decision-title" className="text-lg font-bold">{pendingReport.title}</h2>
+            <h2 id="report-decision-title" className="text-lg font-bold">{pendingReport.title}</h2>
             <p className="mt-2 text-sm text-muted-foreground">Ghi chú là bắt buộc và sẽ được lưu vào audit trail.</p>
-            <label htmlFor="review-note" className="mt-4 block text-sm font-medium">Ghi chú reviewer</label>
-            <textarea id="review-note" autoFocus value={note} onChange={(event) => setNote(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-border bg-background p-3 text-sm" />
+            <label htmlFor="report-review-note" className="mt-4 block text-sm font-medium">Ghi chú reviewer</label>
+            <textarea id="report-review-note" autoFocus value={note} onChange={(event) => setNote(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-border bg-background p-3 text-sm" />
             <div className="mt-5 flex justify-end gap-3">
               <button type="button" onClick={() => setPendingReport(null)} className="rounded-lg px-4 py-2 text-sm font-medium hover:bg-muted">Hủy</button>
               <button type="button" disabled={!note.trim() || submittingIds.has(pendingReport.report.item_id)} onClick={() => void submitReportDecision()} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Xác nhận</button>
