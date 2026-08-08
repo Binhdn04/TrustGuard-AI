@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -70,18 +72,74 @@ async def _invoke_structured(llm: Any, schema: type[_StrictOutput], messages: li
     return result if isinstance(result, schema) else schema.model_validate(result)
 
 
-def _failure_update(state: WorkflowState, stage: str, error: Exception) -> dict:
-    logger.warning(
-        "llm_stage_failed stage=%s error_type=%s status_code=%s",
-        stage,
-        type(error).__name__,
-        getattr(error, "status_code", None),
-    )
+class _LlmBudgetExceededError(RuntimeError):
+    pass
+
+
+class _LlmInvocationFailedError(RuntimeError):
+    def __init__(self, usage: dict[str, int | float]) -> None:
+        self.usage = usage
+        super().__init__("LLM invocation failed")
+
+
+def _estimated_tokens(messages: list[Any]) -> int:
+    # A conservative tokenizer-independent reservation. It prevents an LLM
+    # call before the configured cap is crossed; provider usage can replace
+    # this estimate when the LLM boundary exposes normalized metadata.
+    characters = sum(len(str(getattr(message, "content", ""))) for message in messages)
+    return max(1, (characters + 3) // 4) + 256
+
+
+async def _invoke_budgeted(
+    llm: Any,
+    schema: type[_StrictOutput],
+    messages: list[Any],
+    state: WorkflowState,
+):
+    calls = state.get("llm_calls_used", 0)
+    tokens = state.get("llm_tokens_used", 0)
+    cost = state.get("llm_cost_used_usd", 0.0)
+    reserved_tokens = _estimated_tokens(messages)
+    reserved_cost = reserved_tokens * 0.000001
+    if (
+        calls >= state.get("max_llm_calls", 4)
+        or tokens + reserved_tokens > state.get("max_llm_tokens", 16_384)
+        or cost + reserved_cost > state.get("max_llm_cost_usd", float("inf"))
+    ):
+        raise _LlmBudgetExceededError
+    usage = {
+        "llm_calls_used": calls + 1,
+        "llm_tokens_used": tokens + reserved_tokens,
+        "llm_cost_used_usd": cost + reserved_cost,
+    }
+    try:
+        invocation = _invoke_structured(llm, schema, messages)
+        deadline = state.get("deadline_at")
+        if deadline is not None:
+            remaining = max(0.0, (deadline - datetime.now(UTC)).total_seconds())
+            result = await asyncio.wait_for(invocation, timeout=remaining)
+        else:
+            result = await invocation
+    except Exception as exc:
+        raise _LlmInvocationFailedError(usage) from exc
+    return result, usage
+
+
+def _failure_update(
+    state: WorkflowState,
+    stage: str,
+    *,
+    budget: bool = False,
+    usage: dict[str, int | float] | None = None,
+) -> dict:
     errors = list(state.get("llm_errors", []))
     errors.append(stage)
     limitations = list(state.get("limitations", []))
-    limitations.append(f"LLM không hoàn tất bước {stage}; hệ thống dùng logic deterministic thay thế.")
-    return {"llm_errors": errors, "limitations": list(dict.fromkeys(limitations))}
+    limitations.append(
+        f"LLM không hoàn tất bước {stage}"
+        f"{' do hết budget' if budget else ''}; hệ thống dùng logic deterministic thay thế."
+    )
+    return {"llm_errors": errors, "limitations": list(dict.fromkeys(limitations)), **(usage or {})}
 
 
 def _claim_is_grounded(claim: str, message: str) -> bool:
@@ -95,23 +153,29 @@ def build_analyze_message_node(llm: Any | None):
         if llm is None:
             return {}
         try:
-            result = await _invoke_structured(
+            messages = [
+                SystemMessage(
+                    content=(
+                        "Bạn phân tích tin nhắn mà người dùng dán để kiểm tra lừa đảo. "
+                        "Đánh giá ý đồ có khả năng thuộc về NGƯỜI GỬI tin nhắn, không quy kết người dùng. "
+                        "Chỉ trích xuất claim có trong input; không thêm sự kiện hoặc bằng chứng. "
+                        "Cảm xúc là kỹ thuật tác động nổi bật trong nội dung. Trả structured output."
+                    )
+                ),
+                HumanMessage(content=state.get("message", "")),
+            ]
+            result, usage = await _invoke_budgeted(
                 llm,
                 MessageAnalysis,
-                [
-                    SystemMessage(
-                        content=(
-                            "Bạn phân tích tin nhắn mà người dùng dán để kiểm tra lừa đảo. "
-                            "Đánh giá ý đồ có khả năng thuộc về NGƯỜI GỬI tin nhắn, không quy kết người dùng. "
-                            "Chỉ trích xuất claim có trong input; không thêm sự kiện hoặc bằng chứng. "
-                            "Cảm xúc là kỹ thuật tác động nổi bật trong nội dung. Trả structured output."
-                        )
-                    ),
-                    HumanMessage(content=state.get("message", "")),
-                ],
+                messages,
+                state,
             )
-        except Exception as error:
-            return _failure_update(state, "phân tích ngữ nghĩa", error)
+        except _LlmBudgetExceededError:
+            return _failure_update(state, "phân tích ngữ nghĩa", budget=True)
+        except _LlmInvocationFailedError as exc:
+            return _failure_update(state, "phân tích ngữ nghĩa", usage=exc.usage)
+        except Exception:
+            return _failure_update(state, "phân tích ngữ nghĩa")
 
         claims = list(state.get("claims", []))
         for claim in result.claims:
@@ -126,6 +190,7 @@ def build_analyze_message_node(llm: Any | None):
             "llm_suspected_scam_intent": result.suspected_scam_intent,
             "llm_scam_indicators": result.scam_indicators,
             "llm_model": LLM_MODEL,
+            **usage,
         }
 
     return analyze_message
@@ -145,7 +210,7 @@ def build_plan_tools_node(llm: Any | None):
             "allowed_tools": ["url_scanner", "domain_intelligence", "claim_retriever"],
         }
         try:
-            result = await _invoke_structured(
+            result, usage = await _invoke_budgeted(
                 llm,
                 ToolPlan,
                 [
@@ -159,9 +224,14 @@ def build_plan_tools_node(llm: Any | None):
                     ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
+                state,
             )
-        except Exception as error:
-            return _failure_update(state, "lập kế hoạch tool", error)
+        except _LlmBudgetExceededError:
+            return _failure_update(state, "lập kế hoạch tool", budget=True)
+        except _LlmInvocationFailedError as exc:
+            return _failure_update(state, "lập kế hoạch tool", usage=exc.usage)
+        except Exception:
+            return _failure_update(state, "lập kế hoạch tool")
 
         # The schema enforces the allowlist. The executor intentionally ignores
         # model-supplied targets when constructing executable work and derives
@@ -173,7 +243,7 @@ def build_plan_tools_node(llm: Any | None):
             if key not in seen:
                 seen.add(key)
                 tools.append(item.model_dump())
-        return {"llm_tool_plan": tools}
+        return {"llm_tool_plan": tools, **usage}
 
     return plan_tools
 
@@ -204,7 +274,7 @@ def build_review_assessment_node(llm: Any | None):
             "limitations": state.get("limitations", []),
         }
         try:
-            result = await _invoke_structured(
+            result, usage = await _invoke_budgeted(
                 llm,
                 AssessmentReview,
                 [
@@ -217,9 +287,14 @@ def build_review_assessment_node(llm: Any | None):
                     ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
+                state,
             )
-        except Exception as error:
-            return _failure_update(state, "review đánh giá", error)
+        except _LlmBudgetExceededError:
+            return _failure_update(state, "review đánh giá", budget=True)
+        except _LlmInvocationFailedError as exc:
+            return _failure_update(state, "review đánh giá", usage=exc.usage)
+        except Exception:
+            return _failure_update(state, "review đánh giá")
 
         valid_indexes = [index for index in result.evidence_indexes if 0 <= index < len(evidence)]
         return {
@@ -227,6 +302,7 @@ def build_review_assessment_node(llm: Any | None):
             "llm_assessment_agrees": result.agrees_with_deterministic_assessment,
             "llm_evidence_indexes": valid_indexes,
             "llm_missing_information": result.missing_information,
+            **usage,
         }
 
     return review_assessment
@@ -251,7 +327,7 @@ def build_generate_response_node(llm: Any | None):
             "limitations": state.get("limitations", []),
         }
         try:
-            result = await _invoke_structured(
+            result, usage = await _invoke_budgeted(
                 llm,
                 GroundedResponse,
                 [
@@ -265,9 +341,14 @@ def build_generate_response_node(llm: Any | None):
                     ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ],
+                state,
             )
-        except Exception as error:
-            return _failure_update(state, "tạo phản hồi", error)
+        except _LlmBudgetExceededError:
+            return _failure_update(state, "tạo phản hồi", budget=True)
+        except _LlmInvocationFailedError as exc:
+            return _failure_update(state, "tạo phản hồi", usage=exc.usage)
+        except Exception:
+            return _failure_update(state, "tạo phản hồi")
 
         valid_reasons = [reason for reason in result.reasons if 0 <= reason.evidence_index < len(evidence)]
         indexes = [reason.evidence_index for reason in valid_reasons]
@@ -280,6 +361,7 @@ def build_generate_response_node(llm: Any | None):
             "reasons": [reason.text for reason in valid_reasons] or state.get("reasons", []),
             "limitations": list(dict.fromkeys(item for item in limitations if item.strip())),
             "llm_response_evidence_indexes": indexes,
+            **usage,
         }
 
     return generate_response

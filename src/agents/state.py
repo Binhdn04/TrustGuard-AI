@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, TypedDict
 
-from src.agents.contracts import CampaignFeatures, CampaignHypothesis, LiveStepTransition, ProvisionalWarning
+from src.agents.contracts import (
+    CachedReputationEvidence,
+    CampaignFeatures,
+    CampaignHypothesis,
+    LiveStepTransition,
+    ProvisionalWarning,
+)
 from src.models import (
     CaseStatus,
     ClaimEvidence,
@@ -56,11 +62,23 @@ class WorkflowState(AgentState, total=False):
     next_tool: ToolRoute
     tool_target: str
     tool_attempts: dict[str, int]
+    tool_cost_used_usd: float
+    tool_tokens_used: int
     max_tool_calls: int
     max_tool_retries: int
+    max_tool_cost_usd: float
+    max_tool_tokens: int
+    max_llm_calls: int
+    llm_calls_used: int
+    max_llm_tokens: int
+    llm_tokens_used: int
+    max_llm_cost_usd: float
+    llm_cost_used_usd: float
     deadline_at: datetime
     blocked_urls: list[str]
     blacklisted_domains: list[str]
+    enable_redirect_resolution: bool
+    cached_reputation_evidence: list[CachedReputationEvidence]
     provisional_warning: ProvisionalWarning | None
     active_warning: Literal["provisional", "final"]
     step_transitions: list[LiveStepTransition]

@@ -4,10 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, RefreshCw, Shield } from "lucide-react";
 
 import { getAnalysisApi } from "@/lib/api/analysis-api";
-import {
-  subscribeToAnalysisEvents,
-  type AnalysisEventSubscription,
-} from "@/lib/api/analysis-event-stream";
 import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
 import type { AnalysisEventV3, ProvisionalWarningEventV3 } from "@/types/generated/api-v3";
 import type { InvestigationStep, InvestigationTool } from "@/types/analysis";
@@ -113,15 +109,12 @@ export function AnalysisWorkspace() {
   const [liveLimitations, setLiveLimitations] = useState<string[]>([]);
   const [uiState, setUiState] = useState<AnalysisUiState>("idle");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
-  const detailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const subscriptionRef = useRef<AnalysisEventSubscription | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generationRef = useRef(0);
 
   const stopRuntime = useCallback(() => {
-    if (detailTimerRef.current !== null) clearTimeout(detailTimerRef.current);
-    detailTimerRef.current = null;
-    subscriptionRef.current?.stop();
-    subscriptionRef.current = null;
+    if (pollTimerRef.current !== null) clearTimeout(pollTimerRef.current);
+    pollTimerRef.current = null;
   }, []);
 
   useEffect(() => () => {
@@ -164,72 +157,92 @@ export function AnalysisWorkspace() {
       if (generation !== generationRef.current) return;
       setUiState("queued");
 
-      subscriptionRef.current = subscribeToAnalysisEvents(api, accepted.analysis_id, {
-        onTransportChange: setTransport,
-        onEvents(events) {
-          if (generation !== generationRef.current) return;
-          setSteps((current) => events.reduce(applyEvent, current));
-          for (const event of events) {
-            if (event.event_type === "provisional_warning") {
-              setProvisional(event.payload);
-              setUiState("provisional");
-            } else if (event.event_type === "step_transition") {
-              setLivePlan((current) => upsertLiveStep(current, event.payload));
-              setUiState((current) => (current === "provisional" ? current : "investigating"));
-            } else if (event.event_type === "analysis_status" && event.payload.status === "running") {
-              setUiState((current) => (current === "provisional" ? current : "investigating"));
-            } else if (event.event_type === "limitation") {
-              setLiveLimitations((current) =>
-                current.includes(event.payload.message) ? current : [...current, event.payload.message],
-              );
+      const poll = async () => {
+        const isCurrent = () => generation === generationRef.current;
+        if (!isCurrent()) return;
+        try {
+          if (eventPollingAvailable) {
+            try {
+              const page = await api.getAnalysisEvents(accepted.analysis_id, { cursor, limit: 100 });
+              if (!isCurrent()) return;
+              cursor = page.next_cursor;
+              setSteps((current) => page.events.reduce(applyEvent, current));
+              for (const event of page.events) {
+                if (event.event_type === "provisional_warning") {
+                  setProvisional(event.payload);
+                  setUiState("provisional");
+                } else if (event.event_type === "step_transition") {
+                  setLivePlan((current) => upsertLiveStep(current, event.payload));
+                  setUiState((current) => (current === "provisional" ? current : "investigating"));
+                } else if (event.event_type === "analysis_status" && event.payload.status === "running") {
+                  setUiState((current) => (current === "provisional" ? current : "investigating"));
+                } else if (event.event_type === "limitation") {
+                  setLiveLimitations((current) =>
+                    current.includes(event.payload.message) ? current : [...current, event.payload.message],
+                  );
+                }
+              }
+            } catch {
+              if (!isCurrent()) return;
+              eventPollingAvailable = false;
+              setTransport("polling_fallback");
             }
           }
-        },
-      });
 
-      const pollDetail = async (): Promise<void> => {
-        if (generation !== generationRef.current) return;
-        try {
-          const response = await api.getAnalysis(accepted.analysis_id);
-          if (generation !== generationRef.current) return;
-          if (response.investigation_plan.length > 0) setLivePlan(response.investigation_plan);
-          setSteps((current) =>
-            response.investigation_plan.reduce(
-              (next, step) => applyStepTransition(next, step.tool, step.status),
-              current,
-            ),
-          );
-          setViewModel(mapAnalysisResponseToViewModel(response, { originalContent: content, consentToScanUrls }));
+          const pollDetail = async (): Promise<void> => {
+            if (!isCurrent()) return;
+            try {
+              const response = await api.getAnalysis(accepted.analysis_id);
+              if (!isCurrent()) return;
+              if (response.investigation_plan.length > 0) setLivePlan(response.investigation_plan);
+              setSteps((current) =>
+                response.investigation_plan.reduce(
+                  (next, step) => applyStepTransition(next, step.tool, step.status),
+                  current,
+                ),
+              );
+              setViewModel(mapAnalysisResponseToViewModel(response, { originalContent: content, consentToScanUrls }));
 
-          if (response.status === "completed") {
-            setProvisional(null);
-            setSteps((current) => current.map((step) =>
-              step.status === "skipped" || step.status === "failed"
-                ? step
-                : { ...step, status: "completed" },
-            ));
-            setUiState("final");
-            stopRuntime();
-            return;
-          }
-          if (response.status === "failed") {
-            setProvisional(null);
-            setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
-            setUiState("failed");
-            stopRuntime();
-            return;
-          }
-          setUiState((current) => current === "queued" ? "investigating" : current);
-          detailTimerRef.current = setTimeout(() => void pollDetail(), 1_500);
+              if (response.status === "completed") {
+                setProvisional(null);
+                setSteps((current) => current.map((step) =>
+                  step.status === "skipped" || step.status === "failed"
+                    ? step
+                    : { ...step, status: "completed" },
+                ));
+                setUiState("final");
+                stopRuntime();
+                return;
+              }
+              if (response.status === "failed") {
+                setProvisional(null);
+                setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
+                setUiState("failed");
+                stopRuntime();
+                return;
+              }
+
+              setUiState((current) => current === "queued" ? "investigating" : current);
+              if (!isCurrent()) return;
+              pollTimerRef.current = setTimeout(poll, 1_500);
+            } catch (pollError) {
+              if (!isCurrent()) return;
+              setError(errorMessage(pollError));
+              setUiState("failed");
+              stopRuntime();
+            }
+          };
+
+          void pollDetail();
         } catch (pollError) {
-          if (generation !== generationRef.current) return;
+          if (!isCurrent()) return;
           setError(errorMessage(pollError));
           setUiState("failed");
           stopRuntime();
         }
       };
 
-      void pollDetail();
+      void poll();
     } catch (submitError) {
       if (generation !== generationRef.current) return;
       setError(errorMessage(submitError));

@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urljoin
+from uuid import uuid4
 
 import httpx
 
+from src.agents.tools.cache import VersionedMemoryCache
 from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST, PSL_VERSION, PublicSuffixList
 from src.agents.tools.errors import ToolCallError
+from src.agents.tools.models import (
+    CacheMetadata,
+    CacheStatus,
+    NormalizedToolError,
+    NormalizedToolResult,
+    ToolErrorCode,
+    ToolName,
+    ToolResultStatus,
+    UsageMetadata,
+)
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard
 from src.models import DomainIntelligenceResult
 
@@ -50,8 +63,11 @@ class RdapDomainIntelligence:
         timeout: float = 5.0,
         positive_ttl: timedelta = timedelta(hours=24),
         not_found_ttl: timedelta = timedelta(hours=1),
+        max_cache_entries: int = 10_000,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        if max_cache_entries < 1:
+            raise ValueError("max_cache_entries must be positive")
         self._client = client
         self._owns_client = client is None
         self._guard = guard or SsrfGuard()
@@ -59,6 +75,7 @@ class RdapDomainIntelligence:
         self._timeout = timeout
         self._positive_ttl = positive_ttl
         self._not_found_ttl = not_found_ttl
+        self._max_cache_entries = max_cache_entries
         self._clock = clock
         self._cache: dict[tuple[str, str], _CacheItem] = {}
         self._bootstrap: tuple[dict[str, tuple[str, ...]], datetime] | None = None
@@ -117,12 +134,15 @@ class RdapDomainIntelligence:
         cached = self._cache.get(cache_key)
         if cached is not None and cached.expires_at > now:
             return cached.result.model_copy(deep=True)
+        if cached is not None:
+            self._cache.pop(cache_key, None)
 
         async with self._lock:
             now = self._clock()
             cached = self._cache.get(cache_key)
             if cached is not None and cached.expires_at > now:
                 return cached.result.model_copy(deep=True)
+            self._prune_cache(now)
             services = await self._bootstrap_services()
             tld = registrable.rsplit(".", 1)[-1]
             base_urls = services.get(tld)
@@ -136,7 +156,7 @@ class RdapDomainIntelligence:
                 response, _ = await client.get(endpoint)
                 if response.status_code == 404:
                     result = self._not_found(registrable, now)
-                    self._cache[cache_key] = _CacheItem(result, now + self._not_found_ttl)
+                    self._store_cache(cache_key, result, now + self._not_found_ttl)
                     return result.model_copy(deep=True)
                 if response.status_code == 429:
                     raise ToolCallError(
@@ -157,8 +177,23 @@ class RdapDomainIntelligence:
                 raise ToolCallError(
                     "domain_intelligence", "PROVIDER_ERROR", "RDAP provider failed", retryable=True
                 ) from exc
-            self._cache[cache_key] = _CacheItem(result, now + self._positive_ttl)
+            self._store_cache(cache_key, result, now + self._positive_ttl)
             return result.model_copy(deep=True)
+
+    def _prune_cache(self, now: datetime) -> None:
+        expired = [key for key, item in self._cache.items() if item.expires_at <= now]
+        for key in expired:
+            self._cache.pop(key, None)
+
+    def _store_cache(
+        self,
+        key: tuple[str, str],
+        result: DomainIntelligenceResult,
+        expires_at: datetime,
+    ) -> None:
+        self._cache[key] = _CacheItem(result, expires_at)
+        while len(self._cache) > self._max_cache_entries:
+            self._cache.pop(next(iter(self._cache)))
 
     def _not_found(self, domain: str, observed_at: datetime) -> DomainIntelligenceResult:
         return DomainIntelligenceResult(
@@ -224,3 +259,138 @@ class RdapDomainIntelligence:
     async def aclose(self) -> None:
         if self._owns_client and self._client is not None:
             await self._client.aclose()
+
+
+class NormalizedRdapProvider:
+    """v3 envelope over the compatibility RDAP adapter.
+
+    Both this wrapper and ``RdapDomainIntelligence`` are lazy: constructing
+    either one creates no HTTP client or network task.  Consent remains an
+    executor policy and must be checked before calling ``lookup``.
+    """
+
+    provider_version = f"{RDAP_SCHEMA_VERSION}/psl-{PSL_VERSION}"
+
+    def __init__(
+        self,
+        adapter: RdapDomainIntelligence | None = None,
+        *,
+        timeout: float = 5.0,
+        cache_ttl: timedelta = timedelta(hours=24),
+        not_found_ttl: timedelta = timedelta(hours=1),
+        max_cache_entries: int = 10_000,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._adapter = adapter
+        self._timeout = timeout
+        self._cache_ttl = cache_ttl
+        self._not_found_ttl = not_found_ttl
+        self._clock = clock
+        self._cache: VersionedMemoryCache[DomainIntelligenceResult] = VersionedMemoryCache(
+            max_entries=max_cache_entries,
+            clock=clock,
+        )
+
+    @property
+    def provider(self) -> str:
+        return f"iana-rdap/{self.provider_version}"
+
+    def _get_adapter(self) -> RdapDomainIntelligence:
+        if self._adapter is None:
+            self._adapter = RdapDomainIntelligence(timeout=self._timeout, clock=self._clock)
+        return self._adapter
+
+    async def lookup(self, domain: str) -> NormalizedToolResult[DomainIntelligenceResult]:
+        started = time.perf_counter()
+        try:
+            registrable = DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(domain)
+        except ValueError as exc:
+            return self._failure(started, ToolErrorCode.INVALID_TARGET, str(exc), retryable=False, attempts=0, calls=0)
+        if registrable is None:
+            return self._failure(
+                started,
+                ToolErrorCode.INVALID_TARGET,
+                "RDAP lookup requires a registrable domain.",
+                retryable=False,
+                attempts=0,
+                calls=0,
+            )
+        cached = await self._cache.get(self.provider, self.provider_version, registrable)
+        if cached is not None:
+            result = cached.value.model_copy(deep=True)
+            return NormalizedToolResult(
+                status=(ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS),
+                result=result,
+                cache=cached.metadata,
+                usage=self._usage(started, attempts=0, calls=0),
+            )
+        try:
+            result = await self._get_adapter().lookup(registrable)
+        except ToolCallError as exc:
+            code = {
+                "RATE_LIMITED": ToolErrorCode.RATE_LIMITED,
+                "PROVIDER_TIMEOUT": ToolErrorCode.PROVIDER_TIMEOUT,
+            }.get(exc.error.code, ToolErrorCode.PROVIDER_ERROR)
+            return self._failure(
+                started,
+                code,
+                exc.error.message,
+                retryable=exc.error.retryable,
+                attempts=1,
+                calls=1,
+            )
+        ttl = self._not_found_ttl if result.signals == ["not_found"] else self._cache_ttl
+        await self._cache.put(
+            self.provider,
+            self.provider_version,
+            registrable,
+            result.model_copy(deep=True),
+            ttl,
+        )
+        return NormalizedToolResult(
+            status=ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS,
+            result=result,
+            cache=self._cache.miss_metadata(self.provider, self.provider_version, registrable),
+            usage=self._usage(started, attempts=1, calls=1),
+        )
+
+    def _usage(self, started: float, *, attempts: int, calls: int) -> UsageMetadata:
+        return UsageMetadata(
+            usage_ref=f"usage:rdap:{uuid4()}",
+            provider=self.provider,
+            provider_version=self.provider_version,
+            operation="rdap_lookup",
+            attempts=attempts,
+            network_calls=calls,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            request_units=calls,
+            response_units=1 if calls else 0,
+            observed_at=self._clock(),
+        )
+
+    def _failure(
+        self,
+        started: float,
+        code: ToolErrorCode,
+        message: str,
+        *,
+        retryable: bool,
+        attempts: int,
+        calls: int,
+    ) -> NormalizedToolResult[DomainIntelligenceResult]:
+        return NormalizedToolResult(
+            status=ToolResultStatus.BLOCKED if code is ToolErrorCode.INVALID_TARGET else ToolResultStatus.FAILED,
+            error=NormalizedToolError(
+                tool=ToolName.RDAP,
+                code=code,
+                message=message,
+                retryable=retryable,
+                provider=self.provider,
+            ),
+            cache=CacheMetadata(status=CacheStatus.BYPASS, bypass_reason="invalid_or_failed_lookup"),
+            usage=self._usage(started, attempts=attempts, calls=calls),
+        )
+
+    async def aclose(self) -> None:
+        if self._adapter is not None:
+            await self._adapter.aclose()

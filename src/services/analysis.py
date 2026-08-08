@@ -79,12 +79,15 @@ class AnalysisService:
         self,
         blacklist: BlacklistRepository | None = None,
         processor: AnalysisProcessor | None = None,
+        *,
+        durable_jobs: bool = False,
     ) -> None:
         self._records: dict[UUID, _AnalysisRecord] = {}
         self._lock = asyncio.Lock()
         self._decision_lock = asyncio.Lock()
         self._blacklist = blacklist
         self._processor = processor
+        self._durable_jobs = durable_jobs
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def create(self, request: AnalysisCreateRequest, principal: Principal) -> AnalysisAcceptedResponse:
@@ -121,7 +124,7 @@ class AnalysisService:
                 async with self._lock:
                     self._records.pop(analysis_id, None)
                 raise
-        if self._processor is not None:
+        if self._processor is not None and not self._durable_jobs:
             task = asyncio.create_task(
                 self._run_processor(analysis_id, request.model_copy(deep=True), now),
                 name=f"analysis-{analysis_id}",
@@ -129,6 +132,24 @@ class AnalysisService:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         return AnalysisAcceptedResponse(analysis_id=analysis_id, created_at=now)
+
+    async def process_durable_job(self, analysis_id: UUID) -> None:
+        """Worker entry point; safe to call after an API process restart."""
+        await self._ensure_record(analysis_id)
+        async with self._lock:
+            record = self._records.get(analysis_id)
+            if record is None:
+                raise self._not_found()
+            if record.response.status in {AnalysisStatus.COMPLETED, AnalysisStatus.FAILED}:
+                return
+            request = record.request.model_copy(deep=True)
+            created_at = record.response.created_at
+        await self._run_processor(analysis_id, request, created_at)
+
+    @property
+    def repository(self):
+        """Expose the configured persistence boundary to the worker bootstrap."""
+        return self._blacklist
 
     async def _run_processor(
         self,

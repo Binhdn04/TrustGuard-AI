@@ -4,10 +4,10 @@ AI Agent phát hiện liên kết độc và tuyên bố đáng ngờ trong nộ
 TrustGuard AI lập kế hoạch điều tra, thu thập bằng chứng từ rule, blacklist và provider uy tín, chấm
 điểm rủi ro deterministic rồi giải thích cảnh báo bằng ngôn ngữ dễ hiểu.
 
-> **Trạng thái:** backend contract v2 và LangGraph vertical slice đã hoạt động. Dashboard, history
-> và admin UI vẫn cần nối vào API thật; WebSocket, PostgreSQL runtime, pgvector, Railway, screenshot
-> renderer, campaign detection và appeal thuộc final-product plan nhưng chưa phải capability runtime
-> hiện tại. Contract đích là `/api/v3`; `/api/v2` được giữ tương thích trong release v3 đầu tiên.
+> **Trạng thái:** Wave 1 platform backend đã có PostgreSQL/Alembic, durable job + transactional
+> outbox, v3 event replay/WebSocket ticket và OIDC/JWT. Dashboard, history và admin UI vẫn cần nối
+> end-to-end; screenshot, campaign detection và appeal thuộc các wave sau. `/api/v2` được giữ tương
+> thích trong release v3 đầu tiên.
 
 ## Sản phẩm giải quyết gì?
 
@@ -59,8 +59,8 @@ evidence hoặc tự sửa kết luận.
 | Fact-check | Google Fact Check + fact-check corpus | Provider có; pgvector thuộc final scope |
 | Backend | FastAPI `/api/v2` hiện tại → `/api/v3` final contract | v2 đã có; v3 triển khai theo Wave 0–3 |
 | Frontend | Next.js/React với warning banner | UI có, chưa nối end-to-end |
-| Realtime | Event polling → WebSocket với polling fallback | Polling contract có; WebSocket thuộc final scope |
-| Data | SQLite hiện tại → PostgreSQL/pgvector + Redis | Topology đích |
+| Realtime | Persisted event polling + ticketed WebSocket | Wave 1 backend đã có |
+| Data | PostgreSQL/pgvector source of truth + Redis delivery | Wave 1 core schema/job/outbox đã có |
 | Deploy | Docker → Railway | Docker có; Railway thuộc final scope |
 
 Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](docs/00-PRODUCT_REQUIREMENTS.md),
@@ -112,9 +112,16 @@ npm run dev
 Đặt `NEXT_PUBLIC_API_URL=http://localhost:8000` và `NEXT_PUBLIC_USE_MOCK_API=false` trong
 `frontend/.env.local` khi kiểm thử HTTP integration. Swagger UI: `http://localhost:8000/docs`.
 
-Docker Compose hiện khởi tạo backend, PostgreSQL/pgvector và Redis, nhưng backend vẫn persist vào
-SQLite qua `SECURITY_DATABASE_PATH`. Không dùng Compose hiện tại làm bằng chứng rằng migration
-PostgreSQL/Redis đã hoàn tất.
+Docker Compose chạy `alembic upgrade head` trước backend. Khi `DATABASE_URL` là PostgreSQL, API dùng
+PostgreSQL làm source of truth và worker tự reclaim lease hết hạn; Redis chỉ đánh thức/phân phối
+event. SQLite vẫn là default offline nếu cấu hình `DATABASE_URL=sqlite:///...`.
+
+Import dữ liệu development SQLite sau revision `0003_durable_jobs`:
+
+```bash
+python scripts/import_sqlite_to_postgres.py ./data/security.db \
+  --database-url "$DATABASE_URL" --encryption-key "$DATABASE_ENCRYPTION_KEY"
+```
 
 ## Kiểm thử
 
