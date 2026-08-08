@@ -306,15 +306,19 @@ def _build_planning_loop_node(
                 await set_step_status(step.step_id, InvestigationStepStatus.RUNNING)
 
             snapshot: WorkflowState = dict(working)
-            remaining_seconds = None
+            timeout_at = None
             if working.get("deadline_at") is not None:
                 remaining_seconds = max(0.0, (working["deadline_at"] - clock()).total_seconds())
+                timeout_at = asyncio.get_running_loop().time() + remaining_seconds
 
             async def run_with_deadline(step):
-                if remaining_seconds is None:
+                if timeout_at is None:
                     return await run_step(step, snapshot)
                 try:
-                    return await asyncio.wait_for(run_step(step, snapshot), timeout=remaining_seconds)
+                    # All selected tools share one absolute deadline. Time
+                    # spent scheduling sibling tasks cannot extend the budget.
+                    async with asyncio.timeout_at(timeout_at):
+                        return await run_step(step, snapshot)
                 except TimeoutError:
                     return {
                         "errors": list(snapshot.get("errors", []))

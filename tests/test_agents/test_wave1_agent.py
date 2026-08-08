@@ -70,6 +70,13 @@ class RecordingScanner:
         )
 
 
+class MixedSpeedScanner(RecordingScanner):
+    async def scan(self, normalized_url: str) -> UrlScanResult:
+        if "slow" in normalized_url:
+            await asyncio.sleep(1)
+        return await super().scan(normalized_url)
+
+
 class FixtureRedirectResolver:
     provider = "fixture-redirect"
 
@@ -165,6 +172,25 @@ async def test_deadline_cancels_inflight_provider_and_falls_back() -> None:
     assert step.status is InvestigationStepStatus.FAILED
     assert any(error.code == "PROVIDER_TIMEOUT" for error in result["errors"])
     assert result["verdict"] is Verdict.INCONCLUSIVE
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tools_share_deadline_without_discarding_fast_result() -> None:
+    scanner = MixedSpeedScanner()
+    graph = build_graph(url_scanner=scanner, blacklist=FakeBlacklistRepository())
+
+    result = await graph.ainvoke(
+        {
+            "message": "Kiểm tra https://fast.example/ và https://slow.example/",
+            "consent_to_scan_urls": True,
+            "deadline_at": datetime.now(UTC) + timedelta(milliseconds=30),
+        }
+    )
+
+    steps = {item.target: item for item in result["investigation_plan"] if item.tool is InvestigationTool.URL_SCANNER}
+    assert steps["https://fast.example/"].status is InvestigationStepStatus.COMPLETED
+    assert steps["https://slow.example/"].status is InvestigationStepStatus.FAILED
+    assert [item.normalized_url for item in result["url_findings"]] == ["https://fast.example/"]
 
 
 @pytest.mark.asyncio
