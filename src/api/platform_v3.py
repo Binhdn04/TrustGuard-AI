@@ -266,8 +266,7 @@ async def list_reports_v3(
     service: AnalysisServiceDependency,
     principal: PrincipalDependency,
 ) -> list[AnalysisReportResponseV3]:
-    await service.get_for(analysis_id, principal)
-    reports = await service.list_reports_by_analysis(analysis_id)
+    reports = await service.list_reports_by_analysis(analysis_id, principal)
     return [AnalysisReportResponseV3.model_validate(r.model_dump()) for r in reports]
 
 

@@ -308,7 +308,12 @@ class AnalysisService:
             return sorted(reports, key=lambda item: item.created_at, reverse=True)[offset : offset + limit]
         return await list_reports(limit=limit, offset=offset)
 
-    async def list_reports_by_analysis(self, analysis_id: UUID) -> list[AnalysisReportResponse]:
+    async def list_reports_by_analysis(
+        self,
+        analysis_id: UUID,
+        principal: Principal,
+    ) -> list[AnalysisReportResponse]:
+        await self.get_for(analysis_id, principal)
         list_reports_by_analysis = getattr(self._blacklist, "list_reports_by_analysis", None)
         if list_reports_by_analysis is None:
             async with self._lock:

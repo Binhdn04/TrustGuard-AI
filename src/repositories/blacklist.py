@@ -135,25 +135,18 @@ class SQLiteBlacklistRepository:
         columns = {row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()}
         if "analysis_id" not in columns:
             self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
-        review_columns = {
-            row[1] for row in self._connection.execute("PRAGMA table_info(review_queue_items)").fetchall()
-        }
-        for column, definition in (
-            ("decision", "TEXT"),
-            ("reviewer_id", "TEXT"),
-            ("reviewer_note", "TEXT"),
-            ("reviewed_at", "TEXT"),
-        ):
-            if column not in review_columns:
-                self._connection.execute(f"ALTER TABLE review_queue_items ADD COLUMN {column} {definition}")
         self._connection.commit()
         self._apply_migrations()
 
     def _apply_migrations(self) -> None:
         """Apply additive SQLite migrations to existing vertical-slice databases."""
         applied = {row[0] for row in self._connection.execute("SELECT version FROM schema_migrations")}
-        if 2 in applied:
-            return
+        if 2 not in applied:
+            self._apply_v2_migration()
+        if 3 not in applied:
+            self._apply_review_queue_migration()
+
+    def _apply_v2_migration(self) -> None:
         statements = (
             """CREATE TABLE IF NOT EXISTS analysis_steps (
                 analysis_id TEXT NOT NULL, step_id TEXT NOT NULL, step_json TEXT NOT NULL,
@@ -205,6 +198,28 @@ class SQLiteBlacklistRepository:
                 self._replace_analysis_artifacts(upgraded, [])
             self._connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _apply_review_queue_migration(self) -> None:
+        """Add review audit fields atomically to pre-review-queue SQLite databases."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._connection.execute("PRAGMA table_info(review_queue_items)").fetchall()}
+            for column, definition in (
+                ("decision", "TEXT"),
+                ("reviewer_id", "TEXT"),
+                ("reviewer_note", "TEXT"),
+                ("reviewed_at", "TEXT"),
+            ):
+                if column not in columns:
+                    self._connection.execute(f"ALTER TABLE review_queue_items ADD COLUMN {column} {definition}")
+            self._connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)",
                 (datetime.now(UTC).isoformat(),),
             )
             self._connection.commit()
@@ -390,8 +405,7 @@ class SQLiteBlacklistRepository:
         evidence_snapshot: list[Evidence],
     ) -> None:
         async with self._lock:
-            try:
-                self._connection.execute("BEGIN")
+            with self._connection:
                 self._connection.execute(
                     """
                     INSERT INTO analysis_reports(
@@ -416,10 +430,6 @@ class SQLiteBlacklistRepository:
                         created_at.isoformat(),
                     ),
                 )
-                self._connection.commit()
-            except Exception:
-                self._connection.rollback()
-                raise
 
     async def list_review_queue_items(self) -> list[ReviewQueueItem]:
         async with self._lock:
