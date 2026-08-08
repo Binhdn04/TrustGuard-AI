@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 from datetime import datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Query, WebSocket, status
+from fastapi.encoders import jsonable_encoder
+from starlette.websockets import WebSocketDisconnect
 
-from src.api.dependencies import AnalysisServiceDependency, PrincipalDependency
+from src.api.dependencies import (
+    AnalysisServiceDependency,
+    PrincipalDependency,
+    TicketManagerDependency,
+    get_analysis_service,
+    get_ticket_manager,
+)
 from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
@@ -56,6 +65,7 @@ router = APIRouter(tags=["contract-v3"])
 _COMMON_ERRORS = {
     403: {"model": ErrorEnvelope},
     404: {"model": ErrorEnvelope},
+    429: {"model": ErrorEnvelope},
     422: {"model": ErrorEnvelope},
 }
 _PLANNED_ERRORS = {**_COMMON_ERRORS, 501: {"model": ErrorEnvelope}}
@@ -151,6 +161,17 @@ async def analysis_events_v3(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> AnalysisEventPageV3:
     after_sequence = _decode_cursor(cursor)
+    return await _build_event_page(analysis_id, service, principal, after_sequence, cursor, limit)
+
+
+async def _build_event_page(
+    analysis_id: UUID,
+    service,
+    principal,
+    after_sequence: int,
+    cursor: str | None,
+    limit: int,
+) -> AnalysisEventPageV3:
     response = await service.get_for(analysis_id, principal)
     plan_by_id = {step.step_id: step for step in response.investigation_plan}
     # events_for() returns append order. Persisted records enforce that order
@@ -235,23 +256,74 @@ async def report_analysis_v3(
     "/ws-tickets",
     response_model=WebSocketTicketResponseV3,
     status_code=status.HTTP_201_CREATED,
-    responses=_PLANNED_ERRORS,
+    responses=_COMMON_ERRORS,
 )
 async def create_websocket_ticket_v3(
     request: WebSocketTicketRequestV3,
     service: AnalysisServiceDependency,
     principal: PrincipalDependency,
+    tickets: TicketManagerDependency,
 ) -> WebSocketTicketResponseV3:
     await service.get_for(request.analysis_id, principal)
-    _planned_feature()
+    ticket, expires_at = await tickets.issue(request.analysis_id, principal)
+    return WebSocketTicketResponseV3(
+        ticket=ticket,
+        analysis_id=request.analysis_id,
+        expires_at=expires_at,
+        stream_path=f"/api/v3/analyses/{request.analysis_id}/stream",
+    )
 
 
 @router.websocket("/analyses/{analysis_id}/stream")
-async def analysis_stream_v3(websocket: WebSocket, analysis_id: UUID, ticket: str = Query()) -> None:
-    # The route is reserved in Wave 0; ticket issue/consume and replay arrive with
-    # the durable event store in Wave 1.
-    del analysis_id, ticket
-    await websocket.close(code=1013, reason="WebSocket streaming is not implemented in Wave 0.")
+async def analysis_stream_v3(
+    websocket: WebSocket,
+    analysis_id: UUID,
+    ticket: str = Query(max_length=256),
+    cursor: str | None = Query(default=None, max_length=128),
+) -> None:
+    """Replay persisted events and then tail them without owning the job.
+
+    Closing this socket only ends delivery; analysis processing is deliberately
+    independent of the connection lifecycle.
+    """
+    ticket_factory = websocket.app.dependency_overrides.get(get_ticket_manager, get_ticket_manager)
+    tickets = ticket_factory()
+    if hasattr(tickets, "__await__"):
+        tickets = await tickets
+    principal = await tickets.consume(ticket, analysis_id)
+    if principal is None:
+        await websocket.close(code=4403, reason="Invalid or expired WebSocket ticket.")
+        return
+
+    service_factory = websocket.app.dependency_overrides.get(get_analysis_service, get_analysis_service)
+    service = service_factory()
+    if hasattr(service, "__await__"):
+        service = await service
+    try:
+        await service.get_for(analysis_id, principal)
+    except PlatformError:
+        await websocket.close(code=4403, reason="Analysis access denied.")
+        return
+
+    try:
+        after_sequence = _decode_cursor(cursor)
+    except PlatformError:
+        await websocket.close(code=4400, reason="Invalid event cursor.")
+        return
+    await websocket.accept()
+    checkpoint = cursor
+    try:
+        while True:
+            page = await _build_event_page(analysis_id, service, principal, after_sequence, checkpoint, 500)
+            for event in page.events:
+                await websocket.send_json(jsonable_encoder(event))
+                after_sequence = event.sequence
+            checkpoint = page.next_cursor
+            # Redis pub/sub may wake this loop in production; polling remains
+            # the correctness path because persisted events are authoritative.
+            await asyncio.sleep(0.25)
+    except (WebSocketDisconnect, RuntimeError):
+        return
 
 
 @router.post(
