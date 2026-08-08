@@ -1,3 +1,5 @@
+from src.agents.tools.cache import CachedValue, VersionedMemoryCache
+from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import (
     FakeBlacklistRepository,
@@ -39,10 +41,18 @@ from src.agents.tools.protocols import (
     UrlScanner,
 )
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
-from src.agents.tools.rdap import RdapDomainIntelligence
+from src.agents.tools.rdap import NormalizedRdapProvider, RdapDomainIntelligence
+from src.agents.tools.redirect import GuardedRedirectResolver
+from src.agents.tools.reputation import (
+    GoogleWebRiskProvider,
+    ProductionUrlReputationCascade,
+    VirusTotalUrlProvider,
+)
+from src.agents.tools.resilience import CircuitBreaker, CircuitOpenError, CircuitState, RetryPolicy
 
 __all__ = [
     "BlacklistRepository",
+    "CachedValue",
     "CacheMetadata",
     "CacheStatus",
     "ClaimRetriever",
@@ -75,7 +85,19 @@ __all__ = [
     "UsageMetadata",
     "GoogleFactCheckRetriever",
     "GoogleSafeBrowsingScanner",
+    "GoogleWebRiskProvider",
+    "VirusTotalUrlProvider",
+    "ProductionUrlReputationCascade",
+    "GuardedRedirectResolver",
     "RdapDomainIntelligence",
+    "NormalizedRdapProvider",
+    "VersionedMemoryCache",
+    "CircuitBreaker",
+    "CircuitOpenError",
+    "CircuitState",
+    "RetryPolicy",
+    "canonicalize_registrable_domain",
+    "canonicalize_url",
     "GuardedHttpClient",
     "SsrfGuard",
     "SsrfPolicy",

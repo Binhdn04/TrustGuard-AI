@@ -407,8 +407,10 @@ def build_openai_graph(**kwargs):
     settings = get_settings()
     llm = get_llm() if settings.openai_api_key else None
     owned_adapters = build_provider_adapters(settings)
+    graph_adapter_names = {"url_scanner", "domain_intelligence", "claim_retriever"}
     for name, adapter in owned_adapters.items():
-        kwargs.setdefault(name, adapter)
+        if name in graph_adapter_names:
+            kwargs.setdefault(name, adapter)
     graph = build_graph(llm=llm, **kwargs)
     graph._owned_adapters = tuple(owned_adapters.values())
     return graph
