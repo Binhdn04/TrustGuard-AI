@@ -119,15 +119,36 @@ def build_investigation_plan(state: WorkflowState) -> list[InvestigationStep]:
 
     proposed = state.get("llm_tool_plan", [])
     priorities = [item.get("tool") for item in proposed]
-    for required in ("url_scanner", "domain_intelligence", "claim_retriever"):
+    required_tools = ["url_scanner", "domain_intelligence", "claim_retriever"]
+    if state.get("enable_redirect_resolution"):
+        priorities = [item for item in priorities if item != "redirect_resolver"]
+        priorities.insert(0, "redirect_resolver")
+        required_tools.insert(0, "redirect_resolver")
+    for required in required_tools:
         if required not in priorities:
             priorities.append(required)
 
     consent = state.get("consent_to_scan_urls") is True
     blocked = set(state.get("blocked_urls", []))
     blacklisted = set(state.get("blacklisted_domains", []))
+    redirect_by_url: dict[str, InvestigationStep] = {}
     for tool_name in priorities:
-        if tool_name == "url_scanner":
+        if tool_name == "redirect_resolver" and state.get("enable_redirect_resolution"):
+            for url in state.get("normalized_urls", []):
+                dependency = blacklist_by_domain.get(domain_target(url) or "")
+                redirect_by_url[url] = ensure_step(
+                    plan,
+                    tool=InvestigationTool.REDIRECT_RESOLVER,
+                    target=url,
+                    reason_code="redirect_chain_needed",
+                    depends_on=[dependency.step_id] if dependency else [local.step_id],
+                    status=(
+                        InvestigationStepStatus.PENDING
+                        if consent and url not in blocked and domain_target(url) not in blacklisted
+                        else InvestigationStepStatus.SKIPPED
+                    ),
+                )
+        elif tool_name == "url_scanner":
             for url in state.get("normalized_urls", []):
                 dependency = blacklist_by_domain.get(domain_target(url) or "")
                 ensure_step(
@@ -135,7 +156,13 @@ def build_investigation_plan(state: WorkflowState) -> list[InvestigationStep]:
                     tool=InvestigationTool.URL_SCANNER,
                     target=url,
                     reason_code="url_reputation_needed",
-                    depends_on=[dependency.step_id] if dependency else [local.step_id],
+                    depends_on=(
+                        [redirect_by_url[url].step_id]
+                        if url in redirect_by_url
+                        else [dependency.step_id]
+                        if dependency
+                        else [local.step_id]
+                    ),
                     status=(
                         InvestigationStepStatus.PENDING
                         if consent and url not in blocked and domain_target(url) not in blacklisted

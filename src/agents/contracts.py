@@ -12,6 +12,7 @@ from src.models import (
     InvestigationTool,
     RecommendedAction,
     RiskLevel,
+    UrlScanResult,
     Verdict,
 )
 
@@ -38,6 +39,14 @@ class ProvisionalWarning(AgentContractModel):
     summary: str
     evidence_refs: list[str] = Field(min_length=1)
     is_provisional: Literal[True] = True
+
+
+class CachedReputationEvidence(AgentContractModel):
+    """Trusted cache input; callers must supply the persisted expiry and usage reference."""
+
+    finding: UrlScanResult
+    usage_ref: str
+    expires_at: datetime
 
 
 class LiveStepTransition(AgentContractModel):
@@ -110,6 +119,7 @@ __all__ = [
     "CampaignDetectionOutput",
     "CampaignFeatures",
     "CampaignHypothesis",
+    "CachedReputationEvidence",
     "ExplanationOutput",
     "LiveStepTransition",
     "ProvisionalWarning",
