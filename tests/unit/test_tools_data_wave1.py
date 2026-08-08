@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -8,18 +8,37 @@ import pytest
 from src.agents.tools import (
     CacheMetadata,
     GoogleWebRiskProvider,
+    GuardedHttpClient,
     GuardedRedirectResolver,
     NormalizedToolResult,
     ProductionUrlReputationCascade,
     SsrfGuard,
+    SsrfPolicy,
+    ToolCallError,
     ToolResultStatus,
     UrlReputationFinding,
     UsageMetadata,
+    VersionedMemoryCache,
     canonicalize_registrable_domain,
 )
 from src.models import Verdict
 
 NOW = datetime(2026, 8, 8, tzinfo=UTC)
+
+
+class _ChunkStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.yielded = 0
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.yielded += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def test_shared_canonicalizer_handles_subdomain_idna_and_rejects_non_domains() -> None:
@@ -29,6 +48,43 @@ def test_shared_canonicalizer_handles_subdomain_idna_and_rejects_non_domains() -
         canonicalize_registrable_domain("co.uk")
     with pytest.raises(ValueError):
         canonicalize_registrable_domain("127.0.0.1")
+
+
+@pytest.mark.asyncio
+async def test_guarded_client_stops_stream_without_content_length_at_byte_limit() -> None:
+    stream = _ChunkStream([b"1234", b"5678", b"must-not-be-read"])
+
+    async def resolver(_host: str, _port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    policy = SsrfPolicy(max_response_bytes=5)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        guarded = GuardedHttpClient(client, SsrfGuard(resolver=resolver, policy=policy))
+        with pytest.raises(ToolCallError, match="too large") as caught:
+            await guarded.get("https://public.example/")
+
+    assert getattr(caught.value, "error").code == "RESPONSE_TOO_LARGE"
+    assert stream.yielded == 2
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_versioned_cache_prunes_expired_entries_and_enforces_capacity() -> None:
+    current = NOW
+    cache: VersionedMemoryCache[str] = VersionedMemoryCache(max_entries=2, clock=lambda: current)
+    await cache.put("provider", "v1", "expired", "old", timedelta(seconds=1))
+    current += timedelta(seconds=2)
+    await cache.put("provider", "v1", "one", "1", timedelta(hours=1))
+    assert len(cache._items) == 1
+
+    await cache.put("provider", "v1", "two", "2", timedelta(hours=1))
+    await cache.put("provider", "v1", "three", "3", timedelta(hours=1))
+
+    assert len(cache._items) == 2
+    assert await cache.get("provider", "v1", "one") is None
 
 
 @pytest.mark.asyncio

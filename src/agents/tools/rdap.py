@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from uuid import uuid4
 
 import httpx
 
+from src.agents.tools.cache import VersionedMemoryCache
 from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST, PSL_VERSION, PublicSuffixList
 from src.agents.tools.errors import ToolCallError
 from src.agents.tools.models import (
@@ -63,8 +63,11 @@ class RdapDomainIntelligence:
         timeout: float = 5.0,
         positive_ttl: timedelta = timedelta(hours=24),
         not_found_ttl: timedelta = timedelta(hours=1),
+        max_cache_entries: int = 10_000,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        if max_cache_entries < 1:
+            raise ValueError("max_cache_entries must be positive")
         self._client = client
         self._owns_client = client is None
         self._guard = guard or SsrfGuard()
@@ -72,6 +75,7 @@ class RdapDomainIntelligence:
         self._timeout = timeout
         self._positive_ttl = positive_ttl
         self._not_found_ttl = not_found_ttl
+        self._max_cache_entries = max_cache_entries
         self._clock = clock
         self._cache: dict[tuple[str, str], _CacheItem] = {}
         self._bootstrap: tuple[dict[str, tuple[str, ...]], datetime] | None = None
@@ -130,12 +134,15 @@ class RdapDomainIntelligence:
         cached = self._cache.get(cache_key)
         if cached is not None and cached.expires_at > now:
             return cached.result.model_copy(deep=True)
+        if cached is not None:
+            self._cache.pop(cache_key, None)
 
         async with self._lock:
             now = self._clock()
             cached = self._cache.get(cache_key)
             if cached is not None and cached.expires_at > now:
                 return cached.result.model_copy(deep=True)
+            self._prune_cache(now)
             services = await self._bootstrap_services()
             tld = registrable.rsplit(".", 1)[-1]
             base_urls = services.get(tld)
@@ -149,7 +156,7 @@ class RdapDomainIntelligence:
                 response, _ = await client.get(endpoint)
                 if response.status_code == 404:
                     result = self._not_found(registrable, now)
-                    self._cache[cache_key] = _CacheItem(result, now + self._not_found_ttl)
+                    self._store_cache(cache_key, result, now + self._not_found_ttl)
                     return result.model_copy(deep=True)
                 if response.status_code == 429:
                     raise ToolCallError(
@@ -170,8 +177,23 @@ class RdapDomainIntelligence:
                 raise ToolCallError(
                     "domain_intelligence", "PROVIDER_ERROR", "RDAP provider failed", retryable=True
                 ) from exc
-            self._cache[cache_key] = _CacheItem(result, now + self._positive_ttl)
+            self._store_cache(cache_key, result, now + self._positive_ttl)
             return result.model_copy(deep=True)
+
+    def _prune_cache(self, now: datetime) -> None:
+        expired = [key for key, item in self._cache.items() if item.expires_at <= now]
+        for key in expired:
+            self._cache.pop(key, None)
+
+    def _store_cache(
+        self,
+        key: tuple[str, str],
+        result: DomainIntelligenceResult,
+        expires_at: datetime,
+    ) -> None:
+        self._cache[key] = _CacheItem(result, expires_at)
+        while len(self._cache) > self._max_cache_entries:
+            self._cache.pop(next(iter(self._cache)))
 
     def _not_found(self, domain: str, observed_at: datetime) -> DomainIntelligenceResult:
         return DomainIntelligenceResult(
@@ -255,13 +277,19 @@ class NormalizedRdapProvider:
         *,
         timeout: float = 5.0,
         cache_ttl: timedelta = timedelta(hours=24),
+        not_found_ttl: timedelta = timedelta(hours=1),
+        max_cache_entries: int = 10_000,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._adapter = adapter
         self._timeout = timeout
         self._cache_ttl = cache_ttl
+        self._not_found_ttl = not_found_ttl
         self._clock = clock
-        self._cache: dict[str, tuple[DomainIntelligenceResult, datetime, datetime]] = {}
+        self._cache: VersionedMemoryCache[DomainIntelligenceResult] = VersionedMemoryCache(
+            max_entries=max_cache_entries,
+            clock=clock,
+        )
 
     @property
     def provider(self) -> str:
@@ -287,19 +315,13 @@ class NormalizedRdapProvider:
                 attempts=0,
                 calls=0,
             )
-        now = self._clock()
-        cached = self._cache.get(registrable)
-        key_hash = hashlib.sha256(f"rdap\0{self.provider_version}\0{registrable}".encode()).hexdigest()
-        if cached is not None and cached[2] > now:
+        cached = await self._cache.get(self.provider, self.provider_version, registrable)
+        if cached is not None:
+            result = cached.value.model_copy(deep=True)
             return NormalizedToolResult(
-                status=ToolResultStatus.SUCCESS,
-                result=cached[0].model_copy(deep=True),
-                cache=CacheMetadata(
-                    status=CacheStatus.HIT,
-                    cache_key_hash=key_hash,
-                    stored_at=cached[1],
-                    expires_at=cached[2],
-                ),
+                status=(ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS),
+                result=result,
+                cache=cached.metadata,
                 usage=self._usage(started, attempts=0, calls=0),
             )
         try:
@@ -317,12 +339,18 @@ class NormalizedRdapProvider:
                 attempts=1,
                 calls=1,
             )
-        stored_at = self._clock()
-        self._cache[registrable] = (result.model_copy(deep=True), stored_at, stored_at + self._cache_ttl)
+        ttl = self._not_found_ttl if result.signals == ["not_found"] else self._cache_ttl
+        await self._cache.put(
+            self.provider,
+            self.provider_version,
+            registrable,
+            result.model_copy(deep=True),
+            ttl,
+        )
         return NormalizedToolResult(
             status=ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS,
             result=result,
-            cache=CacheMetadata(status=CacheStatus.MISS, cache_key_hash=key_hash),
+            cache=self._cache.miss_metadata(self.provider, self.provider_version, registrable),
             usage=self._usage(started, attempts=1, calls=1),
         )
 

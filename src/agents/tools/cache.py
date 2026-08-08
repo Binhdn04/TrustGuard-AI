@@ -26,9 +26,17 @@ class _Entry(Generic[T]):
 
 
 class VersionedMemoryCache(Generic[T]):
-    """Small async cache whose key always includes provider/schema version."""
+    """Bounded async cache whose key includes provider/schema version."""
 
-    def __init__(self, *, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+    def __init__(
+        self,
+        *,
+        max_entries: int = 10_000,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be positive")
+        self._max_entries = max_entries
         self._clock = clock
         self._items: dict[str, _Entry[T]] = {}
         self._lock = asyncio.Lock()
@@ -65,8 +73,17 @@ class VersionedMemoryCache(Generic[T]):
         key = self.key_hash(namespace, version, target)
         async with self._lock:
             self._items[key] = _Entry(value=value, stored_at=now, expires_at=now + ttl)
+            # Opportunistic sweeping prevents expired one-off targets from
+            # accumulating forever in a long-running worker.
+            expired = [item_key for item_key, item in self._items.items() if item.expires_at <= now]
+            for item_key in expired:
+                self._items.pop(item_key, None)
+            while len(self._items) > self._max_entries:
+                self._items.pop(next(iter(self._items)))
 
     def miss_metadata(self, namespace: str, version: str, target: str) -> CacheMetadata:
+        # Pure derivation from immutable string values; it neither reads nor
+        # mutates cache state and therefore needs no lock.
         return CacheMetadata(
             status=CacheStatus.MISS,
             cache_key_hash=self.key_hash(namespace, version, target),
