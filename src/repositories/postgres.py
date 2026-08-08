@@ -32,6 +32,7 @@ class DurableJob:
 @dataclass(frozen=True, slots=True)
 class OutboxMessage:
     id: UUID
+    aggregate_id: UUID
     event_type: str
     payload: dict[str, Any]
     idempotency_key: str
@@ -51,12 +52,12 @@ class PostgresPlatformRepository:
         self._encryption_key = encryption_key
         self._pool = pool
         self._owns_pool = pool is None
-        self._active_job: ContextVar[UUID | None] = ContextVar("active_analysis_job", default=None)
+        self._active_job: ContextVar[tuple[UUID, str] | None] = ContextVar("active_analysis_job", default=None)
 
     @contextmanager
-    def job_scope(self, job_id: UUID):
+    def job_scope(self, job_id: UUID, worker_id: str):
         """Bind terminal persistence to the currently claimed durable job."""
-        token = self._active_job.set(job_id)
+        token = self._active_job.set((job_id, worker_id))
         try:
             yield
         finally:
@@ -110,14 +111,6 @@ class PostgresPlatformRepository:
                 event.model_dump_json(),
                 event.occurred_at,
             )
-            active_job = self._active_job.get()
-            if response is not None and response.status.value in {"completed", "failed"} and active_job:
-                await connection.execute(
-                    """UPDATE analysis_jobs SET status='completed', lease_expires_at=NULL,
-                              worker_id=NULL, updated_at=$2 WHERE id=$1 AND status='running'""",
-                    active_job,
-                    event.occurred_at,
-                )
             await connection.execute(
                 """INSERT INTO analysis_jobs(
                        id, analysis_id, kind, status, max_attempts, available_at,
@@ -165,17 +158,26 @@ class PostgresPlatformRepository:
 
     async def list_analysis_responses(self, *, owner_id=None, case_status=None):
         pool = await self._get_pool()
-        clauses: list[str] = []
-        values: list[Any] = []
-        if owner_id is not None:
-            values.append(owner_id)
-            clauses.append(f"owner_id = ${len(values)}")
-        if case_status is not None:
-            values.append(case_status)
-            clauses.append(f"case_status = ${len(values)}")
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         async with pool.acquire() as connection:
-            rows = await connection.fetch(f"SELECT response FROM analyses {where} ORDER BY created_at DESC", *values)
+            if owner_id is not None and case_status is not None:
+                rows = await connection.fetch(
+                    """SELECT response FROM analyses
+                       WHERE owner_id=$1 AND case_status=$2 ORDER BY created_at DESC""",
+                    owner_id,
+                    case_status,
+                )
+            elif owner_id is not None:
+                rows = await connection.fetch(
+                    "SELECT response FROM analyses WHERE owner_id=$1 ORDER BY created_at DESC",
+                    owner_id,
+                )
+            elif case_status is not None:
+                rows = await connection.fetch(
+                    "SELECT response FROM analyses WHERE case_status=$1 ORDER BY created_at DESC",
+                    case_status,
+                )
+            else:
+                rows = await connection.fetch("SELECT response FROM analyses ORDER BY created_at DESC")
         return [AnalysisResponse.model_validate(_json_value(row["response"])) for row in rows]
 
     async def append_analysis_event(self, event: AnalysisEvent) -> None:
@@ -266,6 +268,19 @@ class PostgresPlatformRepository:
                 event.model_dump_json(),
                 event.occurred_at,
             )
+            active_job = self._active_job.get()
+            if response is not None and response.status.value in {"completed", "failed"} and active_job:
+                job_id, worker_id = active_job
+                updated = await connection.execute(
+                    """UPDATE analysis_jobs SET status='completed', lease_expires_at=NULL,
+                              worker_id=NULL, updated_at=$3
+                       WHERE id=$1 AND worker_id=$2 AND status='running'""",
+                    job_id,
+                    worker_id,
+                    event.occurred_at,
+                )
+                if updated != "UPDATE 1":
+                    raise LostJobLeaseError("job lease ownership was lost before terminal commit")
             await connection.execute(
                 """INSERT INTO outbox(
                        id, aggregate_type, aggregate_id, event_type, payload,
@@ -308,13 +323,15 @@ class PostgresPlatformRepository:
             )
         return DurableJob(row["id"], row["analysis_id"], row["kind"], attempt, row["max_attempts"], lease)
 
-    async def finish_job(self, job_id: UUID) -> None:
+    async def finish_job(self, job_id: UUID, worker_id: str) -> None:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             await connection.execute(
                 """UPDATE analysis_jobs SET status='completed', lease_expires_at=NULL,
-                          worker_id=NULL, updated_at=now() WHERE id=$1 AND status='running'""",
+                          worker_id=NULL, updated_at=now()
+                   WHERE id=$1 AND worker_id=$2 AND status='running'""",
                 job_id,
+                worker_id,
             )
 
     async def renew_job(self, job_id: UUID, worker_id: str, lease_seconds: int) -> bool:
@@ -329,26 +346,29 @@ class PostgresPlatformRepository:
             )
         return result == "UPDATE 1"
 
-    async def retry_job(self, job: DurableJob, failure_code: str) -> None:
+    async def retry_job(self, job: DurableJob, failure_code: str, worker_id: str) -> bool:
         pool = await self._get_pool()
         exhausted = job.attempt >= job.max_attempts
         delay = min(2**job.attempt, 60)
         async with pool.acquire() as connection:
-            await connection.execute(
+            updated = await connection.execute(
                 """UPDATE analysis_jobs SET status=$2, failure_code=$3,
                           available_at=now()+($4 * interval '1 second'), lease_expires_at=NULL,
-                          worker_id=NULL, updated_at=now() WHERE id=$1""",
+                          worker_id=NULL, updated_at=now()
+                   WHERE id=$1 AND worker_id=$5 AND status='running'""",
                 job.id,
                 "failed" if exhausted else "retry",
                 failure_code[:64],
                 delay,
+                worker_id,
             )
+        return updated == "UPDATE 1"
 
     async def claim_outbox(self, worker_id: str, limit: int = 100) -> list[OutboxMessage]:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
             rows = await connection.fetch(
-                """SELECT id,event_type,payload,idempotency_key FROM outbox
+                """SELECT id,aggregate_id,event_type,payload,idempotency_key FROM outbox
                    WHERE published_at IS NULL AND (lease_expires_at IS NULL OR lease_expires_at<=now())
                    ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $1""",
                 limit,
@@ -362,7 +382,13 @@ class PostgresPlatformRepository:
                     worker_id,
                 )
         return [
-            OutboxMessage(row["id"], row["event_type"], _json_value(row["payload"]), row["idempotency_key"])
+            OutboxMessage(
+                row["id"],
+                row["aggregate_id"],
+                row["event_type"],
+                _json_value(row["payload"]),
+                row["idempotency_key"],
+            )
             for row in rows
         ]
 
@@ -431,6 +457,10 @@ class PostgresPlatformRepository:
 
 def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
+
+
+class LostJobLeaseError(RuntimeError):
+    pass
 
 
 def _safe_url_or_text(value: str) -> str:

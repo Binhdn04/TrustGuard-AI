@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import binascii
+from contextlib import suppress
 from datetime import datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -15,6 +15,7 @@ from src.api.dependencies import (
     PrincipalDependency,
     TicketManagerDependency,
     get_analysis_service,
+    get_event_notifier,
     get_ticket_manager,
 )
 from src.core.auth import require_security_admin
@@ -312,18 +313,39 @@ async def analysis_stream_v3(
         return
     await websocket.accept()
     checkpoint = cursor
+    notifier_factory = websocket.app.dependency_overrides.get(get_event_notifier, get_event_notifier)
+    notifier = notifier_factory()
+    if hasattr(notifier, "__await__"):
+        notifier = await notifier
+    try:
+        listener = await notifier.listen(analysis_id)
+    except Exception:
+        await websocket.close(code=1013, reason="Realtime delivery is temporarily unavailable.")
+        return
     try:
         while True:
             page = await _build_event_page(analysis_id, service, principal, after_sequence, checkpoint, 500)
+            terminal = False
             for event in page.events:
                 await websocket.send_json(jsonable_encoder(event))
                 after_sequence = event.sequence
+                terminal = (
+                    terminal
+                    or event.event_type.value == "final_result"
+                    or (event.event_type.value == "analysis_status" and event.payload.status is AnalysisStatus.FAILED)
+                )
             checkpoint = page.next_cursor
-            # Redis pub/sub may wake this loop in production; polling remains
-            # the correctness path because persisted events are authoritative.
-            await asyncio.sleep(0.25)
+            if terminal:
+                await websocket.close(code=1000, reason="Analysis reached a terminal state.")
+                return
+            # Redis outbox delivery wakes production streams. The timeout is a
+            # low-frequency correctness fallback if a notification is missed.
+            await listener.wait(timeout_seconds=10)
     except (WebSocketDisconnect, RuntimeError):
         return
+    finally:
+        with suppress(Exception):
+            await listener.close()
 
 
 @router.post(

@@ -16,7 +16,13 @@ from src.repositories import PostgresPlatformRepository, SQLiteBlacklistReposito
 from src.services.analysis import AnalysisService
 from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher
 from src.services.processor import LangGraphAnalysisProcessor
-from src.services.realtime import MemoryTicketStore, RedisTicketStore, WebSocketTicketManager
+from src.services.realtime import (
+    MemoryEventNotifier,
+    MemoryTicketStore,
+    RedisEventNotifier,
+    RedisTicketStore,
+    WebSocketTicketManager,
+)
 
 _worker: DurableAnalysisWorker | None = None
 _worker_task = None
@@ -107,6 +113,25 @@ async def close_ticket_manager() -> None:
         manager = get_ticket_manager()
         get_ticket_manager.cache_clear()
         await manager.close()
+
+
+@lru_cache
+def get_event_notifier():
+    settings = get_settings()
+    if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+        try:
+            return RedisEventNotifier(settings.redis_url)
+        except (ImportError, RuntimeError):
+            if settings.app_env == "production":
+                raise
+    return MemoryEventNotifier()
+
+
+async def close_event_notifier() -> None:
+    if get_event_notifier.cache_info().currsize:
+        notifier = get_event_notifier()
+        get_event_notifier.cache_clear()
+        await notifier.close()
 
 
 async def get_principal(authorization: Annotated[str | None, Header()] = None) -> Principal:

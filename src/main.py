@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from src.api.dependencies import (
     close_analysis_service,
+    close_event_notifier,
     close_rate_limiter,
     close_ticket_manager,
     start_durable_worker,
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
         await stop_durable_worker()
         await close_analysis_service()
         await close_ticket_manager()
+        await close_event_notifier()
         await close_rate_limiter()
         print("Shutting down...")
 

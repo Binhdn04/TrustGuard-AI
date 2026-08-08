@@ -5,7 +5,7 @@ import logging
 import socket
 from uuid import uuid4
 
-from src.repositories.postgres import PostgresPlatformRepository
+from src.repositories.postgres import DurableJob, LostJobLeaseError, PostgresPlatformRepository
 from src.services.analysis import AnalysisService
 
 logger = logging.getLogger(__name__)
@@ -39,21 +39,45 @@ class DurableAnalysisWorker:
                     pass
                 continue
             try:
-                heartbeat = asyncio.create_task(self._renew_lease(job.id), name=f"lease-{job.id}")
-                try:
-                    with self._repository.job_scope(job.id):
-                        await self._service.process_durable_job(job.analysis_id)
-                finally:
-                    heartbeat.cancel()
-                    await asyncio.gather(heartbeat, return_exceptions=True)
+                await self._execute_claimed_job(job)
+            except LostJobLeaseError:
+                # Ownership is uncertain or already transferred. Never update
+                # the job or continue analysis under a stale lease.
+                logger.warning(
+                    "analysis_job_lease_lost",
+                    extra={"job_id": str(job.id), "failure_code": "LostJobLeaseError"},
+                )
             except Exception as exc:  # failure code is class only; no input/secret leakage
                 logger.warning(
                     "analysis_job_failed",
                     extra={"job_id": str(job.id), "failure_code": type(exc).__name__},
                 )
-                await self._repository.retry_job(job, type(exc).__name__)
+                await self._repository.retry_job(job, type(exc).__name__, self._worker_id)
             else:
-                await self._repository.finish_job(job.id)
+                # Terminal persistence normally completes the job atomically;
+                # this covers idempotent recovery of an already-terminal row.
+                await self._repository.finish_job(job.id, self._worker_id)
+
+    async def _execute_claimed_job(self, job: DurableJob) -> None:
+        with self._repository.job_scope(job.id, self._worker_id):
+            processing = asyncio.create_task(
+                self._service.process_durable_job(job.analysis_id), name=f"process-{job.id}"
+            )
+            heartbeat = asyncio.create_task(self._renew_lease(job.id), name=f"lease-{job.id}")
+            done, _ = await asyncio.wait({processing, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+            if processing in done:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+                await processing
+                return
+
+            processing.cancel()
+            await asyncio.gather(processing, return_exceptions=True)
+            try:
+                await heartbeat
+            except Exception as exc:
+                raise LostJobLeaseError("job lease renewal failed") from exc
+            raise LostJobLeaseError("job lease renewal stopped unexpectedly")
 
     async def _renew_lease(self, job_id) -> None:
         interval = max(self._lease_seconds / 3, 1)
@@ -61,7 +85,7 @@ class DurableAnalysisWorker:
             await asyncio.sleep(interval)
             renewed = await self._repository.renew_job(job_id, self._worker_id, self._lease_seconds)
             if not renewed:
-                raise RuntimeError("job lease ownership was lost")
+                raise LostJobLeaseError("job lease ownership was lost")
 
     def stop(self) -> None:
         self._stopping.set()
@@ -84,7 +108,7 @@ class OutboxPublisher:
         messages = await self._repository.claim_outbox(self._worker_id)
         for message in messages:
             # Payloads are already minimized at the transaction boundary.
-            await self._redis.publish("trustguard:events", str(message.id))
+            await self._redis.publish(f"trustguard:analysis:{message.aggregate_id}", message.event_type)
             await self._repository.mark_outbox_published(message.id)
         return len(messages)
 
