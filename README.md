@@ -17,7 +17,8 @@ tuyên bố đang lan truyền. TrustGuard AI cung cấp:
 - cảnh báo inline hai pha: cảnh báo sơ bộ nhanh từ rule/blacklist/cache, sau đó cập nhật kết luận khi
   tool và LLM hoàn tất;
 - risk score, verdict, evidence, limitation và khuyến nghị rõ ràng;
-- kiểm tra URL/domain qua adapter reputation và RDAP/WHOIS, cùng fact-check retriever cho claim;
+- kiểm tra URL/domain qua adapter reputation và RDAP/WHOIS; fact-check claim bằng Google ClaimReview
+  retrieval, PostgreSQL FTS/pgvector và Tavily/Jina fallback theo Source Registry;
 - memory blacklist có nguồn gốc và audit;
 - chuyển case nghiêm trọng cho Security Admin mà không trì hoãn cảnh báo cá nhân;
 - Human-in-the-loop bắt buộc trước khi chặn domain hoặc phát cảnh báo diện rộng.
@@ -34,9 +35,14 @@ flowchart LR
     B --> C[Rule + blacklist + reputation cache]
     C --> D[Cảnh báo sơ bộ]
     C --> E[URL/domain scan]
-    C --> F[Fact-check retrieval]
+    C --> F[Google Claim Search + FTS/pgvector]
+    F --> M{Evidence đủ?}
+    M -->|Có| O[FlashRank top 5]
+    M -->|Không| N[Tavily → Jina → chunk]
+    N --> O[FlashRank top 5]
+    O --> P[GPT-4o-mini evidence comparison]
     E --> G[Risk Engine]
-    F --> G
+    P --> G
     G --> H[Giải thích grounded]
     H --> I[Cập nhật cảnh báo inline]
     G --> J{Cần tác động diện rộng?}
@@ -44,19 +50,23 @@ flowchart LR
     K --> L[Blacklist / broad warning sau phê duyệt]
 ```
 
-LLM `gpt-4o-mini` hỗ trợ hiểu ngữ cảnh, đề xuất thứ tự tool, review coverage và viết giải thích.
-Score, verdict và action được quyết định từ structured evidence bằng Risk Engine; LLM không được tạo
-evidence hoặc tự sửa kết luận.
+LLM `gpt-4o-mini` hỗ trợ extract tối đa năm claim có temporal interval, so sánh evidence theo schema
+và viết giải thích. OpenAI `text-embedding-3-small` tạo vector; FlashRank multilingual là ngoại lệ
+local-model duy nhất và chỉ rerank. LLM comparison tạo stance có citation, còn score/verdict/action
+vẫn do Risk Engine deterministic quyết định.
 
 ## Công nghệ và kiến trúc
 
 | Lớp | Lựa chọn | Trạng thái |
 |---|---|---|
 | LLM | OpenAI `gpt-4o-mini` | Đã có, optional theo API key |
+| Embedding | OpenAI `text-embedding-3-small` qua `/v1/embeddings` | Thiết kế Wave 2; batch tối đa 5 claim |
 | Orchestration | LangGraph: extract → scan → verify → score → warn/escalate | Đã có vertical slice |
 | URL reputation | Google Web Risk primary, VirusTotal policy-gated secondary | Đã wire; fake adapters mặc định trong test |
 | Domain intelligence | RDAP-first/WHOIS; guarded redirect | Đã wire lazy sau consent |
-| Fact-check | Google Fact Check + fact-check corpus | Provider có; pgvector thuộc final scope |
+| Fact-check retrieval | Google Fact Check Claim Search + PostgreSQL FTS/pgvector | Google chỉ index ClaimReview có sẵn, không tự verify |
+| Web fallback | Tavily Search → Jina Reader → LangChain splitter | Chỉ chạy khi evidence hiện có chưa đủ |
+| Rerank | FlashRank `ms-marco-MultiBERT-L-12` | Local CPU exception; multilingual, top 5 |
 | Backend | FastAPI `/api/v3` + `/api/v2` compatibility | Product path v3 đang hoạt động |
 | Frontend | Next.js/React với warning banner | Dashboard/history/admin gọi API thật |
 | Realtime | Persisted event polling + ticketed WebSocket | Wave 1 backend đã có |
@@ -79,7 +89,8 @@ Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](d
 
 ### Advanced intelligence
 
-- Fact-check bằng corpus nguồn tin cậy trong pgvector.
+- Fact-check optimized retrieval: Google ClaimReview + FTS/pgvector trước; chỉ fallback Tavily/Jina
+  khi chưa đủ evidence, rồi FlashRank và comparison có citation.
 - Screenshot renderer cô lập, không cookie/đăng nhập và chỉ chạy sau consent khi scan tĩnh chưa đủ.
 - Phát hiện chiến dịch lan truyền theo cụm và dashboard xu hướng tin giả.
 - Học có kiểm duyệt từ báo cáo người dùng; feedback không tự động đổi model/score.

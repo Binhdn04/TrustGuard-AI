@@ -4,12 +4,13 @@ import asyncio
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.agents.fact_check import ExtractedClaim
 from src.agents.state import WorkflowState
 
 LLM_MODEL = "gpt-4o-mini"
@@ -19,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 class _StrictOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ExtractedClaimDraft(_StrictOutput):
+    text: str = Field(min_length=1, max_length=1000)
+    language: str = Field(default="vi", min_length=2, max_length=35)
+    is_temporal: bool = False
+    claim_date_start: date | None = None
+    claim_date_end: date | None = None
 
 
 class MessageAnalysis(_StrictOutput):
@@ -35,7 +44,8 @@ class MessageAnalysis(_StrictOutput):
     ]
     suspected_scam_intent: bool
     scam_indicators: list[str] = Field(max_length=8)
-    claims: list[str] = Field(max_length=5)
+    # Strings remain accepted for frozen v2 structured-output fixtures.
+    claims: list[str | ExtractedClaimDraft] = Field(max_length=5)
 
 
 class PlannedTool(_StrictOutput):
@@ -158,7 +168,8 @@ def build_analyze_message_node(llm: Any | None):
                     content=(
                         "Bạn phân tích tin nhắn mà người dùng dán để kiểm tra lừa đảo. "
                         "Đánh giá ý đồ có khả năng thuộc về NGƯỜI GỬI tin nhắn, không quy kết người dùng. "
-                        "Chỉ trích xuất claim có trong input; không thêm sự kiện hoặc bằng chứng. "
+                        "Chỉ trích xuất tối đa năm claim có trong input; không thêm sự kiện hoặc bằng chứng. "
+                        "Mỗi claim object gồm text, language, is_temporal và claim_date_start/end ISO nếu có. "
                         "Cảm xúc là kỹ thuật tác động nổi bật trong nội dung. Trả structured output."
                     )
                 ),
@@ -178,12 +189,29 @@ def build_analyze_message_node(llm: Any | None):
             return _failure_update(state, "phân tích ngữ nghĩa")
 
         claims = list(state.get("claims", []))
-        for claim in result.claims:
+        extracted = list(state.get("extracted_claims", []))
+        by_text = {item.normalized_text: item for item in extracted}
+        for draft in result.claims:
+            claim = draft if isinstance(draft, str) else draft.text
             cleaned = claim.strip()
             if cleaned and cleaned not in claims and _claim_is_grounded(cleaned, state.get("message", "")):
                 claims.append(cleaned)
+            if cleaned and _claim_is_grounded(cleaned, state.get("message", "")):
+                metadata = draft if isinstance(draft, ExtractedClaimDraft) else None
+                try:
+                    item = ExtractedClaim.from_text(
+                        cleaned,
+                        language=metadata.language if metadata else "vi",
+                        claim_date_start=metadata.claim_date_start if metadata else None,
+                        claim_date_end=metadata.claim_date_end if metadata else None,
+                        is_temporal=metadata.is_temporal if metadata else None,
+                    )
+                    by_text[item.normalized_text] = item
+                except ValueError:
+                    continue
         return {
             "claims": claims[:5],
+            "extracted_claims": list(by_text.values())[:5],
             "llm_context": result.context,
             "llm_emotion": result.dominant_emotion,
             "llm_sender_intent": result.sender_intent,
@@ -371,6 +399,7 @@ __all__ = [
     "AssessmentReview",
     "GroundedReason",
     "GroundedResponse",
+    "ExtractedClaimDraft",
     "LLM_MODEL",
     "MessageAnalysis",
     "PlannedTool",

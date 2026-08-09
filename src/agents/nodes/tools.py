@@ -8,11 +8,12 @@ from src.agents.tools.protocols import (
     BlacklistRepository,
     ClaimRetriever,
     DomainIntelligence,
+    FactCheckCorpus,
     RedirectResolver,
     UrlReputationCascade,
     UrlScanner,
 )
-from src.models import Evidence, EvidenceType, ToolError
+from src.models import ClaimEvidence, ClaimStance, Evidence, EvidenceType, ToolError
 
 
 def _error_from_exception(tool: str, exc: Exception) -> ToolError:
@@ -269,7 +270,29 @@ def _claim_type(finding: str) -> EvidenceType:
     return EvidenceType.OFFICIAL_SOURCE
 
 
-def build_verify_claims_node(retriever: ClaimRetriever | None):
+def _corpus_claim_evidence(match) -> ClaimEvidence:
+    """Project a trusted corpus record without deriving stance from similarity."""
+    record = match.record
+    return ClaimEvidence(
+        source=f"{record.publisher} ({record.record_id}@{record.record_version})",
+        title=f"Fact-check corpus record {record.record_id}",
+        url=record.source_url,
+        finding=record.claim,
+        relevance=match.similarity,
+        stance=record.stance,
+        observed_at=record.updated_at,
+    )
+
+
+def build_verify_claims_node(
+    retriever: ClaimRetriever | None,
+    corpus: FactCheckCorpus | None = None,
+    *,
+    corpus_similarity_threshold: float = 0.6,
+):
+    if not 0 <= corpus_similarity_threshold <= 1:
+        raise ValueError("corpus_similarity_threshold must be between 0 and 1")
+
     async def verify_claims(state: WorkflowState) -> dict:
         target = state["tool_target"]
         used, attempts = _advance(state, "verify_claim", target)
@@ -277,7 +300,53 @@ def build_verify_claims_node(retriever: ClaimRetriever | None):
         limitations = list(state.get("limitations", []))
         findings = list(state.get("claim_findings", []))
         evidence = list(state.get("evidence", []))
-        if retriever is None:
+        usage_update: dict = {}
+        corpus_results: list[ClaimEvidence] = []
+        corpus_version: str | None = None
+        if corpus is not None:
+            try:
+                envelope = await corpus.search(target, limit=5)
+                usage_update = _usage_update(state, envelope)
+                if envelope.status in {ToolResultStatus.SUCCESS, ToolResultStatus.INCONCLUSIVE}:
+                    corpus_version = envelope.result.corpus_version
+                    corpus_results = [
+                        _corpus_claim_evidence(match)
+                        for match in envelope.result.matches
+                        if match.similarity >= corpus_similarity_threshold
+                    ]
+                else:
+                    error = envelope.error
+                    errors.append(
+                        ToolError(
+                            tool="fact_check_corpus",
+                            code=error.code.value if error else "TOOL_ERROR",
+                            message=error.message if error else "Fact-check corpus lookup failed",
+                            retryable=error.retryable if error else False,
+                        )
+                    )
+            except Exception as exc:
+                errors.append(_error_from_exception("fact_check_corpus", exc))
+
+        provider_results: list[ClaimEvidence] = []
+        if retriever is not None:
+            try:
+                provider_results = await retriever.search(target, limit=5)
+            except Exception as exc:
+                error = _error_from_exception("claim_retriever", exc)
+                errors.append(error)
+                limitations.append(f"Nguồn fact-check không trả được kết quả ({error.code}).")
+
+        results = corpus_results + provider_results
+        # Deduplicate citations, preferring the trusted corpus projection.
+        unique_results: list[ClaimEvidence] = []
+        seen: set[tuple[str | None, str, ClaimStance]] = set()
+        for item in results:
+            key = (item.url, item.finding.casefold(), item.stance)
+            if key not in seen:
+                seen.add(key)
+                unique_results.append(item)
+
+        if corpus is None and retriever is None:
             errors.append(
                 ToolError(
                     tool="claim_retriever",
@@ -288,26 +357,25 @@ def build_verify_claims_node(retriever: ClaimRetriever | None):
             )
             limitations.append("Không có nguồn fact-check được cấu hình để xác minh claim.")
         else:
-            try:
-                results = await retriever.search(target, limit=5)
-                findings.extend(results)
-                for item in results:
-                    evidence.append(
-                        Evidence(
-                            type=EvidenceType.FACT_CHECK,
-                            source=item.source,
-                            title=item.title,
-                            url=item.url,
-                            finding=item.finding,
-                            observed_at=item.observed_at,
-                        )
+            findings.extend(unique_results)
+            for item in unique_results:
+                evidence.append(
+                    Evidence(
+                        type=EvidenceType.FACT_CHECK,
+                        source=item.source,
+                        title=item.title,
+                        url=item.url,
+                        finding=item.finding,
+                        observed_at=item.observed_at,
                     )
-                if not results:
-                    limitations.append("Không tìm thấy nguồn đủ liên quan để xác minh claim.")
-            except Exception as exc:
-                error = _error_from_exception("claim_retriever", exc)
-                errors.append(error)
-                limitations.append(f"Nguồn fact-check không trả được kết quả ({error.code}).")
+                )
+            relevant_stances = {item.stance for item in unique_results if item.relevance >= corpus_similarity_threshold}
+            decisive = relevant_stances - {ClaimStance.UNRATED}
+            if ClaimStance.SUPPORTS in decisive and ClaimStance.REFUTES in decisive:
+                limitations.append("Các nguồn fact-check đáng tin cậy đang mâu thuẫn; kết quả claim chưa kết luận.")
+            if not unique_results:
+                suffix = f" trong corpus {corpus_version}" if corpus_version else ""
+                limitations.append(f"Không tìm thấy nguồn đủ liên quan để xác minh claim{suffix}.")
         return {
             "tool_calls_used": used,
             "tool_attempts": attempts,
@@ -315,6 +383,7 @@ def build_verify_claims_node(retriever: ClaimRetriever | None):
             "limitations": list(dict.fromkeys(limitations)),
             "claim_findings": findings,
             "evidence": evidence,
+            **usage_update,
         }
 
     return verify_claims
