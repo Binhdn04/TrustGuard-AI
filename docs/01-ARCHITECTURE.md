@@ -1,6 +1,6 @@
 # Architecture — P-068
 
-**Snapshot:** 2026-08-08
+**Snapshot:** 2026-08-09
 
 **Phạm vi:** Kiến trúc đang tồn tại trong repository sau Wave 1; các capability chưa hoàn tất được ghi rõ ở bảng trạng thái.
 
@@ -107,6 +107,10 @@ Các structured output nội bộ:
 - `AssessmentReview`: coverage, evidence indexes và missing information;
 - `GroundedResponse`: summary, reasons gắn evidence index và limitations.
 
+Wave 2 mở rộng `MessageAnalysis.claims` thành tối đa năm claim có language/temporal metadata và thêm
+`ClaimAssessment` cho comparison stance/citation. Đây là private workflow state, không thêm field
+vào public `AnalysisResponse`.
+
 Invalid output/call failure được ghi vào private `llm_errors` và limitation. Public response không
 chứa prompt, model trace hoặc chain-of-thought. Config runtime hiện lấy từ `Settings`; default thực
 tế là model `gpt-4o-mini`, temperature `0.7`, timeout 30 giây, `max_retries=2`.
@@ -118,7 +122,12 @@ tế là model `gpt-4o-mini`, temperature `0.7`, timeout 30 giây, `max_retries=
 | Local URL rules | `nodes/rules.py` | Có |
 | Approved blacklist | `SQLiteBlacklistRepository` | Có ở SQLite; PostgreSQL lifecycle chưa implement |
 | URL reputation | `ProductionUrlReputationCascade` (Web Risk + optional VirusTotal) | Chỉ khi có Web Risk key; fake adapters trong test |
-| Fact-check | `GoogleFactCheckRetriever` | Chỉ khi có API key |
+| Indexed ClaimReview | `GoogleClaimSearch` — Google Fact Check Tools `claims.search` | Chỉ khi có API key; retrieval, không phải verifier |
+| External embedding | `EmbeddingProvider` target: OpenAI `text-embedding-3-small` | Wave 2; không có local-model fallback |
+| Existing corpus | `HybridCorpusRetriever` — PostgreSQL FTS + pgvector/RRF | Wave 2; Source Registry + temporal filter bắt buộc |
+| Web discovery | `TavilySearch` | Chỉ sau sufficiency miss; domain filter từ Source Registry |
+| Web extraction | `JinaReader` | Tối đa 5 canonical URL đã qua policy |
+| Chunking/rerank | `langchain-text-splitters` + FlashRank `ms-marco-MultiBERT-L-12` | Local CPU; top 5; không sinh verdict |
 | Domain intelligence | Lazy `RdapDomainIntelligence` | Inject sẵn; chỉ tạo request sau consent/policy |
 | Redirect resolver | `GuardedRedirectResolver` | Inject sẵn; revalidate từng hop |
 | Offline tools | Fake URL/claim/domain/blacklist adapters | Test only |
@@ -203,8 +212,11 @@ flowchart TB
     Worker --> Local[Rules + blacklist + reputation cache]
     Worker --> Reputation[GSB / Web Risk / VirusTotal]
     Worker --> Domain[RDAP-first WHOIS + redirect resolver]
-    Worker --> Facts[Fact-check provider + trusted corpus]
-    Worker --> LLM[GPT-4o-mini]
+    Worker --> Facts[Google Claim Search + PostgreSQL hybrid]
+    Facts -. insufficient .-> WebEvidence[Tavily + Jina Reader]
+    Worker --> Embed[text-embedding-3-small API]
+    Worker --> Rerank[langchain splitters + FlashRank CPU]
+    Worker --> LLM[GPT-4o-mini extraction/comparison]
     Worker -. advanced + consent .-> Screenshot[Sandbox screenshot renderer]
 ```
 
@@ -260,18 +272,112 @@ thể trả admin hypothesis với approval flags fail-closed; clustering thật
 - Screenshot renderer là advanced fallback: sandbox không cookie, credential, login hay persistent
   storage; chặn script/download khi policy yêu cầu và áp dụng SSRF, hop, size, time budget.
 
-### 9.3 Fact-check, campaign và feedback
+### 9.3 Fact-check: retrieve first, search web only when needed
 
-Fact-check provider là đường cơ bản. Pha nâng cao ingest nguồn đã phê duyệt vào PostgreSQL/pgvector,
-lưu source URL, publisher, publication/update time, language, claim, stance và embedding version.
-Retrieval phải lọc nguồn hợp lệ và trả citation; similarity một mình không được coi là verdict.
+`gpt-4o-mini` dùng Structured Outputs để extract tối đa năm claim và so sánh evidence;
+`text-embedding-3-small` tạo một embeddings batch cho semantic retrieval. FlashRank là ngoại lệ local:
+reranker CPU chỉ sắp hạng candidate, không xác minh claim và không ghi risk score. Tham chiếu:
+[GPT-4o mini](https://developers.openai.com/api/docs/models/gpt-4o-mini),
+[text-embedding-3-small](https://developers.openai.com/api/docs/models/text-embedding-3-small).
+
+```mermaid
+flowchart TD
+    A[User message] --> B[FastAPI]
+    B --> C[LangGraph]
+    C --> D[GPT-4o-mini claim extraction]
+    D -->|max 5 + temporal range| E[Redact + normalize + one embedding batch]
+    E -->|bounded fan-out: 3| F[Per-claim retrieval]
+    F --> G[Google Fact Check claims.search]
+    F --> H[PostgreSQL FTS top 20]
+    F --> I[pgvector top 20]
+    H --> J[RRF k=60 + dedupe]
+    I --> J
+    G --> K[Source + temporal policy]
+    J --> K
+    K --> L{Evidence sufficient?}
+    L -->|Yes| R[Candidate set]
+    L -->|No| M[Tavily Search max 10]
+    M --> N[Source Registry + canonical URL dedupe]
+    N -->|max 5 URLs| O[Jina Reader]
+    O --> P[RecursiveCharacterTextSplitter]
+    P --> R
+    R --> S[FlashRank multilingual CPU]
+    S -->|top 5| T[GPT-4o-mini evidence comparison]
+    T --> U[supports / refutes / mixed / inconclusive + citations]
+    U --> V[Persist cache + provenance]
+    V --> W[Deterministic Risk Engine]
+```
+
+#### Google retrieval semantics và corpus hybrid
+
+Google Fact Check Tools `claims.search` chỉ tìm các claim đã được fact-check và trả claim cùng
+`ClaimReview` liên quan; đây là retrieval/index layer, không phải Google tự xác minh hay cung cấp một
+“Google verdict”. Publisher/reviewer gốc quyết định provenance và source tier. Xem
+[Google Fact Check Tools API](https://developers.google.com/fact-check/tools/api/reference/rest/v1alpha1/claims/search).
+
+Mỗi `ExtractedClaim` gồm `claim_id`, text chuẩn hóa, language, `is_temporal`, `claim_date_start` và
+`claim_date_end`; từ “hiện nay/hôm nay” neo vào `analysis.created_at`. Toàn bộ claim được embed một
+lần, rồi tối đa ba claim chạy song song. Với mỗi claim, Google Claim Search và Existing Corpus chạy
+song song. Corpus lấy top 20 từ FTS cấu hình `simple` và top 20 từ pgvector cosine, lọc đúng
+model/version/dimensions, source active và temporal eligibility, dedupe theo record/version rồi hợp
+nhất bằng reciprocal-rank fusion `k=60`. Embedding timeout/429 chỉ bỏ nhánh vector; Google và FTS vẫn
+chạy, không load embedding model local.
+
+#### Source Trust Policy và temporal eligibility
+
+Source Registry là policy versioned, audited, có origin/pattern, tier, source type, active,
+allowed operations, effective interval và reviewer. `*.gov.vn` mặc định Tier A theo suffix match
+đúng ranh giới hostname; explicit deny/disable luôn thắng. Policy:
+
+| Tier | Nguồn | Quyền dùng |
+|---|---|---|
+| A | `*.gov.vn` | Có thể hỗ trợ kết luận nếu temporal-compatible |
+| B | Approved newspapers, trusted fact-checkers | Có thể hỗ trợ kết luận |
+| C | Other reputable sources | Chỉ corroboration, không bao giờ đủ một mình |
+| Untrusted | Unknown blogs, forums, social media | Discovery only; loại trước comparator |
+
+Evidence đủ khi có **một Tier A temporal-compatible**, **một trusted ClaimReview Tier B**, hoặc
+**hai Tier B độc lập**. Independence tính theo publisher/organization, không theo URL. Tier C không
+thể làm gate thành công.
+
+Temporal claim bắt buộc xét `claim_date_start/end`, `published_at`, `effective_from/to` và
+`retrieved_at`. Effective interval phủ claim date là tín hiệu mạnh nhất. Nếu nguồn không công bố
+effective interval, `updated_at`/`published_at` được dùng làm proxy với penalty và limitation; nếu
+không có bất kỳ ngày nào thì loại khỏi temporal comparison. Semantic relevance không được override
+temporal incompatibility.
+
+#### Conditional web retrieval, chunking và rerank
+
+Chỉ evidence-sufficiency miss mới gọi Tavily, giúp giảm cost/latency/token và phụ thuộc external API.
+Request dùng `max_results=10`, không lấy generated answer/raw content, truyền `include_domains` từ
+Source Registry; temporal query dùng news/date range tương ứng. Sau policy check và canonical URL
+dedupe, tối đa năm URL đi qua Jina Reader để lấy cleaned text/Markdown. Xem
+[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) và
+[Jina Reader](https://jina.ai/reader/).
+
+`RecursiveCharacterTextSplitter` dùng `chunk_size=1200`, `chunk_overlap=150` và separator ưu tiên
+paragraph/sentence; mỗi chunk giữ source/version/date/content hash. FlashRank singleton chạy CPU với
+`ms-marco-MultiBERT-L-12`, `max_length=512`, chọn top 5 trên toàn bộ candidate. Model phải được bundle
+hoặc cache trong image, không download lúc request. Xem
+[LangChain text splitters](https://docs.langchain.com/oss/python/integrations/splitters/recursive_text_splitter)
+và [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank).
+
+Comparator chỉ nhận top 5 evidence đủ policy, trả `supports | refutes | mixed | inconclusive`, opaque
+citation refs, contradiction refs và limitations; citation ngoài input/sai schema/timeout thành
+`inconclusive`. Evidence web mới được canonicalize, dedupe theo URL + cleaned-content hash + source
+version rồi cache ngay. Chỉ Tier A/B đã validate/review mới được promote vào trusted corpus; Tier C
+không auto-promote. Runtime stance không bao giờ tự trở thành trusted record. Các boundary nội bộ là
+`GoogleClaimSearch`, `HybridCorpusRetriever`, `EvidenceSufficiencyGate`, `TavilySearch`, `JinaReader`,
+`Chunker`, `Reranker`, `SourceRegistry` và `EvidenceComparator`.
+
+### 9.4 Campaign và feedback
 
 Campaign detection gom cụm theo registrable domain, redirect target, claim embedding và time window,
 chỉ tạo hypothesis cho admin. Không lưu/suy diễn social graph hay danh tính sender. User report và
 appeal đi vào review/evaluation set; mọi thay đổi rule/threshold/model được version, đánh giá offline
 và phê duyệt, không online-learn trực tiếp.
 
-### 9.4 Privacy và approval boundaries
+### 9.5 Privacy và approval boundaries
 
 - Client/user chủ động chọn nội dung; backend không đọc history nền hoặc phá E2E encryption.
 - URL/domain lookup và screenshot cần consent. LLM/fact-check chỉ nhận claim/đoạn trích tối thiểu đã
@@ -280,7 +386,7 @@ và phê duyệt, không online-learn trực tiếp.
   `publish_broad_warning` cần Security Admin review, evidence snapshot, note và audit transaction.
 - Appeal có thể đảo quyết định/disable blacklist qua một quyết định mới; không xóa audit cũ.
 
-### 9.5 Capability status
+### 9.6 Capability status
 
 | Capability | Hiện tại | Đích |
 |---|---|---|
@@ -290,6 +396,7 @@ và phê duyệt, không online-learn trực tiếp.
 | Jobs | Durable worker/outbox, lease/retry/idempotency | Mở rộng chaos/recovery tests |
 | URL reputation | Web Risk primary, VirusTotal policy-gated secondary; fake default test | Provider operations hardening |
 | Domain/redirect | Lazy RDAP sau consent + guarded redirect resolver | Mở rộng provider coverage |
+| Fact-check | Google Claim Search adapter + normalized corpus boundary | Google + FTS/pgvector → sufficiency gate → conditional Tavily/Jina → FlashRank → comparison/cache |
 | Screenshot | Chưa có | Sandboxed renderer trong final release |
 | Feedback | User report queue + audited queue decision trên SQLite/PostgreSQL; blacklist decision chỉ SQLite | PostgreSQL blacklist lifecycle, appeal, calibrated learning, campaign dashboard |
 | Deploy | Compose/PostgreSQL/Redis/Alembic path đã có | Hosted rollout với health, migration và secrets |

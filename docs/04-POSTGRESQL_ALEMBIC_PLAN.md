@@ -1,6 +1,6 @@
 # PostgreSQL and Alembic Plan — Contract v3
 
-**Status:** frozen for Wave 0  
+**Status:** Wave 2 fact-check extension frozen
 **Owner:** Hải — API/Platform  
 **Source of truth:** PostgreSQL 16+ with `pgvector`; Redis is never authoritative.
 
@@ -38,18 +38,26 @@ add columns or indexes, but must not reinterpret an existing column in place.
 | `review_decisions` | `id` PK, nullable analysis/appeal/action IDs, reviewer, decision/outcome, action, immutable evidence snapshot, note, timestamp, predecessor decision ID | resource FKs, `(decided_at desc)` |
 | `admin_actions` | `id` PK, nullable analysis/campaign IDs, reviewed action, canonical target, status, evidence snapshot, proposed/reviewed/executed times, `version`; non-`none` actions cannot execute without an approved decision FK | `(status, proposed_at)`, target/action lookup |
 | `blacklist_entries` | `id` PK, canonical registrable domain unique, active flag, enabling decision FK, nullable disabling decision FK, timestamps, `version`; provenance decisions are immutable | active partial index on canonical domain, `(updated_at desc)` |
-| `fact_check_sources` | `id` PK, publisher, allowlisted origin, active flag, policy version, timestamps | unique normalized origin |
-| `fact_check_records` | `id` PK, source FK, source URL, publisher, normalized claim, stance, language, published/updated/ingested times, content hash, record version, ingestion provenance | unique `(source_id, content_hash, record_version)`, language/time |
-| `fact_check_embeddings` | `(record_id, embedding_version)` PK, model, dimensions, `vector(1536)`, embedded time | HNSW cosine index plus `(embedding_version)` filter |
+| `fact_check_sources` | Source Registry: `id` PK, publisher/organization, normalized origin or hostname pattern, tier constrained to `A/B/C/UNTRUSTED`, source type, active, explicit deny, allowed operations, policy version, policy effective interval, default freshness, reviewer/timestamps | unique `(normalized_pattern, policy_version)`, active tier/origin, effective interval |
+| `fact_check_records` | `id` PK, source FK, source URL, publisher, normalized claim, source/reviewer stance, language, `claim_date_start/end`, `published_at`, `updated_at`, `effective_from/to`, `retrieved_at`, ingested time, nullable `fresh_until`, temporal proxy/penalty, content hash, record version, ingestion provenance, policy version, generated `search_vector` using `simple` config, promotion status/reviewer | unique `(source_id, content_hash, record_version)`, GIN `search_vector`, language/temporal/freshness/promotion |
+| `fact_check_embeddings` | `(record_id, embedding_version)` PK, model, model version, dimensions fixed at 1536, `vector(1536)`, embedded time | HNSW cosine index plus `(model, model_version, dimensions, embedding_version)` filter |
+| `fact_check_results` | `id` PK, optional analysis ID, opaque claim hash, language, `is_temporal`, `claim_date_start/end`, stance, evidence/contradiction refs, limitations, comparator model/prompt version, source-policy version, `fresh_until`, embedding status, created/updated times; runtime LLM result is never a trusted corpus record | `(claim_hash, created_at desc)`, claim dates, `(fresh_until)`, pending-embedding partial index |
+| `fact_check_result_embeddings` | `(result_id, embedding_version)` PK, model, model version, dimensions fixed at 1536, `vector(1536)`, embedded time | HNSW cosine index plus `(model, model_version, dimensions, embedding_version)` filter |
+| `fact_check_evidence_snapshots` | `id` PK, result FK, opaque evidence ref unique per result, source/version/tier/policy version, canonical safe URL, cleaned minimized content, published/updated/effective/retrieved times, temporal compatibility/proxy penalty, content hash, validation/promotion state; no raw HTML/provider body | `(result_id)`, `(source, retrieved_at)`, `(canonical_url, content_hash, source_version)`, promotion queue |
+| `fact_check_chunks` | `id` deterministic PK, evidence snapshot FK, chunk index, cleaned text, text/content hash, source/version/tier, published/effective/retrieved times, splitter/version; unique `(evidence_snapshot_id, chunk_index, splitter_version)` | `(evidence_snapshot_id, chunk_index)`, `(content_hash)`, temporal/tier lookup |
 | `campaign_clusters` | `id` PK, hypothesis, time window, thresholds/config version, reviewer status, timestamps, `version`; a cluster is only a hypothesis | `(reviewer_status, created_at)`, window |
 | `campaign_members` | `(campaign_id, analysis_id)` PK, match kind, similarity nullable, evidence refs; sender identity is forbidden | `(analysis_id)` |
 | `campaign_signals` | `(campaign_id, signal)` PK, aggregate count; no raw private message | `(campaign_id)` |
 | `artifacts` | `id` PK, analysis FK, storage key, media type, size/hash, created/expiry/deleted times; access tokens are never stored | expiry partial index for retention worker |
 | `schema_imports` | importer name/source fingerprint PK, started/completed times, row counts and redacted error summary | `(completed_at)` |
 
-Embedding dimension is deliberately fixed in the first corpus table. A model with a different
-dimension gets a new embedding table/column and dual-read migration; it must not silently mix vectors
-in the existing cosine index.
+Embedding dimension is deliberately fixed at 1536 for the initial `text-embedding-3-small` indexes.
+A different dimension gets a new embedding table/column and dual-read migration; model/version/
+dimensions must match the query and must never be silently mixed in one cosine search. Source
+`fresh_until` is authoritative only up to configured caps: temporal 6 hours and non-temporal 30 days.
+FTS dùng normalized text với cấu hình `simple`; query lấy top 20 từ FTS và top 20 từ vector trước khi
+dedupe + RRF `k=60`. Source Registry resolve theo thời điểm evidence được dùng; explicit deny/disable
+luôn thắng wildcard `*.gov.vn`, và suffix match phải kiểm tra đúng ranh giới hostname.
 
 ## 3. Transaction boundaries
 
@@ -64,6 +72,14 @@ in the existing cosine index.
    never updated or deleted.
 5. Campaign detection can create hypotheses and members, but only an approved `admin_actions` row can
    create a block or broad warning.
+6. Completed evidence comparison inserts `fact_check_results`, minimized evidence snapshots, usage
+   and embedding in one transaction. If embedding was unavailable, commit with
+   `embedding_status='pending'` and enqueue an idempotent re-embedding job keyed by
+   result/model/version. Re-embedding never changes stance/evidence provenance.
+7. Tavily/Jina evidence is canonicalized and inserted idempotently by canonical URL + cleaned-content
+   hash + source version, then chunked deterministically. Cache insertion does not confer trust.
+   Promotion is a separate reviewed transaction that records reviewer/policy version and permits only
+   validated Tier A/B records; Tier C and runtime comparator stances cannot auto-promote.
 
 ## 4. Alembic revision sequence
 
@@ -73,7 +89,7 @@ in the existing cosine index.
 | `0002_analysis_core` | Analyses, events, steps, evidence, reports and owner/read indexes | v3 core repository contract tests |
 | `0003_durable_jobs` | Jobs, outbox, tool usage, leases and idempotency constraints | restart/duplicate/outbox recovery tests |
 | `0004_review_lifecycle` | Appeals, immutable decisions, admin actions and blacklist lifecycle | appeal-overturn and atomic action tests |
-| `0005_fact_check_corpus` | Sources, records, embeddings and vector indexes | citation/version/rollback tests |
+| `0005_fact_check_corpus` | Versioned Source Registry, trusted/runtime records, FTS, temporal metadata, evidence snapshots/chunks, promotion state, 1536d embeddings and pending re-embedding indexes | source-policy/temporal/RRF/citation/dedupe/promotion/model-version/rollback tests |
 | `0006_campaign_artifacts` | Campaign tables and retained artifact metadata | privacy, retention and approval-boundary tests |
 
 Migrations use expand/migrate/contract: add nullable or defaulted structures first, deploy dual-write

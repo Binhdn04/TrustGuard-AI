@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from src.agents.contracts import LiveStepTransition
+from src.agents.fact_check import ExtractedClaim, FactCheckOrchestrator
 from src.agents.nodes.example_node import analyze_node, respond_node
 from src.agents.nodes.explanation import explain_result, route_action
 from src.agents.nodes.extraction import classify_input, extract_indicators
@@ -44,6 +45,7 @@ from src.agents.tools.protocols import (
     BlacklistRepository,
     ClaimRetriever,
     DomainIntelligence,
+    FactCheckCorpus,
     RedirectResolver,
     ToolExecutionLedger,
     UrlReputationCascade,
@@ -113,10 +115,12 @@ def _build_planning_loop_node(
     execution_ledger: ToolExecutionLedger | None = None,
     progress_sink: ProgressSink | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    fact_check_corpus: FactCheckCorpus | None = None,
+    fact_check_orchestrator: FactCheckOrchestrator | None = None,
 ):
     progress_sink = progress_sink or NullProgressSink()
     scan_node = build_scan_urls_node(url_scanner, blacklist, url_reputation)
-    claim_node = build_verify_claims_node(claim_retriever)
+    claim_node = build_verify_claims_node(claim_retriever, fact_check_corpus)
     domain_node = build_inspect_domains_node(domain_intelligence)
     redirect_node = build_resolve_redirects_node(redirect_resolver)
 
@@ -124,7 +128,7 @@ def _build_planning_loop_node(
         InvestigationTool.URL_SCANNER: url_reputation or url_scanner,
         InvestigationTool.REDIRECT_RESOLVER: redirect_resolver,
         InvestigationTool.DOMAIN_INTELLIGENCE: domain_intelligence,
-        InvestigationTool.CLAIM_RETRIEVER: claim_retriever,
+        InvestigationTool.CLAIM_RETRIEVER: fact_check_corpus or claim_retriever,
     }
 
     def provider_for(tool: InvestigationTool) -> str | None:
@@ -155,6 +159,14 @@ def _build_planning_loop_node(
         working: WorkflowState = dict(state)
         working["enable_redirect_resolution"] = redirect_resolver is not None
         working["investigation_plan"] = build_investigation_plan(working)
+        if fact_check_orchestrator is not None:
+            # The Wave 2 orchestrator owns all claims as one batch. Per-claim
+            # compatibility steps must never trigger duplicate embedding calls.
+            for step in list(working["investigation_plan"]):
+                if step.tool is InvestigationTool.CLAIM_RETRIEVER and step.status is InvestigationStepStatus.PENDING:
+                    working["investigation_plan"] = transition_step(
+                        working["investigation_plan"], step.step_id, InvestigationStepStatus.SKIPPED
+                    )
         working.setdefault("step_transitions", [])
         working.setdefault("tool_usage_refs", [])
         working.setdefault("tool_calls_used", 0)
@@ -397,6 +409,17 @@ def build_graph(
     redirect_resolver: RedirectResolver | None = None,
     domain_intelligence: DomainIntelligence | None = None,
     claim_retriever: ClaimRetriever | None = None,
+    fact_check_corpus: FactCheckCorpus | None = None,
+    fact_check_orchestrator: FactCheckOrchestrator | None = None,
+    embedding_provider: Any | None = None,
+    google_claim_search: Any | None = None,
+    hybrid_corpus_retriever: Any | None = None,
+    tavily_search: Any | None = None,
+    jina_reader: Any | None = None,
+    chunker: Any | None = None,
+    reranker: Any | None = None,
+    evidence_comparator: Any | None = None,
+    source_registry: Any | None = None,
     blacklist: BlacklistRepository | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
     progress_sink: ProgressSink | None = None,
@@ -409,6 +432,29 @@ def build_graph(
 ):
     """Build the injectable v2 analysis workflow."""
     graph = StateGraph(WorkflowState)
+    wave2_parts = (
+        embedding_provider,
+        google_claim_search,
+        hybrid_corpus_retriever,
+        tavily_search,
+        jina_reader,
+        chunker,
+        reranker,
+        evidence_comparator,
+        source_registry,
+    )
+    if fact_check_orchestrator is None and any(item is not None for item in wave2_parts):
+        fact_check_orchestrator = FactCheckOrchestrator(
+            embedding_provider=embedding_provider,
+            google_claim_search=google_claim_search,
+            corpus_retriever=hybrid_corpus_retriever,
+            tavily_search=tavily_search,
+            jina_reader=jina_reader,
+            chunker=chunker,
+            reranker=reranker,
+            comparator=evidence_comparator,
+            source_registry=source_registry,
+        )
     graph.add_node("classify_input", _classify_node)
     graph.add_node("extract_indicators", _extract_node)
     graph.add_node("analyze_message", build_analyze_message_node(llm))
@@ -438,8 +484,50 @@ def build_graph(
             execution_ledger,
             progress_sink,
             progress_clock,
+            fact_check_corpus,
+            fact_check_orchestrator,
         ),
     )
+
+    async def verify_fact_checks(state: WorkflowState) -> dict:
+        if fact_check_orchestrator is None:
+            return {}
+        extracted = list(state.get("extracted_claims", []))
+        known = {item.normalized_text for item in extracted}
+        for raw_claim in state.get("claims", []):
+            try:
+                item = ExtractedClaim.from_text(raw_claim)
+            except ValueError:
+                continue
+            if item.normalized_text not in known:
+                known.add(item.normalized_text)
+                extracted.append(item)
+        result = await fact_check_orchestrator.verify(extracted[:5])
+        evidence = list(state.get("evidence", []))
+        for finding in result.claim_findings:
+            from src.models import Evidence, EvidenceType
+
+            evidence.append(
+                Evidence(
+                    type=EvidenceType.FACT_CHECK,
+                    source=finding.source,
+                    title=finding.title,
+                    url=finding.url,
+                    finding=finding.finding,
+                    observed_at=finding.observed_at,
+                )
+            )
+        return {
+            "extracted_claims": extracted[:5],
+            "claim_findings": list(state.get("claim_findings", [])) + list(result.claim_findings),
+            "evidence": evidence,
+            "limitations": list(dict.fromkeys([*state.get("limitations", []), *result.limitations])),
+            "errors": [*state.get("errors", []), *result.errors],
+            "tool_usage_refs": list(dict.fromkeys([*state.get("tool_usage_refs", []), *result.tool_usage_refs])),
+            "embedding_status": result.embedding_status,
+        }
+
+    graph.add_node("verify_fact_checks", verify_fact_checks)
     risk_engine = risk_engine or FunctionRiskEngine(assess_risk)
     explanation_engine = explanation_engine or FunctionExplanationEngine(explain_result)
     campaign_detector = campaign_detector or NullCampaignDetector()
@@ -467,7 +555,8 @@ def build_graph(
     graph.add_edge("provisional_warning", "analyze_message")
     graph.add_edge("analyze_message", "plan_tools")
     graph.add_edge("plan_tools", "planning_loop")
-    graph.add_edge("planning_loop", "detect_campaign")
+    graph.add_edge("planning_loop", "verify_fact_checks")
+    graph.add_edge("verify_fact_checks", "detect_campaign")
     graph.add_edge("detect_campaign", "assess_risk")
     graph.add_edge("assess_risk", "review_assessment")
     graph.add_edge("review_assessment", "explain_result")
@@ -505,6 +594,16 @@ def build_openai_graph(**kwargs):
         "redirect_resolver",
         "domain_intelligence",
         "claim_retriever",
+        "fact_check_corpus",
+        "embedding_provider",
+        "google_claim_search",
+        "hybrid_corpus_retriever",
+        "tavily_search",
+        "jina_reader",
+        "chunker",
+        "reranker",
+        "evidence_comparator",
+        "source_registry",
     }
     for name, adapter in owned_adapters.items():
         if name in graph_adapter_names:

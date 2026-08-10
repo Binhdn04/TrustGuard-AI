@@ -10,6 +10,7 @@ from src.agents.contracts import (
     LiveStepTransition,
     ProvisionalWarning,
 )
+from src.agents.fact_check import EmbeddingStatus, ExtractedClaim
 from src.models import (
     CaseStatus,
     ClaimEvidence,
@@ -59,6 +60,7 @@ class WorkflowState(AgentState, total=False):
     """Serializable private state used only while the graph is executing."""
 
     summary: str
+    extracted_claims: list[ExtractedClaim]
     next_tool: ToolRoute
     tool_target: str
     tool_attempts: dict[str, int]
@@ -85,6 +87,7 @@ class WorkflowState(AgentState, total=False):
     tool_usage_refs: list[str]
     campaign_features: CampaignFeatures
     campaign_hypotheses: list[CampaignHypothesis]
+    embedding_status: EmbeddingStatus
     llm_model: str
     llm_context: str
     llm_emotion: str
