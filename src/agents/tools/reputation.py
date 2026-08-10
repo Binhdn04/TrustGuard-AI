@@ -540,3 +540,179 @@ class ProductionUrlReputationCascade:
         await self.primary.aclose()
         if self.secondary is not None:
             await self.secondary.aclose()
+
+
+class UrlReputationService:
+    """Compatibility cascade with service-level retry, circuit breaking and cache.
+
+    Providers can be lightweight protocol implementations that already return a
+    normalized envelope; unlike ``ProductionUrlReputationCascade`` they do not
+    need to own their retry/circuit policy.
+    """
+
+    provider = "trustguard-reputation-service"
+
+    def __init__(
+        self,
+        primary: Any,
+        secondary: Any | None = None,
+        *,
+        policy_version: str = "reputation-policy-v1",
+        max_attempts: int = 2,
+        backoff_seconds: float = 0.1,
+        failure_threshold: int = 3,
+        circuit_cooldown: timedelta = timedelta(seconds=30),
+        ttl: timedelta = timedelta(minutes=10),
+        sleeper: Sleeper = asyncio.sleep,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
+        self.primary = primary
+        self.secondary = secondary
+        self.policy_version = policy_version
+        self._retry = RetryPolicy(max_attempts=max_attempts, base_delay_seconds=backoff_seconds)
+        self._circuits = {
+            id(provider): CircuitBreaker(
+                failure_threshold=failure_threshold,
+                recovery_timeout=circuit_cooldown,
+                clock=clock,
+            )
+            for provider in (primary, secondary)
+            if provider is not None
+        }
+        self._cache: VersionedMemoryCache[UrlReputationCascadeResult] = VersionedMemoryCache(clock=clock)
+        self._ttl = ttl
+        self._sleeper = sleeper
+        self._clock = clock
+
+    @property
+    def _cache_version(self) -> str:
+        versions = [f"{self.primary.provider}:{self.primary.provider_version}"]
+        if self.secondary is not None:
+            versions.append(f"{self.secondary.provider}:{self.secondary.provider_version}")
+        return f"{self.policy_version}|{'|'.join(versions)}"
+
+    async def _lookup(self, provider: Any, target: str) -> NormalizedToolResult[UrlReputationFinding]:
+        circuit = self._circuits[id(provider)]
+        last: NormalizedToolResult[UrlReputationFinding] | None = None
+        for attempt in range(1, self._retry.max_attempts + 1):
+            try:
+                await circuit.before_call()
+            except CircuitOpenError:
+                return NormalizedToolResult(
+                    status=ToolResultStatus.FAILED,
+                    error=NormalizedToolError(
+                        tool=ToolName.URL_REPUTATION,
+                        code=ToolErrorCode.PROVIDER_ERROR,
+                        message="Reputation provider circuit is open.",
+                        retryable=True,
+                        provider=provider.provider,
+                    ),
+                    cache=CacheMetadata(status=CacheStatus.BYPASS, bypass_reason="circuit_open"),
+                    usage=UsageMetadata(
+                        usage_ref=f"usage:reputation-service:{uuid4()}",
+                        provider=provider.provider,
+                        provider_version=provider.provider_version,
+                        operation="lookup",
+                        attempts=0,
+                        network_calls=0,
+                        latency_ms=0,
+                        observed_at=self._clock(),
+                    ),
+                )
+            last = await provider.lookup(target)
+            if last.status in {ToolResultStatus.SUCCESS, ToolResultStatus.INCONCLUSIVE}:
+                await circuit.record_success()
+                return last
+            await circuit.record_failure()
+            if not (last.error and last.error.retryable) or attempt == self._retry.max_attempts:
+                return last
+            retry_after = (last.error.retry_after_ms / 1000) if last.error.retry_after_ms is not None else None
+            await backoff(self._retry.delay(attempt, retry_after), sleeper=self._sleeper)
+        assert last is not None
+        return last
+
+    async def assess(
+        self,
+        normalized_url: str,
+        *,
+        high_risk: bool = False,
+        secondary_budget_remaining: int = 1,
+    ) -> NormalizedToolResult[UrlReputationCascadeResult]:
+        started = time.perf_counter()
+        try:
+            target = canonicalize_url(normalized_url)
+        except ValueError as exc:
+            return ProductionUrlReputationCascade._failure(self, started, ToolErrorCode.INVALID_TARGET, str(exc))
+        cached = await self._cache.get(self.provider, self._cache_version, target)
+        if cached is not None:
+            return NormalizedToolResult(
+                status=(
+                    ToolResultStatus.INCONCLUSIVE
+                    if cached.value.verdict is Verdict.INCONCLUSIVE
+                    else ToolResultStatus.SUCCESS
+                ),
+                result=cached.value.model_copy(deep=True),
+                cache=cached.metadata,
+                usage=self._usage(started, [], attempts=0, calls=0),
+            )
+
+        outcomes = [await self._lookup(self.primary, target)]
+        primary_finding = outcomes[0].result
+        escalate = high_risk or (
+            primary_finding is not None and primary_finding.verdict in {Verdict.MALICIOUS, Verdict.SUSPICIOUS}
+        )
+        if escalate and self.secondary is not None and secondary_budget_remaining > 0:
+            outcomes.append(await self._lookup(self.secondary, target))
+        findings = [outcome.result for outcome in outcomes if outcome.result is not None]
+        attempts = sum(outcome.usage.attempts for outcome in outcomes)
+        calls = sum(outcome.usage.network_calls for outcome in outcomes)
+        if not findings:
+            error = next((outcome.error for outcome in outcomes if outcome.error), None)
+            return NormalizedToolResult(
+                status=ToolResultStatus.FAILED,
+                error=error,
+                cache=self._cache.miss_metadata(self.provider, self._cache_version, target),
+                usage=self._usage(started, outcomes, attempts=attempts, calls=calls),
+            )
+        verdicts = {finding.verdict for finding in findings}
+        conflict = len(verdicts) > 1
+        verdict = (
+            Verdict.MALICIOUS
+            if Verdict.MALICIOUS in verdicts
+            else Verdict.SUSPICIOUS
+            if Verdict.SUSPICIOUS in verdicts
+            else Verdict.SAFE
+            if Verdict.SAFE in verdicts
+            else Verdict.INCONCLUSIVE
+        )
+        result = UrlReputationCascadeResult(
+            normalized_url=target,
+            findings=findings,
+            verdict=verdict,
+            provider_conflict=conflict,
+            policy_version=self.policy_version,
+        )
+        await self._cache.put(self.provider, self._cache_version, target, result, self._ttl)
+        return NormalizedToolResult(
+            status=ToolResultStatus.INCONCLUSIVE if verdict is Verdict.INCONCLUSIVE else ToolResultStatus.SUCCESS,
+            result=result,
+            cache=self._cache.miss_metadata(self.provider, self._cache_version, target),
+            usage=self._usage(started, outcomes, attempts=attempts, calls=calls),
+        )
+
+    def _usage(self, started: float, outcomes: list[Any], *, attempts: int, calls: int) -> UsageMetadata:
+        return UsageMetadata(
+            usage_ref=f"usage:reputation-service:{uuid4()}",
+            provider=self.provider,
+            provider_version=self._cache_version,
+            operation="url_reputation_cascade",
+            attempts=attempts,
+            network_calls=calls,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            request_units=sum(item.usage.request_units for item in outcomes),
+            response_units=sum(item.usage.response_units for item in outcomes),
+            estimated_cost_usd=sum(item.usage.estimated_cost_usd for item in outcomes),
+            observed_at=self._clock(),
+        )

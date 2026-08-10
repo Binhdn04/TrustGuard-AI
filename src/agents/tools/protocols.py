@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 from src.models import BlacklistLookupEntry, ClaimEvidence, DomainIntelligenceResult, UrlScanResult
 
@@ -39,6 +40,26 @@ class FactCheckCorpus(Protocol):
 
 class ScreenshotRenderer(Protocol):
     async def render(self, normalized_url: str) -> NormalizedToolResult[ScreenshotResult]: ...
+
+
+class EmbeddingProvider(Protocol):
+    async def embed_batch(self, claims: Sequence[str]) -> Any: ...
+
+
+class GoogleClaimSearch(Protocol):
+    async def search(self, claim: Any) -> Any: ...
+
+
+class HybridCorpusRetriever(Protocol):
+    async def search(self, claim: Any, *, vector: Sequence[float] | None = None) -> Any: ...
+
+
+class TavilySearch(Protocol):
+    async def search(self, claim: Any, *, max_results: int = 10) -> Any: ...
+
+
+class JinaReader(Protocol):
+    async def read(self, candidate: Any) -> Any: ...
 
 
 class UrlScanner(Protocol):
