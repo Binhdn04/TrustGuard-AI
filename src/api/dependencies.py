@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
-    from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher
+    from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher, RetentionWorker
 
 from fastapi import Depends, Header, Request
 
 from src.agents.graph import build_openai_graph
+from src.agents.tools.advanced import OpenAIEmbeddingProvider
 from src.config import get_settings
 from src.core.auth import ConfiguredAuthenticator, Principal, UserRole
 from src.core.errors import PlatformError
@@ -17,6 +19,13 @@ from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
 from src.services.analysis import AnalysisService
+from src.services.platform_wave2 import (
+    ArtifactSigner,
+    MemoryWave2Repository,
+    VersionedSourceRegistry,
+    Wave2PlatformService,
+    default_source_policies,
+)
 from src.services.processor import LangGraphAnalysisProcessor
 from src.services.realtime import (
     MemoryEventNotifier,
@@ -30,6 +39,10 @@ _worker: DurableAnalysisWorker | None = None
 _worker_task = None
 _outbox: OutboxPublisher | None = None
 _outbox_task = None
+_retention: RetentionWorker | None = None
+_retention_task = None
+_memory_wave2_repository = MemoryWave2Repository()
+_source_registry = VersionedSourceRegistry(default_source_policies())
 
 
 @lru_cache
@@ -37,11 +50,15 @@ def get_analysis_service() -> AnalysisService:
     settings = get_settings()
     postgres = settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
     blacklist = (
-        PostgresPlatformRepository(settings.database_url, settings.database_encryption_key)
+        PostgresPlatformRepository(
+            settings.database_url,
+            settings.database_encryption_key,
+            content_retention_days=settings.artifact_retention_days,
+        )
         if postgres
         else SQLiteBlacklistRepository(settings.security_database_path)
     )
-    graph = build_openai_graph(blacklist=blacklist)
+    graph = build_openai_graph(blacklist=blacklist, source_registry=_source_registry)
     processor = LangGraphAnalysisProcessor(graph)
     return AnalysisService(blacklist=blacklist, processor=processor, durable_jobs=postgres)
 
@@ -65,19 +82,40 @@ async def close_analysis_service() -> None:
 
 
 async def start_durable_worker() -> None:
-    global _outbox, _outbox_task, _worker, _worker_task
+    global _outbox, _outbox_task, _retention, _retention_task, _worker, _worker_task
     service = get_analysis_service()
     if not isinstance(service.repository, PostgresPlatformRepository):
         return
     try:
-        from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher  # noqa: PLC0415
+        from src.services.durable_worker import (  # noqa: PLC0415
+            DurableAnalysisWorker,
+            OutboxPublisher,
+            ReembeddingJobHandler,
+            RetentionWorker,
+        )
     except ImportError:
         if get_settings().app_env == "production":
             raise
         return
     settings = get_settings()
-    _worker = DurableAnalysisWorker(service.repository, service, lease_seconds=settings.job_lease_seconds)
+    policies = await service.repository.load_source_policies(datetime.now(UTC))
+    _source_registry.replace(policies or default_source_policies())
+    handlers = {}
+    if settings.openai_api_key:
+        embedding_provider = OpenAIEmbeddingProvider(
+            settings.openai_api_key,
+            timeout=settings.provider_timeout_seconds,
+        )
+        handlers["reembed_fact_check_result"] = ReembeddingJobHandler(service.repository, embedding_provider)
+    _worker = DurableAnalysisWorker(
+        service.repository,
+        service,
+        lease_seconds=settings.job_lease_seconds,
+        job_handlers=handlers,
+    )
     _worker_task = asyncio.create_task(_worker.run(), name="durable-analysis-worker")
+    _retention = RetentionWorker(service.repository)
+    _retention_task = asyncio.create_task(_retention.run(), name="retention-worker")
     try:
         _outbox = OutboxPublisher(service.repository, settings.redis_url)
         _outbox_task = asyncio.create_task(_outbox.run(), name="transactional-outbox-publisher")
@@ -90,21 +128,29 @@ async def start_durable_worker() -> None:
 
 
 async def stop_durable_worker() -> None:
-    global _outbox, _outbox_task, _worker, _worker_task
+    global _outbox, _outbox_task, _retention, _retention_task, _worker, _worker_task
     if _worker is not None:
         _worker.stop()
     if _worker_task is not None:
         await _worker_task
+    if _worker is not None:
+        await _worker.close()
     if _outbox is not None:
         _outbox.stop()
     if _outbox_task is not None:
         await _outbox_task
     if _outbox is not None:
         await _outbox.close()
+    if _retention is not None:
+        _retention.stop()
+    if _retention_task is not None:
+        await _retention_task
     _worker = None
     _worker_task = None
     _outbox = None
     _outbox_task = None
+    _retention = None
+    _retention_task = None
 
 
 @lru_cache
@@ -191,6 +237,28 @@ async def close_rate_limiter() -> None:
         await limiter.close()
 
 
+@lru_cache
+def get_wave2_service() -> Wave2PlatformService:
+    settings = get_settings()
+    analysis_service = get_analysis_service()
+    repository = analysis_service.repository
+    if not isinstance(repository, PostgresPlatformRepository):
+        repository = _memory_wave2_repository
+    signer = ArtifactSigner(settings.artifact_signing_key, settings.artifact_access_ttl_seconds)
+    return Wave2PlatformService(repository, signer, _source_registry)
+
+
+async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
+    override = request.app.dependency_overrides.get(get_wave2_service)
+    if override is None:
+        return get_wave2_service()
+    service = override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
+
+
 AnalysisServiceDependency = Annotated[AnalysisService, Depends(resolve_analysis_service)]
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
 TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(get_ticket_manager)]
+Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]
