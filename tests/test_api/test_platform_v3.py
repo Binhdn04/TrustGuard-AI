@@ -86,7 +86,7 @@ async def test_invalid_v3_cursor_uses_error_envelope(client, platform_service_v3
 
 
 @pytest.mark.asyncio
-async def test_wave2_contract_routes_enforce_admin_and_fail_explicitly(client, platform_service_v3):
+async def test_wave2_contract_routes_enforce_admin_and_return_metrics(client, platform_service_v3):
     forbidden = await client.get(
         "/api/v3/admin/metrics",
         headers=USER_HEADERS,
@@ -94,10 +94,11 @@ async def test_wave2_contract_routes_enforce_admin_and_fail_explicitly(client, p
     )
     assert forbidden.status_code == 403
 
-    planned = await client.get(
+    metrics = await client.get(
         "/api/v3/admin/metrics",
         headers=ADMIN_HEADERS,
         params={"from": "2026-08-01T00:00:00Z", "to": "2026-08-07T00:00:00Z"},
     )
-    assert planned.status_code == 501
-    assert planned.json()["error"]["message"].endswith("not implemented in Wave 0.")
+    assert metrics.status_code == 200
+    assert metrics.json()["contract_version"] == "v3"
+    assert metrics.json()["window"]["started_at"] == "2026-08-01T00:00:00Z"

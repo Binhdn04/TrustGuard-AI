@@ -14,6 +14,7 @@ from src.api.dependencies import (
     AnalysisServiceDependency,
     PrincipalDependency,
     TicketManagerDependency,
+    Wave2ServiceDependency,
     get_analysis_service,
     get_event_notifier,
     get_ticket_manager,
@@ -69,10 +70,11 @@ router = APIRouter(tags=["contract-v3"])
 _COMMON_ERRORS = {
     403: {"model": ErrorEnvelope},
     404: {"model": ErrorEnvelope},
+    409: {"model": ErrorEnvelope},
     429: {"model": ErrorEnvelope},
     422: {"model": ErrorEnvelope},
 }
-_PLANNED_ERRORS = {**_COMMON_ERRORS, 501: {"model": ErrorEnvelope}}
+_PLANNED_ERRORS = _COMMON_ERRORS
 
 
 def _as_v3(response) -> AnalysisResponseV3:
@@ -109,15 +111,6 @@ def _decode_cursor(cursor: str | None) -> int:
 
 def _event_id(analysis_id: UUID, sequence: int, occurred_at: datetime, step: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"trustguard:{analysis_id}:{sequence}:{occurred_at.isoformat()}:{step}")
-
-
-def _planned_feature() -> None:
-    raise PlatformError(
-        status_code=501,
-        code=ErrorCode.INTERNAL_ERROR,
-        message="This v3 capability is frozen but is not implemented in Wave 0.",
-        retryable=False,
-    )
 
 
 @router.post(
@@ -375,29 +368,32 @@ async def create_appeal_v3(
     analysis_id: UUID,
     request: AppealCreateRequestV3,
     service: AnalysisServiceDependency,
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
 ) -> AppealReceiptV3:
-    del request
-    await service.get_for(analysis_id, principal)
-    _planned_feature()
+    analysis = await service.get_for(analysis_id, principal)
+    return await wave2.create_appeal(analysis_id, principal.user_id, request, analysis.evidence or [])
 
 
 @router.get("/appeals/{appeal_id}", response_model=AppealResponseV3, responses=_PLANNED_ERRORS)
-async def get_appeal_v3(appeal_id: UUID, principal: PrincipalDependency) -> AppealResponseV3:
-    del appeal_id, principal
-    _planned_feature()
+async def get_appeal_v3(
+    appeal_id: UUID,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> AppealResponseV3:
+    return await wave2.get_appeal(appeal_id, principal)
 
 
 @router.get("/admin/appeals", response_model=AppealPageV3, responses=_PLANNED_ERRORS)
 async def list_admin_appeals_v3(
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
     appeal_status: AppealStatus | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> AppealPageV3:
-    del appeal_status, limit, offset
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.list_appeals(appeal_status, limit, offset)
 
 
 @router.post(
@@ -408,11 +404,11 @@ async def list_admin_appeals_v3(
 async def decide_appeal_v3(
     appeal_id: UUID,
     request: AppealDecisionRequestV3,
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
 ) -> AppealDecisionResponseV3:
-    del appeal_id, request
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.decide_appeal(appeal_id, request, principal.user_id)
 
 
 @router.post(
@@ -423,60 +419,66 @@ async def decide_appeal_v3(
 async def decide_admin_action_v3(
     action_id: UUID,
     request: AdminActionDecisionRequestV3,
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
 ) -> AdminActionDecisionResponseV3:
-    del action_id, request
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.decide_admin_action(action_id, request.decision, request.note, principal.user_id)
 
 
 @router.get("/admin/actions", response_model=AdminActionPageV3, responses=_PLANNED_ERRORS)
 async def list_admin_actions_v3(
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
     action_status: AdminActionStatus | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> AdminActionPageV3:
-    del action_status, limit, offset
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.list_admin_actions(action_status, limit, offset)
 
 
 @router.get("/admin/actions/{action_id}", response_model=AdminActionRecordV3, responses=_PLANNED_ERRORS)
-async def get_admin_action_v3(action_id: UUID, principal: PrincipalDependency) -> AdminActionRecordV3:
-    del action_id
+async def get_admin_action_v3(
+    action_id: UUID,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> AdminActionRecordV3:
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.get_admin_action(action_id)
 
 
 @router.get("/admin/campaigns", response_model=CampaignPageV3, responses=_PLANNED_ERRORS)
 async def list_campaigns_v3(
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
     reviewer_status: CampaignReviewerStatus | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> CampaignPageV3:
-    del reviewer_status, limit, offset
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.list_campaigns(reviewer_status, limit, offset)
 
 
 @router.get("/admin/campaigns/{campaign_id}", response_model=CampaignDetailV3, responses=_PLANNED_ERRORS)
-async def get_campaign_v3(campaign_id: UUID, principal: PrincipalDependency) -> CampaignDetailV3:
-    del campaign_id
+async def get_campaign_v3(
+    campaign_id: UUID,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> CampaignDetailV3:
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.get_campaign(campaign_id)
 
 
 @router.get("/admin/metrics", response_model=OperationsMetricsResponseV3, responses=_PLANNED_ERRORS)
 async def get_operations_metrics_v3(
+    wave2: Wave2ServiceDependency,
     principal: PrincipalDependency,
     from_: datetime = Query(alias="from"),
     to: datetime = Query(),
 ) -> OperationsMetricsResponseV3:
-    del from_, to
     require_security_admin(principal)
-    _planned_feature()
+    return await wave2.operations_metrics(from_, to)
 
 
 @router.get("/admin/review-queue", response_model=list[ReviewQueueItem], responses=_PLANNED_ERRORS)

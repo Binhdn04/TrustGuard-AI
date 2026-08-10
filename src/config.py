@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     admin_rate_limit_per_minute: int = Field(default=60, ge=1)
     job_lease_seconds: int = Field(default=60, ge=5, le=3600)
 
+    # Signed artifact access and retention. Access tokens are derived and are
+    # never stored in PostgreSQL.
+    artifact_signing_key: str = "development-artifact-signing-key"
+    artifact_access_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    artifact_retention_days: int = Field(default=30, ge=1, le=365)
+
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
 

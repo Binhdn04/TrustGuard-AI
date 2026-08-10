@@ -130,11 +130,12 @@ Docker Compose chạy `alembic upgrade head` trước backend. Khi `DATABASE_URL
 PostgreSQL làm source of truth và worker tự reclaim lease hết hạn; Redis chỉ đánh thức/phân phối
 event. SQLite vẫn là default offline nếu cấu hình `DATABASE_URL=sqlite:///...`.
 
-SQLite file thực tế lấy từ `SECURITY_DATABASE_PATH`. PostgreSQL hiện hỗ trợ durable analysis và
-user-report review queue; v2 admin decision/approved blacklist vẫn chỉ hoàn chỉnh ở SQLite.
+SQLite file thực tế lấy từ `SECURITY_DATABASE_PATH`. PostgreSQL là runtime production cho durable
+analysis, appeal/reviewed action, Source Registry, fact-check cache/corpus, campaign, usage metrics và
+artifact retention. Các action nhạy cảm chỉ thay đổi blacklist sau decision transaction được duyệt.
 
 Import dữ liệu development SQLite sau khi đã chạy `alembic upgrade head` (head hiện tại là
-`0004_review_queue`):
+`0006_campaign_artifacts`):
 
 ```bash
 python scripts/import_sqlite_to_postgres.py ./data/security.db \
