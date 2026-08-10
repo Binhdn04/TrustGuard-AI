@@ -94,18 +94,46 @@ class _FixtureProvider:
 
     async def lookup(self, url: str):
         self.calls += 1
-        usage = UsageMetadata(usage_ref=f"usage:{self.calls}", provider=self.provider, provider_version="v1",
-                              operation="lookup", attempts=1, network_calls=1, latency_ms=1, observed_at=NOW)
+        usage = UsageMetadata(
+            usage_ref=f"usage:{self.calls}",
+            provider=self.provider,
+            provider_version="v1",
+            operation="lookup",
+            attempts=1,
+            network_calls=1,
+            latency_ms=1,
+            observed_at=NOW,
+        )
         if self.calls <= self.failures:
             from src.agents.tools import NormalizedToolError, ToolErrorCode, ToolName
-            return NormalizedToolResult(status="failed",
-                error=NormalizedToolError(tool=ToolName.URL_REPUTATION, code=ToolErrorCode.RATE_LIMITED,
-                                          message="limited", retryable=True, provider=self.provider, retry_after_ms=0),
-                cache=CacheMetadata(status="miss"), usage=usage)
-        finding = UrlReputationFinding(provider=self.provider, provider_version="v1", normalized_url=url,
-                                       matched=self.verdict is Verdict.MALICIOUS, verdict=self.verdict, observed_at=NOW)
-        return NormalizedToolResult(status="success" if finding.matched else "inconclusive", result=finding,
-                                    cache=CacheMetadata(status="miss"), usage=usage)
+
+            return NormalizedToolResult(
+                status="failed",
+                error=NormalizedToolError(
+                    tool=ToolName.URL_REPUTATION,
+                    code=ToolErrorCode.RATE_LIMITED,
+                    message="limited",
+                    retryable=True,
+                    provider=self.provider,
+                    retry_after_ms=0,
+                ),
+                cache=CacheMetadata(status="miss"),
+                usage=usage,
+            )
+        finding = UrlReputationFinding(
+            provider=self.provider,
+            provider_version="v1",
+            normalized_url=url,
+            matched=self.verdict is Verdict.MALICIOUS,
+            verdict=self.verdict,
+            observed_at=NOW,
+        )
+        return NormalizedToolResult(
+            status="success" if finding.matched else "inconclusive",
+            result=finding,
+            cache=CacheMetadata(status="miss"),
+            usage=usage,
+        )
 
 
 @pytest.mark.asyncio
@@ -124,8 +152,9 @@ async def test_cascade_disagreement_retry_and_provider_versioned_memory_hit():
 @pytest.mark.asyncio
 async def test_circuit_breaker_stops_repeated_provider_calls():
     provider = _FixtureProvider("web-risk", Verdict.INCONCLUSIVE, failures=20)
-    service = UrlReputationService(provider, failure_threshold=1, max_attempts=1,
-                                   circuit_cooldown=timedelta(minutes=1), clock=lambda: NOW)
+    service = UrlReputationService(
+        provider, failure_threshold=1, max_attempts=1, circuit_cooldown=timedelta(minutes=1), clock=lambda: NOW
+    )
     first = await service.assess("https://one.example")
     second = await service.assess("https://two.example")
     assert first.status is ToolResultStatus.FAILED and second.status is ToolResultStatus.FAILED
@@ -162,8 +191,13 @@ class _FakeLegacyRdap:
 
     async def lookup(self, domain: str):
         self.calls += 1
-        return DomainIntelligenceResult(provider=self.provider, domain=domain, signals=["recent_registration"],
-                                        privacy_redacted=True, observed_at=datetime.now(UTC))
+        return DomainIntelligenceResult(
+            provider=self.provider,
+            domain=domain,
+            signals=["recent_registration"],
+            privacy_redacted=True,
+            observed_at=datetime.now(UTC),
+        )
 
     async def aclose(self):
         return None

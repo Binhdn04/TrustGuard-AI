@@ -379,7 +379,7 @@ class NormalizedRdapProvider:
         calls: int,
     ) -> NormalizedToolResult[DomainIntelligenceResult]:
         return NormalizedToolResult(
-            status=ToolResultStatus.BLOCKED if code is ToolErrorCode.INVALID_TARGET else ToolResultStatus.FAILED,
+            status=ToolResultStatus.FAILED,
             error=NormalizedToolError(
                 tool=ToolName.RDAP,
                 code=code,

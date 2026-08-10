@@ -25,8 +25,13 @@ class NormalizedRdapProvider:
 
     provider_version = "rdap-v3"
 
-    def __init__(self, adapter: RdapDomainIntelligence | None = None,
-                 *, cache_ttl: timedelta = timedelta(hours=24), **adapter_options: object) -> None:
+    def __init__(
+        self,
+        adapter: RdapDomainIntelligence | None = None,
+        *,
+        cache_ttl: timedelta = timedelta(hours=24),
+        **adapter_options: object,
+    ) -> None:
         self._adapter = adapter or RdapDomainIntelligence(**adapter_options)
         self.provider = self._adapter.provider
         self._cache_ttl = cache_ttl
@@ -57,29 +62,39 @@ class NormalizedRdapProvider:
                 "RATE_LIMITED": ToolErrorCode.RATE_LIMITED,
                 "SSRF_BLOCKED": ToolErrorCode.SSRF_BLOCKED,
             }
-            return self._error(aliases.get(source.code, ToolErrorCode.PROVIDER_ERROR), source.message,
-                               started, source.retryable)
+            return self._error(
+                aliases.get(source.code, ToolErrorCode.PROVIDER_ERROR), source.message, started, source.retryable
+            )
         except ValueError:
             return self._error(ToolErrorCode.INVALID_TARGET, "RDAP target is invalid", started, False)
         self._seen[key] = (now + self._cache_ttl, result.model_copy(deep=True))
         return NormalizedToolResult(
             status=ToolResultStatus.INCONCLUSIVE if "not_found" in result.signals else ToolResultStatus.SUCCESS,
-            result=result, cache=CacheMetadata(status="miss"), usage=self._usage(started, 1, now),
+            result=result,
+            cache=CacheMetadata(status="miss"),
+            usage=self._usage(started, 1, now),
         )
 
     def _usage(self, started: float, calls: int, observed_at: datetime) -> UsageMetadata:
         return UsageMetadata(
-            usage_ref=f"usage:{uuid4()}", provider=self.provider, provider_version=self.provider_version,
-            operation="lookup", attempts=1 if calls else 0, network_calls=calls,
-            latency_ms=(time.monotonic() - started) * 1000, observed_at=observed_at,
+            usage_ref=f"usage:{uuid4()}",
+            provider=self.provider,
+            provider_version=self.provider_version,
+            operation="lookup",
+            attempts=1 if calls else 0,
+            network_calls=calls,
+            latency_ms=(time.monotonic() - started) * 1000,
+            observed_at=observed_at,
         )
 
-    def _error(self, code: ToolErrorCode, message: str, started: float,
-               retryable: bool) -> NormalizedToolResult[DomainIntelligenceResult]:
+    def _error(
+        self, code: ToolErrorCode, message: str, started: float, retryable: bool
+    ) -> NormalizedToolResult[DomainIntelligenceResult]:
         return NormalizedToolResult(
             status=ToolResultStatus.BLOCKED if code is ToolErrorCode.SSRF_BLOCKED else ToolResultStatus.FAILED,
-            error=NormalizedToolError(tool=ToolName.RDAP, code=code, message=message,
-                                      retryable=retryable, provider=self.provider),
+            error=NormalizedToolError(
+                tool=ToolName.RDAP, code=code, message=message, retryable=retryable, provider=self.provider
+            ),
             cache=CacheMetadata(status="miss"),
             usage=self._usage(started, 1, datetime.now(UTC)),
         )

@@ -35,8 +35,9 @@ class Settings(BaseSettings):
     reputation_max_network_calls: int = Field(default=4, ge=1, le=20)
     google_safe_browsing_api_key: str = ""
     google_fact_check_api_key: str = ""
-    google_web_risk_api_key: str = ""
-    virustotal_api_key: str = ""
+    tavily_api_key: str = ""
+    jina_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)

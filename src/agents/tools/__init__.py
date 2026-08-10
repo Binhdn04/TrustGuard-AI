@@ -1,3 +1,15 @@
+from src.agents.tools.advanced import (
+    EvidenceChunker,
+    FlashRankReranker,
+    GoogleClaimSearchAdapter,
+    JinaReaderAdapter,
+    OpenAIEmbeddingProvider,
+    PlaywrightScreenshotRenderer,
+    TavilySearchAdapter,
+    canonicalize_evidence_url,
+    clean_reader_content,
+    reciprocal_rank_fusion,
+)
 from src.agents.tools.cache import CachedValue, VersionedMemoryCache
 from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
@@ -12,13 +24,20 @@ from src.agents.tools.integration import build_domain_intelligence_adapter, buil
 from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
+    CorpusCandidate,
+    EmbeddingBatch,
+    EmbeddingVector,
+    EvidenceChunk,
     FactCheckCorpusMatch,
     FactCheckCorpusRecord,
     FactCheckSearchResult,
+    FetchedEvidence,
+    GoogleClaimReviewMatch,
     NormalizedToolError,
     NormalizedToolResult,
     RedirectResolutionResult,
     RedirectResolutionStatus,
+    RerankedCandidate,
     ScreenshotResult,
     ToolErrorCode,
     ToolName,
@@ -26,6 +45,7 @@ from src.agents.tools.models import (
     UrlReputationCascadeResult,
     UrlReputationFinding,
     UsageMetadata,
+    WebCandidate,
 )
 from src.agents.tools.network import GuardedHttpClient, SsrfGuard, SsrfPolicy
 from src.agents.tools.protocols import (
@@ -46,6 +66,7 @@ from src.agents.tools.redirect import GuardedRedirectResolver
 from src.agents.tools.reputation import (
     GoogleWebRiskProvider,
     ProductionUrlReputationCascade,
+    UrlReputationService,
     VirusTotalUrlProvider,
 )
 from src.agents.tools.resilience import CircuitBreaker, CircuitOpenError, CircuitState, RetryPolicy
@@ -88,6 +109,7 @@ __all__ = [
     "GoogleWebRiskProvider",
     "VirusTotalUrlProvider",
     "ProductionUrlReputationCascade",
+    "UrlReputationService",
     "GuardedRedirectResolver",
     "RdapDomainIntelligence",
     "NormalizedRdapProvider",
@@ -105,4 +127,22 @@ __all__ = [
     "UnsafeUrlError",
     "build_provider_adapters",
     "build_domain_intelligence_adapter",
+    "OpenAIEmbeddingProvider",
+    "GoogleClaimSearchAdapter",
+    "TavilySearchAdapter",
+    "JinaReaderAdapter",
+    "PlaywrightScreenshotRenderer",
+    "EvidenceChunker",
+    "FlashRankReranker",
+    "reciprocal_rank_fusion",
+    "canonicalize_evidence_url",
+    "clean_reader_content",
+    "EmbeddingBatch",
+    "EmbeddingVector",
+    "GoogleClaimReviewMatch",
+    "CorpusCandidate",
+    "WebCandidate",
+    "FetchedEvidence",
+    "EvidenceChunk",
+    "RerankedCandidate",
 ]

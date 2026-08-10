@@ -227,3 +227,93 @@ class ScreenshotResult(ToolContractModel):
     visible_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     signals: list[str] = Field(default_factory=list)
     observed_at: datetime
+
+
+class EmbeddingVector(ToolContractModel):
+    claim_index: int = Field(ge=0)
+    vector: list[float]
+
+
+class EmbeddingBatch(ToolContractModel):
+    vectors: list[EmbeddingVector] = Field(min_length=1, max_length=5)
+    model: str
+    model_version: str
+    dimensions: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_vectors(self) -> Self:
+        if [item.claim_index for item in self.vectors] != list(range(len(self.vectors))):
+            raise ValueError("embedding vectors must preserve input order")
+        if any(len(item.vector) != self.dimensions for item in self.vectors):
+            raise ValueError("embedding dimensions do not match vector length")
+        return self
+
+
+class GoogleClaimReviewMatch(ToolContractModel):
+    claim_text: str
+    review_ref: str
+    review_url: str
+    reviewer: str
+    publisher: str
+    title: str
+    textual_rating: str | None = None
+    stance: ClaimStance = ClaimStance.UNRATED
+    source_tier: str = "untrusted"
+    trusted_claim_review: bool = False
+    published_at: datetime | None = None
+    observed_at: datetime
+
+
+class CorpusCandidate(ToolContractModel):
+    evidence_ref: str
+    record: FactCheckCorpusRecord
+    fts_rank: int | None = Field(default=None, ge=1)
+    vector_rank: int | None = Field(default=None, ge=1)
+    rrf_score: float = Field(ge=0)
+    source_tier: str = "untrusted"
+    temporal_status: str = "compatible"
+
+
+class WebCandidate(ToolContractModel):
+    evidence_ref: str
+    canonical_url: str
+    title: str
+    snippet: str
+    publisher: str
+    source_tier: str = "untrusted"
+    published_at: datetime | None = None
+    source_version: str
+
+
+class FetchedEvidence(ToolContractModel):
+    evidence_ref: str
+    canonical_url: str
+    title: str
+    cleaned_content: str
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    publisher: str
+    source_tier: str
+    source_version: str
+    published_at: datetime | None = None
+    observed_at: datetime
+
+
+class EvidenceChunk(ToolContractModel):
+    chunk_ref: str
+    evidence_ref: str
+    index: int = Field(ge=0)
+    text: str
+    canonical_url: str
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_tier: str
+    source_version: str
+    published_at: datetime | None = None
+
+
+class RerankedCandidate(ToolContractModel):
+    chunk_ref: str
+    evidence_ref: str
+    rank: int = Field(ge=1)
+    rerank_score: float
+    text: str
+    canonical_url: str

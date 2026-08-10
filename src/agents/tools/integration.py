@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agents.tools.advanced import (
+    GoogleClaimSearchAdapter,
+    JinaReaderAdapter,
+    OpenAIEmbeddingProvider,
+    TavilySearchAdapter,
+)
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
 from src.agents.tools.rdap import RdapDomainIntelligence
 from src.agents.tools.redirect import GuardedRedirectResolver
@@ -39,6 +45,13 @@ def build_provider_adapters(settings: Any) -> dict[str, object]:
         adapters["url_scanner"] = GoogleSafeBrowsingScanner(settings.google_safe_browsing_api_key, timeout=timeout)
     if settings.google_fact_check_api_key:
         adapters["claim_retriever"] = GoogleFactCheckRetriever(settings.google_fact_check_api_key, timeout=timeout)
+        adapters["google_claim_search"] = GoogleClaimSearchAdapter(settings.google_fact_check_api_key, timeout=timeout)
+    if getattr(settings, "openai_api_key", ""):
+        adapters["embedding_provider"] = OpenAIEmbeddingProvider(settings.openai_api_key, timeout=timeout)
+    if getattr(settings, "tavily_api_key", ""):
+        adapters["tavily_search"] = TavilySearchAdapter(settings.tavily_api_key, timeout=timeout)
+    if getattr(settings, "jina_api_key", ""):
+        adapters["jina_reader"] = JinaReaderAdapter(settings.jina_api_key, timeout=timeout)
     # These constructors perform no I/O. Consent is checked in the executor
     # before either lazy RDAP lookup or redirect resolution is called.
     adapters["domain_intelligence"] = build_domain_intelligence_adapter(settings)
