@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from src.agents.contracts import LiveStepTransition
+from src.agents.fact_check import ExtractedClaim, FactCheckOrchestrator
 from src.agents.nodes.example_node import analyze_node, respond_node
 from src.agents.nodes.explanation import explain_result, route_action
 from src.agents.nodes.extraction import classify_input, extract_indicators
@@ -18,9 +19,15 @@ from src.agents.nodes.llm import (
     build_review_assessment_node,
 )
 from src.agents.nodes.planning import build_investigation_plan, plan_next_tool, transition_step
+from src.agents.nodes.provisional import build_provisional_warning
 from src.agents.nodes.risk import assess_risk
 from src.agents.nodes.rules import build_rule_check_node
-from src.agents.nodes.tools import build_inspect_domains_node, build_scan_urls_node, build_verify_claims_node
+from src.agents.nodes.tools import (
+    build_inspect_domains_node,
+    build_resolve_redirects_node,
+    build_scan_urls_node,
+    build_verify_claims_node,
+)
 from src.agents.seams import (
     CampaignDetector,
     ExplanationEngine,
@@ -28,7 +35,9 @@ from src.agents.seams import (
     FunctionRiskEngine,
     NullCampaignDetector,
     NullProgressSink,
+    NullProvisionalWarningSink,
     ProgressSink,
+    ProvisionalWarningSink,
     RiskEngine,
 )
 from src.agents.state import LegacyAgentState, WorkflowState
@@ -36,7 +45,10 @@ from src.agents.tools.protocols import (
     BlacklistRepository,
     ClaimRetriever,
     DomainIntelligence,
+    FactCheckCorpus,
+    RedirectResolver,
     ToolExecutionLedger,
+    UrlReputationCascade,
     UrlScanner,
 )
 from src.models import InvestigationStepStatus, InvestigationTool, ToolError
@@ -58,9 +70,9 @@ async def _action_node(state: WorkflowState) -> dict:
     }
 
 
-def _deadline_reached(state: WorkflowState) -> bool:
+def _deadline_reached(state: WorkflowState, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> bool:
     deadline = state.get("deadline_at")
-    return deadline is not None and datetime.now(UTC) >= deadline
+    return deadline is not None and clock() >= deadline
 
 
 def _ready_steps(state: WorkflowState):
@@ -88,6 +100,9 @@ def _merge_tool_result(working: WorkflowState, base: WorkflowState, update: dict
     working["tool_attempts"] = attempts
     used_delta = update.get("tool_calls_used", base.get("tool_calls_used", 0)) - base.get("tool_calls_used", 0)
     working["tool_calls_used"] = working.get("tool_calls_used", 0) + max(0, used_delta)
+    for key in ("tool_cost_used_usd", "tool_tokens_used"):
+        delta = update.get(key, base.get(key, 0)) - base.get(key, 0)
+        working[key] = working.get(key, 0) + max(0, delta)  # type: ignore[literal-required]
 
 
 def _build_planning_loop_node(
@@ -95,19 +110,25 @@ def _build_planning_loop_node(
     claim_retriever: ClaimRetriever | None,
     blacklist: BlacklistRepository | None,
     domain_intelligence: DomainIntelligence | None = None,
+    redirect_resolver: RedirectResolver | None = None,
+    url_reputation: UrlReputationCascade | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
     progress_sink: ProgressSink | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    fact_check_corpus: FactCheckCorpus | None = None,
+    fact_check_orchestrator: FactCheckOrchestrator | None = None,
 ):
     progress_sink = progress_sink or NullProgressSink()
-    scan_node = build_scan_urls_node(url_scanner, blacklist)
-    claim_node = build_verify_claims_node(claim_retriever)
+    scan_node = build_scan_urls_node(url_scanner, blacklist, url_reputation)
+    claim_node = build_verify_claims_node(claim_retriever, fact_check_corpus)
     domain_node = build_inspect_domains_node(domain_intelligence)
+    redirect_node = build_resolve_redirects_node(redirect_resolver)
 
     adapters = {
-        InvestigationTool.URL_SCANNER: url_scanner,
+        InvestigationTool.URL_SCANNER: url_reputation or url_scanner,
+        InvestigationTool.REDIRECT_RESOLVER: redirect_resolver,
         InvestigationTool.DOMAIN_INTELLIGENCE: domain_intelligence,
-        InvestigationTool.CLAIM_RETRIEVER: claim_retriever,
+        InvestigationTool.CLAIM_RETRIEVER: fact_check_corpus or claim_retriever,
     }
 
     def provider_for(tool: InvestigationTool) -> str | None:
@@ -115,6 +136,8 @@ def _build_planning_loop_node(
             return None
         adapter = adapters[tool]
         if adapter is None:
+            if tool is InvestigationTool.REDIRECT_RESOLVER:
+                return None
             return "not-configured"
         return str(getattr(adapter, "provider", f"{type(adapter).__module__}.{type(adapter).__qualname__}"))
 
@@ -123,6 +146,8 @@ def _build_planning_loop_node(
         unit["tool_target"] = step.target
         if step.tool is InvestigationTool.URL_SCANNER:
             return await scan_node(unit)
+        if step.tool is InvestigationTool.REDIRECT_RESOLVER:
+            return await redirect_node(unit)
         if step.tool is InvestigationTool.DOMAIN_INTELLIGENCE:
             return await domain_node(unit)
         if step.tool is InvestigationTool.CLAIM_RETRIEVER:
@@ -132,13 +157,26 @@ def _build_planning_loop_node(
     async def planning_loop(state: WorkflowState) -> dict:
         """Run bounded independent work in parallel after executor hard gates."""
         working: WorkflowState = dict(state)
+        working["enable_redirect_resolution"] = redirect_resolver is not None
         working["investigation_plan"] = build_investigation_plan(working)
+        if fact_check_orchestrator is not None:
+            # The Wave 2 orchestrator owns all claims as one batch. Per-claim
+            # compatibility steps must never trigger duplicate embedding calls.
+            for step in list(working["investigation_plan"]):
+                if step.tool is InvestigationTool.CLAIM_RETRIEVER and step.status is InvestigationStepStatus.PENDING:
+                    working["investigation_plan"] = transition_step(
+                        working["investigation_plan"], step.step_id, InvestigationStepStatus.SKIPPED
+                    )
         working.setdefault("step_transitions", [])
         working.setdefault("tool_usage_refs", [])
         working.setdefault("tool_calls_used", 0)
         working.setdefault("tool_attempts", {})
         working.setdefault("max_tool_calls", 6)
         working.setdefault("max_tool_retries", 1)
+        working.setdefault("tool_cost_used_usd", 0.0)
+        working.setdefault("tool_tokens_used", 0)
+        working.setdefault("max_tool_cost_usd", float("inf"))
+        working.setdefault("max_tool_tokens", 2**31 - 1)
 
         async def record_transition(step, *, force: bool = False) -> None:
             transitions = list(working.get("step_transitions", []))
@@ -182,7 +220,7 @@ def _build_planning_loop_node(
                     working["limitations"] = decision["limitations"]
                     await skip_pending()
                 break
-            if _deadline_reached(working):
+            if _deadline_reached(working, clock):
                 limitations = list(working.get("limitations", []))
                 limitations.append("Đã hết thời gian dành cho việc gọi công cụ.")
                 working["limitations"] = list(dict.fromkeys(limitations))
@@ -200,15 +238,34 @@ def _build_planning_loop_node(
             for step in ready:
                 # Recheck immediately before a coroutine is created. URL/domain
                 # work that fails this gate never reaches asyncio.gather.
-                if step.tool in {InvestigationTool.URL_SCANNER, InvestigationTool.DOMAIN_INTELLIGENCE}:
+                if step.tool in {
+                    InvestigationTool.URL_SCANNER,
+                    InvestigationTool.REDIRECT_RESOLVER,
+                    InvestigationTool.DOMAIN_INTELLIGENCE,
+                }:
+                    if step.tool is InvestigationTool.REDIRECT_RESOLVER and redirect_resolver is None:
+                        gated.append(step)
+                        continue
                     if working.get("consent_to_scan_urls") is not True:
                         await set_step_status(step.step_id, InvestigationStepStatus.SKIPPED)
                         continue
-                    if step.tool is InvestigationTool.URL_SCANNER and step.target in working.get("blocked_urls", []):
+                    if step.tool in {
+                        InvestigationTool.URL_SCANNER,
+                        InvestigationTool.REDIRECT_RESOLVER,
+                    } and step.target in working.get("blocked_urls", []):
                         await set_step_status(step.step_id, InvestigationStepStatus.SKIPPED)
                         continue
                 gated.append(step)
 
+            if (
+                working["tool_cost_used_usd"] >= working["max_tool_cost_usd"]
+                or working["tool_tokens_used"] >= working["max_tool_tokens"]
+            ):
+                limitations = list(working.get("limitations", []))
+                limitations.append("Đã dùng hết ngân sách chi phí/token cho công cụ.")
+                working["limitations"] = list(dict.fromkeys(limitations))
+                await skip_pending()
+                break
             remaining = working["max_tool_calls"] - working["tool_calls_used"]
             selected = []
             selected_providers: list[str] = []
@@ -261,13 +318,42 @@ def _build_planning_loop_node(
                 await set_step_status(step.step_id, InvestigationStepStatus.RUNNING)
 
             snapshot: WorkflowState = dict(working)
-            results = await asyncio.gather(*(run_step(step, snapshot) for step in selected))
+            timeout_at = None
+            if working.get("deadline_at") is not None:
+                remaining_seconds = max(0.0, (working["deadline_at"] - clock()).total_seconds())
+                timeout_at = asyncio.get_running_loop().time() + remaining_seconds
+
+            async def run_with_deadline(step):
+                if timeout_at is None:
+                    return await run_step(step, snapshot)
+                try:
+                    # All selected tools share one absolute deadline. Time
+                    # spent scheduling sibling tasks cannot extend the budget.
+                    async with asyncio.timeout_at(timeout_at):
+                        return await run_step(step, snapshot)
+                except TimeoutError:
+                    return {
+                        "errors": list(snapshot.get("errors", []))
+                        + [
+                            ToolError(
+                                tool=step.tool.value,
+                                code="PROVIDER_TIMEOUT",
+                                message="Tool call exceeded the analysis deadline",
+                                retryable=False,
+                            )
+                        ],
+                        "limitations": list(snapshot.get("limitations", []))
+                        + ["Đã hết thời gian dành cho việc gọi công cụ."],
+                    }
+
+            results = await asyncio.gather(*(run_with_deadline(step) for step in selected))
             for step, provider, update in zip(selected, selected_providers, results, strict=True):
                 base_error_count = len(snapshot.get("errors", []))
                 _merge_tool_result(working, snapshot, update)
                 new_errors = list(update.get("errors", []))[base_error_count:]
                 attempt_key = {
                     InvestigationTool.URL_SCANNER: "scan_url",
+                    InvestigationTool.REDIRECT_RESOLVER: "resolve_redirect",
                     InvestigationTool.DOMAIN_INTELLIGENCE: "domain_intelligence",
                     InvestigationTool.CLAIM_RETRIEVER: "verify_claim",
                 }[step.tool]
@@ -297,6 +383,8 @@ def _build_planning_loop_node(
                 "next_tool",
                 "tool_target",
                 "tool_calls_used",
+                "tool_cost_used_usd",
+                "tool_tokens_used",
                 "tool_attempts",
                 "investigation_plan",
                 "url_findings",
@@ -317,11 +405,25 @@ def _build_planning_loop_node(
 def build_graph(
     *,
     url_scanner: UrlScanner | None = None,
+    url_reputation: UrlReputationCascade | None = None,
+    redirect_resolver: RedirectResolver | None = None,
     domain_intelligence: DomainIntelligence | None = None,
     claim_retriever: ClaimRetriever | None = None,
+    fact_check_corpus: FactCheckCorpus | None = None,
+    fact_check_orchestrator: FactCheckOrchestrator | None = None,
+    embedding_provider: Any | None = None,
+    google_claim_search: Any | None = None,
+    hybrid_corpus_retriever: Any | None = None,
+    tavily_search: Any | None = None,
+    jina_reader: Any | None = None,
+    chunker: Any | None = None,
+    reranker: Any | None = None,
+    evidence_comparator: Any | None = None,
+    source_registry: Any | None = None,
     blacklist: BlacklistRepository | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
     progress_sink: ProgressSink | None = None,
+    provisional_warning_sink: ProvisionalWarningSink | None = None,
     risk_engine: RiskEngine | None = None,
     explanation_engine: ExplanationEngine | None = None,
     campaign_detector: CampaignDetector | None = None,
@@ -330,10 +432,43 @@ def build_graph(
 ):
     """Build the injectable v2 analysis workflow."""
     graph = StateGraph(WorkflowState)
+    wave2_parts = (
+        embedding_provider,
+        google_claim_search,
+        hybrid_corpus_retriever,
+        tavily_search,
+        jina_reader,
+        chunker,
+        reranker,
+        evidence_comparator,
+        source_registry,
+    )
+    if fact_check_orchestrator is None and any(item is not None for item in wave2_parts):
+        fact_check_orchestrator = FactCheckOrchestrator(
+            embedding_provider=embedding_provider,
+            google_claim_search=google_claim_search,
+            corpus_retriever=hybrid_corpus_retriever,
+            tavily_search=tavily_search,
+            jina_reader=jina_reader,
+            chunker=chunker,
+            reranker=reranker,
+            comparator=evidence_comparator,
+            source_registry=source_registry,
+        )
     graph.add_node("classify_input", _classify_node)
     graph.add_node("extract_indicators", _extract_node)
     graph.add_node("analyze_message", build_analyze_message_node(llm))
     graph.add_node("normalize_and_check_rules", build_rule_check_node(blacklist))
+    provisional_warning_sink = provisional_warning_sink or NullProvisionalWarningSink()
+
+    async def provisional_warning(state: WorkflowState) -> dict:
+        update = build_provisional_warning(state, progress_clock)
+        warning = update.get("provisional_warning")
+        if warning is not None:
+            await provisional_warning_sink.emit(warning.model_copy(deep=True))
+        return update
+
+    graph.add_node("provisional_warning", provisional_warning)
     graph.add_node("plan_tools", build_plan_tools_node(llm))
     if execution_ledger is None and hasattr(blacklist, "claim_tool_execution"):
         execution_ledger = blacklist  # type: ignore[assignment]
@@ -344,11 +479,55 @@ def build_graph(
             claim_retriever,
             blacklist,
             domain_intelligence,
+            redirect_resolver,
+            url_reputation,
             execution_ledger,
             progress_sink,
             progress_clock,
+            fact_check_corpus,
+            fact_check_orchestrator,
         ),
     )
+
+    async def verify_fact_checks(state: WorkflowState) -> dict:
+        if fact_check_orchestrator is None:
+            return {}
+        extracted = list(state.get("extracted_claims", []))
+        known = {item.normalized_text for item in extracted}
+        for raw_claim in state.get("claims", []):
+            try:
+                item = ExtractedClaim.from_text(raw_claim)
+            except ValueError:
+                continue
+            if item.normalized_text not in known:
+                known.add(item.normalized_text)
+                extracted.append(item)
+        result = await fact_check_orchestrator.verify(extracted[:5])
+        evidence = list(state.get("evidence", []))
+        for finding in result.claim_findings:
+            from src.models import Evidence, EvidenceType
+
+            evidence.append(
+                Evidence(
+                    type=EvidenceType.FACT_CHECK,
+                    source=finding.source,
+                    title=finding.title,
+                    url=finding.url,
+                    finding=finding.finding,
+                    observed_at=finding.observed_at,
+                )
+            )
+        return {
+            "extracted_claims": extracted[:5],
+            "claim_findings": list(state.get("claim_findings", [])) + list(result.claim_findings),
+            "evidence": evidence,
+            "limitations": list(dict.fromkeys([*state.get("limitations", []), *result.limitations])),
+            "errors": [*state.get("errors", []), *result.errors],
+            "tool_usage_refs": list(dict.fromkeys([*state.get("tool_usage_refs", []), *result.tool_usage_refs])),
+            "embedding_status": result.embedding_status,
+        }
+
+    graph.add_node("verify_fact_checks", verify_fact_checks)
     risk_engine = risk_engine or FunctionRiskEngine(assess_risk)
     explanation_engine = explanation_engine or FunctionExplanationEngine(explain_result)
     campaign_detector = campaign_detector or NullCampaignDetector()
@@ -371,11 +550,13 @@ def build_graph(
 
     graph.set_entry_point("classify_input")
     graph.add_edge("classify_input", "extract_indicators")
-    graph.add_edge("extract_indicators", "analyze_message")
-    graph.add_edge("analyze_message", "normalize_and_check_rules")
-    graph.add_edge("normalize_and_check_rules", "plan_tools")
+    graph.add_edge("extract_indicators", "normalize_and_check_rules")
+    graph.add_edge("normalize_and_check_rules", "provisional_warning")
+    graph.add_edge("provisional_warning", "analyze_message")
+    graph.add_edge("analyze_message", "plan_tools")
     graph.add_edge("plan_tools", "planning_loop")
-    graph.add_edge("planning_loop", "detect_campaign")
+    graph.add_edge("planning_loop", "verify_fact_checks")
+    graph.add_edge("verify_fact_checks", "detect_campaign")
     graph.add_edge("detect_campaign", "assess_risk")
     graph.add_edge("assess_risk", "review_assessment")
     graph.add_edge("review_assessment", "explain_result")
@@ -407,8 +588,26 @@ def build_openai_graph(**kwargs):
     settings = get_settings()
     llm = get_llm() if settings.openai_api_key else None
     owned_adapters = build_provider_adapters(settings)
+    graph_adapter_names = {
+        "url_scanner",
+        "url_reputation",
+        "redirect_resolver",
+        "domain_intelligence",
+        "claim_retriever",
+        "fact_check_corpus",
+        "embedding_provider",
+        "google_claim_search",
+        "hybrid_corpus_retriever",
+        "tavily_search",
+        "jina_reader",
+        "chunker",
+        "reranker",
+        "evidence_comparator",
+        "source_registry",
+    }
     for name, adapter in owned_adapters.items():
-        kwargs.setdefault(name, adapter)
+        if name in graph_adapter_names:
+            kwargs.setdefault(name, adapter)
     graph = build_graph(llm=llm, **kwargs)
     graph._owned_adapters = tuple(owned_adapters.values())
     return graph

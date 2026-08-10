@@ -1,6 +1,6 @@
 # Final Product Implementation Plan — P-068
 
-**Revision:** 2026-08-07
+**Revision:** 2026-08-09
 
 **Baseline:** commit `535522f` (`feat/agent_v3`, trùng `origin/main` tại thời điểm rà soát)
 
@@ -172,8 +172,16 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 
 ### Bình — Agent/Risk
 
-- Tích hợp corpus retriever vào claim verification; similarity chỉ route candidate, stance/evidence
-  vẫn đến từ trusted record/provider.
+- Mở rộng GPT-4o-mini claim extraction thành tối đa năm item có `claim_date_start/end`; redact,
+  canonicalize, gửi một `text-embedding-3-small` batch rồi fan-out tối đa ba claim.
+- Mỗi claim chạy Google Claim Search và Existing Corpus hybrid song song, áp temporal/source policy,
+  rồi chạy deterministic evidence-sufficiency gate trước mọi Tavily/Jina call.
+- Gate đủ khi có một Tier A temporal-compatible, một trusted ClaimReview Tier B, hoặc hai Tier B độc
+  lập; Tier C không đủ một mình và Untrusted bị loại trước comparator.
+- Orchestrate conditional Tavily → Jina → chunk → FlashRank top 5 → GPT-4o-mini comparison.
+  Comparator trả stance/citation có schema; Risk Engine giữ độc quyền score/verdict/action.
+- Khi embedding timeout/429, bỏ nhánh vector nhưng tiếp tục Google/FTS/conditional web; FlashRank là
+  local CPU rerank exception, không phải embedding/comparison fallback.
 - Implement campaign clustering job theo exact registrable domain/redirect target và claim embedding;
   default window 24 giờ, cosine threshold 0,85, tối thiểu 3 analyses, tất cả configurable/versioned.
 - Cluster chỉ tạo admin hypothesis; không tự block/broad warn và không suy diễn sender identity.
@@ -182,8 +190,19 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 
 ### Đức — Tools/Data
 
-- Xây allowlisted fact-check ingestion, dedupe/version/provenance và pgvector retrieval; record có
-  publisher, source URL, claim, stance, language, published/updated time và embedding version.
+- Implement `EmbeddingProvider` production bằng OpenAI `text-embedding-3-small` `/v1/embeddings`,
+  batch tối đa năm claim, vector 1536 chiều, normalized usage/error và không có local model.
+- Implement Google Fact Check Tools `claims.search` như retrieval/index adapter: normalize claim và
+  ClaimReview cùng reviewer/publisher provenance; không gán “Google verdict”.
+- Implement PostgreSQL hybrid retrieval: FTS `simple` top 20 + pgvector cosine top 20, filter
+  model/version/dimensions/language/source/temporal, dedupe record-version và RRF `k=60`.
+- Implement Tavily Search (`max_results=10`, registry domain/date filter, không answer/raw content)
+  và Jina Reader cho tối đa năm canonical URL sau source-policy validation.
+- Chunk bằng `RecursiveCharacterTextSplitter` (`1200/150`, paragraph/sentence separators) và rerank
+  local CPU bằng FlashRank `ms-marco-MultiBERT-L-12`, `max_length=512`, top 5. Bundle/cache model
+  trong image; không download trong request path.
+- Canonicalize và dedupe evidence theo URL + cleaned-content hash + source version; giữ temporal
+  metadata và citation mapping xuyên suốt search/fetch/chunk/rerank.
 - Implement Playwright/Chromium screenshot worker cô lập: fresh context, không cookie/login/
   credential/persistent storage, download disabled, SSRF/DNS revalidation và resource limits.
 - Screenshot chỉ được planner dùng sau explicit consent khi static evidence thiếu; output chỉ gồm
@@ -192,6 +211,13 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 
 ### Hải — API/Platform
 
+- Xây versioned Source Registry: Tier A `*.gov.vn` với deny override; Tier B approved newspapers và
+  trusted fact-checkers; Tier C reputable sources khác; Untrusted discovery-only. Lưu allowed
+  operations, policy effective interval, reviewer và audit.
+- Thêm runtime fact-check result/evidence/chunk cache tách trusted corpus, FTS vector, temporal dates,
+  comparator version, promotion status, `embedding_status` và idempotent re-embedding job.
+- Web evidence được cache/dedupe ngay; chỉ Tier A/B đã validate/review được promote trusted corpus.
+  Tier C không auto-promote, runtime LLM stance không trở thành trusted record.
 - Implement appeal create/read/admin queue/decision/notification với ownership và immutable audit.
 - Mở rộng reviewed action: `add_to_blacklist`, `disable_blacklist`, `block_domain`,
   `publish_broad_warning`, `none`; mọi action ngoài `none` cần approved decision transaction.
@@ -211,7 +237,19 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 
 ### Merge gate Wave 2
 
-- Citation trỏ đúng corpus record/version; no-match/conflict trả limitation/inconclusive.
+- Một analysis 1–5 claim chỉ tạo một embeddings request; claim fan-out không vượt concurrency 3.
+- Google Claim Search và FTS/pgvector chạy trước; Google match giữ publisher/reviewer provenance và
+  không được mô tả là Google tự fact-check.
+- Evidence đủ không gọi Tavily/Jina; thiếu mới gọi Tavily tối đa 10, Jina tối đa 5 URL, chunk và
+  FlashRank top 5. No-match/conflict trả limitation/inconclusive.
+- Semantic-high nhưng temporal-wrong bị loại/hạ hạng đúng policy; publication proxy có penalty và
+  limitation; temporal evidence không có ngày bị loại.
+- `*.gov.vn` suffix match đúng hostname, deny override hoạt động; Untrusted không vào comparator,
+  Tier C-only không qua gate và hai Tier B phải độc lập publisher.
+- Embedding timeout/429 không load local embedding model, vẫn thử Google/FTS/web trong budget và lưu
+  `embedding_status=pending` nếu có completed comparison.
+- Tavily/Jina/FlashRank failure có limitation và không sinh safe/giả citation.
+- Runtime cache dedupe idempotent; chỉ reviewed Tier A/B được promote trusted corpus.
 - Screenshot private IP, credential URL, redirect escape, download và timeout đều fail closed.
 - Appeal overturn tạo corrective decision/blacklist disable, không sửa/xóa audit cũ.
 - Campaign không có code path phát broad warning trước admin approval.
@@ -226,11 +264,15 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 - Tune threshold chỉ qua versioned config + regression approval; kiểm tra prompt injection và
   evidence-grounding/hallucination.
 - Soak test agent resume, bounded loop, duplicate events và provider conflict.
+- Eval stance theo language/temporal/provider path; kiểm tra prompt injection trong fetched evidence,
+  fabricated citation và comparator inconsistency.
 
 ### Đức — Tools/Data
 
 - Provider contract tests bằng recorded sanitized fixtures; live smoke riêng, không chạy trong CI.
 - Load/failure test cache, quota exhaustion, provider outage và corpus rebuild/rollback.
+- Load test batch embeddings, bounded claim fan-out, freshness/stale rate, re-embedding backlog và
+  vector model/dimension dual-read migration.
 - Security review redirect/RDAP/screenshot egress; rotate/disable provider bằng config không deploy code.
 
 ### Hải — API/Platform

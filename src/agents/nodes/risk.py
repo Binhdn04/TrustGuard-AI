@@ -74,7 +74,9 @@ def assess_risk(state: AgentState) -> dict:
     relevant_claims = [
         finding for finding in state.get("claim_findings", []) if finding.relevance >= _CLAIM_RELEVANCE_THRESHOLD
     ]
-    if any(finding.stance is ClaimStance.REFUTES for finding in relevant_claims):
+    claim_stances = {finding.stance for finding in relevant_claims}
+    claims_conflict = ClaimStance.SUPPORTS in claim_stances and ClaimStance.REFUTES in claim_stances
+    if ClaimStance.REFUTES in claim_stances and not claims_conflict:
         score += 70
     elif any(finding.stance is ClaimStance.MIXED for finding in relevant_claims):
         score += 25
@@ -85,7 +87,7 @@ def assess_risk(state: AgentState) -> dict:
     limitations = state.get("limitations", [])
     has_errors = bool(state.get("errors"))
     provider_safe = any(item.verdict is Verdict.SAFE for item in state.get("url_findings", []))
-    fact_refuted = any(finding.stance is ClaimStance.REFUTES for finding in relevant_claims)
+    fact_refuted = ClaimStance.REFUTES in claim_stances and not claims_conflict
     provider_malicious = any(item.verdict is Verdict.MALICIOUS for item in state.get("url_findings", []))
 
     if fact_refuted or provider_malicious:

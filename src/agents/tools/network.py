@@ -106,10 +106,16 @@ class GuardedHttpClient:
     async def get(self, url: str, **kwargs: object) -> tuple[httpx.Response, list[str]]:
         current = url
         chain = [url]
+        visited = {url}
         request_headers = dict(kwargs.pop("headers", {}) or {})
         request_extensions = dict(kwargs.pop("extensions", {}) or {})
+        kwargs.pop("follow_redirects", None)
         for redirect_number in range(self._guard.policy.max_redirects + 1):
-            target = await self._guard.validate(current)
+            try:
+                target = await self._guard.validate(current)
+            except ToolCallError as exc:
+                exc.network_calls = redirect_number
+                raise
             # Connect to the exact DNS answer that was checked.  The original
             # hostname is retained for HTTP routing and TLS SNI/certificate
             # verification, eliminating the validation/request DNS race.
@@ -117,24 +123,59 @@ class GuardedHttpClient:
             headers["host"] = target.host_header
             extensions = request_extensions.copy()
             extensions["sni_hostname"] = target.host.encode("ascii")
-            response = await self._client.get(
+            request = self._client.build_request(
+                "GET",
                 target.pinned_url(target.addresses[0]),
                 headers=headers,
                 extensions=extensions,
-                follow_redirects=False,
                 **kwargs,
             )
+            # ``AsyncClient.get`` eagerly buffers the complete response. Use
+            # streaming so the byte limit is enforced while data arrives.
+            response = await self._client.send(request, stream=True, follow_redirects=False)
             location = response.headers.get("location")
             if response.is_redirect and location:
+                await response.aclose()
                 if redirect_number >= self._guard.policy.max_redirects:
                     raise ToolCallError("url_scanner", "TOO_MANY_REDIRECTS", "Redirect limit exceeded")
                 current = urljoin(current, location)
+                if current in visited:
+                    error = ToolCallError("redirect_resolver", "REDIRECT_LOOP", "Redirect chain contains a loop")
+                    error.network_calls = redirect_number + 1
+                    raise error
+                visited.add(current)
                 chain.append(current)
                 continue
             content_length = response.headers.get("content-length")
-            if content_length and int(content_length) > self._guard.policy.max_response_bytes:
-                raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
-            if len(response.content) > self._guard.policy.max_response_bytes:
-                raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
-            return response, chain
+            if content_length:
+                try:
+                    advertised_size = int(content_length)
+                except ValueError as exc:
+                    await response.aclose()
+                    raise ToolCallError(
+                        "url_scanner", "PROVIDER_ERROR", "Response has an invalid content length"
+                    ) from exc
+                if advertised_size > self._guard.policy.max_response_bytes:
+                    await response.aclose()
+                    raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
+            body = bytearray()
+            try:
+                async for chunk in response.aiter_bytes():
+                    if len(body) + len(chunk) > self._guard.policy.max_response_bytes:
+                        raise ToolCallError("url_scanner", "RESPONSE_TOO_LARGE", "Provider response is too large")
+                    body.extend(chunk)
+            finally:
+                await response.aclose()
+            response_headers = response.headers.copy()
+            response_headers.pop("content-encoding", None)
+            response_headers.pop("content-length", None)
+            response_headers.pop("transfer-encoding", None)
+            bounded_response = httpx.Response(
+                response.status_code,
+                headers=response_headers,
+                content=bytes(body),
+                request=request,
+                extensions=response.extensions,
+            )
+            return bounded_response, chain
         raise ToolCallError("url_scanner", "TOO_MANY_REDIRECTS", "Redirect limit exceeded")

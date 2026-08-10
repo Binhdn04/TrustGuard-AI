@@ -1,4 +1,28 @@
+[project]
+name = "trustguard-ai"
+version = "0.1.0"
+description = "Evidence-grounded fact-check and URL risk analysis API"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.14.0",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.115.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langgraph>=0.2.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "psycopg[binary]>=3.2.0",
+    "PyJWT[crypto]>=2.10.0",
+    "python-dotenv>=1.0.0",
+    "redis>=5.2.0",
+    "uvicorn[standard]>=0.34.0",
+]
+
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.16.1",
 ]

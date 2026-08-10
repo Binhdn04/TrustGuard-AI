@@ -335,6 +335,7 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
         reason="Evidence needs another review",
         comment="Please verify the provider result.",
         created_at=created_at,
+        evidence_snapshot=[],
     )
     reviewed_response = response.model_copy(update={"case_status": CaseStatus.APPROVED})
     review_event = AnalysisEvent(
@@ -383,6 +384,87 @@ async def test_security_repository_persists_admin_views_atomically(tmp_path):
     blacklist_after_failure = await repository.list_blacklist(query=None, limit=50, offset=0)
     assert "must-not-be-written.example" not in {entry.domain for entry in blacklist_after_failure}
     await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_report_and_review_queue_insert_roll_back_together(tmp_path):
+    database = tmp_path / "security.db"
+    repository = SQLiteBlacklistRepository(database)
+    analysis_id = uuid4()
+    report_id = uuid4()
+    created_at = datetime.now(UTC)
+    await repository.create_analysis(
+        owner_id="user-1",
+        request=AnalysisCreateRequest(message="Check report transaction", consent_to_scan_urls=False),
+        response=AnalysisResponse(
+            analysis_id=analysis_id,
+            status=AnalysisStatus.QUEUED,
+            created_at=created_at,
+        ),
+        event=AnalysisEvent(
+            analysis_id=analysis_id,
+            status=AnalysisStatus.QUEUED,
+            step="queued",
+            occurred_at=created_at,
+        ),
+    )
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """CREATE TRIGGER reject_review_queue_insert
+           BEFORE INSERT ON review_queue_items
+           BEGIN SELECT RAISE(ABORT, 'fixture rejection'); END"""
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await repository.record_report(
+            report_id=str(report_id),
+            analysis_id=str(analysis_id),
+            reporter_id="user-1",
+            reason="Must roll back",
+            comment=None,
+            created_at=created_at,
+            evidence_snapshot=[],
+        )
+
+    assert await repository.list_reports(limit=50, offset=0) == []
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_review_queue_audit_columns_use_versioned_sqlite_migration(tmp_path):
+    database = tmp_path / "legacy-review.db"
+    repository = SQLiteBlacklistRepository(database)
+    await repository.close()
+
+    connection = sqlite3.connect(database)
+    connection.execute("DELETE FROM schema_migrations WHERE version = 3")
+    connection.execute("DROP TABLE review_queue_items")
+    connection.execute(
+        """CREATE TABLE review_queue_items (
+               item_id TEXT PRIMARY KEY,
+               report_id TEXT NOT NULL UNIQUE,
+               analysis_id TEXT NOT NULL,
+               status TEXT NOT NULL,
+               evidence_snapshot_json TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+           )"""
+    )
+    connection.commit()
+    connection.close()
+
+    repository = SQLiteBlacklistRepository(database)
+    await repository.close()
+
+    connection = sqlite3.connect(database)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(review_queue_items)")}
+    versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+    connection.close()
+
+    assert {"decision", "reviewer_id", "reviewer_note", "reviewed_at"} <= columns
+    assert 3 in versions
 
 
 @pytest.mark.asyncio

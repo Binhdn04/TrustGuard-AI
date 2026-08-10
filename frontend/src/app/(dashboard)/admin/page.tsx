@@ -1,242 +1,368 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, XCircle, AlertTriangle, ShieldCheck, ShieldAlert, FileText, Link as LinkIcon, MoreVertical } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FileText,
+  Link as LinkIcon,
+  Loader2,
+  ShieldAlert,
+  ShieldCheck,
+  XCircle,
+} from "lucide-react";
+
+import { getAnalysisApi } from "@/lib/api/analysis-api";
+import { ApiError } from "@/lib/api/http-analysis-api";
 import { cn } from "@/lib/utils";
+import type {
+  AdminDecisionRequest,
+  AnalysisResponse,
+  BlacklistEntry,
+  ReviewQueueItem,
+  ReviewQueueDecisionRequest,
+} from "@/types/analysis";
 
-// --- Mock Data ---
-const MOCK_REVIEWS = [
-  {
-    id: "rev1",
-    originalContent: "Thuốc X chữa khỏi ung thư dạ dày 100%.",
-    extractedClaim: "Thuốc X chữa khỏi ung thư dạ dày.",
-    aiStance: "refutes",
-    evidenceCount: 0,
-    limitations: ["Cần chuyên gia y tế xác nhận."],
-    status: "pending",
-  }
-];
+interface PendingDecision {
+  analysis: AnalysisResponse;
+  title: string;
+  request: Omit<AdminDecisionRequest, "note">;
+}
 
-const MOCK_URLS = [
-  {
-    id: "url1",
-    domain: "tapdoanx-qua.example",
-    verdict: "suspicious",
-    blacklistStatus: "not_listed",
-    intelligence: "Domain mới đăng ký 2 ngày, chứa từ khóa mạo danh.",
-    redirects: 2,
-    status: "pending",
+function displayDomain(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
   }
-];
+}
 
 export default function AdminPage() {
-  const [activeTab, setActiveTab] = useState<"factcheck" | "url">("factcheck");
-  const [reviews, setReviews] = useState(MOCK_REVIEWS);
-  const [urls, setUrls] = useState(MOCK_URLS);
-  
-  // Dialog state
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    action: () => void;
-  }>({ isOpen: false, title: "", message: "", action: () => {} });
+  const [activeTab, setActiveTab] = useState<"factcheck" | "url" | "reports">("factcheck");
+  const [cases, setCases] = useState<AnalysisResponse[]>([]);
+  const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([]);
+  const [reports, setReports] = useState<ReviewQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingDecision | null>(null);
+  const [pendingReport, setPendingReport] = useState<{ report: ReviewQueueItem, title: string, request: Omit<ReviewQueueDecisionRequest, "note"> } | null>(null);
+  const [note, setNote] = useState("");
+  const [submittingIds, setSubmittingIds] = useState<Set<string>>(new Set());
+  const [caseErrors, setCaseErrors] = useState<Record<string, string>>({});
+  const [reportErrors, setReportErrors] = useState<Record<string, string>>({});
 
-  const handleAction = (title: string, message: string, action: () => void) => {
-    setConfirmDialog({ isOpen: true, title, message, action });
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const api = getAnalysisApi();
+      const [reviewCases, blacklistEntries, reviewQueueItems] = await Promise.all([
+        api.listAdminCases(),
+        api.listAdminBlacklist(),
+        api.listReviewQueueItems(),
+      ]);
+      setCases(reviewCases);
+      setBlacklist(blacklistEntries);
+      setReports(reviewQueueItems);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Không thể tải hàng đợi kiểm duyệt.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const api = getAnalysisApi();
+    void Promise.all([api.listAdminCases(), api.listAdminBlacklist(), api.listReviewQueueItems()])
+      .then(([reviewCases, blacklistEntries, reviewQueueItems]) => {
+        if (!active) return;
+        setCases(reviewCases);
+        setBlacklist(blacklistEntries);
+        setReports(reviewQueueItems);
+      })
+      .catch((error: unknown) => {
+        if (active) setLoadError(error instanceof Error ? error.message : "Không thể tải hàng đợi kiểm duyệt.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  const urlCases = useMemo(
+    () => cases.filter((item) => (item.normalized_urls?.length ?? 0) > 0),
+    [cases],
+  );
+
+  const openDecision = (
+    analysis: AnalysisResponse,
+    title: string,
+    request: Omit<AdminDecisionRequest, "note">,
+  ) => {
+    if (submittingIds.has(analysis.analysis_id)) return;
+    setPending({ analysis, title, request });
+    setNote("");
   };
 
-  const closeDialog = () => setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+  const submitDecision = async () => {
+    if (!pending || !note.trim() || submittingIds.has(pending.analysis.analysis_id)) return;
+    const analysisId = pending.analysis.analysis_id;
+    setSubmittingIds((current) => new Set(current).add(analysisId));
+    setCaseErrors((current) => ({ ...current, [analysisId]: "" }));
+    try {
+      await getAnalysisApi().decideAdminCase(analysisId, {
+        ...pending.request,
+        note: note.trim(),
+      });
+      setCases((current) => current.filter((item) => item.analysis_id !== analysisId));
+      setPending(null);
+      await load();
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 409
+        ? "Case đã được reviewer khác xử lý. Dữ liệu vừa được tải lại."
+        : error instanceof Error ? error.message : "Không thể lưu quyết định.";
+      setCaseErrors((current) => ({ ...current, [analysisId]: message }));
+      setPending(null);
+      if (error instanceof ApiError && error.status === 409) await load();
+    } finally {
+      setSubmittingIds((current) => {
+        const next = new Set(current);
+        next.delete(analysisId);
+        return next;
+      });
+    }
+  };
+
+  const openReportDecision = (
+    report: ReviewQueueItem,
+    title: string,
+    request: Omit<ReviewQueueDecisionRequest, "note">,
+  ) => {
+    if (submittingIds.has(report.item_id)) return;
+    setPendingReport({ report, title, request });
+    setNote("");
+  };
+
+  const submitReportDecision = async () => {
+    if (!pendingReport || !note.trim() || submittingIds.has(pendingReport.report.item_id)) return;
+    const itemId = pendingReport.report.item_id;
+    setSubmittingIds((current) => new Set(current).add(itemId));
+    setReportErrors((current) => ({ ...current, [itemId]: "" }));
+    try {
+      await getAnalysisApi().decideReviewQueueItem(itemId, {
+        ...pendingReport.request,
+        note: note.trim(),
+      });
+      setPendingReport(null);
+      await load();
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 409
+        ? "Report đã được xử lý."
+        : error instanceof Error ? error.message : "Không thể lưu quyết định.";
+      setReportErrors((current) => ({ ...current, [itemId]: message }));
+      setPendingReport(null);
+      if (error instanceof ApiError && error.status === 409) await load();
+    } finally {
+      setSubmittingIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
+
+  const startReportReview = async (itemId: string) => {
+    if (submittingIds.has(itemId)) return;
+    setSubmittingIds((current) => new Set(current).add(itemId));
+    setReportErrors((current) => ({ ...current, [itemId]: "" }));
+    try {
+      await getAnalysisApi().startReviewQueueItem(itemId);
+      await load();
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 409
+        ? "Report đã được reviewer khác nhận xử lý. Dữ liệu vừa được tải lại."
+        : error instanceof Error ? error.message : "Không thể bắt đầu review.";
+      setReportErrors((current) => ({ ...current, [itemId]: message }));
+      if (error instanceof ApiError && error.status === 409) await load();
+    } finally {
+      setSubmittingIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
 
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4 sm:px-6">
-      
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Admin Workspace</h1>
-        <p className="text-muted-foreground mt-2">Khu vực kiểm duyệt dành cho Human-in-the-loop và Security Admin.</p>
+        <h1 className="text-3xl font-bold">Admin Workspace</h1>
+        <p className="mt-2 text-muted-foreground">Hàng đợi human-in-the-loop từ API; mọi quyết định đều cần ghi chú.</p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex space-x-1 p-1 bg-muted rounded-xl mb-6 max-w-sm">
-        <button
-          onClick={() => setActiveTab("factcheck")}
-          className={cn("flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors", activeTab === "factcheck" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-        >
-          Fact-check Review
-        </button>
-        <button
-          onClick={() => setActiveTab("url")}
-          className={cn("flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors", activeTab === "url" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-        >
-          URL Security
-        </button>
+      <div className="mb-6 flex max-w-[600px] space-x-1 rounded-xl bg-muted p-1" role="tablist">
+        <button role="tab" aria-selected={activeTab === "factcheck"} onClick={() => setActiveTab("factcheck")} className={cn("flex-1 rounded-lg px-3 py-2 text-sm font-medium", activeTab === "factcheck" ? "bg-background shadow-sm" : "text-muted-foreground")}>Fact-check Review</button>
+        <button role="tab" aria-selected={activeTab === "url"} onClick={() => setActiveTab("url")} className={cn("flex-1 rounded-lg px-3 py-2 text-sm font-medium", activeTab === "url" ? "bg-background shadow-sm" : "text-muted-foreground")}>URL Security</button>
+        <button role="tab" aria-selected={activeTab === "reports"} onClick={() => setActiveTab("reports")} className={cn("flex-1 rounded-lg px-3 py-2 text-sm font-medium", activeTab === "reports" ? "bg-background shadow-sm" : "text-muted-foreground")}>User Reports</button>
       </div>
 
-      {/* Content */}
-      <div className="space-y-6">
-        
-        {/* --- Tab: Fact-Check --- */}
-        {activeTab === "factcheck" && (
-          <div className="space-y-4">
-            {reviews.map(review => (
-              <div key={review.id} className={cn("p-5 rounded-2xl border bg-card", review.status !== "pending" && "opacity-60")}>
-                <div className="flex flex-col md:flex-row gap-6">
-                  
-                  {/* Info */}
-                  <div className="flex-1 space-y-4">
+      {loading && <div aria-live="polite" className="flex justify-center py-16"><Loader2 className="size-7 animate-spin text-primary" /></div>}
+      {loadError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{loadError}<button type="button" onClick={() => void load()} className="ml-2 font-bold underline">Thử lại</button></div>}
+
+      {!loading && !loadError && activeTab === "factcheck" && (
+        <div className="space-y-4">
+          {cases.map((review) => {
+            const submitting = submittingIds.has(review.analysis_id);
+            return (
+              <article key={review.analysis_id} className="rounded-2xl border bg-card p-5">
+                <div className="flex flex-col gap-6 md:flex-row">
+                  <div className="min-w-0 flex-1 space-y-4">
                     <div>
-                      <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1">Nội dung gốc</h4>
-                      <p className="text-sm font-medium">&quot;{review.originalContent}&quot;</p>
+                      <h2 className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Claim cần duyệt</h2>
+                      <p className="text-sm font-medium">{review.claims?.join(" · ") || review.summary || review.analysis_id}</p>
                     </div>
-                    
-                    <div className="p-3 bg-muted/50 rounded-xl border border-border">
-                      <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-1 flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Claim được trích xuất</h4>
-                      <p className="text-sm font-medium">&quot;{review.extractedClaim}&quot;</p>
-                      
-                      <div className="mt-3 flex items-center gap-4">
-                        <div>
-                          <span className="text-[10px] text-muted-foreground block mb-0.5">Kết luận AI:</span>
-                          <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase", review.aiStance === "refutes" ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20")}>
-                            {review.aiStance}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-muted-foreground block mb-0.5">Evidence:</span>
-                          <span className="text-xs font-medium">{review.evidenceCount} nguồn</span>
-                        </div>
-                      </div>
+                    <div className="rounded-xl border border-border bg-muted/50 p-3">
+                      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase text-muted-foreground"><FileText className="size-3.5" />Evidence snapshot ({review.evidence?.length ?? 0})</h3>
+                      <ul className="mt-3 space-y-2">
+                        {(review.evidence ?? []).map((evidence, index) => (
+                          <li key={`${evidence.type}:${index}`} className="rounded-lg bg-background p-3 text-xs">
+                            <p className="font-bold">{evidence.title}</p>
+                            <p className="mt-1 text-muted-foreground">{evidence.source}: {evidence.finding}</p>
+                            {evidence.url && <p className="mt-1 break-all text-muted-foreground">URL nguồn: {evidence.url}</p>}
+                          </li>
+                        ))}
+                        {(review.evidence?.length ?? 0) === 0 && <li className="text-xs text-muted-foreground">Không có evidence snapshot.</li>}
+                      </ul>
                     </div>
-                    
-                    {review.limitations.length > 0 && (
-                      <div className="text-xs text-amber-600 dark:text-amber-400 flex gap-1.5 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
-                        <AlertTriangle className="w-4 h-4 shrink-0" />
-                        <span>Limitation: {review.limitations.join(" ")}</span>
+                    {(review.limitations?.length ?? 0) > 0 && <div className="flex gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-700"><AlertTriangle className="size-4 shrink-0" /><span>{review.limitations?.join(" ")}</span></div>}
+                    {caseErrors[review.analysis_id] && <p role="alert" className="text-sm font-medium text-rose-600">{caseErrors[review.analysis_id]}</p>}
+                  </div>
+                  <div className="flex shrink-0 flex-row gap-2 md:flex-col">
+                    <button disabled={submitting} onClick={() => openDecision(review, "Xác nhận kết quả AI", { decision: "approved", action: "none" })} className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-600 disabled:opacity-50"><CheckCircle2 className="size-4" />Approve</button>
+                    <button disabled={submitting} onClick={() => openDecision(review, "Bác bỏ kết quả AI", { decision: "rejected", action: "none" })} className="flex items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-600 disabled:opacity-50"><XCircle className="size-4" />Reject</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+          {cases.length === 0 && <div className="rounded-2xl border border-dashed py-12 text-center text-muted-foreground">Không có case đang chờ duyệt.</div>}
+        </div>
+      )}
+
+      {!loading && !loadError && activeTab === "url" && (
+        <div className="space-y-4">
+          {urlCases.map((review) => {
+            const url = review.normalized_urls?.[0] ?? "";
+            const domain = displayDomain(url);
+            const listed = blacklist.some((entry) => entry.domain === domain);
+            const submitting = submittingIds.has(review.analysis_id);
+            return (
+              <article key={review.analysis_id} className="rounded-2xl border bg-card p-5">
+                <div className="flex flex-col gap-6 md:flex-row">
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <h2 className="flex items-center gap-2 text-sm font-bold"><LinkIcon className="size-4 text-muted-foreground" /><span className="break-all">{domain}</span></h2>
+                    <p className="break-all rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">URL phân tích: {url}</p>
+                    <p className="text-xs">Verdict: <strong>{review.verdict ?? "inconclusive"}</strong> · Blacklist: <strong>{listed ? "đã có" : "chưa có"}</strong></p>
+                    <div className="rounded-xl border p-3">
+                      <h3 className="text-xs font-semibold uppercase text-muted-foreground">Evidence snapshot</h3>
+                      {(review.evidence ?? []).map((evidence, index) => <p key={`${evidence.type}:${index}`} className="mt-2 text-xs"><strong>{evidence.source}</strong>: {evidence.finding}</p>)}
+                    </div>
+                    {caseErrors[review.analysis_id] && <p role="alert" className="text-sm font-medium text-rose-600">{caseErrors[review.analysis_id]}</p>}
+                  </div>
+                  <div className="flex shrink-0 flex-row gap-2 md:flex-col">
+                    <button disabled={submitting || listed} onClick={() => openDecision(review, `Thêm ${domain} vào blacklist`, { decision: "approved", action: "add_to_blacklist" })} className="flex items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-600 disabled:opacity-50"><ShieldAlert className="size-4" />Blacklist</button>
+                    <button disabled={submitting} onClick={() => openDecision(review, `Không thêm ${domain} vào blacklist`, { decision: "rejected", action: "none" })} className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-600 disabled:opacity-50"><ShieldCheck className="size-4" />Bỏ qua</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+          {urlCases.length === 0 && <div className="rounded-2xl border border-dashed py-12 text-center text-muted-foreground">Không có URL đang chờ duyệt.</div>}
+        </div>
+      )}
+
+      {!loading && !loadError && activeTab === "reports" && (
+        <div className="space-y-4">
+          {reports.map((report) => {
+            const submitting = submittingIds.has(report.item_id);
+            return (
+              <article key={report.item_id} className="rounded-2xl border bg-card p-5">
+                <div className="flex flex-col gap-6 md:flex-row">
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <h2 className="flex items-center gap-2 text-sm font-bold"><FileText className="size-4 text-muted-foreground" /><span className="break-all">{report.analysis_id}</span></h2>
+                    <p className="text-xs">Status: <strong>{report.status}</strong></p>
+                    <div className="rounded-xl border p-3 bg-muted/30">
+                      <h3 className="text-xs font-semibold uppercase text-muted-foreground">Chi tiết Report</h3>
+                      <p className="mt-2 text-sm"><strong>Lý do:</strong> {report.reason}</p>
+                      {report.comment && <p className="mt-1 text-sm text-muted-foreground"><strong>Ghi chú:</strong> {report.comment}</p>}
+                    </div>
+                    {report.analysis_content && (
+                      <div className="rounded-xl border p-3 bg-muted/10">
+                        <h3 className="text-xs font-semibold uppercase text-muted-foreground">Nội dung người dùng đã hỏi chat</h3>
+                        <p className="mt-2 text-sm italic border-l-2 pl-3 py-1 border-muted-foreground text-muted-foreground">{report.analysis_content}</p>
                       </div>
                     )}
-                  </div>
-
-                  {/* Actions */}
-                  {review.status === "pending" ? (
-                    <div className="flex flex-row md:flex-col gap-2 shrink-0">
-                      <button 
-                        onClick={() => handleAction("Approve AI Result", "Xác nhận kết luận của AI là chính xác?", () => setReviews(r => r.map(x => x.id === review.id ? {...x, status: "approved"} : x)))}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 rounded-xl text-sm font-semibold transition-colors"
-                      >
-                        <CheckCircle2 className="w-4 h-4" /> Approve
-                      </button>
-                      <button 
-                        onClick={() => handleAction("Reject AI Result", "Bác bỏ kết luận của AI và chỉnh sửa thủ công?", () => setReviews(r => r.map(x => x.id === review.id ? {...x, status: "rejected"} : x)))}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 rounded-xl text-sm font-semibold transition-colors"
-                      >
-                        <XCircle className="w-4 h-4" /> Reject
-                      </button>
-                      <button 
-                        onClick={() => handleAction("Escalate", "Chuyển case này cho senior reviewer?", () => setReviews(r => r.map(x => x.id === review.id ? {...x, status: "escalated"} : x)))}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-background border border-border hover:bg-muted text-foreground rounded-xl text-sm font-semibold transition-colors"
-                      >
-                        <MoreVertical className="w-4 h-4" /> Escalate
-                      </button>
+                    <div className="rounded-xl border p-3">
+                      <h3 className="text-xs font-semibold uppercase text-muted-foreground">Evidence snapshot</h3>
+                      {(report.evidence_snapshot ?? []).map((evidence, index) => <p key={`${evidence.type}:${index}`} className="mt-2 text-xs"><strong>{evidence.source}</strong>: {evidence.finding}</p>)}
+                      {(report.evidence_snapshot?.length ?? 0) === 0 && <p className="mt-2 text-xs text-muted-foreground">Không có evidence.</p>}
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-center shrink-0 w-32 border border-dashed rounded-xl border-border bg-muted/30">
-                      <span className="text-sm font-medium text-muted-foreground capitalize">{review.status}</span>
-                    </div>
-                  )}
-
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* --- Tab: URL Security --- */}
-        {activeTab === "url" && (
-          <div className="space-y-4">
-            {urls.map(url => (
-              <div key={url.id} className={cn("p-5 rounded-2xl border bg-card", url.status !== "pending" && "opacity-60")}>
-                <div className="flex flex-col md:flex-row gap-6">
-                  
-                  {/* Info */}
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <LinkIcon className="w-4 h-4 text-muted-foreground" />
-                      <h4 className="text-sm font-bold truncate">{url.domain}</h4>
-                      <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase", url.verdict === "suspicious" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20" : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20")}>
-                        {url.verdict}
-                      </span>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <span className="text-[10px] text-muted-foreground block mb-0.5">Blacklist Status:</span>
-                        <span className="text-xs font-semibold">{url.blacklistStatus}</span>
+                    {report.status === "processed" && report.decision && (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                        <p><strong>Decision:</strong> {report.decision}</p>
+                        {report.reviewer_note && <p className="mt-1"><strong>Reviewer note:</strong> {report.reviewer_note}</p>}
                       </div>
-                      <div>
-                        <span className="text-[10px] text-muted-foreground block mb-0.5">Redirects:</span>
-                        <span className="text-xs font-semibold">{url.redirects} hops</span>
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-muted/50 rounded-xl border border-border text-sm">
-                      <span className="text-xs font-semibold text-muted-foreground block mb-1">Domain Intelligence:</span>
-                      {url.intelligence}
-                    </div>
+                    )}
+                    {reportErrors[report.item_id] && <p role="alert" className="text-sm font-medium text-rose-600">{reportErrors[report.item_id]}</p>}
                   </div>
-
-                  {/* Actions */}
-                  {url.status === "pending" ? (
-                    <div className="flex flex-row md:flex-col gap-2 shrink-0">
-                      <button 
-                        onClick={() => handleAction("Thêm vào Blacklist", `Xác nhận thêm domain ${url.domain} vào danh sách đen?`, () => setUrls(u => u.map(x => x.id === url.id ? {...x, status: "blacklisted"} : x)))}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 rounded-xl text-sm font-semibold transition-colors"
-                      >
-                        <ShieldAlert className="w-4 h-4" /> Blacklist
-                      </button>
-                      <button 
-                        onClick={() => handleAction("Đánh dấu An toàn", `Bỏ qua cảnh báo cho domain ${url.domain}?`, () => setUrls(u => u.map(x => x.id === url.id ? {...x, status: "ignored"} : x)))}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 rounded-xl text-sm font-semibold transition-colors"
-                      >
-                        <ShieldCheck className="w-4 h-4" /> Safe
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center shrink-0 w-32 border border-dashed rounded-xl border-border bg-muted/30">
-                      <span className="text-sm font-medium text-muted-foreground capitalize">{url.status}</span>
-                    </div>
-                  )}
-
+                  <div className="flex shrink-0 flex-row gap-2 md:flex-col">
+                    {report.status === "submitted" && (
+                      <button disabled={submitting} onClick={() => void startReportReview(report.item_id)} className="flex items-center justify-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-600 disabled:opacity-50">Start Review</button>
+                    )}
+                    {report.status === "reviewing" && (
+                      <>
+                        <button disabled={submitting} onClick={() => openReportDecision(report, `Approve Report`, { decision: "approved" })} className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-600 disabled:opacity-50"><ShieldCheck className="size-4" />Approve</button>
+                        <button disabled={submitting} onClick={() => openReportDecision(report, `Reject Report`, { decision: "rejected" })} className="flex items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-600 disabled:opacity-50"><ShieldAlert className="size-4" />Reject</button>
+                        <button disabled={submitting} onClick={() => openReportDecision(report, `Dismiss Report`, { decision: "dismissed" })} className="flex items-center justify-center gap-2 rounded-xl border border-gray-500/20 bg-gray-500/10 px-4 py-2 text-sm font-semibold text-gray-600 disabled:opacity-50"><XCircle className="size-4" />Dismiss</button>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              </article>
+            );
+          })}
+          {reports.length === 0 && <div className="rounded-2xl border border-dashed py-12 text-center text-muted-foreground">Không có report.</div>}
+        </div>
+      )}
 
-      </div>
-
-      {/* Confirmation Dialog Overlay */}
-      {confirmDialog.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-          <div className="bg-card w-full max-w-sm rounded-2xl border shadow-xl p-6 animate-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-bold mb-2">{confirmDialog.title}</h3>
-            <p className="text-sm text-muted-foreground mb-6">{confirmDialog.message}</p>
-            <div className="flex gap-3 justify-end">
-              <button 
-                onClick={closeDialog}
-                className="px-4 py-2 rounded-xl text-sm font-medium hover:bg-muted transition-colors"
-              >
-                Hủy
-              </button>
-              <button 
-                onClick={() => { confirmDialog.action(); closeDialog(); }}
-                className="px-4 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-              >
-                Xác nhận
-              </button>
+      {pending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="decision-title">
+          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+            <h2 id="decision-title" className="text-lg font-bold">{pending.title}</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Ghi chú là bắt buộc và sẽ được lưu vào audit trail.</p>
+            <label htmlFor="review-note" className="mt-4 block text-sm font-medium">Ghi chú reviewer</label>
+            <textarea id="review-note" autoFocus value={note} onChange={(event) => setNote(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-border bg-background p-3 text-sm" />
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={() => setPending(null)} className="rounded-lg px-4 py-2 text-sm font-medium hover:bg-muted">Hủy</button>
+              <button type="button" disabled={!note.trim() || submittingIds.has(pending.analysis.analysis_id)} onClick={() => void submitDecision()} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Xác nhận</button>
             </div>
           </div>
         </div>
       )}
 
+      {pendingReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="report-decision-title">
+          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+            <h2 id="report-decision-title" className="text-lg font-bold">{pendingReport.title}</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Ghi chú là bắt buộc và sẽ được lưu vào audit trail.</p>
+            <label htmlFor="report-review-note" className="mt-4 block text-sm font-medium">Ghi chú reviewer</label>
+            <textarea id="report-review-note" autoFocus value={note} onChange={(event) => setNote(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-border bg-background p-3 text-sm" />
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={() => setPendingReport(null)} className="rounded-lg px-4 py-2 text-sm font-medium hover:bg-muted">Hủy</button>
+              <button type="button" disabled={!note.trim() || submittingIds.has(pendingReport.report.item_id)} onClick={() => void submitReportDecision()} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Xác nhận</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

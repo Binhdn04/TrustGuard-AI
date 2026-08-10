@@ -1,6 +1,6 @@
 # Contract and Fixtures — P-068
 
-**Document revision:** 2.1 — 2026-08-07
+**Document revision:** 2.4 — 2026-08-09
 
 **Wire contract:** `contract_version: "v2"`, base path `/api/v2`
 
@@ -38,6 +38,8 @@ CaseStatus              not_required | pending_review | approved | rejected
 RecommendedAction       allow | show_caution | do_not_open | escalate_for_review
 ReviewDecision          approved | rejected
 ReviewAction            add_to_blacklist | none
+ReportStatus            submitted | reviewing | processed
+ReportReviewDecision    approved | rejected | dismissed
 ```
 
 | Score | Risk level | Default action |
@@ -151,8 +153,9 @@ Consumer không được tự tính hoặc phụ thuộc vào giá trị hash c�
 }
 ```
 
-`step_id` và `step_status` là nullable. Hiện không có WebSocket endpoint. Processor phát step event
-sau khi graph trả plan cuối, nên event contract đúng nhưng timing chưa phải realtime transition.
+`step_id` và `step_status` là nullable cho event legacy. WebSocket và polling replay cùng event
+sequence/cursor, nhưng runtime hiện chuyển plan cuối thành step event sau `ainvoke`; progress sink trong
+planning loop chưa được inject vào persistence nên transition chưa thật sự live.
 
 ## 4. Admin API
 
@@ -166,7 +169,28 @@ Tất cả endpoint yêu cầu role `security_admin`.
 | GET | `/api/v2/admin/blacklist?query=&limit=50&offset=0` | `BlacklistEntry[]`; query tối đa 253 ký tự. |
 | POST | `/api/v2/admin/cases/{id}/decision` | Review case và optional blacklist write. |
 
-Decision request:
+**API v3 bổ sung (đang hoạt động):**
+
+| Method | Path | Contract |
+|---|---|---|
+| GET | `/api/v3/admin/review-queue` | `ReviewQueueItem[]`; danh sách user reports kèm state và audit fields, gồm cả item đã xử lý. |
+| POST | `/api/v3/admin/review-queue/{item_id}/start-review` | Atomically chuyển report từ `submitted` sang `reviewing`; trả 409 nếu state đã đổi. |
+| POST | `/api/v3/admin/review-queue/{item_id}/decision` | Chỉ nhận report đang `reviewing`; lưu `approved/rejected/dismissed`, reviewer và `note`, rồi chuyển `processed`. Trả 409 nếu state đã đổi. |
+
+`ReviewQueueItem` trả về `reason`, `comment`, `analysis_content`, immutable `evidence_snapshot` và audit
+fields `decision`, `reviewer_id`, `reviewer_note`, `reviewed_at`. PostgreSQL lưu cùng contract qua
+migration `0004_review_queue`; SQLite tự thêm các cột audit khi mở database dev cũ.
+
+Review-queue decision request:
+
+```json
+{
+  "decision": "dismissed",
+  "note": "Evidence does not support the report."
+}
+```
+
+V2 admin-case decision request:
 
 ```json
 {
@@ -269,6 +293,36 @@ class RedirectResolver(Protocol):
 class ClaimRetriever(Protocol):
     async def search(self, claim: str, limit: int = 5) -> list[ClaimEvidence]: ...
 
+class EmbeddingProvider(Protocol):
+    async def embed_batch(self, claims: list[str]) -> NormalizedToolResult[EmbeddingBatch]: ...
+
+class GoogleClaimSearch(Protocol):
+    async def search(self, claim: ExtractedClaim) -> NormalizedToolResult[list[GoogleClaimReviewMatch]]: ...
+
+class HybridCorpusRetriever(Protocol):
+    async def search(self, query: CorpusQuery) -> NormalizedToolResult[list[CorpusCandidate]]: ...
+
+class EvidenceSufficiencyGate(Protocol):
+    def evaluate(self, claim: ExtractedClaim, evidence: list[EvidenceCandidate]) -> EvidenceSufficiency: ...
+
+class TavilySearch(Protocol):
+    async def search(self, query: WebSearchQuery) -> NormalizedToolResult[list[WebCandidate]]: ...
+
+class JinaReader(Protocol):
+    async def read(self, candidate: WebCandidate) -> NormalizedToolResult[FetchedEvidence]: ...
+
+class Chunker(Protocol):
+    def split(self, evidence: list[FetchedEvidence]) -> list[EvidenceChunk]: ...
+
+class Reranker(Protocol):
+    def rank(self, claim: ExtractedClaim, candidates: list[EvidenceChunk], top_k: int = 5) -> list[RerankedCandidate]: ...
+
+class SourceRegistry(Protocol):
+    def classify(self, canonical_url: str, at: datetime) -> SourcePolicyDecision: ...
+
+class EvidenceComparator(Protocol):
+    async def compare(self, claim: ExtractedClaim, evidence: list[RerankedCandidate]) -> NormalizedToolResult[ClaimAssessment]: ...
+
 class DomainIntelligence(Protocol):
     async def lookup(self, domain: str) -> DomainIntelligenceResult: ...
 
@@ -279,9 +333,14 @@ class BlacklistRepository(Protocol):
 
 Important model rules:
 
+- `ClaimRetriever` là compatibility boundary của v2; Wave 2 orchestration dùng các boundary chi tiết
+  `GoogleClaimSearch`/`HybridCorpusRetriever`/conditional web bên trên.
 - `UrlScanResult`: provider, normalized URL, verdict, redirect chain, signals, observed time.
 - Provider no-hit phải là `inconclusive`, không phải `safe`.
 - `ClaimEvidence`: source/title/url/finding/relevance/stance/observed time; scoring dùng stance.
+- Claim pipeline nội bộ dùng tối đa năm `ExtractedClaim` kèm claim date/range; một `EmbeddingBatch`
+  phải giữ đúng thứ tự claim input và ghi model/version/dimensions. Không contract nào chứa raw
+  prompt/provider body.
 - `DomainIntelligenceResult`: registration/expiry/registrar/country nullable, status, redaction,
   signals và observed time; không có registrant entity/vCard/raw response.
 - `BlacklistLookupEntry`: domain, decision provenance, source, added time và active flag.
@@ -296,7 +355,13 @@ vì chưa có adapter mapping.
 - Score chỉ dùng structured rule/tool findings, không dùng prose LLM.
 - RDAP signals bị cap tổng cộng 20 điểm; recent registration một mình giữ verdict inconclusive.
 - Privacy redaction không tăng điểm.
-- Fact-check chỉ ảnh hưởng điểm khi stance đã normalize và relevance đạt threshold.
+- Fact-check chỉ ảnh hưởng điểm khi comparator stance có schema, citation và relevance đạt threshold.
+  Comparison `inconclusive` được project thành `ClaimStance.UNRATED`; LLM không ghi score trực tiếp.
+- Google `claims.search` chỉ trả indexed ClaimReview; adapter không được gắn nhãn kết quả là verdict
+  do Google xác minh. Tier/trust thuộc reviewer/publisher gốc.
+- Untrusted evidence bị loại trước comparator; Tier C không được tự tạo `supports`/`refutes`.
+- Temporal incompatibility loại evidence bất kể semantic score; publication proxy phải có penalty và
+  limitation, evidence không có ngày bị loại khỏi temporal claim.
 - Blacklist/malicious provider evidence có thể tạo malicious verdict và escalation theo rule.
 - Provider unavailable/no-hit/empty result phải tạo limitation khi làm giảm coverage.
 - LLM output schema không có quyền ghi `risk_score`, `risk_level`, `verdict`,
@@ -353,11 +418,10 @@ contract v2.
 
 Phần này là contract final product đã được freeze trong Wave 0. Pydantic source of truth nằm tại
 `src/models/schemas.py`, OpenAPI được phát từ `src/main.py`, và schema/migration plan nằm tại
-`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter đã có dưới `/api/v3` để client
-tích hợp sớm. WebSocket ticket, appeal, reviewed action, campaign và metrics đã có đầy đủ request/
-response schema và route trong OpenAPI nhưng chủ động trả 501 cho tới wave triển khai tương ứng;
-không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path v2 tương thích; capability mới chỉ
-xuất hiện dưới `/api/v3`.
+`docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter, event replay, WebSocket ticket
+và stream đã hoạt động dưới `/api/v3`. Appeal, reviewed action, campaign và metrics đã có schema/route
+trong OpenAPI nhưng chủ động trả 501; không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path
+v2 tương thích; capability mới chỉ xuất hiện dưới `/api/v3`.
 
 ### 11.0 Versioning và core routes
 
@@ -366,7 +430,7 @@ sung typed realtime/appeal/action/campaign/metrics resources thay vì nhét null
 
 | Method | Path | Hành vi v3 |
 |---|---|---|
-| POST | `/api/v3/analyses` | Tạo durable analysis, trả `202` sau transactional enqueue. |
+| POST | `/api/v3/analyses` | PostgreSQL: transactional durable enqueue; SQLite dev/test: in-process execution. Cả hai trả `202`. |
 | GET | `/api/v3/analyses` | List analysis của principal hiện tại. |
 | GET | `/api/v3/analyses/{id}` | Trả state/result cuối, gồm plan/evidence/limitation như v2. |
 | GET | `/api/v3/analyses/{id}/events` | Poll/replay persisted typed events theo cursor. |
@@ -378,7 +442,7 @@ v2 create được đánh dấu deprecated khi v3 production-ready và không nh
 
 ### 11.1 Realtime và cảnh báo hai pha
 
-Đích: `WS /api/v3/analyses/{analysis_id}/stream` dùng ticket ngắn hạn lấy từ
+Hiện tại, `WS /api/v3/analyses/{analysis_id}/stream` dùng ticket ngắn hạn lấy từ
 `POST /api/v3/ws-tickets`. Server chỉ stream analysis mà principal có quyền đọc. Polling
 `GET /api/v3/analyses/{id}/events` vẫn là fallback và nguồn replay.
 
@@ -425,15 +489,24 @@ cost, latency, cache status và outcome; target/raw prompt không thuộc public
 
 ### 11.4 Advanced tool contract
 
-Wave 0 freeze nằm tại `src/agents/tools/protocols.py` và `src/agents/tools/models.py`. Năm boundary
-provider-neutral là:
+Wave 0 freeze ban đầu nằm tại `src/agents/tools/protocols.py` và `src/agents/tools/models.py`; Wave 2
+mở rộng danh sách boundary provider-neutral thành:
 
 ```text
 UrlReputationProvider.lookup  -> NormalizedToolResult[UrlReputationFinding]
 UrlReputationCascade.assess   -> NormalizedToolResult[UrlReputationCascadeResult]
 RedirectResolver.resolve      -> NormalizedToolResult[RedirectResolutionResult]
 RdapProvider.lookup           -> NormalizedToolResult[DomainIntelligenceResult]
-FactCheckCorpus.search        -> NormalizedToolResult[FactCheckSearchResult]
+EmbeddingProvider.embed_batch -> NormalizedToolResult[EmbeddingBatch]
+GoogleClaimSearch.search      -> NormalizedToolResult[list[GoogleClaimReviewMatch]]
+HybridCorpusRetriever.search -> NormalizedToolResult[list[CorpusCandidate]]
+EvidenceSufficiencyGate.eval  -> EvidenceSufficiency
+TavilySearch.search           -> NormalizedToolResult[list[WebCandidate]]
+JinaReader.read               -> NormalizedToolResult[FetchedEvidence]
+Chunker.split                 -> list[EvidenceChunk]
+Reranker.rank                 -> list[RerankedCandidate]
+SourceRegistry.classify       -> SourcePolicyDecision
+EvidenceComparator.compare   -> NormalizedToolResult[ClaimAssessment]
 ScreenshotRenderer.render     -> NormalizedToolResult[ScreenshotResult]
 ```
 
@@ -449,9 +522,44 @@ Input là normalized public HTTP(S) URL đã consent; output chỉ gồm final U
 visible-text hash, render signals và observed time. Không trả cookie, credential, DOM/raw page body
 hoặc dữ liệu form. Renderer không đăng nhập, không tương tác và bị giới hạn redirect/time/body.
 
-Fact-check corpus record v3 cần source URL, publisher, claim, stance, language, published/updated
-time, embedding model/version và ingestion provenance. Vector similarity chỉ là retrieval score;
-ClaimEvidence stance vẫn phải đến từ normalized source metadata/reviewer, không suy ra từ similarity.
+Fact-check pipeline contract bổ sung các private model sau; chúng không mở rộng `AnalysisResponse`:
+
+```text
+ExtractedClaim       claim_id, normalized_text, language, is_temporal, claim_date_start/end
+EmbeddingBatch       vectors[], model, model_version, dimensions
+CorpusQuery          lexical_query, vector?, model/version/dimensions, language, temporal range
+SourceRegistryEntry  origin/pattern, tier, source_type, active, allowed_operations, policy_version,
+                     effective_from/to, reviewed_by/at, explicit_deny
+GoogleClaimReviewMatch claim/review refs, reviewer/publisher, rating, url, dates, source tier
+TemporalMetadata     claim_start/end, published_at, effective_from/to, retrieved_at, proxy_penalty
+CorpusCandidate      evidence_ref, record/version, FTS/vector ranks, RRF score, temporal status
+EvidenceSufficiency  sufficient, matched rule, eligible refs, missing requirements
+WebCandidate         canonical_url, title, registry decision, publication hint
+FetchedEvidence      evidence_ref, source/version, safe_url, cleaned text, temporal metadata, hash
+EvidenceChunk        chunk_ref, evidence_ref, index, text, source tier/version, dates, content hash
+RerankedCandidate    chunk_ref, rank, rerank score
+ClaimAssessment      stance, evidence_refs[], contradiction_refs[], limitations[], comparator_version
+```
+
+`ClaimAssessment.stance` là `supports | refutes | mixed | inconclusive`; `evidence_refs` bắt buộc
+cho ba stance đầu. Comparator output có thể quyết định stance nhưng không được chứa risk score,
+verdict/action hoặc citation không thuộc input evidence. Fact-check corpus record vẫn cần source URL,
+publisher, claim, source/reviewer stance, language, published/updated time, embedding model/version
+và ingestion provenance. Similarity chỉ route/rerank candidate, không tự sinh stance.
+
+Mặc định production dùng một request batch `text-embedding-3-small`, vector 1536 chiều, tối đa năm
+claim; fan-out tiếp theo giới hạn ba claim. Mỗi claim chạy Google Claim Search song song với corpus:
+FTS `simple` top 20 + pgvector cosine top 20, dedupe record/version và RRF `k=60`.
+
+Evidence gate là rule-based: đủ khi có một Tier A temporal-compatible, một trusted ClaimReview Tier B,
+hoặc hai Tier B độc lập. Nếu chưa đủ, Tavily lấy tối đa 10 kết quả theo registry domain/date filter;
+Jina Reader chỉ đọc tối đa năm canonical URL. `RecursiveCharacterTextSplitter` dùng 1200 ký tự,
+overlap 150. FlashRank local CPU `ms-marco-MultiBERT-L-12`, `max_length=512`, chọn top 5; model này
+chỉ rerank, không tạo stance. Untrusted bị loại trước comparator, Tier C chỉ corroboration.
+
+Embedding timeout/429 tạo vector bypass chứ không tạo local embedding fallback. Pipeline tiếp tục
+Google, FTS rồi conditional Tavily/Jina trong budget. Nếu comparison hoàn tất nhưng chưa có vector, result mang
+`embedding_status=pending`; background re-embedding dùng idempotency key theo result/model/version.
 
 ### 11.5 Fixture additions trước final v3 release gate
 
@@ -463,6 +571,15 @@ download/timeout). Tất cả đều offline và validate qua đúng normalized 
 - provisional → final upgrade, WebSocket reconnect/replay và duplicate event;
 - no-consent chứng minh không tạo provider/renderer client;
 - conflicting reputation/fact-check, timeout, 429 và exhausted cost budget;
+- batch 1–5 claim chỉ gọi embeddings một lần; model/dimension mismatch không dùng chung index;
+- Google ClaimReview giữ reviewer/publisher provenance và không trở thành “Google verdict”;
+- temporal exact interval, publication proxy có penalty, semantic-high/time-wrong và missing-date;
+- sufficiency gate: một Tier A, một trusted ClaimReview Tier B, hai Tier B độc lập, Tier C-only miss;
+- sufficient evidence không gọi Tavily/Jina; miss mới gọi Tavily tối đa 10 và Jina tối đa 5 URL;
+- embedding outage bỏ vector nhưng vẫn chạy Google/FTS/conditional web, không tạo local embedding model;
+- source suffix/deny, Untrusted exclusion, Tier C no-auto-promotion và two-publisher independence;
+- chunk boundary/metadata, FlashRank multilingual top 5 và reranker failure limitation;
+- comparator thiếu/giả citation bị reject;
 - screenshot SSRF/redirect/download/cookie isolation;
 - appeal uphold/overturn và blacklist disable có immutable audit;
 - campaign cluster hypothesis không tự phát broad warning;

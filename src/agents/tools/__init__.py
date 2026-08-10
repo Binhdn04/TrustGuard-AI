@@ -1,3 +1,5 @@
+from src.agents.tools.cache import CachedValue, VersionedMemoryCache
+from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import (
     FakeBlacklistRepository,
@@ -6,11 +8,7 @@ from src.agents.tools.fakes import (
     FakeToolCallError,
     FakeUrlScanner,
 )
-from src.agents.tools.integration import (
-    build_domain_intelligence_adapter,
-    build_provider_adapters,
-    build_v3_tools_data_adapters,
-)
+from src.agents.tools.integration import build_domain_intelligence_adapter, build_provider_adapters
 from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
@@ -43,18 +41,18 @@ from src.agents.tools.protocols import (
     UrlScanner,
 )
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
-from src.agents.tools.rdap import RdapDomainIntelligence
-from src.agents.tools.rdap_v3 import NormalizedRdapProvider
-from src.agents.tools.redirects import GuardedRedirectResolver
+from src.agents.tools.rdap import NormalizedRdapProvider, RdapDomainIntelligence
+from src.agents.tools.redirect import GuardedRedirectResolver
 from src.agents.tools.reputation import (
     GoogleWebRiskProvider,
-    UrlReputationService,
+    ProductionUrlReputationCascade,
     VirusTotalUrlProvider,
-    canonicalize_url,
 )
+from src.agents.tools.resilience import CircuitBreaker, CircuitOpenError, CircuitState, RetryPolicy
 
 __all__ = [
     "BlacklistRepository",
+    "CachedValue",
     "CacheMetadata",
     "CacheStatus",
     "ClaimRetriever",
@@ -87,8 +85,19 @@ __all__ = [
     "UsageMetadata",
     "GoogleFactCheckRetriever",
     "GoogleSafeBrowsingScanner",
+    "GoogleWebRiskProvider",
+    "VirusTotalUrlProvider",
+    "ProductionUrlReputationCascade",
+    "GuardedRedirectResolver",
     "RdapDomainIntelligence",
     "NormalizedRdapProvider",
+    "VersionedMemoryCache",
+    "CircuitBreaker",
+    "CircuitOpenError",
+    "CircuitState",
+    "RetryPolicy",
+    "canonicalize_registrable_domain",
+    "canonicalize_url",
     "GuardedHttpClient",
     "SsrfGuard",
     "SsrfPolicy",
@@ -96,10 +105,4 @@ __all__ = [
     "UnsafeUrlError",
     "build_provider_adapters",
     "build_domain_intelligence_adapter",
-    "build_v3_tools_data_adapters",
-    "GuardedRedirectResolver",
-    "GoogleWebRiskProvider",
-    "UrlReputationService",
-    "VirusTotalUrlProvider",
-    "canonicalize_url",
 ]

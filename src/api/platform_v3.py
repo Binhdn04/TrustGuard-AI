@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import base64
 import binascii
+from contextlib import suppress
 from datetime import datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Query, WebSocket, status
+from fastapi.encoders import jsonable_encoder
+from starlette.websockets import WebSocketDisconnect
 
-from src.api.dependencies import AnalysisServiceDependency, PrincipalDependency
+from src.api.dependencies import (
+    AnalysisServiceDependency,
+    PrincipalDependency,
+    TicketManagerDependency,
+    get_analysis_service,
+    get_event_notifier,
+    get_ticket_manager,
+)
 from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
@@ -45,6 +55,9 @@ from src.models import (
     FinalResultEventV3,
     InvestigationTool,
     OperationsMetricsResponseV3,
+    ReportStatus,
+    ReviewQueueDecisionRequest,
+    ReviewQueueItem,
     StepTransitionEventPayload,
     StepTransitionEventV3,
     WebSocketTicketRequestV3,
@@ -56,6 +69,7 @@ router = APIRouter(tags=["contract-v3"])
 _COMMON_ERRORS = {
     403: {"model": ErrorEnvelope},
     404: {"model": ErrorEnvelope},
+    429: {"model": ErrorEnvelope},
     422: {"model": ErrorEnvelope},
 }
 _PLANNED_ERRORS = {**_COMMON_ERRORS, 501: {"model": ErrorEnvelope}}
@@ -151,6 +165,17 @@ async def analysis_events_v3(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> AnalysisEventPageV3:
     after_sequence = _decode_cursor(cursor)
+    return await _build_event_page(analysis_id, service, principal, after_sequence, cursor, limit)
+
+
+async def _build_event_page(
+    analysis_id: UUID,
+    service,
+    principal,
+    after_sequence: int,
+    cursor: str | None,
+    limit: int,
+) -> AnalysisEventPageV3:
     response = await service.get_for(analysis_id, principal)
     plan_by_id = {step.step_id: step for step in response.investigation_plan}
     # events_for() returns append order. Persisted records enforce that order
@@ -231,27 +256,113 @@ async def report_analysis_v3(
     return AnalysisReportResponseV3.model_validate(receipt.model_dump())
 
 
+@router.get(
+    "/analyses/{analysis_id}/reports",
+    response_model=list[AnalysisReportResponseV3],
+    responses=_COMMON_ERRORS,
+)
+async def list_reports_v3(
+    analysis_id: UUID,
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> list[AnalysisReportResponseV3]:
+    reports = await service.list_reports_by_analysis(analysis_id, principal)
+    return [AnalysisReportResponseV3.model_validate(r.model_dump()) for r in reports]
+
+
 @router.post(
     "/ws-tickets",
     response_model=WebSocketTicketResponseV3,
     status_code=status.HTTP_201_CREATED,
-    responses=_PLANNED_ERRORS,
+    responses=_COMMON_ERRORS,
 )
 async def create_websocket_ticket_v3(
     request: WebSocketTicketRequestV3,
     service: AnalysisServiceDependency,
     principal: PrincipalDependency,
+    tickets: TicketManagerDependency,
 ) -> WebSocketTicketResponseV3:
     await service.get_for(request.analysis_id, principal)
-    _planned_feature()
+    ticket, expires_at = await tickets.issue(request.analysis_id, principal)
+    return WebSocketTicketResponseV3(
+        ticket=ticket,
+        analysis_id=request.analysis_id,
+        expires_at=expires_at,
+        stream_path=f"/api/v3/analyses/{request.analysis_id}/stream",
+    )
 
 
 @router.websocket("/analyses/{analysis_id}/stream")
-async def analysis_stream_v3(websocket: WebSocket, analysis_id: UUID, ticket: str = Query()) -> None:
-    # The route is reserved in Wave 0; ticket issue/consume and replay arrive with
-    # the durable event store in Wave 1.
-    del analysis_id, ticket
-    await websocket.close(code=1013, reason="WebSocket streaming is not implemented in Wave 0.")
+async def analysis_stream_v3(
+    websocket: WebSocket,
+    analysis_id: UUID,
+    ticket: str = Query(max_length=256),
+    cursor: str | None = Query(default=None, max_length=128),
+) -> None:
+    """Replay persisted events and then tail them without owning the job.
+
+    Closing this socket only ends delivery; analysis processing is deliberately
+    independent of the connection lifecycle.
+    """
+    ticket_factory = websocket.app.dependency_overrides.get(get_ticket_manager, get_ticket_manager)
+    tickets = ticket_factory()
+    if hasattr(tickets, "__await__"):
+        tickets = await tickets
+    principal = await tickets.consume(ticket, analysis_id)
+    if principal is None:
+        await websocket.close(code=4403, reason="Invalid or expired WebSocket ticket.")
+        return
+
+    service_factory = websocket.app.dependency_overrides.get(get_analysis_service, get_analysis_service)
+    service = service_factory()
+    if hasattr(service, "__await__"):
+        service = await service
+    try:
+        await service.get_for(analysis_id, principal)
+    except PlatformError:
+        await websocket.close(code=4403, reason="Analysis access denied.")
+        return
+
+    try:
+        after_sequence = _decode_cursor(cursor)
+    except PlatformError:
+        await websocket.close(code=4400, reason="Invalid event cursor.")
+        return
+    await websocket.accept()
+    checkpoint = cursor
+    notifier_factory = websocket.app.dependency_overrides.get(get_event_notifier, get_event_notifier)
+    notifier = notifier_factory()
+    if hasattr(notifier, "__await__"):
+        notifier = await notifier
+    try:
+        listener = await notifier.listen(analysis_id)
+    except Exception:
+        await websocket.close(code=1013, reason="Realtime delivery is temporarily unavailable.")
+        return
+    try:
+        while True:
+            page = await _build_event_page(analysis_id, service, principal, after_sequence, checkpoint, 500)
+            terminal = False
+            for event in page.events:
+                await websocket.send_json(jsonable_encoder(event))
+                after_sequence = event.sequence
+                terminal = (
+                    terminal
+                    or event.event_type.value == "final_result"
+                    or (event.event_type.value == "analysis_status" and event.payload.status is AnalysisStatus.FAILED)
+                )
+            checkpoint = page.next_cursor
+            if terminal:
+                await websocket.close(code=1000, reason="Analysis reached a terminal state.")
+                return
+            # Redis outbox delivery wakes production streams. The timeout is a
+            # low-frequency correctness fallback if a notification is missed.
+            await listener.wait(timeout_seconds=10)
+    except (WebSocketDisconnect, RuntimeError):
+        return
+    finally:
+        with suppress(Exception):
+            await listener.close()
 
 
 @router.post(
@@ -366,3 +477,80 @@ async def get_operations_metrics_v3(
     del from_, to
     require_security_admin(principal)
     _planned_feature()
+
+
+@router.get("/admin/review-queue", response_model=list[ReviewQueueItem], responses=_PLANNED_ERRORS)
+async def list_review_queue_items_v3(
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> list[ReviewQueueItem]:
+    require_security_admin(principal)
+    return await service.list_review_queue_items()
+
+
+@router.post(
+    "/admin/review-queue/{item_id}/start-review",
+    responses=_PLANNED_ERRORS,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def start_review_v3(
+    item_id: UUID,
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> None:
+    require_security_admin(principal)
+    item_key = str(item_id)
+    item = await service.get_review_queue_item(item_key)
+    if not item:
+        raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Item not found", retryable=False)
+    if item.status is not ReportStatus.SUBMITTED:
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report is no longer awaiting review.",
+            retryable=False,
+        )
+    if not await service.start_review_queue_item(item_key, principal.user_id):
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report review state changed. Refresh and try again.",
+            retryable=False,
+        )
+
+
+@router.post(
+    "/admin/review-queue/{item_id}/decision",
+    responses=_PLANNED_ERRORS,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def decide_review_queue_item_v3(
+    item_id: UUID,
+    request: ReviewQueueDecisionRequest,
+    service: AnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> None:
+    require_security_admin(principal)
+    item_key = str(item_id)
+    item = await service.get_review_queue_item(item_key)
+    if not item:
+        raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Item not found", retryable=False)
+    if item.status is not ReportStatus.REVIEWING:
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report must be in reviewing state before a decision.",
+            retryable=False,
+        )
+    if not await service.decide_review_queue_item(
+        item_key,
+        decision=request.decision,
+        reviewer_id=principal.user_id,
+        note=request.note,
+    ):
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Report review state changed. Refresh and try again.",
+            retryable=False,
+        )

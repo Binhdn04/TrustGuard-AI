@@ -8,12 +8,17 @@ from src.agents.contracts import (
     CampaignDetectionOutput,
     ExplanationOutput,
     LiveStepTransition,
+    ProvisionalWarning,
     RiskAssessmentOutput,
 )
 
 
 class ProgressSink(Protocol):
     async def emit(self, transition: LiveStepTransition) -> None: ...
+
+
+class ProvisionalWarningSink(Protocol):
+    async def emit(self, warning: ProvisionalWarning) -> None: ...
 
 
 class RiskEngine(Protocol):
@@ -31,6 +36,11 @@ class CampaignDetector(Protocol):
 class NullProgressSink:
     async def emit(self, transition: LiveStepTransition) -> None:
         del transition
+
+
+class NullProvisionalWarningSink:
+    async def emit(self, warning: ProvisionalWarning) -> None:
+        del warning
 
 
 class NullCampaignDetector:
@@ -62,6 +72,8 @@ __all__ = [
     "FunctionRiskEngine",
     "NullCampaignDetector",
     "NullProgressSink",
+    "NullProvisionalWarningSink",
     "ProgressSink",
+    "ProvisionalWarningSink",
     "RiskEngine",
 ]

@@ -4,10 +4,10 @@ AI Agent phát hiện liên kết độc và tuyên bố đáng ngờ trong nộ
 TrustGuard AI lập kế hoạch điều tra, thu thập bằng chứng từ rule, blacklist và provider uy tín, chấm
 điểm rủi ro deterministic rồi giải thích cảnh báo bằng ngôn ngữ dễ hiểu.
 
-> **Trạng thái:** backend contract v2 và LangGraph vertical slice đã hoạt động. Dashboard, history
-> và admin UI vẫn cần nối vào API thật; WebSocket, PostgreSQL runtime, pgvector, Railway, screenshot
-> renderer, campaign detection và appeal thuộc final-product plan nhưng chưa phải capability runtime
-> hiện tại. Contract đích là `/api/v3`; `/api/v2` được giữ tương thích trong release v3 đầu tiên.
+> **Trạng thái:** Wave 1 platform backend đã có PostgreSQL/Alembic, durable job + transactional
+> outbox, v3 event replay/WebSocket ticket và OIDC/JWT. Dashboard, history và admin UI mặc định gọi
+> API thật; screenshot, campaign detection và appeal thuộc các wave sau. `/api/v2` được giữ tương
+> thích trong release v3 đầu tiên.
 
 ## Sản phẩm giải quyết gì?
 
@@ -17,7 +17,8 @@ tuyên bố đang lan truyền. TrustGuard AI cung cấp:
 - cảnh báo inline hai pha: cảnh báo sơ bộ nhanh từ rule/blacklist/cache, sau đó cập nhật kết luận khi
   tool và LLM hoàn tất;
 - risk score, verdict, evidence, limitation và khuyến nghị rõ ràng;
-- kiểm tra URL/domain qua adapter reputation và RDAP/WHOIS, cùng fact-check retriever cho claim;
+- kiểm tra URL/domain qua adapter reputation và RDAP/WHOIS; fact-check claim bằng Google ClaimReview
+  retrieval, PostgreSQL FTS/pgvector và Tavily/Jina fallback theo Source Registry;
 - memory blacklist có nguồn gốc và audit;
 - chuyển case nghiêm trọng cho Security Admin mà không trì hoãn cảnh báo cá nhân;
 - Human-in-the-loop bắt buộc trước khi chặn domain hoặc phát cảnh báo diện rộng.
@@ -34,9 +35,14 @@ flowchart LR
     B --> C[Rule + blacklist + reputation cache]
     C --> D[Cảnh báo sơ bộ]
     C --> E[URL/domain scan]
-    C --> F[Fact-check retrieval]
+    C --> F[Google Claim Search + FTS/pgvector]
+    F --> M{Evidence đủ?}
+    M -->|Có| O[FlashRank top 5]
+    M -->|Không| N[Tavily → Jina → chunk]
+    N --> O[FlashRank top 5]
+    O --> P[GPT-4o-mini evidence comparison]
     E --> G[Risk Engine]
-    F --> G
+    P --> G
     G --> H[Giải thích grounded]
     H --> I[Cập nhật cảnh báo inline]
     G --> J{Cần tác động diện rộng?}
@@ -44,23 +50,27 @@ flowchart LR
     K --> L[Blacklist / broad warning sau phê duyệt]
 ```
 
-LLM `gpt-4o-mini` hỗ trợ hiểu ngữ cảnh, đề xuất thứ tự tool, review coverage và viết giải thích.
-Score, verdict và action được quyết định từ structured evidence bằng Risk Engine; LLM không được tạo
-evidence hoặc tự sửa kết luận.
+LLM `gpt-4o-mini` hỗ trợ extract tối đa năm claim có temporal interval, so sánh evidence theo schema
+và viết giải thích. OpenAI `text-embedding-3-small` tạo vector; FlashRank multilingual là ngoại lệ
+local-model duy nhất và chỉ rerank. LLM comparison tạo stance có citation, còn score/verdict/action
+vẫn do Risk Engine deterministic quyết định.
 
 ## Công nghệ và kiến trúc
 
 | Lớp | Lựa chọn | Trạng thái |
 |---|---|---|
 | LLM | OpenAI `gpt-4o-mini` | Đã có, optional theo API key |
+| Embedding | OpenAI `text-embedding-3-small` qua `/v1/embeddings` | Thiết kế Wave 2; batch tối đa 5 claim |
 | Orchestration | LangGraph: extract → scan → verify → score → warn/escalate | Đã có vertical slice |
-| URL reputation | Google Safe Browsing hiện tại; adapter đích hỗ trợ GSB/Web Risk hoặc VirusTotal | Một phần |
-| Domain intelligence | RDAP-first/WHOIS; guarded redirect | Adapter RDAP có, chưa wire mặc định |
-| Fact-check | Google Fact Check + fact-check corpus | Provider có; pgvector thuộc final scope |
-| Backend | FastAPI `/api/v2` hiện tại → `/api/v3` final contract | v2 đã có; v3 triển khai theo Wave 0–3 |
-| Frontend | Next.js/React với warning banner | UI có, chưa nối end-to-end |
-| Realtime | Event polling → WebSocket với polling fallback | Polling contract có; WebSocket thuộc final scope |
-| Data | SQLite hiện tại → PostgreSQL/pgvector + Redis | Topology đích |
+| URL reputation | Google Web Risk primary, VirusTotal policy-gated secondary | Đã wire; fake adapters mặc định trong test |
+| Domain intelligence | RDAP-first/WHOIS; guarded redirect | Đã wire lazy sau consent |
+| Fact-check retrieval | Google Fact Check Claim Search + PostgreSQL FTS/pgvector | Google chỉ index ClaimReview có sẵn, không tự verify |
+| Web fallback | Tavily Search → Jina Reader → LangChain splitter | Chỉ chạy khi evidence hiện có chưa đủ |
+| Rerank | FlashRank `ms-marco-MultiBERT-L-12` | Local CPU exception; multilingual, top 5 |
+| Backend | FastAPI `/api/v3` + `/api/v2` compatibility | Product path v3 đang hoạt động |
+| Frontend | Next.js/React với warning banner | Dashboard/history/admin gọi API thật |
+| Realtime | Persisted event polling + ticketed WebSocket | Wave 1 backend đã có |
+| Data | PostgreSQL/pgvector source of truth + Redis delivery | Wave 1 core schema/job/outbox đã có |
 | Deploy | Docker → Railway | Docker có; Railway thuộc final scope |
 
 Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](docs/00-PRODUCT_REQUIREMENTS.md),
@@ -79,7 +89,8 @@ Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](d
 
 ### Advanced intelligence
 
-- Fact-check bằng corpus nguồn tin cậy trong pgvector.
+- Fact-check optimized retrieval: Google ClaimReview + FTS/pgvector trước; chỉ fallback Tavily/Jina
+  khi chưa đủ evidence, rồi FlashRank và comparison có citation.
 - Screenshot renderer cô lập, không cookie/đăng nhập và chỉ chạy sau consent khi scan tĩnh chưa đủ.
 - Phát hiện chiến dịch lan truyền theo cụm và dashboard xu hướng tin giả.
 - Học có kiểm duyệt từ báo cáo người dùng; feedback không tự động đổi model/score.
@@ -94,12 +105,15 @@ capability, không tạo một điểm dừng MVP. Việc triển khai được 
 Yêu cầu Python 3.11+, Node.js 20+ và npm.
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cp .env.example .env
-uvicorn src.main:app --reload --port 8000
+uv run uvicorn src.main:app --reload --port 8000
 ```
+
+`.env.example` mặc định dùng SQLite để lệnh trên chạy ngay mà không cần Docker. Nếu chọn PostgreSQL,
+hãy chạy PostgreSQL/Redis, thay `DATABASE_URL`, rồi chạy `uv run alembic upgrade head` trước khi mở API.
+
+Nếu không dùng `uv`, có thể tạo virtualenv và cài `requirements.txt` bằng `pip` như trước.
 
 Ở terminal khác:
 
@@ -112,9 +126,20 @@ npm run dev
 Đặt `NEXT_PUBLIC_API_URL=http://localhost:8000` và `NEXT_PUBLIC_USE_MOCK_API=false` trong
 `frontend/.env.local` khi kiểm thử HTTP integration. Swagger UI: `http://localhost:8000/docs`.
 
-Docker Compose hiện khởi tạo backend, PostgreSQL/pgvector và Redis, nhưng backend vẫn persist vào
-SQLite qua `SECURITY_DATABASE_PATH`. Không dùng Compose hiện tại làm bằng chứng rằng migration
-PostgreSQL/Redis đã hoàn tất.
+Docker Compose chạy `alembic upgrade head` trước backend. Khi `DATABASE_URL` là PostgreSQL, API dùng
+PostgreSQL làm source of truth và worker tự reclaim lease hết hạn; Redis chỉ đánh thức/phân phối
+event. SQLite vẫn là default offline nếu cấu hình `DATABASE_URL=sqlite:///...`.
+
+SQLite file thực tế lấy từ `SECURITY_DATABASE_PATH`. PostgreSQL hiện hỗ trợ durable analysis và
+user-report review queue; v2 admin decision/approved blacklist vẫn chỉ hoàn chỉnh ở SQLite.
+
+Import dữ liệu development SQLite sau khi đã chạy `alembic upgrade head` (head hiện tại là
+`0004_review_queue`):
+
+```bash
+python scripts/import_sqlite_to_postgres.py ./data/security.db \
+  --database-url "$DATABASE_URL" --encryption-key "$DATABASE_ENCRYPTION_KEY"
+```
 
 ## Kiểm thử
 
