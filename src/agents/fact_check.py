@@ -75,7 +75,10 @@ class ExtractedClaim(BaseModel):
 
 _EMAIL = re.compile(r"(?<!\w)[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?!\w)")
 _PHONE = re.compile(r"(?<!\d)(?:\+?84|0)[\s.-]?(?:\d[\s.-]?){8,10}(?!\d)")
-_SECRET = re.compile(r"(?i)\b(?:otp|pin|mã\s+(?:xác\s+nhận|otp))\s*[:=-]?\s*[A-Z0-9-]{4,12}\b")
+_SECRET = re.compile(
+    r"\b(?:otp|pin|mã\s+(?:xác\s+nhận|otp))\s*+(?:[:=-]\s*+)?[A-Z0-9-]{4,12}\b",
+    re.IGNORECASE,
+)
 _URL = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 
 
@@ -250,15 +253,25 @@ def _as_candidate(item: Any, *, default_ref_prefix: str) -> EvidenceCandidate:
 def _temporal_compatible(claim: ExtractedClaim, item: EvidenceCandidate) -> bool:
     if not claim.is_temporal:
         return True
-    evidence_start = item.effective_from or (item.published_at.date() if item.published_at else None)
-    evidence_end = item.effective_to or evidence_start
-    if evidence_start is None or evidence_end is None:
+
+    if item.effective_from is not None or item.effective_to is not None:
+        evidence_start = item.effective_from
+        evidence_end = item.effective_to
+    else:
+        # Publication time is a point-in-time proxy when no effective interval exists.
+        evidence_start = evidence_end = item.published_at.date() if item.published_at else None
+    if evidence_start is None and evidence_end is None:
         return False
-    claim_start = claim.claim_date_start or claim.claim_date_end
-    claim_end = claim.claim_date_end or claim.claim_date_start
-    if claim_start is None or claim_end is None:
+
+    claim_start = claim.claim_date_start
+    claim_end = claim.claim_date_end
+    if claim_start is None and claim_end is None:
         return True
-    return evidence_start <= claim_end and evidence_end >= claim_start
+    if claim_end is not None and evidence_start is not None and evidence_start > claim_end:
+        return False
+    if claim_start is not None and evidence_end is not None and evidence_end < claim_start:
+        return False
+    return True
 
 
 def evaluate_evidence_sufficiency(claim: ExtractedClaim, evidence: Sequence[EvidenceCandidate]) -> EvidenceSufficiency:

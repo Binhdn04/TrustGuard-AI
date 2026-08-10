@@ -167,6 +167,8 @@ def _freeze(value: Any) -> Any:
 
 def evaluate(engine: RiskEvaluator, evaluation_set: VersionedEvaluationSet) -> CalibrationMetrics:
     predictions = [(item, engine(item.state)) for item in evaluation_set.examples]
+    if not predictions:
+        raise ValueError("evaluation set must contain at least one example")
     metrics: dict[RiskLevel, RiskLevelMetrics] = {}
     for level in RiskLevel:
         true_positive = sum(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -9,6 +9,7 @@ from src.agents.calibration import (
     RegressionPolicy,
     VersionedEvaluationSet,
     approve_release,
+    evaluate,
     run_regression,
 )
 from src.agents.campaign import (
@@ -24,6 +25,7 @@ from src.agents.fact_check import (
     FactCheckOrchestrator,
     SourceTier,
     canonicalize_claim,
+    evaluate_evidence_sufficiency,
 )
 from src.agents.graph import build_graph
 from src.agents.tools.models import (
@@ -195,6 +197,18 @@ def test_calibration_change_requires_passing_regression_and_approval() -> None:
     assert release.evaluation_set_sha256 == evaluation_set.content_sha256
 
 
+def test_calibration_evaluate_rejects_an_empty_set_constructed_without_build() -> None:
+    evaluation_set = VersionedEvaluationSet(
+        version="eval-empty",
+        examples=(),
+        content_sha256="unused",
+        created_at=NOW,
+    )
+
+    with pytest.raises(ValueError, match="at least one example"):
+        evaluate(assessment(RiskLevel.LOW, Verdict.INCONCLUSIVE), evaluation_set)
+
+
 class BatchEmbedding:
     def __init__(self, *, fail: bool = False):
         self.calls = []
@@ -333,3 +347,29 @@ def test_claim_canonicalization_redacts_secrets_and_url_queries() -> None:
     assert "123456" not in normalized
     assert "test@example.com" not in normalized
     assert "token=secret" not in normalized
+
+
+def test_claim_canonicalization_handles_long_secret_separator_without_backtracking() -> None:
+    normalized = canonicalize_claim("OTP" + (" " * 100_000) + ": 123456")
+
+    assert normalized == "[SECRET]"
+
+
+def test_temporal_start_only_claim_accepts_later_evidence() -> None:
+    claim = ExtractedClaim.from_text(
+        "Policy applies from 2026 onwards",
+        claim_date_start=date(2026, 1, 1),
+    )
+    later = candidate("later-official", SourceTier.A, published_at=datetime(2027, 1, 1, tzinfo=UTC))
+
+    assert evaluate_evidence_sufficiency(claim, [later]).sufficient is True
+
+
+def test_temporal_end_only_claim_accepts_earlier_evidence() -> None:
+    claim = ExtractedClaim.from_text(
+        "Policy applied through 2026",
+        claim_date_end=date(2026, 12, 31),
+    )
+    earlier = candidate("earlier-official", SourceTier.A, published_at=datetime(2025, 1, 1, tzinfo=UTC))
+
+    assert evaluate_evidence_sufficiency(claim, [earlier]).sufficient is True
