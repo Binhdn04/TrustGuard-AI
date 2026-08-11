@@ -10,7 +10,9 @@ import type {
 
 export const CONTRACT_VERSION_V3 = "v3" as const;
 
-export type AnalysisCreateRequestV3 = AnalysisCreateRequest;
+export type AnalysisCreateRequestV3 = AnalysisCreateRequest & {
+  consent_to_capture_screenshot?: boolean;
+};
 
 export interface AnalysisAcceptedResponseV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
@@ -22,6 +24,28 @@ export interface AnalysisAcceptedResponseV3 {
 export type AnalysisResponseV3 = Omit<AnalysisResponse, "contract_version"> & {
   contract_version: typeof CONTRACT_VERSION_V3;
 };
+
+export type ScreenshotStatusV3 = "not_requested" | "pending" | "ready" | "failed" | "expired";
+
+export interface ScreenshotArtifactV3 {
+  artifact_id: string;
+  media_type: "image/png" | "image/jpeg" | "image/webp";
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  expires_at: string;
+  access_path: string;
+  access_expires_at: string;
+}
+
+export interface ScreenshotStatusResponseV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  analysis_id: string;
+  consented: boolean;
+  status: ScreenshotStatusV3;
+  artifact: ScreenshotArtifactV3 | null;
+  failure_code: string | null;
+}
 
 export type AnalysisEventTypeV3 =
   | "analysis_status"
@@ -123,6 +147,14 @@ export interface AppealCreateRequestV3 {
   comment?: string | null;
 }
 
+export interface AppealReceiptV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  appeal_id: string;
+  analysis_id: string;
+  status: "submitted";
+  created_at: string;
+}
+
 export interface AppealResponseV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
   appeal_id: string;
@@ -134,6 +166,31 @@ export interface AppealResponseV3 {
   resolution_note: string | null;
   created_at: string;
   resolved_at: string | null;
+}
+
+export interface AppealAdminRecordV3 extends AppealResponseV3 {
+  owner_id: string;
+}
+
+export interface AppealPageV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  items: AppealAdminRecordV3[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AppealDecisionRequestV3 {
+  outcome: AppealOutcomeV3;
+  note: string;
+}
+
+export interface AppealDecisionResponseV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  appeal_id: string;
+  decision_id: string;
+  outcome: AppealOutcomeV3;
+  decided_at: string;
 }
 
 export type ReviewedActionV3 =
@@ -155,6 +212,45 @@ export type CampaignReviewerStatusV3 =
   | "confirmed"
   | "rejected";
 
+export type ReviewDecisionV3 = "approved" | "rejected";
+
+export interface AdminActionRecordV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  action_id: string;
+  analysis_id: string | null;
+  campaign_id: string | null;
+  action: ReviewedActionV3;
+  target: string | null;
+  status: AdminActionStatusV3;
+  evidence_snapshot: import("@/types/analysis").Evidence[];
+  proposed_at: string;
+  reviewer_id: string | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+}
+
+export interface AdminActionPageV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  items: AdminActionRecordV3[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AdminActionDecisionRequestV3 {
+  decision: ReviewDecisionV3;
+  note: string;
+}
+
+export interface AdminActionDecisionResponseV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  action_id: string;
+  decision_id: string;
+  action: ReviewedActionV3;
+  status: "approved" | "rejected";
+  reviewed_at: string;
+}
+
 export interface CampaignSummaryV3 {
   campaign_id: string;
   hypothesis: string;
@@ -166,10 +262,59 @@ export interface CampaignSummaryV3 {
   clustering_version: string;
 }
 
-export interface OperationsMetricsV3 {
-  active_analyses: number;
-  completed_analyses_24h: number;
-  average_latency_ms: number;
-  error_rate: number;
+export interface CampaignDetailV3 extends CampaignSummaryV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  evidence_refs: string[];
+  registrable_domains: string[];
+  redirect_targets: string[];
+  reviewer_id: string | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+}
+
+export interface CampaignPageV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  items: CampaignSummaryV3[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface OperationsMetricsResponseV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  window: { started_at: string; ended_at: string };
+  generated_at: string;
+  latency: Array<{
+    operation: string;
+    count: number;
+    p50_ms: number | null;
+    p95_ms: number | null;
+    p99_ms: number | null;
+  }>;
+  cache: Array<{
+    provider: string;
+    hits: number;
+    misses: number;
+    hit_rate: number | null;
+  }>;
+  usage: Array<{
+    provider: string;
+    model: string | null;
+    calls: number;
+    tokens: number;
+    estimated_cost_usd: number;
+    quota_used: number | null;
+    rate_limited: number;
+    timed_out: number;
+  }>;
+  risk_distribution: Array<{ risk_level: RiskLevel; count: number }>;
+  feedback: {
+    reports: number;
+    appeals: number;
+    appeals_upheld: number;
+    appeals_overturned: number;
+    appeals_inconclusive: number;
+    false_positive_rate: number | null;
+  };
 }
 

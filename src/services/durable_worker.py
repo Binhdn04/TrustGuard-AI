@@ -206,6 +206,7 @@ class RetentionWorker:
     def stop(self) -> None:
         self._stopping.set()
 
+
 class ReembeddingJobHandler:
     """Idempotently fill pending result vectors without changing stance or provenance."""
 

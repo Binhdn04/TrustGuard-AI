@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     artifact_signing_key: str = "development-artifact-signing-key"
     artifact_access_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     artifact_retention_days: int = Field(default=30, ge=1, le=365)
+    artifact_storage_dir: str = "./data/artifacts"
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"

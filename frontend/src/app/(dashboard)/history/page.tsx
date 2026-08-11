@@ -14,7 +14,7 @@ import {
 import { getAnalysisApi } from "@/lib/api/analysis-api";
 import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
 import { cn } from "@/lib/utils";
-import type { AnalysisResponseV3 } from "@/types/generated/api-v3";
+import type { AnalysisResponseV3, AppealResponseV3 } from "@/types/generated/api-v3";
 import type { ClaimStance } from "@/types/analysis-view-model";
 
 type FilterType = "all" | ClaimStance | "url_warning";
@@ -34,33 +34,54 @@ function displayForStance(stance: ClaimStance) {
 
 export default function HistoryPage() {
   const [items, setItems] = useState<AnalysisResponseV3[]>([]);
+  const [appeals, setAppeals] = useState<Record<string, AppealResponseV3>>({});
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const loadAppeals = useCallback(async (analyses: AnalysisResponseV3[]) => {
+    const api = getAnalysisApi();
+    const results = await Promise.allSettled(
+      analyses.map((analysis) => api.listAnalysisAppeals(analysis.analysis_id)),
+    );
+    const next: Record<string, AppealResponseV3> = {};
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled" && result.value[0]) {
+        next[analyses[index].analysis_id] = result.value[0];
+      }
+    });
+    setAppeals(next);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setItems(await getAnalysisApi().listAnalyses());
+      const response = await getAnalysisApi().listAnalyses();
+      setItems(response);
+      await loadAppeals(response);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Không thể tải lịch sử kiểm chứng.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadAppeals]);
 
   useEffect(() => {
     let active = true;
     void getAnalysisApi().listAnalyses()
-      .then((response) => { if (active) setItems(response); })
+      .then((response) => {
+        if (!active) return;
+        setItems(response);
+        void loadAppeals(response);
+      })
       .catch((loadError: unknown) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Không thể tải lịch sử kiểm chứng.");
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [loadAppeals]);
 
   const history = useMemo(() => items.map((response) => {
     const originalContent = response.claims?.join(" ") || response.summary || `Phân tích ${response.analysis_id}`;
@@ -132,6 +153,7 @@ export default function HistoryPage() {
                     <p className="text-xs text-muted-foreground">
                       {new Date(item.date).toLocaleDateString("vi-VN")} · {item.claimsCount} claim · {item.sourcesCount} nguồn · {item.status}
                     </p>
+                    {appeals[item.id] && <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs"><p className="font-semibold text-violet-700 dark:text-violet-300">Khiếu nại: {appeals[item.id].status.replaceAll("_", " ")}</p>{appeals[item.id].status === "resolved" && <><p className="mt-1 font-medium">{appeals[item.id].outcome === "overturn" ? "Kết luận đã được đảo ngược" : appeals[item.id].outcome === "uphold" ? "Kết luận được giữ nguyên" : "Chưa đủ bằng chứng"}</p><p className="mt-1 text-muted-foreground">{appeals[item.id].resolution_note}</p></>}</div>}
                     {item.urls.map((url) => <p key={url} className="break-all text-xs text-muted-foreground">URL: {url}</p>)}
                   </div>
                   <div className="flex flex-wrap gap-2">

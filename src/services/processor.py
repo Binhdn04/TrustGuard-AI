@@ -49,6 +49,7 @@ class LangGraphAnalysisProcessor:
                 "analysis_id": str(analysis_id),
                 "message": request.message,
                 "consent_to_scan_urls": request.consent_to_scan_urls,
+                "consent_to_capture_screenshot": bool(getattr(request, "consent_to_capture_screenshot", False)),
                 "max_tool_calls": self._max_tool_calls,
             }
         )

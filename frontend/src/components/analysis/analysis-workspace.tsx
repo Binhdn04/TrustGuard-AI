@@ -18,6 +18,7 @@ import type {
 } from "@/types/analysis-view-model";
 
 import { AnalysisLimitations } from "./analysis-limitations";
+import { AnalysisAppealForm } from "./analysis-appeal-form";
 import { AnalysisProgress } from "./analysis-progress";
 import { AnalysisReportForm } from "./analysis-report-form";
 import { FactCheckComposer } from "./fact-check-composer";
@@ -25,6 +26,7 @@ import { FactCheckSummary } from "./fact-check-summary";
 import { LinkSafetyPanel } from "./link-safety-panel";
 import { LiveInvestigationPlan } from "./live-investigation-plan";
 import { ProvisionalWarningBanner } from "./provisional-warning-banner";
+import { ScreenshotArtifactPanel } from "./screenshot-artifact-panel";
 
 function upsertLiveStep(current: InvestigationStep[], next: InvestigationStep): InvestigationStep[] {
   const index = current.findIndex((step) => step.step_id === next.step_id);
@@ -46,6 +48,7 @@ export function AnalysisWorkspace() {
   const [liveLimitations, setLiveLimitations] = useState<string[]>([]);
   const [uiState, setUiState] = useState<AnalysisUiState>("idle");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
+  const [screenshotRequested, setScreenshotRequested] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventSubscriptionRef = useRef<AnalysisEventSubscription | null>(null);
   const generationRef = useRef(0);
@@ -72,9 +75,14 @@ export function AnalysisWorkspace() {
     setLiveLimitations([]);
     setUiState("idle");
     setTransport("disconnected");
+    setScreenshotRequested(false);
   }, [stopRuntime]);
 
-  const startAnalysis = async (content: string, consentToScanUrls: boolean) => {
+  const startAnalysis = async (
+    content: string,
+    consentToScanUrls: boolean,
+    consentToCaptureScreenshot: boolean,
+  ) => {
     generationRef.current += 1;
     const generation = generationRef.current;
     stopRuntime();
@@ -85,12 +93,14 @@ export function AnalysisWorkspace() {
     setLiveLimitations([]);
     setUiState("submitting");
     setTransport("connecting");
+    setScreenshotRequested(consentToCaptureScreenshot);
 
     try {
       const api = getAnalysisApi();
       const accepted = await api.createAnalysis({
         message: content,
         consent_to_scan_urls: consentToScanUrls,
+        consent_to_capture_screenshot: consentToCaptureScreenshot,
       });
       if (generation !== generationRef.current) return;
       setUiState("queued");
@@ -216,6 +226,8 @@ export function AnalysisWorkspace() {
             <LinkSafetyPanel result={viewModel.linkSafety} />
             <AnalysisLimitations limitations={viewModel.limitations} />
             <AnalysisReportForm analysisId={viewModel.id} />
+            <AnalysisAppealForm analysisId={viewModel.id} />
+            <ScreenshotArtifactPanel analysisId={viewModel.id} requested={screenshotRequested} />
             <div className="flex justify-center pb-4 pt-4">
               <button type="button" onClick={resetWorkspace} className="flex items-center gap-2 rounded-full border border-border bg-background px-6 py-3 font-medium text-foreground shadow-sm hover:bg-muted">
                 <RefreshCw className="size-4" /> Kiểm tra nội dung khác

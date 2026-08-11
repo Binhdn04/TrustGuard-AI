@@ -15,12 +15,31 @@ import type {
   AnalysisEventPageV3,
   AnalysisReportResponseV3,
   AnalysisResponseV3,
+  AdminActionDecisionRequestV3,
+  AdminActionDecisionResponseV3,
+  AdminActionPageV3,
+  AppealCreateRequestV3,
+  AppealDecisionRequestV3,
+  AppealDecisionResponseV3,
+  AppealPageV3,
+  AppealReceiptV3,
+  AppealResponseV3,
+  CampaignDetailV3,
+  CampaignPageV3,
+  OperationsMetricsResponseV3,
+  ScreenshotStatusResponseV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
 export interface AnalysisEventQuery {
   cursor?: string | null;
   limit?: number;
+}
+
+export interface PageQuery<TStatus extends string> {
+  status?: TStatus;
+  limit?: number;
+  offset?: number;
 }
 
 export interface AnalysisApi {
@@ -37,6 +56,18 @@ export interface AnalysisApi {
     request: AnalysisReportRequest,
   ): Promise<AnalysisReportResponseV3>;
   listReports(analysisId: string): Promise<AnalysisReportResponse[]>;
+  createAppeal(analysisId: string, request: AppealCreateRequestV3): Promise<AppealReceiptV3>;
+  getAppeal(appealId: string): Promise<AppealResponseV3>;
+  listAnalysisAppeals(analysisId: string): Promise<AppealResponseV3[]>;
+  getScreenshotStatus(analysisId: string): Promise<ScreenshotStatusResponseV3>;
+
+  listAdminAppeals(query?: PageQuery<"submitted" | "under_review" | "resolved">): Promise<AppealPageV3>;
+  decideAppeal(appealId: string, request: AppealDecisionRequestV3): Promise<AppealDecisionResponseV3>;
+  listAdminActions(query?: PageQuery<"pending_review" | "approved" | "rejected" | "executed" | "failed">): Promise<AdminActionPageV3>;
+  decideAdminAction(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3>;
+  listCampaigns(query?: PageQuery<"pending_review" | "confirmed" | "rejected">): Promise<CampaignPageV3>;
+  getCampaign(campaignId: string): Promise<CampaignDetailV3>;
+  getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3>;
 
   // Admin APIs for review queue
   listReviewQueueItems(): Promise<ReviewQueueItem[]>;

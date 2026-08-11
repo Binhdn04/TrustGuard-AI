@@ -106,6 +106,7 @@ Yêu cầu Python 3.11+, Node.js 20+ và npm.
 
 ```bash
 uv sync
+uv run playwright install chromium
 cp .env.example .env
 uv run uvicorn src.main:app --reload --port 8000
 ```

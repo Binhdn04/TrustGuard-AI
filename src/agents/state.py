@@ -60,6 +60,7 @@ class WorkflowState(AgentState, total=False):
     """Serializable private state used only while the graph is executing."""
 
     summary: str
+    consent_to_capture_screenshot: bool
     extracted_claims: list[ExtractedClaim]
     next_tool: ToolRoute
     tool_target: str

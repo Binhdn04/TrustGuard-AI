@@ -11,13 +11,18 @@ const EXAMPLES = [
 ];
 
 interface FactCheckComposerProps {
-  onSubmit: (content: string, consentToScanUrls: boolean) => void;
+  onSubmit: (
+    content: string,
+    consentToScanUrls: boolean,
+    consentToCaptureScreenshot: boolean,
+  ) => void;
   isLoading?: boolean;
 }
 
 export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComposerProps) {
   const [content, setContent] = useState("");
   const [consent, setConsent] = useState(false);
+  const [screenshotConsent, setScreenshotConsent] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
   // Auto detect URLs in the content
@@ -30,13 +35,16 @@ export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComp
 
   const updateContent = (nextContent: string) => {
     setContent(nextContent);
-    if (!/https?:\/\/[^\s]+/iu.test(nextContent)) setConsent(false);
+    if (!/https?:\/\/[^\s]+/iu.test(nextContent)) {
+      setConsent(false);
+      setScreenshotConsent(false);
+    }
   };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
-    onSubmit(content.trim(), hasUrls && consent);
+    onSubmit(content.trim(), hasUrls && consent, hasUrls && screenshotConsent);
   };
 
   return (
@@ -151,6 +159,26 @@ export function FactCheckComposer({ onSubmit, isLoading = false }: FactCheckComp
                     </span>
                     <span className="text-xs text-muted-foreground block mt-1">
                       URL và metadata cần thiết có thể được gửi đến dịch vụ bảo mật bên ngoài. Việc này không ảnh hưởng đến quá trình kiểm chứng nội dung.
+                    </span>
+                  </div>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:border-violet-500/50 has-[:checked]:border-violet-500/50 has-[:checked]:bg-violet-500/5">
+                  <div className="relative mt-0.5 flex size-5 items-center justify-center rounded border border-input bg-background">
+                    <input
+                      type="checkbox"
+                      className="peer absolute inset-0 z-10 size-full cursor-pointer opacity-0"
+                      checked={screenshotConsent}
+                      onChange={(event) => setScreenshotConsent(event.target.checked)}
+                      disabled={isLoading}
+                    />
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-violet-600 opacity-0 transition-opacity peer-checked:opacity-100">
+                      <ShieldCheck className="size-3.5 text-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="block text-sm font-semibold text-foreground">Cho phép chụp ảnh trang web trong sandbox</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      Chỉ bật khi bằng chứng tĩnh chưa đủ. Trình duyệt cô lập không dùng cookie, tài khoản hoặc dữ liệu đăng nhập của bạn.
                     </span>
                   </div>
                 </label>

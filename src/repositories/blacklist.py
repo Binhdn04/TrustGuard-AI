@@ -12,6 +12,7 @@ from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST
 from src.models import (
     AdminDecisionAudit,
     AnalysisCreateRequest,
+    AnalysisCreateRequestV3,
     AnalysisEvent,
     AnalysisReportRecord,
     AnalysisReportResponse,
@@ -787,7 +788,7 @@ class SQLiteBlacklistRepository:
             ).fetchall()
         return (
             row[0],
-            AnalysisCreateRequest.model_validate_json(row[1]),
+            _analysis_request_from_json(row[1]),
             AnalysisResponse.model_validate_json(row[2]),
             [AnalysisEvent.model_validate_json(event_row[0]) for event_row in event_rows],
         )
@@ -1031,3 +1032,9 @@ class SQLiteBlacklistRepository:
     async def close(self) -> None:
         async with self._lock:
             self._connection.close()
+
+
+def _analysis_request_from_json(value: str) -> AnalysisCreateRequest:
+    payload = json.loads(value)
+    model = AnalysisCreateRequestV3 if "consent_to_capture_screenshot" in payload else AnalysisCreateRequest
+    return model.model_validate(payload)
