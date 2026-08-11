@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from src.agents.contracts import (
     CachedReputationEvidence,
@@ -89,6 +89,8 @@ class WorkflowState(AgentState, total=False):
     campaign_features: CampaignFeatures
     campaign_hypotheses: list[CampaignHypothesis]
     embedding_status: EmbeddingStatus
+    usage_records: list[Any]
+    claim_feature_vectors: list[tuple[str, tuple[float, ...]]]
     llm_model: str
     llm_context: str
     llm_emotion: str
@@ -102,6 +104,8 @@ class WorkflowState(AgentState, total=False):
     llm_missing_information: list[str]
     llm_response_evidence_indexes: list[int]
     llm_errors: list[str]
+    runtime_progress_sink: Any
+    runtime_provisional_sink: Any
 
 
 class LegacyAgentState(TypedDict, total=False):

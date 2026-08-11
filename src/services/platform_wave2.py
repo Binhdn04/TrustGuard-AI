@@ -322,7 +322,7 @@ class _MemoryAppeal:
 
 def default_source_policies() -> list[SourceRegistryEntry]:
     reviewed_at = datetime(2026, 1, 1, tzinfo=UTC)
-    return [
+    policies = [
         SourceRegistryEntry(
             source_id=UUID("00000000-0000-4000-8000-000000000005"),
             publisher="Vietnam government",
@@ -337,6 +337,30 @@ def default_source_policies() -> list[SourceRegistryEntry]:
             reviewed_at=reviewed_at,
         )
     ]
+    for publisher, pattern in (
+        ("VTV", "*.vtv.vn"),
+        ("VOV", "*.vov.vn"),
+        ("Nhan Dan", "*.nhandan.vn"),
+        ("VietnamPlus", "*.vietnamplus.vn"),
+        ("VnExpress", "*.vnexpress.net"),
+        ("Tuoi Tre", "*.tuoitre.vn"),
+        ("Thanh Nien", "*.thanhnien.vn"),
+    ):
+        policies.append(
+            SourceRegistryEntry(
+                publisher=publisher,
+                normalized_pattern=pattern,
+                tier=SourceTier.B,
+                source_type="reviewed_news",
+                allowed_operations={"search", "read", "compare"},
+                policy_version="source-policy-v2",
+                effective_from=datetime(2026, 8, 11, tzinfo=UTC),
+                default_freshness_seconds=21600,
+                reviewer_id="system-bootstrap",
+                reviewed_at=datetime(2026, 8, 11, tzinfo=UTC),
+            )
+        )
+    return policies
 
 
 @dataclass(slots=True)
@@ -565,6 +589,26 @@ class MemoryWave2Repository:
         item = self.campaigns.get(campaign_id)
         return item.model_copy(deep=True) if item else None
 
+    async def review_campaign(
+        self, campaign_id: UUID, status: CampaignReviewerStatus, note: str, reviewer_id: str
+    ) -> CampaignDetailV3 | None:
+        async with self._lock:
+            item = self.campaigns.get(campaign_id)
+            if item is None:
+                return None
+            if item.reviewer_status is not CampaignReviewerStatus.PENDING_REVIEW:
+                raise _conflict("Campaign was already reviewed.")
+            updated = item.model_copy(
+                update={
+                    "reviewer_status": status,
+                    "reviewer_id": reviewer_id,
+                    "review_note": note,
+                    "reviewed_at": datetime.now(UTC),
+                }
+            )
+            self.campaigns[campaign_id] = updated
+            return updated.model_copy(deep=True)
+
     async def register_source(self, entry: SourceRegistryEntry) -> None:
         async with self._lock:
             if any(
@@ -689,6 +733,22 @@ class VersionedSourceRegistry:
 
     def replace(self, policies: list[SourceRegistryEntry]) -> None:
         self._policies = list(policies)
+
+    def allowed_domains(self, operation: str = "search") -> tuple[str, ...]:
+        now = datetime.now(UTC)
+        return tuple(
+            sorted(
+                {
+                    item.normalized_pattern.removeprefix("*.")
+                    for item in self._policies
+                    if item.active
+                    and not item.explicit_deny
+                    and operation in item.allowed_operations
+                    and item.effective_from <= now
+                    and (item.effective_to is None or item.effective_to > now)
+                }
+            )
+        )
 
     def classify(self, url: str, at: datetime) -> SourcePolicyDecision:
         hostname = (urlsplit(url).hostname or "").lower().rstrip(".")
@@ -845,6 +905,14 @@ class Wave2PlatformService:
             raise _not_found("Campaign was not found.")
         return result
 
+    async def review_campaign(
+        self, campaign_id: UUID, status: CampaignReviewerStatus, note: str, reviewer_id: str
+    ) -> CampaignDetailV3:
+        result = await self.repository.review_campaign(campaign_id, status, note, reviewer_id)  # type: ignore[attr-defined]
+        if result is None:
+            raise _not_found("Campaign was not found.")
+        return result
+
     async def operations_metrics(self, started_at: datetime, ended_at: datetime) -> OperationsMetricsResponseV3:
         if ended_at <= started_at:
             raise PlatformError(
@@ -867,6 +935,9 @@ class Wave2PlatformService:
         if self._active_source_registry is not None:
             policies = await self.repository.load_source_policies(datetime.now(UTC))  # type: ignore[attr-defined]
             self._active_source_registry.replace(policies)
+
+    async def list_sources(self, at: datetime | None = None) -> list[SourceRegistryEntry]:
+        return await self.repository.load_source_policies(at or datetime.now(UTC))  # type: ignore[attr-defined]
 
     async def issue_artifact_access(self, artifact_id: UUID, principal: Principal) -> ArtifactAccess:
         artifact = await self.repository.get_artifact(artifact_id)  # type: ignore[attr-defined]

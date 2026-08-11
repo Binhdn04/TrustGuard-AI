@@ -376,6 +376,11 @@ class FlashRankReranker:
                     rerank_score=float(row.get("score", 0)),
                     text=item.text,
                     canonical_url=item.canonical_url,
+                    title="Web evidence",
+                    publisher=urlsplit(item.canonical_url).hostname or "unknown",
+                    source_tier=item.source_tier,
+                    source_version=item.source_version,
+                    published_at=item.published_at,
                 )
             )
         return output
@@ -398,8 +403,9 @@ class TavilySearchAdapter:
         client: httpx.AsyncClient | None = None,
         timeout: float = 10,
         allowed_domains: Callable[[ExtractedClaim], Sequence[str]] | None = None,
+        classify_source: Callable[[str, datetime], Any] | None = None,
     ) -> None:
-        self.api_key, self._domains = api_key, allowed_domains
+        self.api_key, self._domains, self._classify = api_key, allowed_domains, classify_source
         self._client = client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
 
@@ -430,13 +436,17 @@ class TavilySearchAdapter:
                     continue
                 seen.add(url)
                 host = urlsplit(url).hostname or "unknown"
+                decision = self._classify(url, _now()) if self._classify else None
+                tier = getattr(getattr(decision, "tier", None), "value", None) or "untrusted"
+                publisher = getattr(decision, "publisher", None) or host
                 output.append(
                     WebCandidate(
                         evidence_ref="web:sha256:" + sha256(url.encode()).hexdigest(),
                         canonical_url=url,
                         title=str(row.get("title") or host),
                         snippet=str(row.get("content") or "No snippet"),
-                        publisher=host,
+                        publisher=publisher,
+                        source_tier=str(tier),
                         source_version=self.provider_version,
                     )
                 )

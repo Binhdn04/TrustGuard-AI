@@ -27,12 +27,14 @@ class DurableAnalysisWorker:
         lease_seconds: int = 60,
         idle_seconds: float = 0.5,
         job_handlers: dict[str, Callable[[DurableJob], Awaitable[None]]] | None = None,
+        before_analysis: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._repository = repository
         self._service = service
         self._lease_seconds = lease_seconds
         self._idle_seconds = idle_seconds
         self._job_handlers = job_handlers or {}
+        self._before_analysis = before_analysis
         self._worker_id = f"{socket.gethostname()}:{uuid4()}"
         self._stopping = asyncio.Event()
 
@@ -79,6 +81,8 @@ class DurableAnalysisWorker:
     async def _execute_claimed_job(self, job: DurableJob) -> None:
         with self._repository.job_scope(job.id, self._worker_id):
             if job.kind == "analyze":
+                if self._before_analysis is not None:
+                    await self._before_analysis()
                 operation = self._service.process_durable_job(job.analysis_id)
             else:
                 handler = self._job_handlers.get(job.kind)

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import binascii
 import hashlib
+import os
+import stat
 from contextlib import suppress
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Query, WebSocket, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from starlette.websockets import WebSocketDisconnect
 
 from src.api.dependencies import (
@@ -48,9 +49,11 @@ from src.models import (
     AppealReceiptV3,
     AppealResponseV3,
     AppealStatus,
+    CampaignDecisionRequestV3,
     CampaignDetailV3,
     CampaignPageV3,
     CampaignReviewerStatus,
+    CapabilitiesResponseV3,
     CaseStatus,
     CaseUpdateEventPayload,
     CaseUpdateEventV3,
@@ -60,15 +63,20 @@ from src.models import (
     FinalResultEventV3,
     InvestigationTool,
     OperationsMetricsResponseV3,
+    ProvisionalWarningEventPayload,
+    ProvisionalWarningEventV3,
     ReportStatus,
     ReviewQueueDecisionRequest,
     ReviewQueueItem,
     ScreenshotStatusResponseV3,
+    SourcePolicyCreateRequestV3,
+    SourcePolicyRecordV3,
     StepTransitionEventPayload,
     StepTransitionEventV3,
     WebSocketTicketRequestV3,
     WebSocketTicketResponseV3,
 )
+from src.services.platform_wave2 import SourceRegistryEntry, SourceTier
 
 router = APIRouter(tags=["contract-v3"])
 
@@ -80,6 +88,30 @@ _COMMON_ERRORS = {
     422: {"model": ErrorEnvelope},
 }
 _PLANNED_ERRORS = _COMMON_ERRORS
+_MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/capabilities", response_model=CapabilitiesResponseV3, responses=_COMMON_ERRORS)
+async def capabilities_v3(principal: PrincipalDependency) -> CapabilitiesResponseV3:
+    del principal
+    settings = get_settings()
+    configured = {
+        "openai": bool(settings.openai_api_key),
+        "google_fact_check": bool(settings.google_fact_check_api_key),
+        "tavily": bool(settings.tavily_api_key),
+        "jina": bool(settings.jina_api_key),
+        "web_risk": bool(settings.google_web_risk_api_key),
+        "virustotal": bool(settings.virustotal_api_key),
+        "postgresql": settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")),
+        "redis": bool(settings.redis_url),
+        "screenshot": True,
+    }
+    ready_count = sum(configured.values())
+    profile = "live" if ready_count == len(configured) else "partial" if ready_count else "offline"
+    return CapabilitiesResponseV3(
+        profile=profile,
+        capabilities={name: "ready" if ready else "not_configured" for name, ready in configured.items()},
+    )
 
 
 def _as_v3(response) -> AnalysisResponseV3:
@@ -200,10 +232,22 @@ async def _build_event_page(
                     payload=StepTransitionEventPayload(
                         step_id=event.step_id,
                         tool=step.tool if step is not None else InvestigationTool(event.step),
-                        target=step.target if step is not None else "unavailable",
-                        reason_code=step.reason_code if step is not None else "legacy_event",
-                        depends_on=step.depends_on if step is not None else [],
+                        target=step.target if step is not None else event.target or "unavailable",
+                        reason_code=step.reason_code if step is not None else event.reason_code or "runtime_transition",
+                        depends_on=step.depends_on if step is not None else event.depends_on,
                         status=event.step_status,
+                    ),
+                )
+            )
+        elif event.is_provisional and event.provisional_risk_level and event.provisional_summary:
+            converted.append(
+                ProvisionalWarningEventV3(
+                    **common,
+                    payload=ProvisionalWarningEventPayload(
+                        risk_level=event.provisional_risk_level,
+                        summary=event.provisional_summary,
+                        evidence_refs=event.evidence_refs,
+                        is_provisional=True,
                     ),
                 )
             )
@@ -304,12 +348,12 @@ async def get_analysis_screenshot_v3(
     )
 
 
-@router.get("/artifacts/{artifact_id}", response_class=FileResponse, responses=_COMMON_ERRORS)
+@router.get("/artifacts/{artifact_id}", response_class=Response, responses=_COMMON_ERRORS)
 async def get_artifact_v3(
     artifact_id: UUID,
     wave2: Wave2ServiceDependency,
     token: str = Query(max_length=1024),
-) -> FileResponse:
+) -> Response:
     artifact = await wave2.artifact_for_download(artifact_id, token)
     settings = get_settings()
     storage_root = Path(settings.artifact_storage_dir).resolve()
@@ -321,21 +365,18 @@ async def get_artifact_v3(
             message="Artifact was not found.",
             retryable=False,
         )
-    valid = await asyncio.to_thread(
-        _verify_artifact_file,
-        artifact_path,
-        artifact.size_bytes,
-        artifact.sha256,
-    )
-    if not valid:
+    # Keep the download boundary independently capped even if storage or
+    # metadata was populated outside the capture coordinator.
+    content = _read_verified_artifact(artifact_path, artifact.size_bytes, artifact.sha256)
+    if content is None:
         raise PlatformError(
             status_code=404,
             code=ErrorCode.NOT_FOUND,
             message="Artifact was not found.",
             retryable=False,
         )
-    return FileResponse(
-        artifact_path,
+    return Response(
+        content=content,
         media_type=artifact.media_type,
         headers={
             "Cache-Control": "private, no-store",
@@ -346,17 +387,22 @@ async def get_artifact_v3(
     )
 
 
-def _verify_artifact_file(path: Path, expected_size: int, expected_sha256: str) -> bool:
+def _read_verified_artifact(path: Path, expected_size: int, expected_sha256: str) -> bytes | None:
+    if not 0 <= expected_size <= _MAX_ARTIFACT_BYTES:
+        return None
     try:
-        if not path.is_file() or path.stat().st_size != expected_size:
-            return False
-        digest = hashlib.sha256()
         with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(64 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest() == expected_sha256
-    except OSError:
-        return False
+            file_stat = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != expected_size:
+                return None
+            # The extra byte detects growth after fstat without ever allocating
+            # more than the configured limit plus one byte.
+            content = handle.read(expected_size + 1)
+    except (OSError, ValueError):
+        return None
+    if len(content) != expected_size or hashlib.sha256(content).hexdigest() != expected_sha256:
+        return None
+    return content
 
 
 @router.post(
@@ -564,6 +610,53 @@ async def get_campaign_v3(
 ) -> CampaignDetailV3:
     require_security_admin(principal)
     return await wave2.get_campaign(campaign_id)
+
+
+@router.post(
+    "/admin/campaigns/{campaign_id}/decision",
+    response_model=CampaignDetailV3,
+    responses=_PLANNED_ERRORS,
+)
+async def review_campaign_v3(
+    campaign_id: UUID,
+    request: CampaignDecisionRequestV3,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> CampaignDetailV3:
+    require_security_admin(principal)
+    return await wave2.review_campaign(campaign_id, request.decision, request.note, principal.user_id)
+
+
+@router.get("/admin/sources", response_model=list[SourcePolicyRecordV3], responses=_PLANNED_ERRORS)
+async def list_source_policies_v3(
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SourcePolicyRecordV3]:
+    require_security_admin(principal)
+    return [SourcePolicyRecordV3.model_validate(item.model_dump()) for item in await wave2.list_sources()]
+
+
+@router.post(
+    "/admin/sources",
+    response_model=SourcePolicyRecordV3,
+    status_code=status.HTTP_201_CREATED,
+    responses=_PLANNED_ERRORS,
+)
+async def create_source_policy_v3(
+    request: SourcePolicyCreateRequestV3,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> SourcePolicyRecordV3:
+    require_security_admin(principal)
+    now = datetime.now(UTC)
+    entry = SourceRegistryEntry(
+        **request.model_dump(exclude={"tier"}),
+        tier=SourceTier(request.tier.value),
+        reviewer_id=principal.user_id,
+        reviewed_at=now,
+    )
+    await wave2.register_source(entry)
+    return SourcePolicyRecordV3.model_validate(entry.model_dump())
 
 
 @router.get("/admin/metrics", response_model=OperationsMetricsResponseV3, responses=_PLANNED_ERRORS)

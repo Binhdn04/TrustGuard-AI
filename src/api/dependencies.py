@@ -10,6 +10,11 @@ if TYPE_CHECKING:
 
 from fastapi import Depends, Header, Request
 
+from src.agents.campaign import (
+    ConfigurableCampaignDetector,
+    InMemoryCampaignObservationStore,
+    RepositoryCampaignObservationStore,
+)
 from src.agents.graph import build_openai_graph
 from src.agents.tools.advanced import OpenAIEmbeddingProvider
 from src.config import get_settings
@@ -59,8 +64,21 @@ def get_analysis_service() -> AnalysisService:
         if postgres
         else SQLiteBlacklistRepository(settings.security_database_path)
     )
-    graph = build_openai_graph(blacklist=blacklist, source_registry=_source_registry)
-    processor = LangGraphAnalysisProcessor(graph)
+    processor = None
+    if not postgres or settings.run_durable_worker:
+        campaign_store = (
+            RepositoryCampaignObservationStore(blacklist) if postgres else InMemoryCampaignObservationStore()
+        )
+        graph = build_openai_graph(
+            blacklist=blacklist,
+            source_registry=_source_registry,
+            campaign_detector=ConfigurableCampaignDetector(campaign_store),
+        )
+        processor = LangGraphAnalysisProcessor(
+            graph,
+            deadline_seconds=settings.analysis_deadline_seconds,
+            max_tool_cost_usd=settings.max_provider_cost_usd,
+        )
     artifact_repository = blacklist if postgres else _memory_wave2_repository
     screenshot_capture = ScreenshotCaptureCoordinator(
         artifact_repository,
@@ -113,6 +131,11 @@ async def start_durable_worker() -> None:
     settings = get_settings()
     policies = await service.repository.load_source_policies(datetime.now(UTC))
     _source_registry.replace(policies or default_source_policies())
+
+    async def refresh_source_registry() -> None:
+        active = await service.repository.load_source_policies(datetime.now(UTC))
+        _source_registry.replace(active or default_source_policies())
+
     handlers = {}
     if settings.openai_api_key:
         embedding_provider = OpenAIEmbeddingProvider(
@@ -125,6 +148,7 @@ async def start_durable_worker() -> None:
         service,
         lease_seconds=settings.job_lease_seconds,
         job_handlers=handlers,
+        before_analysis=refresh_source_registry,
     )
     _worker_task = asyncio.create_task(_worker.run(), name="durable-analysis-worker")
     _retention = RetentionWorker(service.repository)

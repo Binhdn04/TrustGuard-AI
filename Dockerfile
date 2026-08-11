@@ -18,7 +18,8 @@ RUN --mount=type=cache,id=p068-pip-v2,target=/root/.cache/pip,sharing=locked \
 FROM python:3.11-slim
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 \
+    FLASHRANK_CACHE_DIR=/ms-flashrank
 
 WORKDIR /app
 
@@ -34,6 +35,11 @@ RUN useradd -m appuser
 # screenshot worker. Browser contexts are always fresh and run as appuser.
 RUN /opt/venv/bin/playwright install --with-deps chromium \
     && chmod -R 755 /ms-playwright
+
+# Keep reranking deterministic at runtime and avoid a first-request model download.
+RUN mkdir -p /ms-flashrank \
+    && /opt/venv/bin/python -c "from flashrank import Ranker; Ranker(model_name='ms-marco-MultiBERT-L-12', cache_dir='/ms-flashrank')" \
+    && chmod -R 755 /ms-flashrank
 
 # Copy application code
 COPY . .

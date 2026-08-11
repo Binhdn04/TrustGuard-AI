@@ -11,6 +11,9 @@ services:
       DATABASE_URL: postgresql://app:app@postgres:5432/p068
       DATABASE_ENCRYPTION_KEY: ${DATABASE_ENCRYPTION_KEY:-development-only-change-me}
       REDIS_URL: redis://redis:6379/0
+      RUN_DURABLE_WORKER: "false"
+      LIVE_PROVIDERS_REQUIRED: ${LIVE_PROVIDERS_REQUIRED:-false}
+      FLASHRANK_CACHE_DIR: /ms-flashrank
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]
     volumes:
       - ./data:/app/data
@@ -25,6 +28,47 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/p068
+      DATABASE_ENCRYPTION_KEY: ${DATABASE_ENCRYPTION_KEY:-development-only-change-me}
+      REDIS_URL: redis://redis:6379/0
+      RUN_DURABLE_WORKER: "true"
+      LIVE_PROVIDERS_REQUIRED: ${LIVE_PROVIDERS_REQUIRED:-false}
+      FLASHRANK_CACHE_DIR: /ms-flashrank
+    command: ["python", "-m", "src.worker"]
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_USE_MOCK_API: "false"
+        NEXT_PUBLIC_DEMO_USER_TOKEN: ${DEMO_USER_TOKEN:-dev-user-token}
+        NEXT_PUBLIC_DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-dev-admin-token}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
   postgres:
     image: pgvector/pgvector:pg16

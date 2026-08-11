@@ -23,7 +23,7 @@ def build_domain_intelligence_adapter(settings: Any) -> RdapDomainIntelligence:
     return RdapDomainIntelligence(timeout=min(settings.provider_timeout_seconds, 5.0))
 
 
-def build_provider_adapters(settings: Any) -> dict[str, object]:
+def build_provider_adapters(settings: Any, source_registry: Any | None = None) -> dict[str, object]:
     """Create only explicitly configured real adapters; empty config stays offline."""
 
     adapters: dict[str, object] = {}
@@ -45,11 +45,20 @@ def build_provider_adapters(settings: Any) -> dict[str, object]:
         adapters["url_scanner"] = GoogleSafeBrowsingScanner(settings.google_safe_browsing_api_key, timeout=timeout)
     if settings.google_fact_check_api_key:
         adapters["claim_retriever"] = GoogleFactCheckRetriever(settings.google_fact_check_api_key, timeout=timeout)
-        adapters["google_claim_search"] = GoogleClaimSearchAdapter(settings.google_fact_check_api_key, timeout=timeout)
+        adapters["google_claim_search"] = GoogleClaimSearchAdapter(
+            settings.google_fact_check_api_key,
+            timeout=timeout,
+            classify_source=source_registry.classify if source_registry else None,
+        )
     if getattr(settings, "openai_api_key", ""):
         adapters["embedding_provider"] = OpenAIEmbeddingProvider(settings.openai_api_key, timeout=timeout)
     if getattr(settings, "tavily_api_key", ""):
-        adapters["tavily_search"] = TavilySearchAdapter(settings.tavily_api_key, timeout=timeout)
+        adapters["tavily_search"] = TavilySearchAdapter(
+            settings.tavily_api_key,
+            timeout=timeout,
+            allowed_domains=(lambda _claim: source_registry.allowed_domains("search")) if source_registry else None,
+            classify_source=source_registry.classify if source_registry else None,
+        )
     if getattr(settings, "jina_api_key", ""):
         adapters["jina_reader"] = JinaReaderAdapter(settings.jina_api_key, timeout=timeout)
     # These constructors perform no I/O. Consent is checked in the executor

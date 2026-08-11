@@ -317,7 +317,13 @@ class PostgresPlatformRepository:
                 uuid4(),
                 event.analysis_id,
                 sequence,
-                "step_transition" if event.step_id else "analysis_status",
+                (
+                    "provisional_warning"
+                    if event.is_provisional
+                    else "step_transition"
+                    if event.step_id
+                    else "analysis_status"
+                ),
                 event.model_dump_json(),
                 event.occurred_at,
             )
@@ -1220,8 +1226,10 @@ class PostgresPlatformRepository:
         async with pool.acquire() as connection:
             rows = await connection.fetch(
                 """WITH eligible AS (
-                     SELECT r.* FROM fact_check_records r
+                     SELECT r.*,s.tier AS source_tier FROM fact_check_records r
+                     JOIN fact_check_sources s ON s.id=r.source_id
                      WHERE r.promotion_status='trusted' AND r.language=$2
+                       AND s.active AND NOT s.explicit_deny
                        AND (r.fresh_until IS NULL OR r.fresh_until > now())
                        AND ($7::timestamptz IS NULL OR r.published_at <= coalesce($8,$7))
                        AND ($8::timestamptz IS NULL OR coalesce(r.effective_to,r.source_updated_at) >= $7)
@@ -1373,7 +1381,8 @@ class PostgresPlatformRepository:
                 """INSERT INTO campaign_clusters(
                        id,hypothesis,window_started_at,window_ended_at,similarity_threshold,
                        minimum_analyses,clustering_version,reviewer_status,created_at,updated_at
-                   ) VALUES($1,$2,$3,$4,$5,$6,$7,'pending_review',$8,$8)""",
+                   ) VALUES($1,$2,$3,$4,$5,$6,$7,'pending_review',$8,$8)
+                   ON CONFLICT(id) DO NOTHING""",
                 campaign.campaign_id,
                 campaign.hypothesis,
                 campaign.window_started_at,
@@ -1399,7 +1408,9 @@ class PostgresPlatformRepository:
             signals.update({f"redirect:{value}": 1 for value in campaign.redirect_targets})
             for signal, count in signals.items():
                 await connection.execute(
-                    "INSERT INTO campaign_signals(campaign_id,signal,signal_count) VALUES($1,$2,$3)",
+                    """INSERT INTO campaign_signals(campaign_id,signal,signal_count) VALUES($1,$2,$3)
+                       ON CONFLICT(campaign_id,signal) DO UPDATE
+                       SET signal_count=GREATEST(campaign_signals.signal_count,EXCLUDED.signal_count)""",
                     campaign.campaign_id,
                     signal,
                     count,
@@ -1408,6 +1419,62 @@ class PostgresPlatformRepository:
         if detail is None:
             raise RuntimeError("campaign persistence failed")
         return detail
+
+    async def add_campaign_observation(self, observation: Any) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """INSERT INTO campaign_observations(
+                       analysis_id,observed_at,registrable_domains,redirect_targets,evidence_refs
+                   ) VALUES($1,$2,$3::jsonb,$4::jsonb,$5::jsonb) ON CONFLICT(analysis_id) DO NOTHING""",
+                UUID(observation.analysis_id),
+                observation.observed_at,
+                json.dumps(observation.registrable_domains),
+                json.dumps(observation.redirect_targets),
+                json.dumps(observation.evidence_refs),
+            )
+            for feature in observation.claim_features:
+                if len(feature.vector) != 1536:
+                    continue
+                await connection.execute(
+                    """INSERT INTO campaign_claim_features(analysis_id,feature_ref,embedding)
+                       VALUES($1,$2,$3::real[]::vector) ON CONFLICT DO NOTHING""",
+                    UUID(observation.analysis_id),
+                    feature.feature_ref,
+                    feature.vector,
+                )
+
+    async def recent_campaign_observations(self, since: datetime):
+        from src.agents.campaign import CampaignObservation, ClaimFeature
+
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT analysis_id,observed_at,registrable_domains,redirect_targets,evidence_refs
+                   FROM campaign_observations WHERE observed_at >= $1 ORDER BY observed_at""",
+                since,
+            )
+            features = await connection.fetch(
+                """SELECT f.analysis_id,f.feature_ref,f.embedding::text AS embedding
+                   FROM campaign_claim_features f JOIN campaign_observations o ON o.analysis_id=f.analysis_id
+                   WHERE o.observed_at >= $1""",
+                since,
+            )
+        by_analysis: dict[UUID, list[ClaimFeature]] = {}
+        for row in features:
+            values = tuple(float(value) for value in row["embedding"].strip("[]").split(","))
+            by_analysis.setdefault(row["analysis_id"], []).append(ClaimFeature(row["feature_ref"], values))
+        return [
+            CampaignObservation(
+                analysis_id=str(row["analysis_id"]),
+                observed_at=row["observed_at"],
+                registrable_domains=tuple(_json_value(row["registrable_domains"])),
+                redirect_targets=tuple(_json_value(row["redirect_targets"])),
+                claim_features=tuple(by_analysis.get(row["analysis_id"], ())),
+                evidence_refs=tuple(_json_value(row["evidence_refs"])),
+            )
+            for row in rows
+        ]
 
     async def list_campaigns(
         self, reviewer_status: CampaignReviewerStatus | None, limit: int, offset: int
@@ -1461,6 +1528,36 @@ class PostgresPlatformRepository:
             review_note=row["review_note"],
             reviewed_at=row["reviewed_at"],
         )
+
+    async def review_campaign(
+        self, campaign_id: UUID, status: CampaignReviewerStatus, note: str, reviewer_id: str
+    ) -> CampaignDetailV3 | None:
+        if status is CampaignReviewerStatus.PENDING_REVIEW:
+            raise ValueError("campaign review must be confirmed or rejected")
+        pool = await self._get_pool()
+        now = datetime.now(UTC)
+        async with pool.acquire() as connection:
+            updated = await connection.execute(
+                """UPDATE campaign_clusters SET reviewer_status=$2,reviewer_id=$3,review_note=$4,
+                          reviewed_at=$5,updated_at=$5,version=version+1
+                   WHERE id=$1 AND reviewer_status='pending_review'""",
+                campaign_id,
+                status.value,
+                reviewer_id,
+                note.strip(),
+                now,
+            )
+        if updated != "UPDATE 1":
+            existing = await self.get_campaign(campaign_id)
+            if existing is None:
+                return None
+            raise PlatformError(
+                status_code=409,
+                code=ErrorCode.INTERNAL_ERROR,
+                message="Campaign was already reviewed.",
+                retryable=False,
+            )
+        return await self.get_campaign(campaign_id)
 
     @staticmethod
     async def _campaign_signals(connection, campaign_ids: list[UUID]) -> dict[UUID, list[tuple[str, int]]]:
@@ -1713,6 +1810,11 @@ class PostgresPlatformRepository:
         if self._owns_pool and self._pool is not None:
             await self._pool.close()
             self._pool = None
+
+    async def healthcheck(self) -> bool:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            return bool(await connection.fetchval("SELECT 1"))
 
 
 def _json_value(value: Any) -> Any:

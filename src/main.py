@@ -11,6 +11,7 @@ from src.api.dependencies import (
     close_event_notifier,
     close_rate_limiter,
     close_ticket_manager,
+    get_analysis_service,
     start_durable_worker,
     stop_durable_worker,
 )
@@ -32,11 +33,13 @@ async def lifespan(app: FastAPI):
     if settings.app_env == "production" and settings.database_encryption_key == "development-only-change-me":
         raise RuntimeError("DATABASE_ENCRYPTION_KEY must be changed in production")
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
-    await start_durable_worker()
+    if settings.run_durable_worker:
+        await start_durable_worker()
     try:
         yield
     finally:
-        await stop_durable_worker()
+        if settings.run_durable_worker:
+            await stop_durable_worker()
         await close_analysis_service()
         await close_ticket_manager()
         await close_event_notifier()
@@ -98,3 +101,41 @@ async def validation_error_handler(request, exc: RequestValidationError):
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.app_env}
+
+
+@app.get("/health/ready")
+async def readiness():
+    checks = {"database": True, "redis": True, "providers": True}
+    service = get_analysis_service()
+    healthcheck = getattr(service.repository, "healthcheck", None)
+    if healthcheck is not None:
+        try:
+            checks["database"] = bool(await healthcheck())
+        except Exception:
+            checks["database"] = False
+    if settings.app_env == "production":
+        try:
+            from redis.asyncio import Redis
+
+            client = Redis.from_url(settings.redis_url)
+            try:
+                checks["redis"] = bool(await client.ping())
+            finally:
+                await client.aclose()
+        except Exception:
+            checks["redis"] = False
+    if settings.live_providers_required:
+        checks["providers"] = all(
+            (
+                settings.openai_api_key,
+                settings.google_fact_check_api_key,
+                settings.google_web_risk_api_key,
+                settings.virustotal_api_key,
+                settings.tavily_api_key,
+                settings.jina_api_key,
+            )
+        )
+    status_code = 200 if all(checks.values()) else 503
+    return JSONResponse(
+        status_code=status_code, content={"status": "ready" if status_code == 200 else "degraded", "checks": checks}
+    )

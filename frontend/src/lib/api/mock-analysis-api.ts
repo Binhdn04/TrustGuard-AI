@@ -28,9 +28,13 @@ import type {
   AppealReceiptV3,
   AppealResponseV3,
   CampaignDetailV3,
+  CampaignDecisionRequestV3,
   CampaignPageV3,
+  CapabilitiesResponseV3,
   OperationsMetricsResponseV3,
   ScreenshotStatusResponseV3,
+  SourcePolicyCreateRequestV3,
+  SourcePolicyRecordV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
@@ -44,6 +48,7 @@ interface MockRecord {
 
 const records = new Map<string, MockRecord>();
 const appeals = new Map<string, AppealResponseV3>();
+const sourcePolicies: SourcePolicyRecordV3[] = [];
 const URL_PATTERN = /https?:\/\/[^\s]+/giu;
 
 function inputTypeFor(message: string): InputType {
@@ -281,6 +286,9 @@ function completedResponse(
 }
 
 export class MockAnalysisApi implements AnalysisApi {
+  async getCapabilities(): Promise<CapabilitiesResponseV3> {
+    return { contract_version: "v3", profile: "offline", capabilities: {} };
+  }
   async createAnalysis(
     request: AnalysisCreateRequestV3,
   ): Promise<AnalysisAcceptedResponseV3> {
@@ -554,6 +562,31 @@ export class MockAnalysisApi implements AnalysisApi {
   async getCampaign(_campaignId: string): Promise<CampaignDetailV3> {
     void _campaignId;
     throw new Error("Không tìm thấy chiến dịch.");
+  }
+
+  async reviewCampaign(
+    campaignId: string,
+    _request: CampaignDecisionRequestV3,
+  ): Promise<CampaignDetailV3> {
+    void _request;
+    return this.getCampaign(campaignId);
+  }
+
+  async listSourcePolicies(): Promise<SourcePolicyRecordV3[]> {
+    return [...sourcePolicies];
+  }
+
+  async createSourcePolicy(request: SourcePolicyCreateRequestV3): Promise<SourcePolicyRecordV3> {
+    const item: SourcePolicyRecordV3 = {
+      ...request,
+      contract_version: "v3",
+      source_id: crypto.randomUUID(),
+      active: true,
+      reviewer_id: "mock-admin",
+      reviewed_at: new Date().toISOString(),
+    };
+    sourcePolicies.push(item);
+    return item;
   }
 
   async getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3> {

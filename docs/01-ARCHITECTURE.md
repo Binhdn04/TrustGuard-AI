@@ -1,8 +1,8 @@
 # Architecture — P-068
 
-**Snapshot:** 2026-08-09
+**Snapshot:** 2026-08-11 (baseline hiện tại, phát triển từ `7715ea0`)
 
-**Phạm vi:** Kiến trúc đang tồn tại trong repository sau Wave 1; các capability chưa hoàn tất được ghi rõ ở bảng trạng thái.
+**Phạm vi:** Kiến trúc runtime hiện tại sau khi đóng integration gate Wave 2.
 
 > Dependency direction chủ đạo: `api → services → agents.graph → tools protocols/adapters →
 > external providers`, với `models` là contract dùng chung.
@@ -91,9 +91,9 @@ Planning loop:
   được inject;
 - dừng khi không còn step sẵn sàng, hết budget hoặc deadline (nếu caller truyền `deadline_at`).
 
-Planning loop đã tạo `pending/running/completed/skipped/failed` qua `ProgressSink`, nhưng runtime factory
-hiện chưa inject sink persistence. `LangGraphAnalysisProcessor` vẫn chuyển plan cuối thành step event
-sau `ainvoke`; vì vậy WebSocket/polling có replay ổn định nhưng chưa phản ánh transition theo thời gian thực.
+`LangGraphAnalysisProcessor` inject `ProgressSink` và `ProvisionalWarningSink` theo từng analysis.
+Transition `pending/running/completed/skipped/failed` được persist và publish ngay khi planning loop
+chạy; terminal projection chỉ bổ sung event còn thiếu, không phát lại transition đã ghi.
 
 ## 4. LLM boundary
 
@@ -107,9 +107,11 @@ Các structured output nội bộ:
 - `AssessmentReview`: coverage, evidence indexes và missing information;
 - `GroundedResponse`: summary, reasons gắn evidence index và limitations.
 
-Wave 2 mở rộng `MessageAnalysis.claims` thành tối đa năm claim có language/temporal metadata và thêm
-`ClaimAssessment` cho comparison stance/citation. Đây là private workflow state, không thêm field
-vào public `AnalysisResponse`.
+Wave 2 đã thêm representation tối đa năm claim có language/temporal metadata và `ClaimAssessment`
+cho comparison stance/citation. Đây là private workflow state, không thêm field vào public
+`AnalysisResponse`. Production factory compose PostgreSQL hybrid corpus, chunker, FlashRank và
+schema-bound comparator; adapter thiếu key vẫn fail closed/inconclusive, còn
+`LIVE_PROVIDERS_REQUIRED=true` biến thiếu key thành lỗi startup/readiness.
 
 Invalid output/call failure được ghi vào private `llm_errors` và limitation. Public response không
 chứa prompt, model trace hoặc chain-of-thought. Config runtime hiện lấy từ `Settings`; default thực
@@ -120,14 +122,14 @@ tế là model `gpt-4o-mini`, temperature `0.7`, timeout 30 giây, `max_retries=
 | Capability | Implementation | Runtime mặc định |
 |---|---|---|
 | Local URL rules | `nodes/rules.py` | Có |
-| Approved blacklist | `SQLiteBlacklistRepository` | Có ở SQLite; PostgreSQL lifecycle chưa implement |
+| Approved blacklist | `SQLiteBlacklistRepository` / `PostgresPlatformRepository` | Có ở dev/test và production; mutation qua reviewed decision |
 | URL reputation | `ProductionUrlReputationCascade` (Web Risk + optional VirusTotal) | Chỉ khi có Web Risk key; fake adapters trong test |
 | Indexed ClaimReview | `GoogleClaimSearch` — Google Fact Check Tools `claims.search` | Chỉ khi có API key; retrieval, không phải verifier |
-| External embedding | `EmbeddingProvider` target: OpenAI `text-embedding-3-small` | Wave 2; không có local-model fallback |
-| Existing corpus | `HybridCorpusRetriever` — PostgreSQL FTS + pgvector/RRF | Wave 2; Source Registry + temporal filter bắt buộc |
+| External embedding | `OpenAIEmbeddingProvider` — `text-embedding-3-small` | Inject khi có OpenAI key; không có local-model fallback |
+| Existing corpus | PostgreSQL FTS + pgvector/RRF implementation | Inject trong production worker |
 | Web discovery | `TavilySearch` | Chỉ sau sufficiency miss; domain filter từ Source Registry |
 | Web extraction | `JinaReader` | Tối đa 5 canonical URL đã qua policy |
-| Chunking/rerank | `langchain-text-splitters` + FlashRank `ms-marco-MultiBERT-L-12` | Local CPU; top 5; không sinh verdict |
+| Chunking/rerank | `langchain-text-splitters` + FlashRank `ms-marco-MultiBERT-L-12` | Local CPU; top 5; Docker preload model; không sinh verdict |
 | Domain intelligence | Lazy `RdapDomainIntelligence` | Inject sẵn; chỉ tạo request sau consent/policy |
 | Redirect resolver | `GuardedRedirectResolver` | Inject sẵn; revalidate từng hop |
 | Offline tools | Fake URL/claim/domain/blacklist adapters | Test only |
@@ -196,8 +198,8 @@ Frontend là Next.js 16/React 19. Repository có:
 - API client nhận OIDC access token qua auth layer; demo role/token chỉ là local fallback.
 
 `HttpAnalysisApi` là mặc định. Chỉ khi `NEXT_PUBLIC_USE_MOCK_API=true` frontend mới dùng adapter in-memory.
-UI đã hỗ trợ provisional banner, nhưng runtime backend hiện chưa persist/emit `provisional_warning` từ
-graph; banner này mới xuất hiện với fixture hoặc khi progress/provisional sink được wire.
+UI hiển thị provisional banner và live transition từ event đã persist; reconnect dùng cursor/dedupe và
+polling nhận cùng event sequence. Platform admin còn có campaign review và Source Registry Tier B.
 
 ## 9. Final production topology
 
@@ -220,9 +222,10 @@ flowchart TB
     Worker -. advanced + consent .-> Screenshot[Sandbox screenshot renderer]
 ```
 
-Đây là topology production Wave 1 hiện tại. Redis chỉ làm broker, cache và event fan-out;
-PostgreSQL là source of truth. Các phần pgvector corpus, screenshot renderer và campaign/appeal đầy đủ
-vẫn thuộc wave tiếp theo.
+Đây là topology production hiện tại. Redis chỉ làm broker, cache và event fan-out; PostgreSQL là
+source of truth. API và durable worker chạy thành process riêng. Migration `0007` persist campaign
+observation/vector và bootstrap reviewed Vietnamese sources; advanced fact-check/campaign path trong
+sơ đồ đã được compose trong worker.
 `pgvector` phục vụ fact-check corpus, không phải dependency của deterministic URL scoring.
 
 Frontend dùng `/api/v3`; `/api/v2` được giữ read-compatible trong migration. Legacy `/chat`/`status`
@@ -255,9 +258,9 @@ hủy analysis và reconnect phải đọc lại event đã persist.
 
 Wave 0 tách bốn injectable boundary tại `src/agents/seams.py`: `ProgressSink`, `RiskEngine`,
 `ExplanationEngine` và `CampaignDetector`. Default risk/explanation chỉ bọc deterministic v2
-functions; default campaign detector và progress persistence là no-op. Planning loop đã phát typed
-transition qua sink boundary, còn durable persistence/replay thuộc Wave 1. Campaign detector chỉ có
-thể trả admin hypothesis với approval flags fail-closed; clustering thật thuộc Wave 2.
+functions. Development graph có thể dùng no-op detector; production dependency inject repository-backed
+detector và live sinks. Claim vector từ fact-check embedding được tái sử dụng cho clustering, cùng
+domain/redirect signals; hypothesis chỉ hiện trong admin và không có code path tự phát broad warning.
 
 ### 9.2 Provider, budget và cost routing
 
@@ -390,16 +393,16 @@ và phê duyệt, không online-learn trực tiếp.
 
 | Capability | Hiện tại | Đích |
 |---|---|---|
-| UI/API | Browser product flow trên `/api/v3`; v2 compatibility | Hoàn thiện các endpoint v3 còn `501` |
-| Progress | WebSocket + polling replay; step event hiện được tạo sau graph, chưa live trong planning loop | Wire progress/provisional sink và thêm observability/SLO |
-| Persistence | PostgreSQL production; SQLite dev/test | pgvector cho fact-check corpus |
+| UI/API | Browser v3 gồm analysis/history/report/appeal/screenshot và admin review/action/campaign/metrics; v2 compatibility | Hosted auth callback, E2E và release hardening |
+| Progress | WebSocket + polling replay; live step/provisional persistence trong planning loop | Hosted observability/SLO |
+| Persistence | PostgreSQL production + schema fact-check/campaign/artifact/source qua `0007`; SQLite dev/test | Chứng minh migration/retention/restore trên hosted runtime |
 | Jobs | Durable worker/outbox, lease/retry/idempotency | Mở rộng chaos/recovery tests |
 | URL reputation | Web Risk primary, VirusTotal policy-gated secondary; fake default test | Provider operations hardening |
 | Domain/redirect | Lazy RDAP sau consent + guarded redirect resolver | Mở rộng provider coverage |
-| Fact-check | Google Claim Search adapter + normalized corpus boundary | Google + FTS/pgvector → sufficiency gate → conditional Tavily/Jina → FlashRank → comparison/cache |
-| Screenshot | Chưa có | Sandboxed renderer trong final release |
-| Feedback | User report queue + audited queue decision trên SQLite/PostgreSQL; blacklist decision chỉ SQLite | PostgreSQL blacklist lifecycle, appeal, calibrated learning, campaign dashboard |
-| Deploy | Compose/PostgreSQL/Redis/Alembic path đã có | Hosted rollout với health, migration và secrets |
+| Fact-check | FTS/pgvector + Google chạy trước; conditional Tavily/Jina → chunk → FlashRank → comparator đã compose | Live-provider smoke, corpus ingestion operations và quality eval |
+| Screenshot | Consent field, capture coordinator, guarded Playwright renderer, signed artifact API/UI và retention schema đã có | Production isolation/egress tests và operational evidence |
+| Feedback | Report/review, appeal/action, campaign detector/persistence/review, metrics và source admin đã có | Complete hosted E2E audit gates |
+| Deploy | Compose tách API/worker/frontend, PostgreSQL/Redis/Alembic và readiness đã có | Hosted rollout với secrets và rollback evidence |
 
 ## 10. Repository map
 

@@ -1,38 +1,61 @@
 # Final Product Implementation Plan — P-068
 
-**Revision:** 2026-08-09
+**Revision:** 2026-08-11
 
-**Baseline:** commit `535522f` (`feat/agent_v3`, trùng `origin/main` tại thời điểm rà soát)
+**Baseline hiện tại:** working baseline ngày 2026-08-11, phát triển từ `7715ea0`
 
 **Mục tiêu:** bốn thành viên, mỗi người dùng một coding agent, triển khai song song toàn bộ TrustGuard
-AI production-ready từ baseline hiện tại. Không có mốc dừng ở MVP; mọi capability Core product và
-Advanced intelligence trong PRD đều nằm trong Definition of Done cuối.
+AI production-ready từ baseline hiện tại. Wave 0–2 đã được merge vào baseline; kế hoạch này giờ dùng
+đã đóng integration gate Wave 2 và tiếp tục hardening/release Wave 3. Không có mốc dừng ở MVP; mọi
+capability Core product và Advanced intelligence trong PRD đều nằm trong Definition of Done cuối.
 
-> Contract đang chạy là v2. Các thay đổi realtime, appeal, campaign và operations được freeze thành
-> contract v3 trước khi code feature để bốn agent không tự phát minh payload khác nhau.
+> Product path đang chạy là contract `/api/v3`; `/api/v2` được giữ compatibility. Contract v3 cho
+> realtime, appeal, campaign, reviewed action, screenshot và operations đã có Pydantic/OpenAPI cùng
+> TypeScript mirror.
 
 ## 1. Baseline không làm lại
 
-### Đã có trong code
+### Đã có trong baseline `7715ea0`
 
-- LangGraph v2 chạy classify → extract → local evidence → bounded tool planning → deterministic
-  scoring → grounded response; LLM lỗi/không có key vẫn fallback.
-- Consent gate, stable step ID, retry/tool budget, execution ledger và deterministic `risk-v2`.
-- Fake adapters, Google Safe Browsing v4, Google Fact Check và RDAP adapter với PSL/SSRF/cache.
-- SQLite repository cho analysis/event/evidence/report/decision/blacklist/outbox.
-- FastAPI `/api/v2` create/get/list/events/report/admin; demo auth, ownership và RBAC.
-- TypeScript contract/client/components; backend 78 tests và frontend 13 tests tại lần rà soát.
+- LangGraph workflow với provisional node, bounded planning, deterministic risk/explanation, Wave 2
+  fact-check orchestration seam, campaign/calibration implementation và deterministic fallback.
+- Consent/SSRF gate, redirect + RDAP, Web Risk/VirusTotal cascade, Google Claim Search, OpenAI
+  embedding, Tavily/Jina, FlashRank và sandbox screenshot implementations.
+- PostgreSQL/pgvector schema qua migration `0007_runtime_integration`, durable job/lease/retry,
+  transactional outbox, Redis notification, retention và re-embedding worker.
+- FastAPI `/api/v3` analysis/events/WebSocket cùng appeal, reviewed action, campaign, metrics,
+  screenshot artifact và review queue; `/api/v2` compatibility vẫn còn.
+- OIDC/JWT backend, production demo-auth guard, RBAC/rate limit, SQLite development fallback.
+- Next.js dùng HTTP v3 mặc định; history, appeal, screenshot và platform-admin UI đã có, mock chỉ
+  opt-in cho component/fixture development.
 
-### Khoảng trống phải đóng cho final product
+### Integration đã hoàn tất trong baseline hiện tại
 
-- Dashboard/history/admin còn simulation hoặc hard-coded; client thiếu live events/decision đầy đủ.
-- RDAP chưa được default factory inject; redirect resolver chưa được executor chạy; blacklist target
-  chưa canonicalize nhất quán.
-- Safe Browsing v4 không phải production provider đích; chưa có provider cascade/cache/usage policy.
-- Progress event phát sau `ainvoke`; chưa có provisional warning, WebSocket replay hoặc durable job.
-- Runtime dùng SQLite/in-process task dù Compose khai báo PostgreSQL/Redis.
-- Chưa có production OIDC, pgvector corpus, screenshot sandbox, appeal, campaign, metrics/cost
-  dashboard hoặc Railway release path.
+- Default graph factory inject PostgreSQL hybrid retriever, chunker, preloaded FlashRank, evidence
+  comparator và repository-backed campaign detector.
+- Progress/provisional sink persist typed event trực tiếp trong planning loop; WebSocket và polling
+  replay cùng event sequence.
+- API và durable worker được tách process; Compose chạy API/worker/frontend/PostgreSQL/Redis và
+  migration `0007_runtime_integration`.
+- Campaign tái sử dụng claim embedding, persist observation/vector/hypothesis; admin review campaign
+  và quản lý reviewed Source Registry qua API/UI.
+- Screenshot signed artifact path đọc/checksum một lần và có retention worker; sandbox/egress test
+  hosted vẫn là release evidence.
+
+### Khoảng trống release còn lại
+- Frontend login biết redirect tới OIDC nhưng callback/session lifecycle và hosted Auth0 flow chưa có
+  release evidence; demo login vẫn tồn tại khi demo env được cấu hình.
+- Railway rollout, provider live smoke, SLO/load/chaos/security/a11y matrix, backup/restore và runbook
+  vẫn thuộc Wave 3. PostgreSQL integration tests cần `TEST_DATABASE_URL` nên bị skip ở offline CI.
+
+### Trạng thái delivery tại baseline
+
+| Wave | Trạng thái | Ý nghĩa |
+|---|---|---|
+| Wave 0 | Merged | Contract v3, seams và fixtures đã có |
+| Wave 1 | Hoàn tất integration | Durable platform, browser path và live in-loop progress đã có |
+| Wave 2 | Hoàn tất integration | Advanced runtime, campaign/source admin và Compose topology đã wire |
+| Wave 3 | Chưa thực hiện | Hardening, hosted deployment, eval và release evidence |
 
 ## 2. Mô hình làm việc với 4 coding agents
 

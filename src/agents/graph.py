@@ -157,6 +157,7 @@ def _build_planning_loop_node(
     async def planning_loop(state: WorkflowState) -> dict:
         """Run bounded independent work in parallel after executor hard gates."""
         working: WorkflowState = dict(state)
+        active_progress_sink = working.get("runtime_progress_sink") or progress_sink
         working["enable_redirect_resolution"] = redirect_resolver is not None
         working["investigation_plan"] = build_investigation_plan(working)
         if fact_check_orchestrator is not None:
@@ -195,7 +196,7 @@ def _build_planning_loop_node(
             )
             transitions.append(transition)
             working["step_transitions"] = transitions
-            await progress_sink.emit(transition.model_copy(deep=True))
+            await active_progress_sink.emit(transition.model_copy(deep=True))
 
         async def set_step_status(step_id: str, status: InvestigationStepStatus) -> None:
             before = next(step for step in working["investigation_plan"] if step.step_id == step_id)
@@ -420,6 +421,7 @@ def build_graph(
     reranker: Any | None = None,
     evidence_comparator: Any | None = None,
     source_registry: Any | None = None,
+    max_claim_concurrency: int = 3,
     blacklist: BlacklistRepository | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
     progress_sink: ProgressSink | None = None,
@@ -454,6 +456,7 @@ def build_graph(
             reranker=reranker,
             comparator=evidence_comparator,
             source_registry=source_registry,
+            max_claim_concurrency=max_claim_concurrency,
         )
     graph.add_node("classify_input", _classify_node)
     graph.add_node("extract_indicators", _extract_node)
@@ -465,7 +468,8 @@ def build_graph(
         update = build_provisional_warning(state, progress_clock)
         warning = update.get("provisional_warning")
         if warning is not None:
-            await provisional_warning_sink.emit(warning.model_copy(deep=True))
+            sink = state.get("runtime_provisional_sink") or provisional_warning_sink
+            await sink.emit(warning.model_copy(deep=True))
         return update
 
     graph.add_node("provisional_warning", provisional_warning)
@@ -502,7 +506,26 @@ def build_graph(
             if item.normalized_text not in known:
                 known.add(item.normalized_text)
                 extracted.append(item)
-        result = await fact_check_orchestrator.verify(extracted[:5])
+        deadline = state.get("deadline_at")
+        timeout = (deadline - datetime.now(UTC)).total_seconds() if deadline is not None else None
+        if timeout is not None and timeout <= 0:
+            return {"limitations": [*state.get("limitations", []), "Đã hết thời gian fact-check trực tuyến."]}
+        try:
+            operation = fact_check_orchestrator.verify(extracted[:5])
+            result = await asyncio.wait_for(operation, timeout=timeout) if timeout is not None else await operation
+        except TimeoutError:
+            return {
+                "limitations": [*state.get("limitations", []), "Fact-check trực tuyến vượt quá deadline."],
+                "errors": [
+                    *state.get("errors", []),
+                    ToolError(
+                        tool="fact_check",
+                        code="PROVIDER_TIMEOUT",
+                        message="Online fact-check deadline exceeded",
+                        retryable=True,
+                    ),
+                ],
+            }
         evidence = list(state.get("evidence", []))
         for finding in result.claim_findings:
             from src.models import Evidence, EvidenceType
@@ -525,6 +548,8 @@ def build_graph(
             "errors": [*state.get("errors", []), *result.errors],
             "tool_usage_refs": list(dict.fromkeys([*state.get("tool_usage_refs", []), *result.tool_usage_refs])),
             "embedding_status": result.embedding_status,
+            "usage_records": list(result.usage_records),
+            "claim_feature_vectors": list(result.claim_feature_vectors),
         }
 
     graph.add_node("verify_fact_checks", verify_fact_checks)
@@ -581,13 +606,31 @@ def build_legacy_graph():
 
 
 def build_openai_graph(**kwargs):
+    from src.agents.tools.advanced import EvidenceChunker
     from src.agents.tools.integration import build_provider_adapters
+    from src.agents.tools.runtime import (
+        OpenAIEvidenceComparator,
+        PostgresHybridCorpusRetriever,
+        build_flashrank_reranker,
+    )
     from src.config import get_settings
     from src.services.llm import get_llm
 
     settings = get_settings()
     llm = get_llm() if settings.openai_api_key else None
-    owned_adapters = build_provider_adapters(settings)
+    source_registry = kwargs.get("source_registry")
+    owned_adapters = build_provider_adapters(settings, source_registry)
+    repository = kwargs.get("blacklist")
+    if repository is not None and hasattr(repository, "search_fact_check_corpus"):
+        kwargs.setdefault("hybrid_corpus_retriever", PostgresHybridCorpusRetriever(repository))
+    kwargs.setdefault("chunker", EvidenceChunker())
+    if llm is not None:
+        kwargs.setdefault("evidence_comparator", OpenAIEvidenceComparator(llm))
+    if settings.live_providers_required:
+        kwargs.setdefault(
+            "reranker",
+            build_flashrank_reranker(settings.flashrank_model, settings.flashrank_cache_dir),
+        )
     graph_adapter_names = {
         "url_scanner",
         "url_reputation",
@@ -604,10 +647,12 @@ def build_openai_graph(**kwargs):
         "reranker",
         "evidence_comparator",
         "source_registry",
+        "max_claim_concurrency",
     }
     for name, adapter in owned_adapters.items():
         if name in graph_adapter_names:
             kwargs.setdefault(name, adapter)
+    kwargs.setdefault("max_claim_concurrency", settings.max_claim_concurrency)
     graph = build_graph(llm=llm, **kwargs)
     graph._owned_adapters = tuple(owned_adapters.values())
     return graph

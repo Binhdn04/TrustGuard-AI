@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
 
 import pytest
@@ -116,6 +117,68 @@ class Encoder:
 
     async def encode(self, claims):
         return [ClaimFeature(feature_ref="claim:sha256:fixture", vector=(1.0, 0.0))] if claims else []
+
+
+class ConcurrentEmbedding:
+    def __init__(self) -> None:
+        self._arrived = 0
+        self._ready = asyncio.Event()
+
+    async def embed_batch(self, claims):
+        self._arrived += 1
+        if self._arrived == 2:
+            self._ready.set()
+        await self._ready.wait()
+        provider = claims[0]
+        return NormalizedToolResult(
+            status=ToolResultStatus.SUCCESS,
+            result=[{"vector": (1.0, 0.0)}],
+            cache=CacheMetadata(status=CacheStatus.MISS),
+            usage=UsageMetadata(
+                usage_ref=f"usage:{provider}",
+                provider=provider,
+                provider_version="v1",
+                operation="embed",
+                attempts=1,
+                network_calls=1,
+                latency_ms=1,
+                observed_at=NOW,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_fact_check_usage_is_scoped_to_each_concurrent_verification() -> None:
+    pipeline = FactCheckOrchestrator(embedding_provider=ConcurrentEmbedding())
+    first, second = await asyncio.gather(
+        pipeline.verify([ExtractedClaim.from_text("first claim")]),
+        pipeline.verify([ExtractedClaim.from_text("second claim")]),
+    )
+
+    assert [item.provider for item in first.usage_records] == ["first claim"]
+    assert [item.provider for item in second.usage_records] == ["second claim"]
+    assert pipeline._usage_records.get() is None
+
+
+class FailingEncoder:
+    version = "must-not-run"
+
+    async def encode(self, claims):
+        raise AssertionError("fact-check embedding must be reused")
+
+
+@pytest.mark.asyncio
+async def test_campaign_detector_reuses_fact_check_embedding() -> None:
+    store = InMemoryCampaignObservationStore()
+    detector = ConfigurableCampaignDetector(store, encoder=FailingEncoder(), clock=lambda: NOW)
+    result = await detector.detect(
+        {
+            "analysis_id": "analysis-reused-vector",
+            "claims": ["a normalized claim"],
+            "claim_feature_vectors": [("claim-feature:sha256:fixture", (1.0, 0.0))],
+        }
+    )
+    assert result["campaign_features"].claim_feature_refs == ["claim-feature:sha256:fixture"]
 
 
 @pytest.mark.asyncio

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     jina_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
+    live_providers_required: bool = False
+    analysis_deadline_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
+    max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
+    max_claim_concurrency: int = Field(default=3, ge=1, le=3)
+    flashrank_model: str = "ms-marco-MultiBERT-L-12"
+    flashrank_cache_dir: str = "./data/flashrank"
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
@@ -68,6 +74,7 @@ class Settings(BaseSettings):
     user_rate_limit_per_minute: int = Field(default=120, ge=1)
     admin_rate_limit_per_minute: int = Field(default=60, ge=1)
     job_lease_seconds: int = Field(default=60, ge=5, le=3600)
+    run_durable_worker: bool = True
 
     # Signed artifact access and retention. Access tokens are derived and are
     # never stored in PostgreSQL.
@@ -83,6 +90,18 @@ class Settings(BaseSettings):
     def reject_demo_auth_in_production(self) -> "Settings":
         if self.app_env == "production" and self.demo_auth_enabled:
             raise ValueError("DEMO_AUTH_ENABLED must be false in production")
+        if self.live_providers_required:
+            required = {
+                "OPENAI_API_KEY": self.openai_api_key,
+                "GOOGLE_FACT_CHECK_API_KEY": self.google_fact_check_api_key,
+                "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
+                "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
+                "TAVILY_API_KEY": self.tavily_api_key,
+                "JINA_API_KEY": self.jina_api_key,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError("Live provider profile is missing: " + ", ".join(missing))
         return self
 
 

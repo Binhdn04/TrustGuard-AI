@@ -25,9 +25,13 @@ import type {
   AppealReceiptV3,
   AppealResponseV3,
   CampaignDetailV3,
+  CampaignDecisionRequestV3,
   CampaignPageV3,
+  CapabilitiesResponseV3,
   OperationsMetricsResponseV3,
   ScreenshotStatusResponseV3,
+  SourcePolicyCreateRequestV3,
+  SourcePolicyRecordV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
@@ -43,6 +47,7 @@ export interface PageQuery<TStatus extends string> {
 }
 
 export interface AnalysisApi {
+  getCapabilities(): Promise<CapabilitiesResponseV3>;
   createAnalysis(request: AnalysisCreateRequestV3): Promise<AnalysisAcceptedResponseV3>;
   getAnalysis(analysisId: string): Promise<AnalysisResponseV3>;
   listAnalyses(): Promise<AnalysisResponseV3[]>;
@@ -67,6 +72,9 @@ export interface AnalysisApi {
   decideAdminAction(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3>;
   listCampaigns(query?: PageQuery<"pending_review" | "confirmed" | "rejected">): Promise<CampaignPageV3>;
   getCampaign(campaignId: string): Promise<CampaignDetailV3>;
+  reviewCampaign(campaignId: string, request: CampaignDecisionRequestV3): Promise<CampaignDetailV3>;
+  listSourcePolicies(): Promise<SourcePolicyRecordV3[]>;
+  createSourcePolicy(request: SourcePolicyCreateRequestV3): Promise<SourcePolicyRecordV3>;
   getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3>;
 
   // Admin APIs for review queue
