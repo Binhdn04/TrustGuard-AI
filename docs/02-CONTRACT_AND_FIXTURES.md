@@ -154,8 +154,8 @@ Consumer không được tự tính hoặc phụ thuộc vào giá trị hash c�
 ```
 
 `step_id` và `step_status` là nullable cho event legacy. WebSocket và polling replay cùng event
-sequence/cursor, nhưng runtime hiện chuyển plan cuối thành step event sau `ainvoke`; progress sink trong
-planning loop chưa được inject vào persistence nên transition chưa thật sự live.
+sequence/cursor. Runtime persist transition từ progress sink ngay trong planning loop và persist
+`provisional_warning` như một typed event; terminal projection không nhân đôi event đã ghi.
 
 ## 4. Admin API
 
@@ -346,8 +346,8 @@ Important model rules:
 - `BlacklistLookupEntry`: domain, decision provenance, source, added time và active flag.
 - Adapter exception được normalize thành private `ToolError`; không trả raw provider payload.
 
-Redirect protocol có trong contract nhưng executor hiện đánh dấu `redirect_resolver` là unsupported
-vì chưa có adapter mapping.
+`RedirectResolver` đã có adapter mapping trong planning executor; consent/policy và SSRF guard được
+kiểm tra trước khi resolver theo từng hop.
 
 ## 8. Scoring invariants
 
@@ -419,9 +419,10 @@ contract v2.
 Phần này là contract final product đã được freeze trong Wave 0. Pydantic source of truth nằm tại
 `src/models/schemas.py`, OpenAPI được phát từ `src/main.py`, và schema/migration plan nằm tại
 `docs/04-POSTGRESQL_ALEMBIC_PLAN.md`. Core analysis/report/read adapter, event replay, WebSocket ticket
-và stream đã hoạt động dưới `/api/v3`. Appeal, reviewed action, campaign và metrics đã có schema/route
-trong OpenAPI nhưng chủ động trả 501; không có dữ liệu giả được ghi. Release v3 đầu tiên giữ read path
-v2 tương thích; capability mới chỉ xuất hiện dưới `/api/v3`.
+và stream đã hoạt động dưới `/api/v3`. Appeal, reviewed action, campaign, metrics, screenshot status
+và signed artifact routes đã có service/repository implementation; PostgreSQL là production backing
+store và memory repository là development/test fallback. Release v3 đầu tiên giữ read path v2 tương
+thích; capability mới chỉ xuất hiện dưới `/api/v3`.
 
 ### 11.0 Versioning và core routes
 
@@ -460,7 +461,7 @@ Sequence tăng đơn điệu trong một analysis; polling/reconnect gửi lại
 
 ### 11.2 Appeal và Human-in-the-loop
 
-API đã freeze:
+API đã freeze và được implement:
 
 | Method | Path | Quyền/hành vi |
 |---|---|---|
@@ -477,7 +478,7 @@ snapshot, note, timestamp và audit. Overturn tạo record mới và giữ lịc
 
 ### 11.3 Campaign và operations dashboard
 
-Admin-only read APIs đã freeze:
+Admin-only read APIs đã freeze và được implement:
 
 - `GET /api/v3/admin/campaigns` và `/api/v3/admin/campaigns/{id}` trả cluster hypothesis, time window, aggregate
   signals, evidence refs và reviewer status; không trả sender social graph/raw private messages.

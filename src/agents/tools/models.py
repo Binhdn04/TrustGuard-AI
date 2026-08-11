@@ -317,3 +317,8 @@ class RerankedCandidate(ToolContractModel):
     rerank_score: float
     text: str
     canonical_url: str
+    title: str
+    publisher: str
+    source_tier: str
+    source_version: str
+    published_at: datetime | None = None

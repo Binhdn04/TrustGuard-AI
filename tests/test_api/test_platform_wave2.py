@@ -27,7 +27,7 @@ from src.services.platform_wave2 import (
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
-NOW = datetime(2026, 8, 10, 10, 0, tzinfo=UTC)
+NOW = datetime.now(UTC).replace(microsecond=0)
 
 
 @pytest.fixture
@@ -183,6 +183,15 @@ async def test_campaign_and_metrics_admin_apis_do_not_expose_private_content(cli
     assert detail.json()["reviewer_status"] == "pending_review"
     assert "message" not in detail.text.lower()
 
+    reviewed = await client.post(
+        f"/api/v3/admin/campaigns/{campaign.campaign_id}/decision",
+        headers=ADMIN_HEADERS,
+        json={"decision": "confirmed", "note": "Signals were independently reviewed."},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["reviewer_status"] == "confirmed"
+    assert reviewed.json()["reviewer_id"] == "demo-security-admin"
+
     metrics = await client.get(
         "/api/v3/admin/metrics",
         headers=ADMIN_HEADERS,
@@ -192,6 +201,30 @@ async def test_campaign_and_metrics_admin_apis_do_not_expose_private_content(cli
     assert metrics.json()["usage"][0]["calls"] == 1
     assert metrics.json()["usage"][0]["tokens"] == 12
     assert "prompt" not in metrics.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_can_register_and_list_reviewed_sources(client, wave2_platform):
+    response = await client.post(
+        "/api/v3/admin/sources",
+        headers=ADMIN_HEADERS,
+        json={
+            "publisher": "Reviewed News",
+            "normalized_pattern": "*.reviewed.example",
+            "tier": "B",
+            "source_type": "reviewed_news",
+            "allowed_operations": ["search", "read", "compare"],
+            "policy_version": "admin-v1",
+            "effective_from": (NOW - timedelta(minutes=1)).isoformat(),
+            "default_freshness_seconds": 21600,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["reviewer_id"] == "demo-security-admin"
+
+    listed = await client.get("/api/v3/admin/sources", headers=ADMIN_HEADERS)
+    assert listed.status_code == 200
+    assert any(item["normalized_pattern"] == "*.reviewed.example" for item in listed.json())
 
 
 @pytest.mark.asyncio

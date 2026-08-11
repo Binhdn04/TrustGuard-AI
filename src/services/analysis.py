@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -8,6 +9,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from src.agents.contracts import ProvisionalWarning
 from src.agents.tools.protocols import BlacklistRepository
 from src.core.auth import Principal, UserRole, require_security_admin
 from src.core.errors import PlatformError
@@ -43,6 +45,7 @@ class AnalysisProcessor(Protocol):
         request: AnalysisCreateRequest,
         created_at: datetime,
         progress: Callable[[InvestigationStep], Awaitable[None]] | None = None,
+        provisional: Callable[[ProvisionalWarning], Awaitable[None]] | None = None,
     ) -> ProcessedAnalysis: ...
 
 
@@ -184,12 +187,10 @@ class AnalysisService:
         if processor is None:
             return
         try:
-            result = await processor.process(
-                analysis_id,
-                request,
-                created_at,
-                progress=lambda step: self._record_step_progress(analysis_id, step),
-            )
+            process_kwargs = {"progress": lambda step: self._record_step_progress(analysis_id, step)}
+            if "provisional" in inspect.signature(processor.process).parameters:
+                process_kwargs["provisional"] = lambda warning: self._record_provisional_warning(analysis_id, warning)
+            result = await processor.process(analysis_id, request, created_at, **process_kwargs)
         except Exception:
             failed_at = datetime.now(UTC)
             failed_event = AnalysisEvent(
@@ -231,6 +232,27 @@ class AnalysisService:
                     # primary analysis. The status endpoint reports failure.
                     pass
         await self.persist_result(analysis_id, result.response, errors=result.errors)
+        record_usage = getattr(self._blacklist, "record_usage", None)
+        if record_usage is not None:
+            from src.services.platform_wave2 import UsageLedgerEntry
+
+            for usage in result.usage_records:
+                await record_usage(
+                    UsageLedgerEntry(
+                        analysis_id=analysis_id,
+                        provider=usage.provider,
+                        model=getattr(usage, "model", None),
+                        provider_version=usage.provider_version,
+                        operation=usage.operation,
+                        units=usage.network_calls,
+                        input_tokens=usage.tokens,
+                        estimated_cost_usd=usage.estimated_cost_usd,
+                        latency_ms=round(usage.latency_ms),
+                        cache_status=usage.cache_status,
+                        outcome=usage.outcome,
+                        observed_at=usage.observed_at,
+                    )
+                )
 
     async def _record_step_progress(self, analysis_id: UUID, step: InvestigationStep) -> None:
         event = AnalysisEvent(
@@ -239,7 +261,30 @@ class AnalysisService:
             step=step.tool.value,
             step_id=step.step_id,
             step_status=step.status,
+            target=step.target,
+            reason_code=step.reason_code,
+            depends_on=step.depends_on,
             occurred_at=datetime.now(UTC),
+        )
+        async with self._lock:
+            record = self._records.get(analysis_id)
+            if record is None:
+                return
+            record.events.append(event)
+        persist_event = getattr(self._blacklist, "append_analysis_event", None)
+        if persist_event is not None:
+            await persist_event(event)
+
+    async def _record_provisional_warning(self, analysis_id: UUID, warning: ProvisionalWarning) -> None:
+        event = AnalysisEvent(
+            analysis_id=analysis_id,
+            status=AnalysisStatus.RUNNING,
+            step="provisional_warning",
+            occurred_at=datetime.now(UTC),
+            provisional_risk_level=warning.risk_level,
+            provisional_summary=warning.summary,
+            evidence_refs=warning.evidence_refs,
+            is_provisional=True,
         )
         async with self._lock:
             record = self._records.get(analysis_id)

@@ -294,6 +294,13 @@ class AnalysisEvent(ContractModel):
     occurred_at: datetime
     step_id: str | None = None
     step_status: InvestigationStepStatus | None = None
+    target: str | None = None
+    reason_code: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    provisional_risk_level: RiskLevel | None = None
+    provisional_summary: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    is_provisional: bool = False
 
 
 class AnalysisReportRequest(ContractModel):
@@ -751,6 +758,46 @@ class CampaignPageV3(ContractModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
     offset: int = Field(ge=0)
+
+
+class CampaignDecisionRequestV3(ContractModel):
+    decision: Literal[CampaignReviewerStatus.CONFIRMED, CampaignReviewerStatus.REJECTED]
+    note: str = Field(min_length=1, max_length=5000)
+
+
+class SourceTierV3(StrEnum):
+    A = "A"
+    B = "B"
+    C = "C"
+    UNTRUSTED = "UNTRUSTED"
+
+
+class SourcePolicyCreateRequestV3(ContractModel):
+    publisher: str = Field(min_length=1, max_length=300)
+    normalized_pattern: str = Field(min_length=3, max_length=253)
+    tier: SourceTierV3
+    source_type: str = Field(min_length=1, max_length=100)
+    explicit_deny: bool = False
+    trusted_claim_review: bool = False
+    allowed_operations: set[Literal["search", "read", "compare", "promote"]] = Field(default_factory=set)
+    policy_version: str = Field(min_length=1, max_length=100)
+    effective_from: datetime
+    effective_to: datetime | None = None
+    default_freshness_seconds: int = Field(default=21600, gt=0, le=31536000)
+
+
+class SourcePolicyRecordV3(SourcePolicyCreateRequestV3):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    source_id: UUID
+    active: bool
+    reviewer_id: str
+    reviewed_at: datetime
+
+
+class CapabilitiesResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    profile: Literal["offline", "partial", "live"]
+    capabilities: dict[str, Literal["ready", "degraded", "not_configured"]]
 
 
 class MetricsWindowV3(ContractModel):

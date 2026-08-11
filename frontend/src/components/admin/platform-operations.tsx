@@ -27,13 +27,15 @@ import type {
   CampaignSummaryV3,
   OperationsMetricsResponseV3,
   ReviewDecisionV3,
+  SourcePolicyRecordV3,
 } from "@/types/generated/api-v3";
 
-type Tab = "appeals" | "actions" | "campaigns";
+type Tab = "appeals" | "actions" | "campaigns" | "sources";
 type TimeRange = "24h" | "7d" | "30d";
 type DecisionTarget =
   | { kind: "appeal"; id: string; title: string }
-  | { kind: "action"; id: string; title: string };
+  | { kind: "action"; id: string; title: string }
+  | { kind: "campaign"; id: string; title: string };
 
 const statusStyle: Record<string, string> = {
   submitted: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -67,13 +69,14 @@ export function PlatformOperations() {
   const [appeals, setAppeals] = useState<AppealAdminRecordV3[]>([]);
   const [actions, setActions] = useState<AdminActionRecordV3[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignSummaryV3[]>([]);
+  const [sources, setSources] = useState<SourcePolicyRecordV3[]>([]);
   const [campaignDetails, setCampaignDetails] = useState<Record<string, CampaignDetailV3>>({});
   const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dataWarnings, setDataWarnings] = useState<string[]>([]);
   const [decision, setDecision] = useState<DecisionTarget | null>(null);
-  const [decisionValue, setDecisionValue] = useState<AppealOutcomeV3 | ReviewDecisionV3>("uphold");
+  const [decisionValue, setDecisionValue] = useState<AppealOutcomeV3 | ReviewDecisionV3 | "confirmed">("uphold");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -87,9 +90,10 @@ export function PlatformOperations() {
         api.listAdminAppeals({ limit: 100 }),
         api.listAdminActions({ limit: 100 }),
         api.listCampaigns({ limit: 100 }),
+        api.listSourcePolicies(),
     ] as const);
     const warnings: string[] = [];
-    const [metricsResult, appealsResult, actionsResult, campaignsResult] = results;
+    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult] = results;
     if (metricsResult.status === "fulfilled") setMetrics(metricsResult.value);
     else { setMetrics(null); warnings.push("metrics"); }
     if (appealsResult.status === "fulfilled") setAppeals(appealsResult.value.items);
@@ -98,6 +102,8 @@ export function PlatformOperations() {
     else { setActions([]); warnings.push("reviewed actions"); }
     if (campaignsResult.status === "fulfilled") setCampaigns(campaignsResult.value.items);
     else { setCampaigns([]); warnings.push("campaigns"); }
+    if (sourcesResult.status === "fulfilled") setSources(sourcesResult.value);
+    else { setSources([]); warnings.push("source registry"); }
     setDataWarnings(warnings);
     setLoading(false);
   }, [timeRange]);
@@ -123,7 +129,7 @@ export function PlatformOperations() {
 
   const openDecision = (target: DecisionTarget) => {
     setDecision(target);
-    setDecisionValue(target.kind === "appeal" ? "uphold" : "approved");
+    setDecisionValue(target.kind === "appeal" ? "uphold" : target.kind === "campaign" ? "confirmed" : "approved");
     setNote("");
   };
 
@@ -138,9 +144,14 @@ export function PlatformOperations() {
           outcome: decisionValue as AppealOutcomeV3,
           note: note.trim(),
         });
-      } else {
+      } else if (decision.kind === "action") {
         await api.decideAdminAction(decision.id, {
           decision: decisionValue as ReviewDecisionV3,
+          note: note.trim(),
+        });
+      } else {
+        await api.reviewCampaign(decision.id, {
+          decision: decisionValue as "confirmed" | "rejected",
           note: note.trim(),
         });
       }
@@ -237,6 +248,7 @@ export function PlatformOperations() {
             ["appeals", `Khiếu nại (${appeals.length})`],
             ["actions", `Hành động (${actions.length})`],
             ["campaigns", `Chiến dịch (${campaigns.length})`],
+            ["sources", `Nguồn (${sources.length})`],
           ] as Array<[Tab, string]>).map(([tab, label]) => (
             <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)} className={cn("flex-1 rounded-lg px-3 py-2 text-sm font-semibold", activeTab === tab ? "bg-background shadow-sm" : "text-muted-foreground")}>{label}</button>
           ))}
@@ -246,7 +258,8 @@ export function PlatformOperations() {
 
         {!loading && activeTab === "appeals" && <AppealList items={appeals} onDecide={(item) => openDecision({ kind: "appeal", id: item.appeal_id, title: `Xử lý khiếu nại ${item.appeal_id.slice(0, 8)}` })} />}
         {!loading && activeTab === "actions" && <ActionList items={actions} onDecide={(item) => openDecision({ kind: "action", id: item.action_id, title: `Phê duyệt ${item.action.replaceAll("_", " ")}` })} />}
-        {!loading && activeTab === "campaigns" && <><div className="mb-4 flex justify-end"><select aria-label="Lọc campaign theo reviewer state" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm"><option value="all">Tất cả reviewer state</option><option value="pending_review">Pending review</option><option value="confirmed">Confirmed</option><option value="rejected">Rejected</option></select></div><CampaignList items={filteredCampaigns} details={campaignDetails} expanded={expandedCampaign} onToggle={(id) => void toggleCampaign(id)} /></>}
+        {!loading && activeTab === "campaigns" && <><div className="mb-4 flex justify-end"><select aria-label="Lọc campaign theo reviewer state" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm"><option value="all">Tất cả reviewer state</option><option value="pending_review">Pending review</option><option value="confirmed">Confirmed</option><option value="rejected">Rejected</option></select></div><CampaignList items={filteredCampaigns} details={campaignDetails} expanded={expandedCampaign} onToggle={(id) => void toggleCampaign(id)} onDecide={(item) => openDecision({ kind: "campaign", id: item.campaign_id, title: `Review campaign ${item.campaign_id.slice(0, 8)}` })} /></>}
+        {!loading && activeTab === "sources" && <SourceRegistryList items={sources} onCreated={load} />}
       </section>
 
       {decision && (
@@ -255,8 +268,8 @@ export function PlatformOperations() {
             <h2 id="wave2-decision-title" className="text-lg font-bold">{decision.title}</h2>
             <p className="mt-1 text-sm text-muted-foreground">Quyết định và ghi chú sẽ được lưu vào audit trail.</p>
             <label htmlFor="decision-value" className="mt-5 block text-sm font-medium">Quyết định</label>
-            <select id="decision-value" value={decisionValue} onChange={(event) => setDecisionValue(event.target.value as AppealOutcomeV3 | ReviewDecisionV3)} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm">
-              {decision.kind === "appeal" ? <><option value="uphold">Giữ nguyên kết quả</option><option value="overturn">Đảo ngược kết quả</option><option value="inconclusive">Chưa đủ bằng chứng</option></> : <><option value="approved">Phê duyệt</option><option value="rejected">Từ chối</option></>}
+            <select id="decision-value" value={decisionValue} onChange={(event) => setDecisionValue(event.target.value as AppealOutcomeV3 | ReviewDecisionV3 | "confirmed")} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm">
+              {decision.kind === "appeal" ? <><option value="uphold">Giữ nguyên kết quả</option><option value="overturn">Đảo ngược kết quả</option><option value="inconclusive">Chưa đủ bằng chứng</option></> : decision.kind === "campaign" ? <><option value="confirmed">Xác nhận campaign</option><option value="rejected">Từ chối</option></> : <><option value="approved">Phê duyệt</option><option value="rejected">Từ chối</option></>}
             </select>
             <label htmlFor="decision-note" className="mt-4 block text-sm font-medium">Ghi chú reviewer</label>
             <textarea id="decision-note" autoFocus maxLength={5000} value={note} onChange={(event) => setNote(event.target.value)} className="mt-1.5 min-h-28 w-full rounded-xl border border-border bg-background p-3 text-sm" />
@@ -302,9 +315,29 @@ function ActionList({ items, onDecide }: { items: AdminActionRecordV3[]; onDecid
   return <div className="space-y-4">{items.map((item) => <article key={item.action_id} className="rounded-2xl border border-border bg-card p-5"><div className="flex flex-col justify-between gap-5 md:flex-row"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.status} /><span className="text-xs text-muted-foreground">{formatDate(item.proposed_at)}</span></div><h2 className="mt-3 font-semibold capitalize">{item.action.replaceAll("_", " ")}</h2>{item.target && <p className="mt-1 break-all text-sm text-muted-foreground">Target: {item.target}</p>}<p className="mt-3 text-xs text-muted-foreground">Evidence snapshot: {item.evidence_snapshot.length} mục</p>{item.review_note && <p className="mt-3 rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">{item.review_note}</p>}</div>{item.status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="inline-flex h-fit shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground"><CheckCircle2 className="size-4" />Review</button>}</div></article>)}</div>;
 }
 
-function CampaignList({ items, details, expanded, onToggle }: { items: CampaignSummaryV3[]; details: Record<string, CampaignDetailV3>; expanded: string | null; onToggle: (id: string) => void }) {
+function CampaignList({ items, details, expanded, onToggle, onDecide }: { items: CampaignSummaryV3[]; details: Record<string, CampaignDetailV3>; expanded: string | null; onToggle: (id: string) => void; onDecide: (item: CampaignSummaryV3) => void }) {
   if (!items.length) return <EmptyState icon={GitBranch} text="Chưa phát hiện cụm chiến dịch nào." />;
-  return <div className="space-y-4">{items.map((item) => { const detail = details[item.campaign_id]; const isOpen = expanded === item.campaign_id; return <article key={item.campaign_id} className="overflow-hidden rounded-2xl border border-border bg-card"><button type="button" aria-expanded={isOpen} onClick={() => onToggle(item.campaign_id)} className="flex w-full items-start gap-4 p-5 text-left hover:bg-muted/30"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-500/10 text-violet-600"><GitBranch className="size-5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><StatusBadge value={item.reviewer_status} /><span className="text-xs text-muted-foreground">{item.analysis_count} analyses</span></span><span className="mt-2 block font-semibold">{item.hypothesis}</span><span className="mt-1 block text-xs text-muted-foreground">Cửa sổ: {formatDate(item.window_started_at)} → {formatDate(item.window_ended_at)}</span><span className="mt-2 flex flex-wrap gap-2">{item.aggregate_signals.map((signal) => <span key={signal.signal} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{signal.signal}: {signal.count}</span>)}</span></span><ChevronDown className={cn("mt-2 size-4 shrink-0 transition-transform", isOpen && "rotate-180")} /></button>{isOpen && <div className="border-t border-border bg-muted/20 p-5">{detail ? <div className="grid gap-5 text-sm md:grid-cols-3"><DetailList title="Domains" items={detail.registrable_domains} /><DetailList title="Redirect targets" items={detail.redirect_targets} /><DetailList title="Evidence refs" items={detail.evidence_refs} /></div> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Đang tải chi tiết…</div>}</div>}</article>; })}</div>;
+  return <div className="space-y-4">{items.map((item) => { const detail = details[item.campaign_id]; const isOpen = expanded === item.campaign_id; return <article key={item.campaign_id} className="overflow-hidden rounded-2xl border border-border bg-card"><button type="button" aria-expanded={isOpen} onClick={() => onToggle(item.campaign_id)} className="flex w-full items-start gap-4 p-5 text-left hover:bg-muted/30"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-500/10 text-violet-600"><GitBranch className="size-5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><StatusBadge value={item.reviewer_status} /><span className="text-xs text-muted-foreground">{item.analysis_count} analyses</span></span><span className="mt-2 block font-semibold">{item.hypothesis}</span><span className="mt-1 block text-xs text-muted-foreground">Cửa sổ: {formatDate(item.window_started_at)} → {formatDate(item.window_ended_at)}</span><span className="mt-2 flex flex-wrap gap-2">{item.aggregate_signals.map((signal) => <span key={signal.signal} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{signal.signal}: {signal.count}</span>)}</span></span><ChevronDown className={cn("mt-2 size-4 shrink-0 transition-transform", isOpen && "rotate-180")} /></button>{item.reviewer_status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="mx-5 mb-4 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Review campaign</button>}{isOpen && <div className="border-t border-border bg-muted/20 p-5">{detail ? <div className="grid gap-5 text-sm md:grid-cols-3"><DetailList title="Domains" items={detail.registrable_domains} /><DetailList title="Redirect targets" items={detail.redirect_targets} /><DetailList title="Evidence refs" items={detail.evidence_refs} /></div> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Đang tải chi tiết…</div>}</div>}</article>; })}</div>;
+}
+
+function SourceRegistryList({ items, onCreated }: { items: SourcePolicyRecordV3[]; onCreated: () => Promise<void> }) {
+  const [publisher, setPublisher] = useState("");
+  const [pattern, setPattern] = useState("");
+  const [saving, setSaving] = useState(false);
+  const create = async () => {
+    if (!publisher.trim() || !pattern.trim() || saving) return;
+    setSaving(true);
+    try {
+      await getAnalysisApi().createSourcePolicy({
+        publisher: publisher.trim(), normalized_pattern: pattern.trim(), tier: "B",
+        source_type: "reviewed_news", explicit_deny: false, trusted_claim_review: false,
+        allowed_operations: ["search", "read", "compare"], policy_version: `admin-${Date.now()}`,
+        effective_from: new Date().toISOString(), effective_to: null, default_freshness_seconds: 21600,
+      });
+      setPublisher(""); setPattern(""); await onCreated();
+    } finally { setSaving(false); }
+  };
+  return <div className="space-y-4"><div className="grid gap-3 rounded-2xl border border-border bg-card p-5 md:grid-cols-[1fr_1fr_auto]"><input aria-label="Publisher" value={publisher} onChange={(event) => setPublisher(event.target.value)} placeholder="Publisher" className="rounded-xl border border-border bg-background px-3 py-2" /><input aria-label="Domain pattern" value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder="*.example.vn" className="rounded-xl border border-border bg-background px-3 py-2" /><button type="button" disabled={saving || !publisher.trim() || !pattern.trim()} onClick={() => void create()} className="rounded-xl bg-primary px-4 py-2 font-semibold text-primary-foreground disabled:opacity-50">Thêm Tier B</button></div><div className="space-y-3">{items.map((item) => <article key={item.source_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={`Tier ${item.tier}`} /><strong>{item.publisher}</strong><code className="text-xs text-muted-foreground">{item.normalized_pattern}</code></div><p className="mt-2 text-xs text-muted-foreground">{item.policy_version} · {item.allowed_operations.join(", ")} · reviewer {item.reviewer_id}</p></article>)}</div></div>;
 }
 
 function DetailList({ title, items }: { title: string; items: string[] }) {

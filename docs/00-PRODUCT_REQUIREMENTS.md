@@ -2,9 +2,9 @@
 
 **Sản phẩm:** TrustGuard AI — Agent phát hiện tin giả và liên kết độc trong tin nhắn
 
-**Bản tài liệu:** 2.4 — 2026-08-09
+**Bản tài liệu:** 2.5 — 2026-08-11
 
-**Trạng thái:** Backend vertical slice đã chạy; final product đang được triển khai từ baseline hiện tại
+**Trạng thái:** Baseline hiện tại đã đóng runtime integration Wave 2; hosted hardening/release gate đang mở
 
 > Contract đang chạy nằm ở `02-CONTRACT_AND_FIXTURES.md`; hiện trạng và kiến trúc đích ở
 > `01-ARCHITECTURE.md`; thứ tự giao hàng ở `03-IMPLEMENTATION_PLAN.md`.
@@ -44,7 +44,9 @@ Mục tiêu sản phẩm:
 - Phê duyệt/bác bỏ case, yêu cầu điều tra thêm và quản lý lifecycle blacklist.
 - Phê duyệt riêng mọi hành động `block_domain` hoặc `publish_broad_warning`.
 
-Auth hiện tại chỉ có demo bearer tokens; production phải dùng IdP/OIDC hoặc session auth tương đương.
+Backend hiện hỗ trợ OIDC/JWT và từ chối bật demo auth trong production. Frontend hỗ trợ chuyển tới
+OIDC login URL và ưu tiên access token thật; callback/session lifecycle cùng hosted Auth0 flow vẫn
+cần được kiểm chứng trong Wave 3. Demo bearer token chỉ dành cho development/test khi được cấu hình.
 
 ## 3. Trải nghiệm hai pha
 

@@ -26,19 +26,23 @@ NEXT_PUBLIC_DEMO_ADMIN_TOKEN=dev-admin-token
 
 Hosted production không được cấu hình hai demo token trên. Thay vào đó, đặt `NEXT_PUBLIC_OIDC_LOGIN_URL` và lưu access token nhận được từ callback OIDC vào `ai_protect_access_token`; API client luôn ưu tiên token này.
 
-## Runtime Wave 1
+## Runtime tại baseline hiện tại
 
 - Tạo/đọc/list/report analysis qua REST v3.
 - Xin WebSocket ticket và nối event stream; reconnect có cursor/dedupe, tự động fallback sang polling nếu stream chưa sẵn sàng.
 - UI hỗ trợ consent disclosure, provisional warning, live plan, final result, limitations và report.
 - History lấy từ REST, không dùng dữ liệu product hard-coded.
-- Admin queue và blacklist lấy từ REST; quyết định dùng endpoint v2 tương thích trong thời gian admin-action v3 còn là `501`.
+- Legacy case/blacklist admin vẫn đọc và quyết định qua REST v2 compatibility; appeal, reviewed
+  action, campaign và operations metrics dùng REST v3.
 - User report đi vào review queue v3; admin phải nhận review trước khi quyết định, và UI xử lý 409/double-submit bằng cách tải lại state.
+- History cho phép theo dõi appeal; analysis workspace có screenshot consent/status và signed artifact view.
+- Platform admin có review campaign và quản lý reviewed Source Registry Tier B qua REST v3.
 - URL do người dùng gửi luôn được hiển thị dưới dạng text, không phải liên kết có thể bấm.
 
-Giới hạn runtime hiện tại: backend chưa persist/emit `provisional_warning` và live step transition ngay
-trong planning loop; provisional banner/live transition đang được kiểm tra bằng fixture và sẽ hoạt động
-với dữ liệu thật sau khi progress/provisional sink được wire vào repository.
+Backend hiện persist/emit `provisional_warning` và step transition ngay trong planning loop. Advanced
+fact-check và campaign production path đã được wire vào worker; để dùng dữ liệu thật cần chạy profile
+PostgreSQL/Redis và cấu hình provider keys với `LIVE_PROVIDERS_REQUIRED=true`. Hosted OIDC/browser E2E
+và live-provider smoke vẫn thuộc release gate.
 
 ## Kiểm tra chất lượng
 

@@ -118,6 +118,27 @@ class Encoder:
         return [ClaimFeature(feature_ref="claim:sha256:fixture", vector=(1.0, 0.0))] if claims else []
 
 
+class FailingEncoder:
+    version = "must-not-run"
+
+    async def encode(self, claims):
+        raise AssertionError("fact-check embedding must be reused")
+
+
+@pytest.mark.asyncio
+async def test_campaign_detector_reuses_fact_check_embedding() -> None:
+    store = InMemoryCampaignObservationStore()
+    detector = ConfigurableCampaignDetector(store, encoder=FailingEncoder(), clock=lambda: NOW)
+    result = await detector.detect(
+        {
+            "analysis_id": "analysis-reused-vector",
+            "claims": ["a normalized claim"],
+            "claim_feature_vectors": [("claim-feature:sha256:fixture", (1.0, 0.0))],
+        }
+    )
+    assert result["campaign_features"].claim_feature_refs == ["claim-feature:sha256:fixture"]
+
+
 @pytest.mark.asyncio
 async def test_campaign_detector_requires_three_and_never_approves_broad_warning() -> None:
     store = InMemoryCampaignObservationStore()

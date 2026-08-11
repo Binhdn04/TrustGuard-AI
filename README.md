@@ -4,10 +4,11 @@ AI Agent phát hiện liên kết độc và tuyên bố đáng ngờ trong nộ
 TrustGuard AI lập kế hoạch điều tra, thu thập bằng chứng từ rule, blacklist và provider uy tín, chấm
 điểm rủi ro deterministic rồi giải thích cảnh báo bằng ngôn ngữ dễ hiểu.
 
-> **Trạng thái:** Wave 1 platform backend đã có PostgreSQL/Alembic, durable job + transactional
-> outbox, v3 event replay/WebSocket ticket và OIDC/JWT. Dashboard, history và admin UI mặc định gọi
-> API thật; screenshot, campaign detection và appeal thuộc các wave sau. `/api/v2` được giữ tương
-> thích trong release v3 đầu tiên.
+> **Trạng thái:** Baseline hiện tại (2026-08-11, phát triển tiếp từ `7715ea0`) đã đóng runtime
+> integration gate Wave 2. PostgreSQL hybrid retrieval, conditional Tavily/Jina, FlashRank,
+> schema-bound comparator, campaign persistence, live progress/provisional events, source registry
+> admin và topology API/worker/frontend đã được compose. Hosted rollout và live-provider smoke bằng
+> secret thật vẫn là release gate Wave 3.
 
 ## Sản phẩm giải quyết gì?
 
@@ -60,18 +61,18 @@ vẫn do Risk Engine deterministic quyết định.
 | Lớp | Lựa chọn | Trạng thái |
 |---|---|---|
 | LLM | OpenAI `gpt-4o-mini` | Đã có, optional theo API key |
-| Embedding | OpenAI `text-embedding-3-small` qua `/v1/embeddings` | Thiết kế Wave 2; batch tối đa 5 claim |
+| Embedding | OpenAI `text-embedding-3-small` qua `/v1/embeddings` | Adapter đã có; batch tối đa 5 claim, re-embedding job đã có |
 | Orchestration | LangGraph: extract → scan → verify → score → warn/escalate | Đã có vertical slice |
 | URL reputation | Google Web Risk primary, VirusTotal policy-gated secondary | Đã wire; fake adapters mặc định trong test |
 | Domain intelligence | RDAP-first/WHOIS; guarded redirect | Đã wire lazy sau consent |
-| Fact-check retrieval | Google Fact Check Claim Search + PostgreSQL FTS/pgvector | Google chỉ index ClaimReview có sẵn, không tự verify |
-| Web fallback | Tavily Search → Jina Reader → LangChain splitter | Chỉ chạy khi evidence hiện có chưa đủ |
-| Rerank | FlashRank `ms-marco-MultiBERT-L-12` | Local CPU exception; multilingual, top 5 |
+| Fact-check retrieval | Google Fact Check Claim Search + PostgreSQL FTS/pgvector | Đã compose trong production worker |
+| Web fallback | Tavily Search → Jina Reader → LangChain splitter | Chỉ chạy sau deterministic sufficiency miss |
+| Rerank | FlashRank `ms-marco-MultiBERT-L-12` | Đã wire; Docker image preload model |
 | Backend | FastAPI `/api/v3` + `/api/v2` compatibility | Product path v3 đang hoạt động |
-| Frontend | Next.js/React với warning banner | Dashboard/history/admin gọi API thật |
-| Realtime | Persisted event polling + ticketed WebSocket | Wave 1 backend đã có |
-| Data | PostgreSQL/pgvector source of truth + Redis delivery | Wave 1 core schema/job/outbox đã có |
-| Deploy | Docker → Railway | Docker có; Railway thuộc final scope |
+| Frontend | Next.js/React với warning banner | Dashboard/history/appeal/platform admin gọi API thật |
+| Realtime | Persisted event polling + ticketed WebSocket | Live step/provisional event được persist ngay khi graph chạy |
+| Data | PostgreSQL/pgvector source of truth + Redis delivery | Migrations `0001`–`0007`, gồm campaign observations/vector và source bootstrap |
+| Deploy | Docker Compose API + worker + frontend | Chạy thật local; Railway thuộc final scope |
 
 Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](docs/00-PRODUCT_REQUIREMENTS.md),
 [contract](docs/02-CONTRACT_AND_FIXTURES.md) và [kế hoạch triển khai](docs/03-IMPLEMENTATION_PLAN.md).
@@ -127,6 +128,19 @@ npm run dev
 Đặt `NEXT_PUBLIC_API_URL=http://localhost:8000` và `NEXT_PUBLIC_USE_MOCK_API=false` trong
 `frontend/.env.local` khi kiểm thử HTTP integration. Swagger UI: `http://localhost:8000/docs`.
 
+Để bật profile dữ liệu/provider thật, điền sáu khóa provider trong `.env`, đặt
+`LIVE_PROVIDERS_REQUIRED=true`, rồi chạy `docker compose up --build`. Compose chạy migration, API,
+durable worker, frontend, PostgreSQL/pgvector và Redis; readiness sẽ fail nếu database/Redis hoặc
+provider profile bắt buộc chưa sẵn sàng trong production profile.
+
+Sau khi các service healthy, chạy một smoke bằng claim/URL công khai đang cần kiểm chứng (script
+không in lại message hay token):
+
+```bash
+LIVE_SMOKE_TOKEN="$OIDC_ACCESS_TOKEN" python scripts/live_provider_smoke.py \
+  "Kiểm chứng tuyên bố hoặc URL công khai do operator chọn"
+```
+
 Docker Compose chạy `alembic upgrade head` trước backend. Khi `DATABASE_URL` là PostgreSQL, API dùng
 PostgreSQL làm source of truth và worker tự reclaim lease hết hạn; Redis chỉ đánh thức/phân phối
 event. SQLite vẫn là default offline nếu cấu hình `DATABASE_URL=sqlite:///...`.
@@ -136,7 +150,7 @@ analysis, appeal/reviewed action, Source Registry, fact-check cache/corpus, camp
 artifact retention. Các action nhạy cảm chỉ thay đổi blacklist sau decision transaction được duyệt.
 
 Import dữ liệu development SQLite sau khi đã chạy `alembic upgrade head` (head hiện tại là
-`0006_campaign_artifacts`):
+`0007_runtime_integration`):
 
 ```bash
 python scripts/import_sqlite_to_postgres.py ./data/security.db \

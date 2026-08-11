@@ -26,9 +26,13 @@ import type {
   AppealReceiptV3,
   AppealResponseV3,
   CampaignDetailV3,
+  CampaignDecisionRequestV3,
   CampaignPageV3,
+  CapabilitiesResponseV3,
   OperationsMetricsResponseV3,
   ScreenshotStatusResponseV3,
+  SourcePolicyCreateRequestV3,
+  SourcePolicyRecordV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
@@ -83,6 +87,10 @@ export class HttpAnalysisApi implements AnalysisApi {
 
   private requestHeaders(headers: Record<string, string>): Record<string, string> {
     return { ...headers, ...authHeaders(this.getAccessToken) };
+  }
+
+  async getCapabilities(): Promise<CapabilitiesResponseV3> {
+    return this.getV3<CapabilitiesResponseV3>("capabilities");
   }
 
   async createAnalysis(
@@ -281,6 +289,24 @@ export class HttpAnalysisApi implements AnalysisApi {
 
   async getCampaign(campaignId: string): Promise<CampaignDetailV3> {
     return this.getV3<CampaignDetailV3>(`admin/campaigns/${encodeURIComponent(campaignId)}`);
+  }
+
+  async reviewCampaign(
+    campaignId: string,
+    request: CampaignDecisionRequestV3,
+  ): Promise<CampaignDetailV3> {
+    return this.postV3<CampaignDetailV3>(
+      `admin/campaigns/${encodeURIComponent(campaignId)}/decision`,
+      request,
+    );
+  }
+
+  async listSourcePolicies(): Promise<SourcePolicyRecordV3[]> {
+    return this.getV3<SourcePolicyRecordV3[]>("admin/sources");
+  }
+
+  async createSourcePolicy(request: SourcePolicyCreateRequestV3): Promise<SourcePolicyRecordV3> {
+    return this.postV3<SourcePolicyRecordV3>("admin/sources", request);
   }
 
   async getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3> {

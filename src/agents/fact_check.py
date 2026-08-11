@@ -5,6 +5,7 @@ import inspect
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -138,6 +139,22 @@ class FactCheckPipelineResult:
     errors: tuple[ToolError, ...]
     tool_usage_refs: tuple[str, ...]
     embedding_status: EmbeddingStatus
+    usage_records: tuple[Any, ...]
+    claim_feature_vectors: tuple[tuple[str, tuple[float, ...]], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedUsage:
+    provider: str
+    provider_version: str
+    operation: str
+    network_calls: int
+    tokens: int
+    estimated_cost_usd: float
+    latency_ms: float
+    observed_at: datetime
+    cache_status: str
+    outcome: str
 
 
 class EmbeddingProvider(Protocol):
@@ -239,7 +256,9 @@ def _as_candidate(item: Any, *, default_ref_prefix: str) -> EvidenceCandidate:
         source_tier=_source_tier(_get(item, "source_tier", _get(record, "source_tier"))),
         stance=stance,
         title=str(_get(item, "title", f"Fact-check by {publisher}")),
-        finding=str(_get(record, "claim", _get(item, "finding", "Evidence matched the extracted claim."))),
+        finding=str(
+            _get(record, "claim", _get(item, "finding", _get(item, "text", "Evidence matched the extracted claim.")))
+        ),
         observed_at=observed_at,
         published_at=_get(record, "published_at", _get(item, "published_at")),
         effective_from=_get(item, "effective_from"),
@@ -349,11 +368,37 @@ class FactCheckOrchestrator:
         self.comparator = comparator
         self.source_registry = source_registry
         self.max_claim_concurrency = max_claim_concurrency
+        self._usage_records: ContextVar[list[Any] | None] = ContextVar("fact_check_usage", default=None)
+
+    def _unwrap(self, envelope: Any):
+        usage = _get(envelope, "usage")
+        if usage is not None and hasattr(usage, "usage_ref"):
+            records = self._usage_records.get()
+            if records is not None:
+                cache = _get(envelope, "cache")
+                status = _get(envelope, "status", "success")
+                records.append(
+                    CapturedUsage(
+                        provider=usage.provider,
+                        provider_version=usage.provider_version,
+                        operation=usage.operation,
+                        network_calls=usage.network_calls,
+                        tokens=usage.tokens,
+                        estimated_cost_usd=usage.estimated_cost_usd,
+                        latency_ms=usage.latency_ms,
+                        observed_at=usage.observed_at,
+                        cache_status=str(_get(cache, "status", "miss")),
+                        outcome=str(getattr(status, "value", status)),
+                    )
+                )
+        return _unwrap(envelope)
 
     async def verify(self, claims: Sequence[ExtractedClaim]) -> FactCheckPipelineResult:
         selected = tuple(claims[:5])
         if not selected:
-            return FactCheckPipelineResult((), (), (), (), EmbeddingStatus.NOT_CONFIGURED)
+            return FactCheckPipelineResult((), (), (), (), EmbeddingStatus.NOT_CONFIGURED, ())
+        usage_records: list[Any] = []
+        self._usage_records.set(usage_records)
         vectors: list[Sequence[float] | None] = [None] * len(selected)
         usage_refs: list[str] = []
         errors: list[ToolError] = []
@@ -362,7 +407,7 @@ class FactCheckOrchestrator:
         if self.embedding_provider is not None:
             try:
                 envelope = await self.embedding_provider.embed_batch([item.normalized_text for item in selected])
-                result, usage_ref, error = _unwrap(envelope)
+                result, usage_ref, error = self._unwrap(envelope)
                 if usage_ref:
                     usage_refs.append(usage_ref)
                 if error:
@@ -399,6 +444,15 @@ class FactCheckOrchestrator:
             tuple(errors),
             tuple(dict.fromkeys(usage_refs)),
             embedding_status,
+            tuple(usage_records),
+            tuple(
+                (
+                    "claim-feature:sha256:" + sha256(item.normalized_text.encode()).hexdigest(),
+                    tuple(vector),
+                )
+                for item, vector in zip(selected, vectors, strict=True)
+                if vector is not None
+            ),
         )
 
     async def _verify_one(self, claim: ExtractedClaim, vector: Sequence[float] | None):
@@ -421,7 +475,7 @@ class FactCheckOrchestrator:
                     errors.append(ToolError(tool=label, code="PROVIDER_ERROR", message=str(envelope), retryable=True))
                     limitations.append(f"{label} không trả được evidence.")
                     continue
-                result, usage_ref, error = _unwrap(envelope)
+                result, usage_ref, error = self._unwrap(envelope)
                 if usage_ref:
                     usage_refs.append(usage_ref)
                 if error:
@@ -467,7 +521,7 @@ class FactCheckOrchestrator:
             return []
         try:
             envelope = await self.tavily_search.search(claim, max_results=10)
-            result, usage_ref, error = _unwrap(envelope)
+            result, usage_ref, error = self._unwrap(envelope)
             if usage_ref:
                 usage_refs.append(usage_ref)
             if error:
@@ -503,7 +557,7 @@ class FactCheckOrchestrator:
             if isinstance(envelope, BaseException):
                 limitations.append("Jina Reader không đọc được một nguồn; nguồn đó bị bỏ qua.")
                 continue
-            result, usage_ref, error = _unwrap(envelope)
+            result, usage_ref, error = self._unwrap(envelope)
             if usage_ref:
                 usage_refs.append(usage_ref)
             if error:
@@ -530,7 +584,7 @@ class FactCheckOrchestrator:
             try:
                 submitted = eligible[:5]
                 envelope = await self.comparator.compare(claim, submitted)
-                result, usage_ref, error = _unwrap(envelope)
+                result, usage_ref, error = self._unwrap(envelope)
                 if usage_ref:
                     usage_refs.append(usage_ref)
                 if error:

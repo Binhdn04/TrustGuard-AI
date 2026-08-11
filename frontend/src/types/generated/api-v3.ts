@@ -280,6 +280,41 @@ export interface CampaignPageV3 {
   offset: number;
 }
 
+export interface CampaignDecisionRequestV3 {
+  decision: "confirmed" | "rejected";
+  note: string;
+}
+
+export type SourceTierV3 = "A" | "B" | "C" | "UNTRUSTED";
+
+export interface SourcePolicyCreateRequestV3 {
+  publisher: string;
+  normalized_pattern: string;
+  tier: SourceTierV3;
+  source_type: string;
+  explicit_deny: boolean;
+  trusted_claim_review: boolean;
+  allowed_operations: Array<"search" | "read" | "compare" | "promote">;
+  policy_version: string;
+  effective_from: string;
+  effective_to: string | null;
+  default_freshness_seconds: number;
+}
+
+export interface SourcePolicyRecordV3 extends SourcePolicyCreateRequestV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  source_id: string;
+  active: boolean;
+  reviewer_id: string;
+  reviewed_at: string;
+}
+
+export interface CapabilitiesResponseV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  profile: "offline" | "partial" | "live";
+  capabilities: Record<string, "ready" | "degraded" | "not_configured">;
+}
+
 export interface OperationsMetricsResponseV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
   window: { started_at: string; ended_at: string };
@@ -317,4 +352,3 @@ export interface OperationsMetricsResponseV3 {
     false_positive_rate: number | null;
   };
 }
-

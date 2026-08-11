@@ -7,21 +7,26 @@ tại.
 ## Kiến trúc hiện tại
 
 ```mermaid
-flowchart LR
-    UI[Next.js/React UI] -. chưa nối dashboard .-> API[FastAPI /api/v2]
-    API --> Task[In-process background task]
-    Task --> Agent[LangGraph workflow]
+flowchart TB
+    UI[Next.js UI] --> API[FastAPI /api/v3]
+    API --> Auth[OIDC/JWT or development token]
+    API --> PG[(PostgreSQL + pgvector)]
+    API -. development .-> SQLite[(SQLite)]
+    PG --> Worker[Durable worker + outbox]
+    Worker --> Redis[(Redis delivery)]
+    Worker --> Agent[LangGraph workflow]
     Agent --> Risk[Deterministic Risk Engine]
-    Agent --> Tools[Local rules / blacklist / provider adapters]
-    API --> SQLite[(SQLite)]
+    Agent --> Tools[Rules / blacklist / configured providers]
+    API --> W2[Appeal / action / campaign / metrics / artifact]
     Agent -. optional .-> LLM[GPT-4o-mini]
 ```
 
-Backend vertical slice, contract v2, SQLite repository và agent workflow đã tồn tại. Frontend chính
-vẫn còn simulation/hard-coded data; progress event hiện được đọc bằng polling và chưa phản ánh mọi
-transition theo thời gian thực.
+Baseline hiện tại phát triển từ `7715ea0` và đã compose Wave 2 end-to-end. Frontend dùng HTTP v3;
+API chỉ nhận/persist job còn worker chạy LangGraph, hybrid retrieval, conditional web fallback,
+rerank/comparison, campaign detection và live event persistence. SQLite/in-process vẫn là development
+fallback. Phần chưa hoàn thành là hosted rollout, live-provider smoke và release hardening Wave 3.
 
-## Kiến trúc đích
+## Phần còn lại của kiến trúc đích
 
 ```mermaid
 flowchart TB
@@ -49,8 +54,7 @@ ClaimReview đã tồn tại. Tavily Search và Jina Reader chỉ chạy khi det
 biết evidence chưa đủ. FlashRank multilingual rerank candidate; GPT-4o-mini so sánh top 5 thành
 stance có citation; Risk Engine vẫn quyết định score/verdict/action deterministic.
 
-`/api/v2` là contract runtime hiện tại và được giữ read-compatible trong release v3 đầu tiên;
-frontend final product dùng `/api/v3`.
+`/api/v3` là product contract hiện tại. `/api/v2` được giữ read-compatible trong release v3 đầu tiên.
 
 ## Trust boundaries
 

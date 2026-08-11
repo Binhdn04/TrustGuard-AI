@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any, Protocol
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from src.agents.contracts import CampaignDetectionOutput, CampaignFeatures, CampaignHypothesis
 from src.agents.fact_check import canonicalize_claim
@@ -90,6 +90,50 @@ class InMemoryCampaignObservationStore:
 
     async def recent(self, since: datetime) -> Sequence[CampaignObservation]:
         return tuple(item for item in self._items.values() if item.observed_at >= since)
+
+
+class RepositoryCampaignObservationStore:
+    def __init__(self, repository: Any) -> None:
+        self._repository = repository
+
+    async def add(self, observation: CampaignObservation) -> None:
+        await self._repository.add_campaign_observation(observation)
+
+    async def recent(self, since: datetime) -> Sequence[CampaignObservation]:
+        return await self._repository.recent_campaign_observations(since)
+
+    async def record_hypotheses(
+        self,
+        hypotheses: Sequence[CampaignHypothesis],
+        members: Sequence[CampaignObservation],
+        config: CampaignConfig,
+    ) -> None:
+        from src.services.platform_wave2 import CampaignWrite
+
+        domains = sorted({value for item in members for value in item.registrable_domains})
+        redirects = sorted({value for item in members for value in item.redirect_targets})
+        for hypothesis in hypotheses:
+            await self._repository.record_campaign(
+                CampaignWrite(
+                    campaign_id=hypothesis.hypothesis_id,
+                    hypothesis=f"Potential coordinated campaign across {hypothesis.analysis_count} analyses",
+                    window_started_at=hypothesis.window_started_at,
+                    window_ended_at=hypothesis.window_ended_at,
+                    similarity_threshold=config.cosine_threshold,
+                    minimum_analyses=config.minimum_analyses,
+                    clustering_version=config.clustering_version,
+                    members=[
+                        (UUID(item.analysis_id), "shared_signal", None, list(item.evidence_refs)) for item in members
+                    ],
+                    aggregate_signals={
+                        **{f"domain:{value}": 1 for value in domains},
+                        **{f"redirect:{value}": 1 for value in redirects},
+                    },
+                    evidence_refs=hypothesis.evidence_refs,
+                    registrable_domains=domains,
+                    redirect_targets=redirects,
+                )
+            )
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -213,7 +257,13 @@ class ConfigurableCampaignDetector:
                 continue
             if len(claims) == 5:
                 break
-        if self._encoder and claims:
+        reused_features = state.get("claim_feature_vectors", ())
+        if reused_features:
+            try:
+                claim_features = tuple(ClaimFeature(str(ref), tuple(vector)) for ref, vector in reused_features)[:5]
+            except (TypeError, ValueError):
+                claim_features = ()
+        elif self._encoder and claims:
             try:
                 claim_features = tuple(await self._encoder.encode(claims))[:5]
             except Exception:
@@ -255,6 +305,9 @@ class ConfigurableCampaignDetector:
         seed = next((item for item in recent if item.analysis_id == analysis_id), observation)
         members = _component(seed, recent, self._config.cosine_threshold)
         hypotheses = cluster_observations(members, config=self._config)
+        persist = getattr(self._store, "record_hypotheses", None)
+        if persist is not None and hypotheses:
+            await persist(hypotheses, members, self._config)
         return {"campaign_features": features, "campaign_hypotheses": hypotheses}
 
 
@@ -266,5 +319,6 @@ __all__ = [
     "ClaimFeatureEncoder",
     "ConfigurableCampaignDetector",
     "InMemoryCampaignObservationStore",
+    "RepositoryCampaignObservationStore",
     "cluster_observations",
 ]
