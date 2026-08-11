@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from src.api.dependencies import get_analysis_service, get_wave2_service
+from src.api.platform_v3 import _MAX_ARTIFACT_BYTES, _read_verified_artifact
 from src.config import get_settings
 from src.core.auth import Principal, UserRole
 from src.main import app
@@ -393,3 +394,25 @@ async def test_screenshot_consent_status_and_verified_image_download(
         params={"token": "invalid"},
     )
     assert denied.status_code == 404
+
+
+def test_verified_artifact_read_has_an_independent_size_cap(tmp_path: Path) -> None:
+    valid = tmp_path / "valid.png"
+    valid.write_bytes(b"png")
+    assert _read_verified_artifact(valid, 3, sha256(b"png").hexdigest()) == b"png"
+
+    oversized = tmp_path / "oversized.png"
+    with oversized.open("wb") as handle:
+        handle.truncate(_MAX_ARTIFACT_BYTES + 1)
+
+    assert (
+        _read_verified_artifact(
+            oversized,
+            _MAX_ARTIFACT_BYTES + 1,
+            sha256(b"").hexdigest(),
+        )
+        is None
+    )
+    # A forged small metadata size is rejected from fstat before file content
+    # can be read into memory.
+    assert _read_verified_artifact(oversized, 1, sha256(b"x").hexdigest()) is None

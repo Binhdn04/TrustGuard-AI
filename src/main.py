@@ -136,4 +136,6 @@ async def readiness():
             )
         )
     status_code = 200 if all(checks.values()) else 503
-    return JSONResponse(status_code=status_code, content={"status": "ready" if status_code == 200 else "degraded", "checks": checks})
+    return JSONResponse(
+        status_code=status_code, content={"status": "ready" if status_code == 200 else "degraded", "checks": checks}
+    )

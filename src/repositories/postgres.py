@@ -1436,13 +1436,12 @@ class PostgresPlatformRepository:
             for feature in observation.claim_features:
                 if len(feature.vector) != 1536:
                     continue
-                vector = "[" + ",".join(str(value) for value in feature.vector) + "]"
                 await connection.execute(
                     """INSERT INTO campaign_claim_features(analysis_id,feature_ref,embedding)
-                       VALUES($1,$2,$3::vector) ON CONFLICT DO NOTHING""",
+                       VALUES($1,$2,$3::real[]::vector) ON CONFLICT DO NOTHING""",
                     UUID(observation.analysis_id),
                     feature.feature_ref,
-                    vector,
+                    feature.vector,
                 )
 
     async def recent_campaign_observations(self, since: datetime):

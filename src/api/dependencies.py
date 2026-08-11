@@ -135,6 +135,7 @@ async def start_durable_worker() -> None:
     async def refresh_source_registry() -> None:
         active = await service.repository.load_source_policies(datetime.now(UTC))
         _source_registry.replace(active or default_source_policies())
+
     handlers = {}
     if settings.openai_api_key:
         embedding_provider = OpenAIEmbeddingProvider(

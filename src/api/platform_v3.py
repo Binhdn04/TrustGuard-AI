@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import os
+import stat
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -86,6 +88,7 @@ _COMMON_ERRORS = {
     422: {"model": ErrorEnvelope},
 }
 _PLANNED_ERRORS = _COMMON_ERRORS
+_MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
 
 
 @router.get("/capabilities", response_model=CapabilitiesResponseV3, responses=_COMMON_ERRORS)
@@ -362,9 +365,8 @@ async def get_artifact_v3(
             message="Artifact was not found.",
             retryable=False,
         )
-    # Artifacts are capped at 5 MiB by the capture coordinator. Reading once
-    # also avoids a verify-then-open race where the file could change between
-    # checksum validation and response streaming.
+    # Keep the download boundary independently capped even if storage or
+    # metadata was populated outside the capture coordinator.
     content = _read_verified_artifact(artifact_path, artifact.size_bytes, artifact.sha256)
     if content is None:
         raise PlatformError(
@@ -386,9 +388,17 @@ async def get_artifact_v3(
 
 
 def _read_verified_artifact(path: Path, expected_size: int, expected_sha256: str) -> bytes | None:
+    if not 0 <= expected_size <= _MAX_ARTIFACT_BYTES:
+        return None
     try:
-        content = path.read_bytes()
-    except OSError:
+        with path.open("rb") as handle:
+            file_stat = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != expected_size:
+                return None
+            # The extra byte detects growth after fstat without ever allocating
+            # more than the configured limit plus one byte.
+            content = handle.read(expected_size + 1)
+    except (OSError, ValueError):
         return None
     if len(content) != expected_size or hashlib.sha256(content).hexdigest() != expected_sha256:
         return None

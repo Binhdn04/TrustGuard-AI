@@ -398,7 +398,17 @@ class FactCheckOrchestrator:
         if not selected:
             return FactCheckPipelineResult((), (), (), (), EmbeddingStatus.NOT_CONFIGURED, ())
         usage_records: list[Any] = []
-        self._usage_records.set(usage_records)
+        token = self._usage_records.set(usage_records)
+        try:
+            return await self._verify_selected(selected, usage_records)
+        finally:
+            self._usage_records.reset(token)
+
+    async def _verify_selected(
+        self,
+        selected: Sequence[ExtractedClaim],
+        usage_records: list[Any],
+    ) -> FactCheckPipelineResult:
         vectors: list[Sequence[float] | None] = [None] * len(selected)
         usage_refs: list[str] = []
         errors: list[ToolError] = []
