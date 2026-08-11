@@ -9,6 +9,7 @@ import {
   LockIcon,
   SearchIcon,
   ShieldIcon,
+  ChartIcon,
   UsersIcon,
 } from "@/components/ui/icons";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -19,6 +20,7 @@ const navigation = [
   { label: "Phân tích", icon: SearchIcon, href: "/" },
   { label: "Lịch sử", icon: ClockIcon, href: "/history" },
   { label: "Admin review", icon: UsersIcon, href: "/admin", adminOnly: true },
+  { label: "Vận hành", icon: ChartIcon, href: "/admin/platform", adminOnly: true },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

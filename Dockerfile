@@ -1,14 +1,24 @@
+# syntax=docker/dockerfile:1
+
 # ---- Stage 1: Build ----
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,id=p068-pip-v2,target=/root/.cache/pip,sharing=locked \
+    python -m venv /opt/venv \
+    && /opt/venv/bin/pip install \
+        --disable-pip-version-check \
+        --timeout 300 \
+        --retries 10 \
+        -r requirements.txt
 
 # ---- Stage 2: Production ----
 FROM python:3.11-slim
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000
 
 WORKDIR /app
 
@@ -19,6 +29,11 @@ ENV PATH=/opt/venv/bin:$PATH
 
 # Security: run as non-root user
 RUN useradd -m appuser
+
+# Install the pinned Chromium runtime and OS libraries used by the isolated
+# screenshot worker. Browser contexts are always fresh and run as appuser.
+RUN /opt/venv/bin/playwright install --with-deps chromium \
+    && chmod -R 755 /ms-playwright
 
 # Copy application code
 COPY . .

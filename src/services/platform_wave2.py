@@ -23,6 +23,7 @@ from src.models import (
     AdminActionPageV3,
     AdminActionRecordV3,
     AdminActionStatus,
+    AnalysisStatus,
     AppealAdminRecordV3,
     AppealCreateRequestV3,
     AppealDecisionRequestV3,
@@ -47,8 +48,13 @@ from src.models import (
     ReviewedAction,
     RiskDistributionMetricV3,
     RiskLevel,
+    ScreenshotArtifactV3,
+    ScreenshotStatus,
+    ScreenshotStatusResponseV3,
     UsageMetricV3,
 )
+
+SAFE_SCREENSHOT_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 
 class PlatformInternalModel(BaseModel):
@@ -274,6 +280,8 @@ class Wave2Repository(Protocol):
 
     async def get_appeal(self, appeal_id: UUID) -> tuple[str, AppealResponseV3] | None: ...
 
+    async def list_appeals_for_analysis(self, analysis_id: UUID, owner_id: str) -> list[AppealResponseV3]: ...
+
     async def list_appeals(
         self, status: AppealStatus | None, limit: int, offset: int
     ) -> tuple[list[AppealAdminRecordV3], int]: ...
@@ -299,6 +307,10 @@ class Wave2Repository(Protocol):
     async def get_campaign(self, campaign_id: UUID) -> CampaignDetailV3 | None: ...
 
     async def operations_metrics(self, started_at: datetime, ended_at: datetime) -> OperationsMetricsResponseV3: ...
+
+    async def get_artifact(self, artifact_id: UUID) -> ArtifactRecord | None: ...
+
+    async def list_artifacts_for_analysis(self, analysis_id: UUID) -> list[ArtifactRecord]: ...
 
 
 @dataclass(slots=True)
@@ -371,6 +383,14 @@ class MemoryWave2Repository:
     async def get_appeal(self, appeal_id: UUID) -> tuple[str, AppealResponseV3] | None:
         item = self.appeals.get(appeal_id)
         return (item.owner_id, item.response.model_copy(deep=True)) if item else None
+
+    async def list_appeals_for_analysis(self, analysis_id: UUID, owner_id: str) -> list[AppealResponseV3]:
+        rows = [
+            item.response.model_copy(deep=True)
+            for item in self.appeals.values()
+            if item.owner_id == owner_id and item.response.analysis_id == analysis_id
+        ]
+        return sorted(rows, key=lambda item: item.created_at, reverse=True)
 
     async def list_appeals(
         self, status: AppealStatus | None, limit: int, offset: int
@@ -469,9 +489,7 @@ class MemoryWave2Repository:
             if item.status is not AdminActionStatus.PENDING_REVIEW:
                 raise _conflict("The admin action has already been reviewed.")
             now, decision_id = datetime.now(UTC), uuid4()
-            status = (
-                AdminActionStatus.APPROVED if decision is ReviewDecision.APPROVED else AdminActionStatus.REJECTED
-            )
+            status = AdminActionStatus.APPROVED if decision is ReviewDecision.APPROVED else AdminActionStatus.REJECTED
             reviewed = item.model_copy(
                 update={
                     "status": status,
@@ -612,10 +630,15 @@ class MemoryWave2Repository:
             if result is None:
                 return False
             evidence = next((item for item in result.evidence if item.evidence_ref == evidence_ref), None)
-            if evidence is None or evidence.validation_status != "validated" or evidence.source_tier not in {
-                SourceTier.A,
-                SourceTier.B,
-            }:
+            if (
+                evidence is None
+                or evidence.validation_status != "validated"
+                or evidence.source_tier
+                not in {
+                    SourceTier.A,
+                    SourceTier.B,
+                }
+            ):
                 return False
             self.audit.append(
                 {
@@ -641,6 +664,10 @@ class MemoryWave2Repository:
     async def get_artifact(self, artifact_id: UUID) -> ArtifactRecord | None:
         item = self.artifacts.get(artifact_id)
         return item.model_copy(deep=True) if item else None
+
+    async def list_artifacts_for_analysis(self, analysis_id: UUID) -> list[ArtifactRecord]:
+        rows = [item.model_copy(deep=True) for item in self.artifacts.values() if item.analysis_id == analysis_id]
+        return sorted(rows, key=lambda item: item.created_at, reverse=True)
 
     async def expire_artifacts(self, now: datetime) -> list[str]:
         keys = []
@@ -713,12 +740,16 @@ class ArtifactSigner:
     def issue(self, artifact_id: UUID, owner_id: str, now: datetime | None = None) -> ArtifactAccess:
         issued_at = now or datetime.now(UTC)
         expires_at = issued_at + timedelta(seconds=self._ttl_seconds)
-        payload = base64.urlsafe_b64encode(
-            json.dumps(
-                {"artifact_id": str(artifact_id), "owner_id": owner_id, "exp": int(expires_at.timestamp())},
-                separators=(",", ":"),
-            ).encode()
-        ).decode().rstrip("=")
+        payload = (
+            base64.urlsafe_b64encode(
+                json.dumps(
+                    {"artifact_id": str(artifact_id), "owner_id": owner_id, "exp": int(expires_at.timestamp())},
+                    separators=(",", ":"),
+                ).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
         signature = hmac.new(self._secret, payload.encode(), hashlib.sha256).hexdigest()
         token = f"{payload}.{signature}"
         return ArtifactAccess(
@@ -771,9 +802,10 @@ class Wave2PlatformService:
             raise _forbidden()
         return response
 
-    async def list_appeals(
-        self, status: AppealStatus | None, limit: int, offset: int
-    ) -> AppealPageV3:
+    async def list_user_appeals(self, analysis_id: UUID, principal: Principal) -> list[AppealResponseV3]:
+        return await self.repository.list_appeals_for_analysis(analysis_id, principal.user_id)
+
+    async def list_appeals(self, status: AppealStatus | None, limit: int, offset: int) -> AppealPageV3:
         items, total = await self.repository.list_appeals(status, limit, offset)
         return AppealPageV3(items=items, total=total, limit=limit, offset=offset)
 
@@ -785,9 +817,7 @@ class Wave2PlatformService:
             raise _not_found("Appeal was not found.")
         return response
 
-    async def list_admin_actions(
-        self, status: AdminActionStatus | None, limit: int, offset: int
-    ) -> AdminActionPageV3:
+    async def list_admin_actions(self, status: AdminActionStatus | None, limit: int, offset: int) -> AdminActionPageV3:
         items, total = await self.repository.list_admin_actions(status, limit, offset)
         return AdminActionPageV3(items=items, total=total, limit=limit, offset=offset)
 
@@ -805,9 +835,7 @@ class Wave2PlatformService:
             raise _not_found("Admin action was not found.")
         return result
 
-    async def list_campaigns(
-        self, status: CampaignReviewerStatus | None, limit: int, offset: int
-    ) -> CampaignPageV3:
+    async def list_campaigns(self, status: CampaignReviewerStatus | None, limit: int, offset: int) -> CampaignPageV3:
         items, total = await self.repository.list_campaigns(status, limit, offset)
         return CampaignPageV3(items=items, total=total, limit=limit, offset=offset)
 
@@ -846,7 +874,82 @@ class Wave2PlatformService:
             raise _not_found("Artifact was not found.")
         if artifact.owner_id != principal.user_id and principal.role is not UserRole.SECURITY_ADMIN:
             raise _forbidden()
+        if artifact.media_type not in SAFE_SCREENSHOT_MEDIA_TYPES:
+            raise _not_found("Artifact was not found.")
         return self.artifact_signer.issue(artifact.artifact_id, artifact.owner_id)
+
+    async def screenshot_status(
+        self,
+        analysis_id: UUID,
+        *,
+        consented: bool,
+        analysis_status: AnalysisStatus,
+        principal: Principal,
+    ) -> ScreenshotStatusResponseV3:
+        if not consented:
+            return ScreenshotStatusResponseV3(
+                analysis_id=analysis_id,
+                consented=False,
+                status=ScreenshotStatus.NOT_REQUESTED,
+            )
+        artifacts = await self.repository.list_artifacts_for_analysis(analysis_id)
+        image_artifacts = [item for item in artifacts if item.media_type in SAFE_SCREENSHOT_MEDIA_TYPES]
+        now = datetime.now(UTC)
+        active = next(
+            (item for item in image_artifacts if item.deleted_at is None and item.expires_at > now),
+            None,
+        )
+        if active is not None:
+            if active.owner_id != principal.user_id and principal.role is not UserRole.SECURITY_ADMIN:
+                raise _forbidden()
+            access = self.artifact_signer.issue(active.artifact_id, active.owner_id)
+            return ScreenshotStatusResponseV3(
+                analysis_id=analysis_id,
+                consented=True,
+                status=ScreenshotStatus.READY,
+                artifact=ScreenshotArtifactV3(
+                    artifact_id=active.artifact_id,
+                    media_type=active.media_type,
+                    size_bytes=active.size_bytes,
+                    sha256=active.sha256,
+                    created_at=active.created_at,
+                    expires_at=active.expires_at,
+                    access_path=access.access_path,
+                    access_expires_at=access.expires_at,
+                ),
+            )
+        if image_artifacts:
+            return ScreenshotStatusResponseV3(
+                analysis_id=analysis_id,
+                consented=True,
+                status=ScreenshotStatus.EXPIRED,
+                failure_code="artifact_expired",
+            )
+        if analysis_status in {AnalysisStatus.QUEUED, AnalysisStatus.RUNNING}:
+            return ScreenshotStatusResponseV3(
+                analysis_id=analysis_id,
+                consented=True,
+                status=ScreenshotStatus.PENDING,
+            )
+        return ScreenshotStatusResponseV3(
+            analysis_id=analysis_id,
+            consented=True,
+            status=ScreenshotStatus.FAILED,
+            failure_code="capture_unavailable",
+        )
+
+    async def artifact_for_download(self, artifact_id: UUID, token: str) -> ArtifactRecord:
+        artifact = await self.repository.get_artifact(artifact_id)
+        now = datetime.now(UTC)
+        if (
+            artifact is None
+            or artifact.deleted_at is not None
+            or artifact.expires_at <= now
+            or artifact.media_type not in SAFE_SCREENSHOT_MEDIA_TYPES
+            or not self.artifact_signer.verify(token, artifact_id, artifact.owner_id, now)
+        ):
+            raise _not_found("Artifact was not found.")
+        return artifact
 
 
 def _hostname_matches(hostname: str, pattern: str) -> bool:
@@ -897,9 +1000,7 @@ def _aggregate_metrics(
                 provider=provider,
                 hits=counts["hit"],
                 misses=counts["miss"],
-                hit_rate=(counts["hit"] / (counts["hit"] + counts["miss"]))
-                if counts["hit"] + counts["miss"]
-                else None,
+                hit_rate=(counts["hit"] / (counts["hit"] + counts["miss"])) if counts["hit"] + counts["miss"] else None,
             )
             for provider, counts in sorted(cache_counts.items())
         ],

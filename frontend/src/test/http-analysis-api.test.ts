@@ -188,4 +188,100 @@ describe("HttpAnalysisApi", () => {
       }),
     );
   });
+
+  it("submits an appeal through the v3 contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        contract_version: "v3",
+        appeal_id: "appeal-1",
+        analysis_id: "analysis-1",
+        status: "submitted",
+        created_at: "2026-08-11T08:00:00Z",
+      }), { status: 201, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HttpAnalysisApi("http://backend.test").createAppeal("analysis-1", {
+      reason: "Nguồn đã lỗi thời",
+      comment: "Xin đối chiếu dữ liệu mới.",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://backend.test/api/v3/analyses/analysis-1/appeals",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: "Nguồn đã lỗi thời", comment: "Xin đối chiếu dữ liệu mới." }),
+      }),
+    );
+  });
+
+  it("loads Wave 2 admin metrics with an explicit time window", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HttpAnalysisApi("http://backend.test").getOperationsMetrics(
+      "2026-08-10T08:00:00.000Z",
+      "2026-08-11T08:00:00.000Z",
+    );
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v3/admin/metrics?");
+    expect(url).toContain("from=2026-08-10T08%3A00%3A00.000Z");
+    expect(url).toContain("to=2026-08-11T08%3A00%3A00.000Z");
+    expect(init).toEqual(expect.objectContaining({ credentials: "include" }));
+  });
+
+  it("uses reviewer_status when filtering campaigns", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ contract_version: "v3", items: [], total: 0, limit: 25, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HttpAnalysisApi("http://backend.test").listCampaigns({
+      status: "pending_review",
+      limit: 25,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://backend.test/api/v3/admin/campaigns?reviewer_status=pending_review&limit=25",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("resolves a signed screenshot artifact path against the backend origin", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        contract_version: "v3",
+        analysis_id: "analysis-1",
+        consented: true,
+        status: "ready",
+        failure_code: null,
+        artifact: {
+          artifact_id: "artifact-1",
+          media_type: "image/png",
+          size_bytes: 120,
+          sha256: "a".repeat(64),
+          created_at: "2026-08-11T08:00:00Z",
+          expires_at: "2026-08-12T08:00:00Z",
+          access_path: "/api/v3/artifacts/artifact-1?token=signed",
+          access_expires_at: "2026-08-11T08:05:00Z",
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await new HttpAnalysisApi("http://backend.test").getScreenshotStatus("analysis-1");
+
+    expect(response.artifact?.access_path).toBe(
+      "http://backend.test/api/v3/artifacts/artifact-1?token=signed",
+    );
+  });
 });

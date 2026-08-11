@@ -2,6 +2,8 @@
 .gitignore
 .env
 .venv
+.uv-cache
+.tmp-*
 __pycache__
 *.pyc
 **/node_modules

@@ -16,6 +16,8 @@ env/
 .env
 .env.local
 .env.production
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -62,3 +64,5 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 .ai-log/codex-scan-state.json
+
+Docker Desktop_*

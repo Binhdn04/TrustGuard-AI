@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
+import hashlib
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Query, WebSocket, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse
 from starlette.websockets import WebSocketDisconnect
 
 from src.api.dependencies import (
@@ -19,6 +23,7 @@ from src.api.dependencies import (
     get_event_notifier,
     get_ticket_manager,
 )
+from src.config import get_settings
 from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
@@ -28,7 +33,6 @@ from src.models import (
     AdminActionRecordV3,
     AdminActionStatus,
     AnalysisAcceptedResponseV3,
-    AnalysisCreateRequest,
     AnalysisCreateRequestV3,
     AnalysisEventPageV3,
     AnalysisReportRequest,
@@ -59,6 +63,7 @@ from src.models import (
     ReportStatus,
     ReviewQueueDecisionRequest,
     ReviewQueueItem,
+    ScreenshotStatusResponseV3,
     StepTransitionEventPayload,
     StepTransitionEventV3,
     WebSocketTicketRequestV3,
@@ -124,7 +129,7 @@ async def create_analysis_v3(
     service: AnalysisServiceDependency,
     principal: PrincipalDependency,
 ) -> AnalysisAcceptedResponseV3:
-    accepted = await service.create(AnalysisCreateRequest.model_validate(request.model_dump()), principal)
+    accepted = await service.create(request, principal)
     return AnalysisAcceptedResponseV3.model_validate(accepted.model_dump(exclude={"contract_version"}))
 
 
@@ -261,6 +266,97 @@ async def list_reports_v3(
 ) -> list[AnalysisReportResponseV3]:
     reports = await service.list_reports_by_analysis(analysis_id, principal)
     return [AnalysisReportResponseV3.model_validate(r.model_dump()) for r in reports]
+
+
+@router.get(
+    "/analyses/{analysis_id}/appeals",
+    response_model=list[AppealResponseV3],
+    responses=_COMMON_ERRORS,
+)
+async def list_analysis_appeals_v3(
+    analysis_id: UUID,
+    service: AnalysisServiceDependency,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> list[AppealResponseV3]:
+    await service.get_for(analysis_id, principal)
+    return await wave2.list_user_appeals(analysis_id, principal)
+
+
+@router.get(
+    "/analyses/{analysis_id}/screenshot",
+    response_model=ScreenshotStatusResponseV3,
+    responses=_COMMON_ERRORS,
+)
+async def get_analysis_screenshot_v3(
+    analysis_id: UUID,
+    service: AnalysisServiceDependency,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> ScreenshotStatusResponseV3:
+    analysis = await service.get_for(analysis_id, principal)
+    request = await service.get_request_for(analysis_id, principal)
+    return await wave2.screenshot_status(
+        analysis_id,
+        consented=bool(getattr(request, "consent_to_capture_screenshot", False)),
+        analysis_status=analysis.status,
+        principal=principal,
+    )
+
+
+@router.get("/artifacts/{artifact_id}", response_class=FileResponse, responses=_COMMON_ERRORS)
+async def get_artifact_v3(
+    artifact_id: UUID,
+    wave2: Wave2ServiceDependency,
+    token: str = Query(max_length=1024),
+) -> FileResponse:
+    artifact = await wave2.artifact_for_download(artifact_id, token)
+    settings = get_settings()
+    storage_root = Path(settings.artifact_storage_dir).resolve()
+    artifact_path = (storage_root / artifact.storage_key).resolve()
+    if not artifact_path.is_relative_to(storage_root):
+        raise PlatformError(
+            status_code=404,
+            code=ErrorCode.NOT_FOUND,
+            message="Artifact was not found.",
+            retryable=False,
+        )
+    valid = await asyncio.to_thread(
+        _verify_artifact_file,
+        artifact_path,
+        artifact.size_bytes,
+        artifact.sha256,
+    )
+    if not valid:
+        raise PlatformError(
+            status_code=404,
+            code=ErrorCode.NOT_FOUND,
+            message="Artifact was not found.",
+            retryable=False,
+        )
+    return FileResponse(
+        artifact_path,
+        media_type=artifact.media_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": "inline",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+def _verify_artifact_file(path: Path, expected_size: int, expected_sha256: str) -> bool:
+    try:
+        if not path.is_file() or path.stat().st_size != expected_size:
+            return False
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(64 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == expected_sha256
+    except OSError:
+        return False
 
 
 @router.post(

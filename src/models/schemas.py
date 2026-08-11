@@ -388,7 +388,7 @@ class ErrorEnvelope(ContractModel):
 
 
 class AnalysisCreateRequestV3(AnalysisCreateRequest):
-    pass
+    consent_to_capture_screenshot: bool = False
 
 
 class AnalysisAcceptedResponseV3(ContractModel):
@@ -400,6 +400,44 @@ class AnalysisAcceptedResponseV3(ContractModel):
 
 class AnalysisResponseV3(AnalysisResponse):
     contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+
+
+class ScreenshotStatus(StrEnum):
+    NOT_REQUESTED = "not_requested"
+    PENDING = "pending"
+    READY = "ready"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+
+class ScreenshotArtifactV3(ContractModel):
+    artifact_id: UUID
+    media_type: Literal["image/png", "image/jpeg", "image/webp"]
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    created_at: datetime
+    expires_at: datetime
+    access_path: str
+    access_expires_at: datetime
+
+
+class ScreenshotStatusResponseV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    analysis_id: UUID
+    consented: bool
+    status: ScreenshotStatus
+    artifact: ScreenshotArtifactV3 | None = None
+    failure_code: str | None = None
+
+    @model_validator(mode="after")
+    def validate_artifact_state(self) -> Self:
+        if self.status is ScreenshotStatus.READY and self.artifact is None:
+            raise ValueError("ready screenshot status requires an artifact")
+        if self.status is not ScreenshotStatus.READY and self.artifact is not None:
+            raise ValueError("only a ready screenshot status may contain an artifact")
+        if not self.consented and self.status is not ScreenshotStatus.NOT_REQUESTED:
+            raise ValueError("screenshot without consent must remain not_requested")
+        return self
 
 
 class AnalysisReportResponseV3(AnalysisReportResponse):

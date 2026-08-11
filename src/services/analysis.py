@@ -46,6 +46,10 @@ class AnalysisProcessor(Protocol):
     ) -> ProcessedAnalysis: ...
 
 
+class ScreenshotCapture(Protocol):
+    async def capture(self, analysis_id: UUID, owner_id: str, normalized_url: str) -> bool: ...
+
+
 @dataclass(slots=True)
 class _ReportRecord:
     reporter_id: str
@@ -83,6 +87,7 @@ class AnalysisService:
         processor: AnalysisProcessor | None = None,
         *,
         durable_jobs: bool = False,
+        screenshot_capture: ScreenshotCapture | None = None,
     ) -> None:
         self._records: dict[UUID, _AnalysisRecord] = {}
         self._lock = asyncio.Lock()
@@ -90,6 +95,7 @@ class AnalysisService:
         self._blacklist = blacklist
         self._processor = processor
         self._durable_jobs = durable_jobs
+        self._screenshot_capture = screenshot_capture
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def create(self, request: AnalysisCreateRequest, principal: Principal) -> AnalysisAcceptedResponse:
@@ -205,6 +211,25 @@ class AnalysisService:
                 failed_response = record.response.model_copy(deep=True)
             await self._persist_state(failed_response, failed_event)
             return
+        if (
+            self._screenshot_capture is not None
+            and bool(getattr(request, "consent_to_capture_screenshot", False))
+            and result.response.normalized_urls
+            and (not result.response.evidence or bool(result.response.limitations))
+        ):
+            async with self._lock:
+                owner_id = self._records[analysis_id].owner_id if analysis_id in self._records else None
+            if owner_id is not None:
+                try:
+                    await self._screenshot_capture.capture(
+                        analysis_id,
+                        owner_id,
+                        result.response.normalized_urls[0],
+                    )
+                except Exception:
+                    # Screenshot is optional evidence and must never fail the
+                    # primary analysis. The status endpoint reports failure.
+                    pass
         await self.persist_result(analysis_id, result.response, errors=result.errors)
 
     async def _record_step_progress(self, analysis_id: UUID, step: InvestigationStep) -> None:
@@ -252,6 +277,14 @@ class AnalysisService:
                 if not is_reviewable_admin:
                     raise self._forbidden()
             return record.response.model_copy(deep=True)
+
+    async def get_request_for(self, analysis_id: UUID, principal: Principal) -> AnalysisCreateRequest:
+        await self.get_for(analysis_id, principal)
+        async with self._lock:
+            record = self._records.get(analysis_id)
+            if record is None:
+                raise self._not_found()
+            return record.request.model_copy(deep=True)
 
     async def events_for(self, analysis_id: UUID, principal: Principal) -> list[AnalysisEvent]:
         await self.get_for(analysis_id, principal)

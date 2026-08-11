@@ -41,14 +41,14 @@ describe("FactCheckComposer", () => {
     const textarea = screen.getByPlaceholderText(/Ví dụ:/i);
     fireEvent.change(textarea, { target: { value: "Nội dung có link https://example.com" } });
     
-    const checkbox = screen.getByRole("checkbox");
+    const checkbox = screen.getByRole("checkbox", { name: /Kiểm tra thêm độ an toàn/i });
     fireEvent.click(checkbox);
     
     const submitBtn = screen.getByRole("button", { name: /phân tích/i });
     expect(submitBtn).not.toBeDisabled();
     fireEvent.click(submitBtn);
     
-    expect(handleSubmit).toHaveBeenCalledWith("Nội dung có link https://example.com", true);
+    expect(handleSubmit).toHaveBeenCalledWith("Nội dung có link https://example.com", true, false);
   });
 
   it("Xóa URL sẽ thu hồi consent trước đó", () => {
@@ -57,11 +57,24 @@ describe("FactCheckComposer", () => {
 
     const textarea = screen.getByPlaceholderText(/Ví dụ:/i);
     fireEvent.change(textarea, { target: { value: "Link https://example.com" } });
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Kiểm tra thêm độ an toàn/i }));
     fireEvent.change(textarea, { target: { value: "Không còn link" } });
     fireEvent.change(textarea, { target: { value: "Link mới https://example.org" } });
     fireEvent.click(screen.getByRole("button", { name: /phân tích/i }));
 
-    expect(handleSubmit).toHaveBeenCalledWith("Link mới https://example.org", false);
+    expect(handleSubmit).toHaveBeenCalledWith("Link mới https://example.org", false, false);
+  });
+
+  it("Screenshot yêu cầu consent riêng", () => {
+    const handleSubmit = vi.fn();
+    render(<FactCheckComposer onSubmit={handleSubmit} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Ví dụ:/i), {
+      target: { value: "Kiểm tra https://example.com" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Cho phép chụp ảnh/i }));
+    fireEvent.click(screen.getByRole("button", { name: /phân tích/i }));
+
+    expect(handleSubmit).toHaveBeenCalledWith("Kiểm tra https://example.com", false, true);
   });
 });

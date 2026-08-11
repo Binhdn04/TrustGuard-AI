@@ -1,5 +1,4 @@
 import type {
-  AnalysisCreateRequest,
   AdminDecisionAudit,
   AdminDecisionRequest,
   AdminDecisionResponse,
@@ -14,22 +13,37 @@ import type {
 } from "@/types/analysis";
 import type {
   AnalysisAcceptedResponseV3,
+  AnalysisCreateRequestV3,
   AnalysisEventPageV3,
   AnalysisEventV3,
   AnalysisReportResponseV3,
   AnalysisResponseV3,
+  AdminActionDecisionRequestV3,
+  AdminActionDecisionResponseV3,
+  AdminActionPageV3,
+  AppealCreateRequestV3,
+  AppealDecisionRequestV3,
+  AppealDecisionResponseV3,
+  AppealPageV3,
+  AppealReceiptV3,
+  AppealResponseV3,
+  CampaignDetailV3,
+  CampaignPageV3,
+  OperationsMetricsResponseV3,
+  ScreenshotStatusResponseV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
 import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
 
 interface MockRecord {
-  request: AnalysisCreateRequest;
+  request: AnalysisCreateRequestV3;
   createdAt: string;
   eventPolls: number;
 }
 
 const records = new Map<string, MockRecord>();
+const appeals = new Map<string, AppealResponseV3>();
 const URL_PATTERN = /https?:\/\/[^\s]+/giu;
 
 function inputTypeFor(message: string): InputType {
@@ -268,7 +282,7 @@ function completedResponse(
 
 export class MockAnalysisApi implements AnalysisApi {
   async createAnalysis(
-    request: AnalysisCreateRequest,
+    request: AnalysisCreateRequestV3,
   ): Promise<AnalysisAcceptedResponseV3> {
     const analysisId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
@@ -434,6 +448,134 @@ export class MockAnalysisApi implements AnalysisApi {
     return [];
   }
 
+  async createAppeal(
+    analysisId: string,
+    request: AppealCreateRequestV3,
+  ): Promise<AppealReceiptV3> {
+    if (!records.has(analysisId)) throw new Error("Không tìm thấy phiên phân tích.");
+    const appealId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    appeals.set(appealId, {
+      contract_version: "v3",
+      appeal_id: appealId,
+      analysis_id: analysisId,
+      status: "submitted",
+      reason: request.reason,
+      comment: request.comment ?? null,
+      outcome: null,
+      resolution_note: null,
+      created_at: createdAt,
+      resolved_at: null,
+    });
+    return {
+      contract_version: "v3",
+      appeal_id: appealId,
+      analysis_id: analysisId,
+      status: "submitted",
+      created_at: createdAt,
+    };
+  }
+
+  async getAppeal(appealId: string): Promise<AppealResponseV3> {
+    const appeal = appeals.get(appealId);
+    if (!appeal) throw new Error("Không tìm thấy khiếu nại.");
+    return appeal;
+  }
+
+  async listAnalysisAppeals(analysisId: string): Promise<AppealResponseV3[]> {
+    return [...appeals.values()]
+      .filter((appeal) => appeal.analysis_id === analysisId)
+      .sort((left, right) => right.created_at.localeCompare(left.created_at));
+  }
+
+  async getScreenshotStatus(analysisId: string): Promise<ScreenshotStatusResponseV3> {
+    const record = records.get(analysisId);
+    if (!record) throw new Error("Không tìm thấy phiên phân tích.");
+    const consented = record.request.consent_to_capture_screenshot === true;
+    return {
+      contract_version: "v3",
+      analysis_id: analysisId,
+      consented,
+      status: consented ? "failed" : "not_requested",
+      artifact: null,
+      failure_code: consented ? "capture_unavailable" : null,
+    };
+  }
+
+  async listAdminAppeals(): Promise<AppealPageV3> {
+    const items = [...appeals.values()].map((appeal) => ({ ...appeal, owner_id: "mock-user" }));
+    return { contract_version: "v3", items, total: items.length, limit: 50, offset: 0 };
+  }
+
+  async decideAppeal(
+    appealId: string,
+    request: AppealDecisionRequestV3,
+  ): Promise<AppealDecisionResponseV3> {
+    const appeal = await this.getAppeal(appealId);
+    const decidedAt = new Date().toISOString();
+    appeals.set(appealId, {
+      ...appeal,
+      status: "resolved",
+      outcome: request.outcome,
+      resolution_note: request.note,
+      resolved_at: decidedAt,
+    });
+    return {
+      contract_version: "v3",
+      appeal_id: appealId,
+      decision_id: crypto.randomUUID(),
+      outcome: request.outcome,
+      decided_at: decidedAt,
+    };
+  }
+
+  async listAdminActions(): Promise<AdminActionPageV3> {
+    return { contract_version: "v3", items: [], total: 0, limit: 50, offset: 0 };
+  }
+
+  async decideAdminAction(
+    actionId: string,
+    request: AdminActionDecisionRequestV3,
+  ): Promise<AdminActionDecisionResponseV3> {
+    return {
+      contract_version: "v3",
+      action_id: actionId,
+      decision_id: crypto.randomUUID(),
+      action: "none",
+      status: request.decision,
+      reviewed_at: new Date().toISOString(),
+    };
+  }
+
+  async listCampaigns(): Promise<CampaignPageV3> {
+    return { contract_version: "v3", items: [], total: 0, limit: 50, offset: 0 };
+  }
+
+  async getCampaign(_campaignId: string): Promise<CampaignDetailV3> {
+    void _campaignId;
+    throw new Error("Không tìm thấy chiến dịch.");
+  }
+
+  async getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3> {
+    return {
+      contract_version: "v3",
+      window: { started_at: from, ended_at: to },
+      generated_at: new Date().toISOString(),
+      latency: [],
+      cache: [],
+      usage: [],
+      risk_distribution: [],
+      feedback: {
+        reports: 0,
+        appeals: appeals.size,
+        appeals_upheld: 0,
+        appeals_overturned: 0,
+        appeals_inconclusive: 0,
+        false_positive_rate: null,
+      },
+    };
+  }
+
   async listReviewQueueItems(): Promise<ReviewQueueItem[]> {
     return [];
   }
@@ -455,4 +597,5 @@ export class MockAnalysisApi implements AnalysisApi {
 
 export function resetMockAnalyses(): void {
   records.clear();
+  appeals.clear();
 }

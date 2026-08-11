@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from src.api.dependencies import get_analysis_service, get_wave2_service
+from src.config import get_settings
 from src.core.auth import Principal, UserRole
 from src.main import app
 from src.models import Evidence, EvidenceType, ReviewedAction
@@ -64,6 +66,13 @@ async def test_appeal_owner_admin_decision_notification_and_immutable_conflict(c
     )
     assert created.status_code == 201
     appeal_id = created.json()["appeal_id"]
+
+    owner_queue = await client.get(
+        f"/api/v3/analyses/{analysis_id}/appeals",
+        headers=USER_HEADERS,
+    )
+    assert owner_queue.status_code == 200
+    assert owner_queue.json()[0]["appeal_id"] == appeal_id
 
     duplicate = await client.post(
         f"/api/v3/analyses/{analysis_id}/appeals",
@@ -278,9 +287,76 @@ async def test_source_registry_deny_promotion_and_artifact_signing(wave2_platfor
         expires_at=NOW + timedelta(days=1),
     )
     await repository.register_artifact(artifact)
-    access = await service.issue_artifact_access(
-        artifact.artifact_id, Principal(user_id=owner, role=UserRole.USER)
-    )
+    access = await service.issue_artifact_access(artifact.artifact_id, Principal(user_id=owner, role=UserRole.USER))
     token = access.access_path.split("token=", 1)[1]
     assert service.artifact_signer.verify(token, artifact.artifact_id, owner)
     assert not service.artifact_signer.verify(token, artifact.artifact_id, "another-user")
+
+
+@pytest.mark.asyncio
+async def test_screenshot_consent_status_and_verified_image_download(
+    client,
+    wave2_platform,
+    tmp_path: Path,
+    monkeypatch,
+):
+    _, repository, _ = wave2_platform
+    settings = get_settings()
+    monkeypatch.setattr(settings, "artifact_storage_dir", str(tmp_path))
+
+    no_consent_id = await _analysis(client)
+    no_consent = await client.get(
+        f"/api/v3/analyses/{no_consent_id}/screenshot",
+        headers=USER_HEADERS,
+    )
+    assert no_consent.status_code == 200
+    assert no_consent.json()["status"] == "not_requested"
+
+    created = await client.post(
+        "/api/v3/analyses",
+        headers=USER_HEADERS,
+        json={
+            "message": "Kiểm tra https://example.com",
+            "consent_to_scan_urls": True,
+            "consent_to_capture_screenshot": True,
+        },
+    )
+    analysis_id = created.json()["analysis_id"]
+    image = b"safe-png-fixture"
+    storage_key = "screenshots/fixture.png"
+    destination = tmp_path / storage_key
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(image)
+    now = datetime.now(UTC)
+    artifact = ArtifactRecord(
+        analysis_id=analysis_id,
+        owner_id="demo-user",
+        storage_key=storage_key,
+        media_type="image/png",
+        size_bytes=len(image),
+        sha256=sha256(image).hexdigest(),
+        created_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    await repository.register_artifact(artifact)
+
+    status_response = await client.get(
+        f"/api/v3/analyses/{analysis_id}/screenshot",
+        headers=USER_HEADERS,
+    )
+    assert status_response.status_code == 200
+    payload = status_response.json()
+    assert payload["status"] == "ready"
+    assert payload["artifact"]["media_type"] == "image/png"
+
+    download = await client.get(payload["artifact"]["access_path"])
+    assert download.status_code == 200
+    assert download.content == image
+    assert download.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in download.headers["content-security-policy"]
+
+    denied = await client.get(
+        f"/api/v3/artifacts/{artifact.artifact_id}",
+        params={"token": "invalid"},
+    )
+    assert denied.status_code == 404

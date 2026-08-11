@@ -16,10 +16,23 @@ import type {
   AnalysisEventPageV3,
   AnalysisReportResponseV3,
   AnalysisResponseV3,
+  AdminActionDecisionRequestV3,
+  AdminActionDecisionResponseV3,
+  AdminActionPageV3,
+  AppealCreateRequestV3,
+  AppealDecisionRequestV3,
+  AppealDecisionResponseV3,
+  AppealPageV3,
+  AppealReceiptV3,
+  AppealResponseV3,
+  CampaignDetailV3,
+  CampaignPageV3,
+  OperationsMetricsResponseV3,
+  ScreenshotStatusResponseV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
-import type { AnalysisApi, AnalysisEventQuery } from "./analysis-api.types";
+import type { AnalysisApi, AnalysisEventQuery, PageQuery } from "./analysis-api.types";
 
 const DEFAULT_API_URL = "http://localhost:8000";
 
@@ -187,6 +200,94 @@ export class HttpAnalysisApi implements AnalysisApi {
     return readJson<AnalysisReportResponse[]>(response);
   }
 
+  async createAppeal(
+    analysisId: string,
+    request: AppealCreateRequestV3,
+  ): Promise<AppealReceiptV3> {
+    return this.postV3<AppealReceiptV3>(
+      `analyses/${encodeURIComponent(analysisId)}/appeals`,
+      request,
+    );
+  }
+
+  async getAppeal(appealId: string): Promise<AppealResponseV3> {
+    return this.getV3<AppealResponseV3>(`appeals/${encodeURIComponent(appealId)}`);
+  }
+
+  async listAnalysisAppeals(analysisId: string): Promise<AppealResponseV3[]> {
+    return this.getV3<AppealResponseV3[]>(
+      `analyses/${encodeURIComponent(analysisId)}/appeals`,
+    );
+  }
+
+  async getScreenshotStatus(analysisId: string): Promise<ScreenshotStatusResponseV3> {
+    const response = await this.getV3<ScreenshotStatusResponseV3>(
+      `analyses/${encodeURIComponent(analysisId)}/screenshot`,
+    );
+    if (!response.artifact) return response;
+    return {
+      ...response,
+      artifact: {
+        ...response.artifact,
+        access_path: response.artifact.access_path.startsWith("http")
+          ? response.artifact.access_path
+          : `${this.baseUrl}${response.artifact.access_path}`,
+      },
+    };
+  }
+
+  async listAdminAppeals(
+    query: PageQuery<"submitted" | "under_review" | "resolved"> = {},
+  ): Promise<AppealPageV3> {
+    return this.getV3<AppealPageV3>(`admin/appeals${this.pageQuery(query)}`);
+  }
+
+  async decideAppeal(
+    appealId: string,
+    request: AppealDecisionRequestV3,
+  ): Promise<AppealDecisionResponseV3> {
+    return this.postV3<AppealDecisionResponseV3>(
+      `admin/appeals/${encodeURIComponent(appealId)}/decision`,
+      request,
+    );
+  }
+
+  async listAdminActions(
+    query: PageQuery<"pending_review" | "approved" | "rejected" | "executed" | "failed"> = {},
+  ): Promise<AdminActionPageV3> {
+    return this.getV3<AdminActionPageV3>(`admin/actions${this.pageQuery(query)}`);
+  }
+
+  async decideAdminAction(
+    actionId: string,
+    request: AdminActionDecisionRequestV3,
+  ): Promise<AdminActionDecisionResponseV3> {
+    return this.postV3<AdminActionDecisionResponseV3>(
+      `admin/actions/${encodeURIComponent(actionId)}/decision`,
+      request,
+    );
+  }
+
+  async listCampaigns(
+    query: PageQuery<"pending_review" | "confirmed" | "rejected"> = {},
+  ): Promise<CampaignPageV3> {
+    const search = new URLSearchParams();
+    if (query.status) search.set("reviewer_status", query.status);
+    if (query.limit !== undefined) search.set("limit", String(query.limit));
+    if (query.offset !== undefined) search.set("offset", String(query.offset));
+    const suffix = search.size ? `?${search.toString()}` : "";
+    return this.getV3<CampaignPageV3>(`admin/campaigns${suffix}`);
+  }
+
+  async getCampaign(campaignId: string): Promise<CampaignDetailV3> {
+    return this.getV3<CampaignDetailV3>(`admin/campaigns/${encodeURIComponent(campaignId)}`);
+  }
+
+  async getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3> {
+    const search = new URLSearchParams({ from, to });
+    return this.getV3<OperationsMetricsResponseV3>(`admin/metrics?${search.toString()}`);
+  }
+
   async listReviewQueueItems(): Promise<ReviewQueueItem[]> {
     const response = await fetch(`${this.baseUrl}/api/v3/admin/review-queue`, {
       credentials: "include",
@@ -236,6 +337,32 @@ export class HttpAnalysisApi implements AnalysisApi {
     const response = await fetch(`${this.baseUrl}/api/v2/admin/${resource}`, {
       credentials: "include",
       headers: this.requestHeaders({ Accept: "application/json" }),
+    });
+    return readJson<T>(response);
+  }
+
+  private pageQuery(query: PageQuery<string>): string {
+    const search = new URLSearchParams();
+    if (query.status) search.set("status", query.status);
+    if (query.limit !== undefined) search.set("limit", String(query.limit));
+    if (query.offset !== undefined) search.set("offset", String(query.offset));
+    return search.size ? `?${search.toString()}` : "";
+  }
+
+  private async getV3<T>(resource: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/v3/${resource}`, {
+      credentials: "include",
+      headers: this.requestHeaders({ Accept: "application/json" }),
+    });
+    return readJson<T>(response);
+  }
+
+  private async postV3<T>(resource: string, body: unknown): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/v3/${resource}`, {
+      method: "POST",
+      credentials: "include",
+      headers: this.requestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
     });
     return readJson<T>(response);
   }

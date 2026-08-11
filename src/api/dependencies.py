@@ -34,6 +34,7 @@ from src.services.realtime import (
     RedisTicketStore,
     WebSocketTicketManager,
 )
+from src.services.screenshot import ScreenshotCaptureCoordinator
 
 _worker: DurableAnalysisWorker | None = None
 _worker_task = None
@@ -60,7 +61,19 @@ def get_analysis_service() -> AnalysisService:
     )
     graph = build_openai_graph(blacklist=blacklist, source_registry=_source_registry)
     processor = LangGraphAnalysisProcessor(graph)
-    return AnalysisService(blacklist=blacklist, processor=processor, durable_jobs=postgres)
+    artifact_repository = blacklist if postgres else _memory_wave2_repository
+    screenshot_capture = ScreenshotCaptureCoordinator(
+        artifact_repository,
+        settings.artifact_storage_dir,
+        retention_days=settings.artifact_retention_days,
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+    return AnalysisService(
+        blacklist=blacklist,
+        processor=processor,
+        durable_jobs=postgres,
+        screenshot_capture=screenshot_capture,
+    )
 
 
 async def resolve_analysis_service(request: Request) -> AnalysisService:

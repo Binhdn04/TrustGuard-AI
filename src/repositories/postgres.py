@@ -16,6 +16,7 @@ from src.models import (
     AdminActionRecordV3,
     AdminActionStatus,
     AnalysisCreateRequest,
+    AnalysisCreateRequestV3,
     AnalysisEvent,
     AnalysisReportRecord,
     AnalysisReportResponse,
@@ -203,7 +204,7 @@ class PostgresPlatformRepository:
             )
         return (
             row["owner_id"],
-            AnalysisCreateRequest.model_validate_json(row["request_json"]),
+            _analysis_request_from_json(row["request_json"]),
             AnalysisResponse.model_validate(_json_value(row["response"])),
             [AnalysisEvent.model_validate(_json_value(item["payload"])) for item in events],
         )
@@ -672,6 +673,18 @@ class PostgresPlatformRepository:
         async with pool.acquire() as connection:
             row = await connection.fetchrow("SELECT * FROM appeals WHERE id=$1", appeal_id)
         return (row["owner_id"], self._appeal_response(row)) if row else None
+
+    async def list_appeals_for_analysis(self, analysis_id: UUID, owner_id: str) -> list[AppealResponseV3]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT * FROM appeals
+                   WHERE analysis_id=$1 AND owner_id=$2
+                   ORDER BY created_at DESC""",
+                analysis_id,
+                owner_id,
+            )
+        return [self._appeal_response(row) for row in rows]
 
     async def list_appeals(
         self, appeal_status: AppealStatus | None, limit: int, offset: int
@@ -1401,7 +1414,9 @@ class PostgresPlatformRepository:
     ) -> tuple[list[CampaignSummaryV3], int]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
-            where, args = ("", []) if reviewer_status is None else ("WHERE c.reviewer_status=$1", [reviewer_status.value])
+            where, args = (
+                ("", []) if reviewer_status is None else ("WHERE c.reviewer_status=$1", [reviewer_status.value])
+            )
             limit_pos, offset_pos = len(args) + 1, len(args) + 2
             rows = await connection.fetch(
                 f"""SELECT c.*,count(DISTINCT m.analysis_id) AS analysis_count
@@ -1412,9 +1427,7 @@ class PostgresPlatformRepository:
                 limit,
                 offset,
             )
-            total = await connection.fetchval(
-                f"SELECT count(*) FROM campaign_clusters c {where}", *args
-            )
+            total = await connection.fetchval(f"SELECT count(*) FROM campaign_clusters c {where}", *args)
             signals = await self._campaign_signals(connection, [row["id"] for row in rows])
         return [self._campaign_summary(row, signals[row["id"]]) for row in rows], int(total)
 
@@ -1435,10 +1448,10 @@ class PostgresPlatformRepository:
             )
         domains = [signal.removeprefix("domain:") for signal, _ in signals if signal.startswith("domain:")]
         redirects = [signal.removeprefix("redirect:") for signal, _ in signals if signal.startswith("redirect:")]
-        public_signals = [(signal, count) for signal, count in signals if not signal.startswith(("domain:", "redirect:"))]
-        evidence_refs = list(
-            dict.fromkeys(ref for member in members for ref in _json_value(member["evidence_refs"]))
-        )
+        public_signals = [
+            (signal, count) for signal, count in signals if not signal.startswith(("domain:", "redirect:"))
+        ]
+        evidence_refs = list(dict.fromkeys(ref for member in members for ref in _json_value(member["evidence_refs"])))
         return CampaignDetailV3(
             **self._campaign_summary(row, public_signals).model_dump(),
             evidence_refs=evidence_refs,
@@ -1517,6 +1530,29 @@ class PostgresPlatformRepository:
             if row
             else None
         )
+
+    async def list_artifacts_for_analysis(self, analysis_id: UUID) -> list[ArtifactRecord]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT * FROM artifacts WHERE analysis_id=$1 ORDER BY created_at DESC",
+                analysis_id,
+            )
+        return [
+            ArtifactRecord(
+                artifact_id=row["id"],
+                analysis_id=row["analysis_id"],
+                owner_id=row["owner_id"],
+                storage_key=row["storage_key"],
+                media_type=row["media_type"],
+                size_bytes=row["size_bytes"],
+                sha256=row["sha256"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                deleted_at=row["deleted_at"],
+            )
+            for row in rows
+        ]
 
     async def expire_artifacts(self, now: datetime) -> list[str]:
         pool = await self._get_pool()
@@ -1610,7 +1646,11 @@ class PostgresPlatformRepository:
             generated_at=datetime.now(UTC),
             latency=[
                 LatencyMetricV3(
-                    operation=row["operation"], count=row["calls"], p50_ms=row["p50"], p95_ms=row["p95"], p99_ms=row["p99"]
+                    operation=row["operation"],
+                    count=row["calls"],
+                    p50_ms=row["p50"],
+                    p95_ms=row["p95"],
+                    p99_ms=row["p99"],
                 )
                 for row in latency_rows
             ],
@@ -1637,8 +1677,7 @@ class PostgresPlatformRepository:
                 for row in usage_rows
             ],
             risk_distribution=[
-                RiskDistributionMetricV3(risk_level=level, count=risk_counts.get(level.value, 0))
-                for level in RiskLevel
+                RiskDistributionMetricV3(risk_level=level, count=risk_counts.get(level.value, 0)) for level in RiskLevel
             ],
             feedback=FeedbackMetricV3(
                 reports=reports,
@@ -1678,6 +1717,12 @@ class PostgresPlatformRepository:
 
 def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
+
+
+def _analysis_request_from_json(value: str) -> AnalysisCreateRequest:
+    payload = json.loads(value)
+    model = AnalysisCreateRequestV3 if "consent_to_capture_screenshot" in payload else AnalysisCreateRequest
+    return model.model_validate(payload)
 
 
 class LostJobLeaseError(RuntimeError):
