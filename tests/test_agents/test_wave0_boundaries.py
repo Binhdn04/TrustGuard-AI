@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from src.agents.contracts import CampaignFeatures, CampaignHypothesis, LiveStepTransition, ProvisionalWarning
 from src.agents.graph import build_graph
-from src.agents.nodes.llm import build_generate_response_node
+from src.agents.nodes.llm import build_generate_response_node, build_review_assessment_node
 from src.agents.nodes.risk import assess_risk
 from src.agents.seams import CampaignDetector, ExplanationEngine, ProgressSink, RiskEngine
 from src.agents.state import AgentState, WorkflowState
@@ -26,6 +26,26 @@ from src.models import (
 from src.services.processor import LangGraphAnalysisProcessor
 
 NOW = datetime(2026, 8, 7, 13, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_expired_deadline_skips_post_processing_without_duplicate_limitations() -> None:
+    class Llm:
+        def with_structured_output(self, _schema):
+            raise AssertionError("expired post-processing must not call the LLM")
+
+    state = {
+        "deadline_at": datetime(2020, 1, 1, tzinfo=UTC),
+        "limitations": [
+            "Fact-check trực tuyến vượt quá thời gian xử lý; các bước tổng hợp sau đó dùng logic deterministic."
+        ],
+    }
+
+    reviewed = await build_review_assessment_node(Llm())(state)
+    generated = await build_generate_response_node(Llm())({**state, **reviewed})
+
+    assert generated["limitations"] == state["limitations"]
+    assert generated["llm_errors"] == ["review đánh giá", "tạo phản hồi"]
 
 
 class RecordingProgressSink(ProgressSink):
@@ -211,6 +231,37 @@ async def test_llm_output_cannot_add_score_verdict_or_action() -> None:
     )
     assert {"risk_score", "verdict", "recommended_action"}.isdisjoint(update)
     assert update["llm_errors"] == ["tạo phản hồi"]
+
+
+@pytest.mark.asyncio
+async def test_response_llm_cannot_add_or_paraphrase_limitations() -> None:
+    class Runnable:
+        async def ainvoke(self, _messages):
+            return {
+                "summary": "Không có đủ dữ liệu để kết luận.",
+                "reasons": [],
+                "limitations": [
+                    "The evidence does not cover cancer treatment or prevention.",
+                    "Bằng chứng không đề cập đầy đủ việc điều trị hoặc phòng ngừa ung thư.",
+                ],
+            }
+
+    class Llm:
+        def with_structured_output(self, _schema):
+            return Runnable()
+
+    original = ["Không có đủ evidence nhất quán để kết luận claim."]
+    update = await build_generate_response_node(Llm())(
+        {
+            "verdict": Verdict.INCONCLUSIVE,
+            "risk_level": RiskLevel.LOW,
+            "recommended_action": "verify_before_action",
+            "evidence": [],
+            "limitations": original,
+        }
+    )
+
+    assert update["limitations"] == original
 
 
 @pytest.mark.parametrize(

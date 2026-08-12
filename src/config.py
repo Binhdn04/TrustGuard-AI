@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    jina_timeout_seconds: float = Field(default=20.0, gt=0.0, le=60.0)
     google_web_risk_api_key: str = ""
     virustotal_api_key: str = ""
     reputation_secondary_enabled: bool = True
@@ -40,6 +41,8 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     live_providers_required: bool = False
     analysis_deadline_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
+    fact_check_timeout_seconds: float = Field(default=30.0, gt=0.0, le=90.0)
+    post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
     flashrank_model: str = "ms-marco-MultiBERT-L-12"
@@ -102,6 +105,8 @@ class Settings(BaseSettings):
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError("Live provider profile is missing: " + ", ".join(missing))
+        if self.post_processing_reserve_seconds >= self.analysis_deadline_seconds:
+            raise ValueError("POST_PROCESSING_RESERVE_SECONDS must be smaller than ANALYSIS_DEADLINE_SECONDS")
         return self
 
 

@@ -73,6 +73,7 @@ class NormalizedToolError(ToolContractModel):
     message: str
     retryable: bool
     provider: str | None = None
+    http_status_code: int | None = Field(default=None, ge=100, le=599)
     retry_after_ms: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -304,6 +305,8 @@ class EvidenceChunk(ToolContractModel):
     index: int = Field(ge=0)
     text: str
     canonical_url: str
+    title: str = "Web evidence"
+    publisher: str = "unknown"
     content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     source_tier: str
     source_version: str

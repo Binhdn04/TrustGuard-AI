@@ -10,7 +10,7 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.agents.fact_check import ExtractedClaim
+from src.agents.fact_check import ClaimSearchQuery, ExtractedClaim
 from src.agents.nodes.rules import NO_VERIFIABLE_INPUT_LIMITATION
 from src.agents.state import WorkflowState
 
@@ -29,6 +29,9 @@ class ExtractedClaimDraft(_StrictOutput):
     is_temporal: bool = False
     claim_date_start: date | None = None
     claim_date_end: date | None = None
+    search_query_en: str | None = Field(default=None, min_length=1, max_length=1000)
+    search_query_alt_en: str | None = Field(default=None, min_length=1, max_length=1000)
+    search_query_vi: str | None = Field(default=None, min_length=1, max_length=1000)
 
 
 class MessageAnalysis(_StrictOutput):
@@ -93,6 +96,28 @@ class _LlmInvocationFailedError(RuntimeError):
         super().__init__("LLM invocation failed")
 
 
+class _LlmDeadlineExceededError(_LlmInvocationFailedError):
+    pass
+
+
+_POST_PROCESSING_DEADLINE_LIMITATION = "Đã hết thời gian xử lý; các bước tổng hợp còn lại dùng logic deterministic."
+
+
+def _deadline_expired(state: WorkflowState) -> bool:
+    deadline = state.get("deadline_at")
+    return deadline is not None and deadline <= datetime.now(UTC)
+
+
+def _deadline_skip_update(state: WorkflowState, stage: str) -> dict:
+    errors = list(state.get("llm_errors", []))
+    if stage not in errors:
+        errors.append(stage)
+    limitations = list(state.get("limitations", []))
+    if not any("các bước tổng hợp" in item for item in limitations):
+        limitations.append(_POST_PROCESSING_DEADLINE_LIMITATION)
+    return {"llm_errors": errors, "limitations": list(dict.fromkeys(limitations))}
+
+
 def _estimated_tokens(messages: list[Any]) -> int:
     # A conservative tokenizer-independent reservation. It prevents an LLM
     # call before the configured cap is crossed; provider usage can replace
@@ -131,6 +156,11 @@ async def _invoke_budgeted(
             result = await asyncio.wait_for(invocation, timeout=remaining)
         else:
             result = await invocation
+    except TimeoutError as exc:
+        deadline = state.get("deadline_at")
+        if deadline is not None and deadline <= datetime.now(UTC):
+            raise _LlmDeadlineExceededError(usage) from exc
+        raise _LlmInvocationFailedError(usage) from exc
     except Exception as exc:
         raise _LlmInvocationFailedError(usage) from exc
     return result, usage
@@ -159,6 +189,47 @@ def _claim_is_grounded(claim: str, message: str) -> bool:
     return bool(claim_tokens) and len(claim_tokens & message_tokens) / len(claim_tokens) >= 0.6
 
 
+def _english_verification_query(claim: str, candidate: str | None) -> str:
+    """Preserve decisive scope/time qualifiers in an English search rewrite."""
+    query = (candidate or claim).strip()
+    claim_folded = claim.casefold()
+    query_folded = query.casefold()
+    for year in re.findall(r"\b(?:19|20)\d{2}\b", claim):
+        if year not in query_folded:
+            query += f" {year}"
+            query_folded += f" {year}"
+    scope_markers = {"all", "completely", "entire", "nationwide", "every"}
+    if any(re.search(rf"\b{marker}\b", claim_folded) for marker in scope_markers) and not any(
+        re.search(rf"\b{marker}\b", query_folded) for marker in scope_markers
+    ):
+        query += " nationwide"
+        query_folded += " nationwide"
+    if not any(term in query_folded for term in ("official", "government", "primary source")):
+        query += " official sources"
+    return " ".join(query.split())[:1000]
+
+
+def _vietnamese_verification_query(english_claim: str, candidate: str) -> str:
+    """Restore scope/time qualifiers that can be lost during EN-to-VI query translation."""
+    query = candidate.strip()
+    claim_folded = english_claim.casefold()
+    query_folded = query.casefold()
+    for year in re.findall(r"\b(?:19|20)\d{2}\b", english_claim):
+        if year not in query_folded:
+            query += f" {year}"
+            query_folded += f" {year}"
+    english_scope = {"all", "completely", "entire", "nationwide", "every"}
+    vietnamese_scope = {"hoàn toàn", "toàn quốc", "tất cả", "mọi"}
+    if any(re.search(rf"\b{marker}\b", claim_folded) for marker in english_scope) and not any(
+        marker in query_folded for marker in vietnamese_scope
+    ):
+        query += " toàn quốc"
+        query_folded += " toàn quốc"
+    if "chính thức" not in query_folded:
+        query += " nguồn chính thức"
+    return " ".join(query.split())[:1000]
+
+
 def build_analyze_message_node(llm: Any | None):
     async def analyze_message(state: WorkflowState) -> dict:
         if llm is None:
@@ -170,7 +241,17 @@ def build_analyze_message_node(llm: Any | None):
                         "Bạn phân tích tin nhắn mà người dùng dán để kiểm tra lừa đảo. "
                         "Đánh giá ý đồ có khả năng thuộc về NGƯỜI GỬI tin nhắn, không quy kết người dùng. "
                         "Chỉ trích xuất tối đa năm claim có trong input; không thêm sự kiện hoặc bằng chứng. "
-                        "Mỗi claim object gồm text, language, is_temporal và claim_date_start/end ISO nếu có. "
+                        "Claim là mọi khẳng định thực tế có thể kiểm chứng, kể cả khẳng định y tế không liên quan "
+                        "đến lừa đảo. Nếu toàn bộ input là một khẳng định có thể kiểm chứng thì phải trả ít nhất "
+                        "một claim, không được để claims rỗng chỉ vì nội dung không phải lừa đảo. "
+                        "Mỗi claim object gồm text, language, is_temporal, claim_date_start/end ISO nếu có, "
+                        "và search_query_en là bản dịch truy vấn tiếng Anh trung thành nếu claim không phải tiếng Anh. "
+                        "Không thêm chi tiết, đối tượng hay kết luận mới trong search_query_en. "
+                        "Luôn tạo search_query_alt_en là truy vấn kiểm chứng tiếng Anh ngắn, ưu tiên nguồn chính thức "
+                        "và phải giữ các qualifier quyết định như địa lý, mốc thời gian, 'all', 'completely', "
+                        "'nationwide'. Không giả định claim đúng hoặc sai; nếu không tạo được query khác có ích thì để null. "
+                        "Nếu claim tiếng Anh liên quan Việt Nam, tạo thêm search_query_vi là bản dịch truy vấn tiếng Việt "
+                        "trung thành, giữ nguyên phạm vi và thời gian; nếu không thì để null. "
                         "Cảm xúc là kỹ thuật tác động nổi bật trong nội dung. Trả structured output."
                     )
                 ),
@@ -200,12 +281,33 @@ def build_analyze_message_node(llm: Any | None):
             if cleaned and _claim_is_grounded(cleaned, state.get("message", "")):
                 metadata = draft if isinstance(draft, ExtractedClaimDraft) else None
                 try:
+                    search_queries = []
+                    source_language = (
+                        ClaimSearchQuery(text=cleaned, language=metadata.language).language if metadata else "vi"
+                    )
+                    if metadata and metadata.search_query_en and source_language != "en":
+                        search_queries.append(ClaimSearchQuery(text=metadata.search_query_en, language="en"))
+                    if metadata and source_language == "en":
+                        verification_query = _english_verification_query(
+                            cleaned, metadata.search_query_alt_en or metadata.search_query_en
+                        )
+                        search_queries.append(ClaimSearchQuery(text=verification_query, language="en"))
+                        if metadata.search_query_vi:
+                            search_queries.append(
+                                ClaimSearchQuery(
+                                    text=_vietnamese_verification_query(cleaned, metadata.search_query_vi),
+                                    language="vi",
+                                )
+                            )
+                    elif metadata and metadata.search_query_alt_en:
+                        search_queries.append(ClaimSearchQuery(text=metadata.search_query_alt_en, language="en"))
                     item = ExtractedClaim.from_text(
                         cleaned,
                         language=metadata.language if metadata else "vi",
                         claim_date_start=metadata.claim_date_start if metadata else None,
                         claim_date_end=metadata.claim_date_end if metadata else None,
                         is_temporal=metadata.is_temporal if metadata else None,
+                        search_queries=search_queries,
                     )
                     by_text[item.normalized_text] = item
                 except ValueError:
@@ -285,6 +387,8 @@ def build_review_assessment_node(llm: Any | None):
     async def review_assessment(state: WorkflowState) -> dict:
         if llm is None:
             return {}
+        if _deadline_expired(state):
+            return _deadline_skip_update(state, "review đánh giá")
         evidence = [
             {
                 "index": index,
@@ -324,6 +428,8 @@ def build_review_assessment_node(llm: Any | None):
             )
         except _LlmBudgetExceededError:
             return _failure_update(state, "review đánh giá", budget=True)
+        except _LlmDeadlineExceededError:
+            return _deadline_skip_update(state, "review đánh giá")
         except _LlmInvocationFailedError as exc:
             return _failure_update(state, "review đánh giá", usage=exc.usage)
         except Exception:
@@ -345,6 +451,8 @@ def build_generate_response_node(llm: Any | None):
     async def generate_response(state: WorkflowState) -> dict:
         if llm is None:
             return {}
+        if _deadline_expired(state):
+            return _deadline_skip_update(state, "tạo phản hồi")
         evidence = [
             {"index": index, "title": item.title, "finding": item.finding, "source": item.source}
             for index, item in enumerate(state.get("evidence", []))
@@ -369,7 +477,9 @@ def build_generate_response_node(llm: Any | None):
                             "Viết phản hồi tiếng Việt ngắn, dễ hiểu, không gây hoảng sợ. "
                             "Mỗi reason phải mang evidence_index của evidence hỗ trợ nó; không nói an toàn "
                             "khi thiếu dữ liệu. Nếu không có evidence, để reasons rỗng. "
-                            "Giữ nguyên verdict, risk level và action do hệ thống cung cấp."
+                            "Giữ nguyên verdict, risk level và action do hệ thống cung cấp. "
+                            "Không tạo, dịch hay diễn giải thêm giới hạn; luôn trả limitations=[] vì backend "
+                            "sẽ giữ nguyên danh sách limitations đã được kiểm chứng trong payload."
                         )
                     ),
                     HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
@@ -378,6 +488,8 @@ def build_generate_response_node(llm: Any | None):
             )
         except _LlmBudgetExceededError:
             return _failure_update(state, "tạo phản hồi", budget=True)
+        except _LlmDeadlineExceededError:
+            return _deadline_skip_update(state, "tạo phản hồi")
         except _LlmInvocationFailedError as exc:
             return _failure_update(state, "tạo phản hồi", usage=exc.usage)
         except Exception:
@@ -388,11 +500,10 @@ def build_generate_response_node(llm: Any | None):
         if not valid_reasons and evidence:
             # Reject an ungrounded response and keep the deterministic explanation.
             return _failure_update(state, "kiểm tra grounding phản hồi")
-        limitations = list(state.get("limitations", [])) + result.limitations
         return {
             "summary": result.summary,
             "reasons": [reason.text for reason in valid_reasons] or state.get("reasons", []),
-            "limitations": list(dict.fromkeys(item for item in limitations if item.strip())),
+            "limitations": list(dict.fromkeys(item for item in state.get("limitations", []) if item.strip())),
             "llm_response_evidence_indexes": indexes,
             **usage,
         }

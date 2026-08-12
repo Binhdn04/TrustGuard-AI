@@ -23,6 +23,10 @@ _CLAIM_MARKERS = (
     "xác nhận",
     "đăng nhập",
     "chuyển khoản",
+    "chữa",
+    "điều trị",
+    "phòng ngừa",
+    "ung thư",
     "hôm nay",
 )
 

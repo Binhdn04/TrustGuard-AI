@@ -78,6 +78,7 @@ class WorkflowState(AgentState, total=False):
     max_llm_cost_usd: float
     llm_cost_used_usd: float
     deadline_at: datetime
+    fact_check_timed_out: bool
     blocked_urls: list[str]
     blacklisted_domains: list[str]
     enable_redirect_resolution: bool

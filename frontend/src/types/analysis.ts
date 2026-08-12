@@ -64,6 +64,7 @@ export interface Evidence {
   title: string;
   url: string | null;
   finding: string;
+  stance?: "supports" | "refutes" | "mixed" | "unrated" | null;
   observed_at: string;
 }
 
