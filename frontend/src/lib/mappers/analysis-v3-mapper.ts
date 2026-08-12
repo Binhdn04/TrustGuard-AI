@@ -50,7 +50,7 @@ function mapFactCheck(response: AnalysisResponseV3): FactCheckResult | null {
     (item) => item.type === "fact_check" || item.type === "official_source",
   );
   const overallStance = combineStances(
-    factEvidence.map((item) => stanceFromFinding(item.finding)),
+    factEvidence.map((item) => item.stance ?? stanceFromFinding(item.finding)),
   );
   const sources = factEvidence
     .filter((item): item is Evidence & { url: string } => Boolean(item.url))

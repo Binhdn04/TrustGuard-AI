@@ -366,6 +366,7 @@ def build_verify_claims_node(
                         title=item.title,
                         url=item.url,
                         finding=item.finding,
+                        stance=item.stance,
                         observed_at=item.observed_at,
                     )
                 )

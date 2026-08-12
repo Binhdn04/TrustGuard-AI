@@ -51,6 +51,13 @@ _memory_wave2_repository = MemoryWave2Repository()
 _source_registry = VersionedSourceRegistry(default_source_policies())
 
 
+def _effective_source_policies(configured):
+    """Keep reviewed built-ins available while allowing persisted policies to override them."""
+    by_pattern = {item.normalized_pattern: item for item in default_source_policies()}
+    by_pattern.update({item.normalized_pattern: item for item in configured or []})
+    return list(by_pattern.values())
+
+
 @lru_cache
 def get_analysis_service() -> AnalysisService:
     settings = get_settings()
@@ -130,11 +137,11 @@ async def start_durable_worker() -> None:
         return
     settings = get_settings()
     policies = await service.repository.load_source_policies(datetime.now(UTC))
-    _source_registry.replace(policies or default_source_policies())
+    _source_registry.replace(_effective_source_policies(policies))
 
     async def refresh_source_registry() -> None:
         active = await service.repository.load_source_policies(datetime.now(UTC))
-        _source_registry.replace(active or default_source_policies())
+        _source_registry.replace(_effective_source_policies(active))
 
     handlers = {}
     if settings.openai_api_key:

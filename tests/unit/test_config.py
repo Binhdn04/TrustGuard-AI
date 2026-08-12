@@ -26,3 +26,8 @@ def test_wave1_reputation_policy_is_bounded() -> None:
     assert settings.reputation_secondary_call_budget == 0
     with pytest.raises(ValidationError):
         Settings(reputation_max_attempts=0, _env_file=None)
+
+
+def test_post_processing_reserve_must_fit_analysis_deadline() -> None:
+    with pytest.raises(ValidationError, match="POST_PROCESSING_RESERVE_SECONDS"):
+        Settings(analysis_deadline_seconds=10, post_processing_reserve_seconds=10, _env_file=None)

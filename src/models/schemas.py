@@ -174,6 +174,7 @@ class Evidence(ContractModel):
     title: str
     url: str | None = None
     finding: str
+    stance: ClaimStance | None = None
     observed_at: datetime
 
 

@@ -335,7 +335,20 @@ def default_source_policies() -> list[SourceRegistryEntry]:
             default_freshness_seconds=21600,
             reviewer_id="system-bootstrap",
             reviewed_at=reviewed_at,
-        )
+        ),
+        SourceRegistryEntry(
+            source_id=UUID("00000000-0000-4000-8000-000000000006"),
+            publisher="Vietnam government",
+            normalized_pattern="*.chinhphu.vn",
+            tier=SourceTier.A,
+            source_type="government",
+            allowed_operations={"search", "read", "compare", "promote"},
+            policy_version="source-policy-v1",
+            effective_from=reviewed_at,
+            default_freshness_seconds=21600,
+            reviewer_id="system-bootstrap",
+            reviewed_at=reviewed_at,
+        ),
     ]
     for publisher, pattern in (
         ("VTV", "*.vtv.vn"),
@@ -358,6 +371,30 @@ def default_source_policies() -> list[SourceRegistryEntry]:
                 default_freshness_seconds=21600,
                 reviewer_id="system-bootstrap",
                 reviewed_at=datetime(2026, 8, 11, tzinfo=UTC),
+            )
+        )
+    for publisher, pattern in (
+        ("FactCheck.org", "*.factcheck.org"),
+        ("PolitiFact", "*.politifact.com"),
+        ("Snopes", "*.snopes.com"),
+        ("Full Fact", "*.fullfact.org"),
+        ("AFP Fact Check", "*.factcheck.afp.com"),
+        ("Reuters Fact Check", "*.reuters.com"),
+        ("AP Fact Check", "*.apnews.com"),
+    ):
+        policies.append(
+            SourceRegistryEntry(
+                publisher=publisher,
+                normalized_pattern=pattern,
+                tier=SourceTier.B,
+                source_type="claim_review",
+                trusted_claim_review=True,
+                allowed_operations={"search", "read", "compare"},
+                policy_version="source-policy-claim-review-v1",
+                effective_from=reviewed_at,
+                default_freshness_seconds=21600,
+                reviewer_id="system-bootstrap",
+                reviewed_at=reviewed_at,
             )
         )
     return policies
@@ -734,7 +771,7 @@ class VersionedSourceRegistry:
     def replace(self, policies: list[SourceRegistryEntry]) -> None:
         self._policies = list(policies)
 
-    def allowed_domains(self, operation: str = "search") -> tuple[str, ...]:
+    def allowed_domains(self, operation: str = "search", *, tiers: set[SourceTier] | None = None) -> tuple[str, ...]:
         now = datetime.now(UTC)
         return tuple(
             sorted(
@@ -744,11 +781,15 @@ class VersionedSourceRegistry:
                     if item.active
                     and not item.explicit_deny
                     and operation in item.allowed_operations
+                    and (tiers is None or item.tier in tiers)
                     and item.effective_from <= now
                     and (item.effective_to is None or item.effective_to > now)
                 }
             )
         )
+
+    def official_domains(self, operation: str = "search") -> tuple[str, ...]:
+        return self.allowed_domains(operation, tiers={SourceTier.A})
 
     def classify(self, url: str, at: datetime) -> SourcePolicyDecision:
         hostname = (urlsplit(url).hostname or "").lower().rstrip(".")

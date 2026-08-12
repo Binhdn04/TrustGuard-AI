@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, date, datetime
 
+import httpx
 import pytest
 
 from src.agents.calibration import (
@@ -20,16 +22,24 @@ from src.agents.campaign import (
     InMemoryCampaignObservationStore,
 )
 from src.agents.fact_check import (
+    ClaimSearchQuery,
     EmbeddingStatus,
     EvidenceCandidate,
     ExtractedClaim,
     FactCheckOrchestrator,
     SourceTier,
+    _as_candidate,
     canonicalize_claim,
     evaluate_evidence_sufficiency,
 )
 from src.agents.graph import build_graph
-from src.agents.tools.advanced import FlashRankReranker
+from src.agents.tools.advanced import (
+    FlashRankReranker,
+    GoogleClaimSearchAdapter,
+    JinaReaderAdapter,
+    LexicalEvidenceReranker,
+    TavilySearchAdapter,
+)
 from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
@@ -37,13 +47,423 @@ from src.agents.tools.models import (
     FactCheckCorpusMatch,
     FactCheckCorpusRecord,
     FactCheckSearchResult,
+    FetchedEvidence,
+    GoogleClaimReviewMatch,
     NormalizedToolResult,
+    ToolErrorCode,
     ToolResultStatus,
     UsageMetadata,
+    WebCandidate,
 )
+from src.agents.tools.runtime import OpenAIEvidenceComparator
 from src.models import ClaimStance, RiskLevel, Verdict
+from src.services.platform_wave2 import VersionedSourceRegistry, default_source_policies
 
 NOW = datetime(2026, 8, 9, 12, tzinfo=UTC)
+
+
+def test_language_names_normalize_and_identical_query_text_is_not_repeated() -> None:
+    claim = ExtractedClaim.from_text(
+        "Vietnam will completely ban motorbikes starting in 2027.",
+        language="English",
+        search_queries=(
+            ClaimSearchQuery(
+                text="Vietnam will completely ban motorbikes starting in 2027.",
+                language="en",
+            ),
+        ),
+    )
+
+    assert claim.language == "en"
+    assert [(item.text, item.language) for item in claim.query_variants] == [
+        ("Vietnam will completely ban motorbikes starting in 2027.", "en")
+    ]
+    assert (
+        claim.claim_id
+        == ExtractedClaim.from_text("Vietnam will completely ban motorbikes starting in 2027.", language="en").claim_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_comparator_normalizes_confirmed_narrower_scope_to_refutes() -> None:
+    class Runnable:
+        async def ainvoke(self, _prompt):
+            return {
+                "stance": "inconclusive",
+                "scope_relation": "narrower_than_claim",
+                "evidence_refs": ["official:1"],
+                "contradiction_refs": [],
+                "limitations": [
+                    {
+                        "code": "SCOPE_MISMATCH",
+                        "message_vi": "Chính sách chỉ áp dụng tại một khu vực, không phải toàn quốc.",
+                        "impacts_verdict": True,
+                    }
+                ],
+            }
+
+    class Llm:
+        def with_structured_output(self, _schema):
+            return Runnable()
+
+    comparator = OpenAIEvidenceComparator(Llm())
+    evidence = [
+        EvidenceCandidate(
+            evidence_ref="official:1",
+            source_url="https://xaydungchinhsach.chinhphu.vn/policy",
+            publisher="Vietnam government",
+            source_tier=SourceTier.A,
+            finding="The restriction applies only within a specified Hanoi zone.",
+            observed_at=NOW,
+        )
+    ]
+
+    result = await comparator.compare(
+        ExtractedClaim.from_text("Vietnam will completely ban motorbikes starting in 2027.", language="English"),
+        evidence,
+    )
+
+    assert result.result is not None
+    assert result.result.stance == "refutes"
+    assert result.result.limitations == []
+
+
+def test_google_claim_review_mapping_preserves_url_and_claim_text() -> None:
+    item = GoogleClaimReviewMatch(
+        claim_text="COVID-19 vaccines contain microchips",
+        review_ref="claimreview:1",
+        review_url="https://www.factcheck.org/review/1",
+        reviewer="FactCheck.org",
+        publisher="FactCheck.org",
+        title="Vaccines do not contain microchips",
+        textual_rating="False",
+        stance=ClaimStance.REFUTES,
+        source_tier="b",
+        trusted_claim_review=True,
+        observed_at=NOW,
+    )
+
+    mapped = _as_candidate(item, default_ref_prefix="google")
+
+    assert mapped.source_url == item.review_url
+    assert mapped.finding == item.claim_text
+    assert mapped.stance is ClaimStance.REFUTES
+
+
+def test_default_registry_trusts_reviewed_fact_check_publishers() -> None:
+    registry = VersionedSourceRegistry(default_source_policies())
+
+    decision = registry.classify("https://www.factcheck.org/review/1", NOW)
+
+    assert decision.tier.value == "B"
+    assert decision.trusted_claim_review is True
+
+
+def test_default_registry_treats_the_government_portal_as_tier_a() -> None:
+    registry = VersionedSourceRegistry(default_source_policies())
+
+    decision = registry.classify("https://xaydungchinhsach.chinhphu.vn/policy", NOW)
+
+    assert decision.tier.value == "A"
+    assert decision.publisher == "Vietnam government"
+    assert "chinhphu.vn" in registry.official_domains()
+
+
+@pytest.mark.asyncio
+async def test_google_claim_search_uses_vi_and_en_queries_and_deduplicates_reviews() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
+        calls.append((params["query"], params["languageCode"]))
+        return httpx.Response(
+            200,
+            json={
+                "claims": [
+                    {
+                        "text": "Hot lemon water does not cure cancer",
+                        "claimReview": [
+                            {
+                                "publisher": {"name": "AFP Fact Check"},
+                                "url": "https://factcheck.afp.com/doc.afp.com.123",
+                                "title": "Lemon water does not cure cancer",
+                                "textualRating": "False",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+    registry = VersionedSourceRegistry(default_source_policies())
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = GoogleClaimSearchAdapter("test-key", client=client, classify_source=registry.classify)
+    claim = ExtractedClaim.from_text(
+        "Uống nước chanh mỗi ngày có thể chữa khỏi ung thư",
+        language="vi",
+        search_queries=(ClaimSearchQuery(text="Drinking lemon water every day can cure cancer", language="en"),),
+    )
+
+    result = await adapter.search(claim)
+    await client.aclose()
+
+    assert set(calls) == {
+        ("Uống nước chanh mỗi ngày có thể chữa khỏi ung thư", "vi"),
+        ("Drinking lemon water every day can cure cancer", "en"),
+    }
+    assert result.status is ToolResultStatus.SUCCESS
+    assert len(result.result or []) == 1
+    assert result.usage is not None and result.usage.network_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_uses_query_variants_and_deduplicates_urls() -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        queries.append(body["query"])
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "url": "https://factcheck.afp.com/doc.afp.com.123",
+                        "title": "Lemon water does not cure cancer",
+                        "content": "The claim is false.",
+                    }
+                ]
+            },
+        )
+
+    registry = VersionedSourceRegistry(default_source_policies())
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = TavilySearchAdapter("test-key", client=client, classify_source=registry.classify)
+    claim = ExtractedClaim.from_text(
+        "Uống nước chanh mỗi ngày có thể chữa khỏi ung thư",
+        language="vi",
+        search_queries=(ClaimSearchQuery(text="Drinking lemon water every day can cure cancer", language="en"),),
+    )
+
+    result = await adapter.search(claim)
+    await client.aclose()
+
+    assert set(queries) == {
+        "Uống nước chanh mỗi ngày có thể chữa khỏi ung thư",
+        "Drinking lemon water every day can cure cancer",
+    }
+    assert result.status is ToolResultStatus.SUCCESS
+    assert len(result.result or []) == 1
+    assert result.usage is not None and result.usage.network_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_prioritizes_independent_publishers() -> None:
+    results = [
+        {
+            "url": f"https://e.vnexpress.net/news/article-{index}.html",
+            "title": f"VnExpress result {index}",
+            "content": "Motorbike policy report.",
+        }
+        for index in range(6)
+    ]
+    results.extend(
+        [
+            {
+                "url": "https://en.vietnamplus.vn/motorbike-policy-post1.vnp",
+                "title": "VietnamPlus result",
+                "content": "Motorbike policy report.",
+            },
+            {
+                "url": "https://xaydungchinhsach.chinhphu.vn/motorbike-emissions.htm",
+                "title": "Government result",
+                "content": "Official motorbike emissions roadmap.",
+            },
+        ]
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": results})
+
+    registry = VersionedSourceRegistry(default_source_policies())
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = TavilySearchAdapter("test-key", client=client, classify_source=registry.classify)
+
+    result = await adapter.search(ExtractedClaim.from_text("Vietnam motorbike policy", language="English"))
+    await client.aclose()
+
+    assert result.status is ToolResultStatus.SUCCESS
+    assert [item.publisher for item in (result.result or [])[:3]] == [
+        "VnExpress",
+        "VietnamPlus",
+        "Vietnam government",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected_code", "expected_status"),
+    [
+        (httpx.Response(503), ToolErrorCode.PROVIDER_ERROR, 503),
+        (httpx.Response(429, headers={"retry-after": "2"}), ToolErrorCode.RATE_LIMITED, 429),
+    ],
+)
+async def test_tavily_search_preserves_http_failure_details(response, expected_code, expected_status) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return response
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = TavilySearchAdapter("test-key", client=client)
+
+    result = await adapter.search(ExtractedClaim.from_text("A claim", language="en"))
+    await client.aclose()
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.error is not None
+    assert result.error.code is expected_code
+    assert result.error.http_status_code == expected_status
+    assert f"HTTP {expected_status}" in result.error.message
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_preserves_timeout_code() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("fixture timeout", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = TavilySearchAdapter("test-key", client=client)
+
+    result = await adapter.search(ExtractedClaim.from_text("A claim", language="en"))
+    await client.aclose()
+
+    assert result.error is not None
+    assert result.error.code is ToolErrorCode.PROVIDER_TIMEOUT
+    assert "timeout" in result.error.message
+
+
+@pytest.mark.asyncio
+async def test_tavily_does_not_treat_claim_effective_dates_as_publication_filters() -> None:
+    request_body = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_body
+        request_body = json.loads(request.content)
+        return httpx.Response(200, json={"results": []})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = TavilySearchAdapter("test-key", client=client)
+    claim = ExtractedClaim.from_text(
+        "A policy will apply starting in 2027",
+        language="en",
+        is_temporal=True,
+        claim_date_start=date(2027, 1, 1),
+        claim_date_end=date(2027, 12, 31),
+    )
+
+    await adapter.search(claim)
+    await client.aclose()
+
+    assert request_body is not None
+    assert "start_date" not in request_body
+    assert "end_date" not in request_body
+
+
+@pytest.mark.asyncio
+async def test_tavily_routes_official_query_to_tier_a_domains_with_advanced_search() -> None:
+    request_bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"results": []})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = TavilySearchAdapter(
+        "test-key",
+        client=client,
+        allowed_domains=lambda _claim: ["vnexpress.net", "chinhphu.vn"],
+        official_domains=lambda _claim: ["chinhphu.vn"],
+    )
+    claim = ExtractedClaim.from_text(
+        "Vietnam will completely ban motorbikes starting in 2027.",
+        language="en",
+        search_queries=(
+            ClaimSearchQuery(
+                text="Vietnam motorbike ban 2027 nationwide official sources",
+                language="en",
+            ),
+        ),
+    )
+
+    await adapter.search(claim)
+    await client.aclose()
+
+    by_query = {body["query"]: body for body in request_bodies}
+    assert by_query[claim.normalized_text]["include_domains"] == ["vnexpress.net", "chinhphu.vn"]
+    assert by_query[claim.search_queries[0].text]["include_domains"] == ["chinhphu.vn"]
+    assert by_query[claim.normalized_text]["search_depth"] == "basic"
+    assert by_query[claim.search_queries[0].text]["search_depth"] == "advanced"
+
+
+@pytest.mark.asyncio
+async def test_jina_reader_preserves_search_excerpt_before_full_page_content() -> None:
+    class Guard:
+        async def validate(self, _url):
+            return None
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<nav>Navigation</nav><p>Full official policy text.</p>")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = JinaReaderAdapter(client=client, guard=Guard())
+    candidate = WebCandidate(
+        evidence_ref="web:official:1",
+        canonical_url="https://chinhphu.vn/policy",
+        title="Official 2027 roadmap",
+        snippet="The 2027 phase applies only to specified Hanoi wards.",
+        publisher="Vietnam government",
+        source_tier="A",
+        source_version="fixture",
+    )
+
+    result = await adapter.read(candidate)
+    await client.aclose()
+
+    assert result.result is not None
+    assert result.result.cleaned_content.startswith(
+        "Official 2027 roadmap\n\nThe 2027 phase applies only to specified Hanoi wards."
+    )
+    assert "Full official policy text." in result.result.cleaned_content
+
+
+def test_lexical_reranker_keeps_best_matching_evidence_first() -> None:
+    reranker = LexicalEvidenceReranker()
+    candidates = [
+        EvidenceChunk(
+            chunk_ref="chunk:unrelated",
+            evidence_ref="evidence:unrelated",
+            index=0,
+            text="Weather forecast for tomorrow.",
+            canonical_url="https://example.gov.vn/weather",
+            content_sha256="a" * 64,
+            source_tier="A",
+            source_version="v1",
+        ),
+        EvidenceChunk(
+            chunk_ref="chunk:matching",
+            evidence_ref="evidence:matching",
+            index=1,
+            text="COVID vaccines do not contain tracking microchips.",
+            canonical_url="https://example.gov.vn/health",
+            content_sha256="b" * 64,
+            source_tier="A",
+            source_version="v1",
+        ),
+    ]
+
+    result = reranker.rank(ExtractedClaim.from_text("COVID vaccines contain microchips"), candidates)
+
+    assert result[0].chunk_ref == "chunk:matching"
+    assert result[0].rerank_score > result[1].rerank_score
 
 
 def test_flashrank_adapter_uses_the_supported_rerank_signature() -> None:
@@ -63,6 +483,8 @@ def test_flashrank_adapter_uses_the_supported_rerank_signature() -> None:
         index=0,
         text="Nước chanh không phải là thuốc chữa ung thư.",
         canonical_url="https://example.gov.vn/health/claim",
+        title="Official health guidance",
+        publisher="Health Ministry",
         content_sha256="a" * 64,
         source_tier="A",
         source_version="source-policy-v1",
@@ -74,6 +496,8 @@ def test_flashrank_adapter_uses_the_supported_rerank_signature() -> None:
     assert ranker.request.query == "Nước chanh chữa ung thư"
     assert ranker.request.passages == [{"id": "chunk:1", "text": chunk.text, "meta": chunk}]
     assert result[0].rerank_score == pytest.approx(0.91)
+    assert result[0].title == "Official health guidance"
+    assert result[0].publisher == "Health Ministry"
 
 
 class Corpus:
@@ -348,6 +772,43 @@ class CountingWeb:
         return []
 
 
+class StaticWeb:
+    def __init__(self, candidates):
+        self.candidates = candidates
+
+    async def search(self, _claim, *, max_results=10):
+        return self.candidates[:max_results]
+
+
+class RecordingReader:
+    def __init__(self):
+        self.publishers = []
+
+    async def read(self, candidate):
+        self.publishers.append(candidate.publisher)
+        return FetchedEvidence(
+            evidence_ref=candidate.evidence_ref,
+            canonical_url=candidate.canonical_url,
+            title=candidate.title,
+            cleaned_content=candidate.snippet,
+            content_sha256="a" * 64,
+            publisher=candidate.publisher,
+            source_tier=candidate.source_tier,
+            source_version=candidate.source_version,
+            observed_at=NOW,
+        )
+
+
+class IdentityChunker:
+    def split(self, evidence):
+        return evidence
+
+
+class IdentityReranker:
+    def rank(self, _claim, candidates, *, top_k=5):
+        return list(candidates)[:top_k]
+
+
 class CitingComparator:
     def __init__(self):
         self.calls = 0
@@ -357,13 +818,100 @@ class CitingComparator:
         return {"stance": "refutes", "evidence_refs": [evidence[0].evidence_ref]}
 
 
-def candidate(ref: str, tier: SourceTier, *, published_at=NOW):
+class InconclusiveComparator:
+    async def compare(self, _claim, _evidence):
+        return {
+            "stance": "inconclusive",
+            "evidence_refs": [],
+            "limitations": [
+                {
+                    "code": "ADJACENT_SCOPE_UNCERTAIN",
+                    "message_vi": "Chưa đủ dữ liệu về một chủ đề liên quan ngoài phạm vi claim.",
+                    "impacts_verdict": True,
+                }
+            ],
+        }
+
+
+@pytest.mark.asyncio
+async def test_web_fallback_spends_reader_budget_on_independent_publishers_first() -> None:
+    candidates = [
+        WebCandidate(
+            evidence_ref=f"web:vnexpress:{index}",
+            canonical_url=f"https://e.vnexpress.net/news/article-{index}.html",
+            title=f"VnExpress {index}",
+            snippet="Vietnam will apply limited motorbike emission rules, not a nationwide ban.",
+            publisher="VnExpress",
+            source_tier="B",
+            source_version="fixture",
+        )
+        for index in range(6)
+    ]
+    candidates.extend(
+        [
+            WebCandidate(
+                evidence_ref="web:vietnamplus:1",
+                canonical_url="https://en.vietnamplus.vn/motorbike-policy-post1.vnp",
+                title="VietnamPlus",
+                snippet="The restriction applies only to specified areas and vehicles.",
+                publisher="VietnamPlus",
+                source_tier="B",
+                source_version="fixture",
+            ),
+            WebCandidate(
+                evidence_ref="web:government:1",
+                canonical_url="https://xaydungchinhsach.chinhphu.vn/motorbike-emissions.htm",
+                title="Official roadmap",
+                snippet="The 2027 roadmap requires emissions inspections in Hanoi and Ho Chi Minh City.",
+                publisher="Vietnam government",
+                source_tier="A",
+                source_version="fixture",
+            ),
+            WebCandidate(
+                evidence_ref="web:government:2",
+                canonical_url="https://thanglong.chinhphu.vn/english/second-policy.htm",
+                title="Official implementation detail",
+                snippet="The 2027 phase covers specified wards in central Hanoi.",
+                publisher="Vietnam government",
+                source_tier="A",
+                source_version="fixture",
+            ),
+        ]
+    )
+    reader = RecordingReader()
+    pipeline = FactCheckOrchestrator(
+        tavily_search=StaticWeb(candidates),
+        jina_reader=reader,
+        chunker=IdentityChunker(),
+        reranker=IdentityReranker(),
+        comparator=CitingComparator(),
+        source_registry=VersionedSourceRegistry(default_source_policies()),
+    )
+
+    result = await pipeline.verify(
+        [
+            ExtractedClaim.from_text(
+                "Vietnam will completely ban motorbikes starting in 2027.",
+                language="English",
+                is_temporal=True,
+            )
+        ]
+    )
+
+    assert reader.publishers[:3] == ["VnExpress", "VietnamPlus", "Vietnam government"]
+    assert reader.publishers.count("Vietnam government") == 2
+    assert result.claim_findings
+
+
+def candidate(ref: str, tier: SourceTier, *, published_at=NOW, effective_from=None, effective_to=None):
     return EvidenceCandidate(
         evidence_ref=ref,
         source_url=f"https://source.example/{ref}",
         publisher=f"publisher-{ref}",
         source_tier=tier,
         published_at=published_at,
+        effective_from=effective_from,
+        effective_to=effective_to,
         observed_at=NOW,
     )
 
@@ -395,6 +943,28 @@ async def test_wave2_pipeline_batches_once_bounds_fanout_and_skips_web_when_suff
 
 
 @pytest.mark.asyncio
+async def test_inconclusive_comparator_keeps_trusted_structured_rating() -> None:
+    rated = EvidenceCandidate(
+        evidence_ref="trusted-rating",
+        source_url="https://www.factcheck.org/review/1",
+        publisher="FactCheck.org",
+        source_tier=SourceTier.B,
+        stance=ClaimStance.REFUTES,
+        trusted_claim_review=True,
+        observed_at=NOW,
+    )
+    pipeline = FactCheckOrchestrator(
+        google_claim_search=ParallelGoogle([rated]),
+        comparator=InconclusiveComparator(),
+    )
+
+    result = await pipeline.verify([ExtractedClaim.from_text("COVID vaccines contain microchips")])
+
+    assert [item.stance for item in result.claim_findings] == [ClaimStance.REFUTES]
+    assert "Chưa đủ dữ liệu về một chủ đề liên quan ngoài phạm vi claim." not in result.limitations
+
+
+@pytest.mark.asyncio
 async def test_embedding_failure_continues_and_tier_c_alone_stays_inconclusive() -> None:
     embedding = BatchEmbedding(fail=True)
     google = ParallelGoogle([candidate("tier-c", SourceTier.C)])
@@ -419,7 +989,17 @@ async def test_embedding_failure_continues_and_tier_c_alone_stays_inconclusive()
 
 @pytest.mark.asyncio
 async def test_temporal_wrong_tier_a_is_excluded_before_comparator() -> None:
-    google = ParallelGoogle([candidate("old-official", SourceTier.A, published_at=datetime(2020, 1, 1, tzinfo=UTC))])
+    google = ParallelGoogle(
+        [
+            candidate(
+                "old-official",
+                SourceTier.A,
+                published_at=datetime(2020, 1, 1, tzinfo=UTC),
+                effective_from=date(2020, 1, 1),
+                effective_to=date(2020, 12, 31),
+            )
+        ]
+    )
     web = CountingWeb()
     comparator = CitingComparator()
     pipeline = FactCheckOrchestrator(google_claim_search=google, tavily_search=web, comparator=comparator)
@@ -435,6 +1015,21 @@ async def test_temporal_wrong_tier_a_is_excluded_before_comparator() -> None:
     assert web.calls == 1
     assert comparator.calls == 0
     assert any("thời gian" in item for item in result.limitations)
+
+
+def test_source_published_before_a_future_policy_can_still_support_the_claim() -> None:
+    claim = ExtractedClaim.from_text(
+        "Policy applies in 2027",
+        language="en",
+        is_temporal=True,
+        claim_date_start=date(2027, 1, 1),
+        claim_date_end=date(2027, 12, 31),
+    )
+    official = candidate("official-announcement", SourceTier.A, published_at=NOW)
+
+    result = evaluate_evidence_sufficiency(claim, [official])
+
+    assert result.sufficient is True
 
 
 def test_claim_canonicalization_redacts_secrets_and_url_queries() -> None:

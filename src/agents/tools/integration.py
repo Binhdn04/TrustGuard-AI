@@ -57,10 +57,14 @@ def build_provider_adapters(settings: Any, source_registry: Any | None = None) -
             settings.tavily_api_key,
             timeout=timeout,
             allowed_domains=(lambda _claim: source_registry.allowed_domains("search")) if source_registry else None,
+            official_domains=(lambda _claim: source_registry.official_domains("search")) if source_registry else None,
             classify_source=source_registry.classify if source_registry else None,
         )
     if getattr(settings, "jina_api_key", ""):
-        adapters["jina_reader"] = JinaReaderAdapter(settings.jina_api_key, timeout=timeout)
+        adapters["jina_reader"] = JinaReaderAdapter(
+            settings.jina_api_key,
+            timeout=getattr(settings, "jina_timeout_seconds", timeout),
+        )
     # These constructors perform no I/O. Consent is checked in the executor
     # before either lazy RDAP lookup or redirect resolution is called.
     adapters["domain_intelligence"] = build_domain_intelligence_adapter(settings)

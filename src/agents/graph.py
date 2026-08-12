@@ -422,6 +422,8 @@ def build_graph(
     evidence_comparator: Any | None = None,
     source_registry: Any | None = None,
     max_claim_concurrency: int = 3,
+    fact_check_timeout_seconds: float | None = None,
+    post_processing_reserve_seconds: float = 0.0,
     blacklist: BlacklistRepository | None = None,
     execution_ledger: ToolExecutionLedger | None = None,
     progress_sink: ProgressSink | None = None,
@@ -508,14 +510,28 @@ def build_graph(
                 extracted.append(item)
         deadline = state.get("deadline_at")
         timeout = (deadline - datetime.now(UTC)).total_seconds() if deadline is not None else None
+        if timeout is not None:
+            timeout = max(0.0, timeout - post_processing_reserve_seconds)
+        if fact_check_timeout_seconds is not None:
+            timeout = min(timeout, fact_check_timeout_seconds) if timeout is not None else fact_check_timeout_seconds
         if timeout is not None and timeout <= 0:
-            return {"limitations": [*state.get("limitations", []), "Đã hết thời gian fact-check trực tuyến."]}
+            return {
+                "fact_check_timed_out": True,
+                "limitations": [
+                    *state.get("limitations", []),
+                    "Fact-check trực tuyến vượt quá thời gian xử lý; các bước tổng hợp sau đó dùng logic deterministic.",
+                ],
+            }
         try:
             operation = fact_check_orchestrator.verify(extracted[:5])
             result = await asyncio.wait_for(operation, timeout=timeout) if timeout is not None else await operation
         except TimeoutError:
             return {
-                "limitations": [*state.get("limitations", []), "Fact-check trực tuyến vượt quá deadline."],
+                "fact_check_timed_out": True,
+                "limitations": [
+                    *state.get("limitations", []),
+                    "Fact-check trực tuyến vượt quá thời gian xử lý; các bước tổng hợp sau đó dùng logic deterministic.",
+                ],
                 "errors": [
                     *state.get("errors", []),
                     ToolError(
@@ -537,6 +553,7 @@ def build_graph(
                     title=finding.title,
                     url=finding.url,
                     finding=finding.finding,
+                    stance=finding.stance,
                     observed_at=finding.observed_at,
                 )
             )
@@ -606,7 +623,7 @@ def build_legacy_graph():
 
 
 def build_openai_graph(**kwargs):
-    from src.agents.tools.advanced import EvidenceChunker
+    from src.agents.tools.advanced import EvidenceChunker, LexicalEvidenceReranker
     from src.agents.tools.integration import build_provider_adapters
     from src.agents.tools.runtime import (
         OpenAIEvidenceComparator,
@@ -626,11 +643,11 @@ def build_openai_graph(**kwargs):
     kwargs.setdefault("chunker", EvidenceChunker())
     if llm is not None:
         kwargs.setdefault("evidence_comparator", OpenAIEvidenceComparator(llm))
-    if settings.live_providers_required:
-        kwargs.setdefault(
-            "reranker",
-            build_flashrank_reranker(settings.flashrank_model, settings.flashrank_cache_dir),
-        )
+    if "tavily_search" in owned_adapters and "jina_reader" in owned_adapters and "reranker" not in kwargs:
+        try:
+            kwargs["reranker"] = build_flashrank_reranker(settings.flashrank_model, settings.flashrank_cache_dir)
+        except RuntimeError:
+            kwargs["reranker"] = LexicalEvidenceReranker()
     graph_adapter_names = {
         "url_scanner",
         "url_reputation",
@@ -648,11 +665,15 @@ def build_openai_graph(**kwargs):
         "evidence_comparator",
         "source_registry",
         "max_claim_concurrency",
+        "fact_check_timeout_seconds",
+        "post_processing_reserve_seconds",
     }
     for name, adapter in owned_adapters.items():
         if name in graph_adapter_names:
             kwargs.setdefault(name, adapter)
     kwargs.setdefault("max_claim_concurrency", settings.max_claim_concurrency)
+    kwargs.setdefault("fact_check_timeout_seconds", settings.fact_check_timeout_seconds)
+    kwargs.setdefault("post_processing_reserve_seconds", settings.post_processing_reserve_seconds)
     graph = build_graph(llm=llm, **kwargs)
     graph._owned_adapters = tuple(owned_adapters.values())
     return graph

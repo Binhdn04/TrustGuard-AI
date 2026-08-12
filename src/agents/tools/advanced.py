@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from collections.abc import Callable, Sequence
@@ -83,15 +84,62 @@ def _failure(
     *,
     retryable: bool,
     retry_after_ms: int | None = None,
+    http_status_code: int | None = None,
+    calls: int = 1,
 ):
     return NormalizedToolResult(
         status=ToolResultStatus.FAILED,
         error=NormalizedToolError(
-            tool=tool, code=code, message=message, retryable=retryable, provider=provider, retry_after_ms=retry_after_ms
+            tool=tool,
+            code=code,
+            message=message,
+            retryable=retryable,
+            provider=provider,
+            retry_after_ms=retry_after_ms,
+            http_status_code=http_status_code,
         ),
         cache=CacheMetadata(status=CacheStatus.BYPASS, bypass_reason="transient_failure"),
-        usage=_usage(provider, version, operation, started),
+        usage=_usage(provider, version, operation, started, calls=calls),
     )
+
+
+def _provider_failure_details(
+    failures: Sequence[BaseException], provider_label: str
+) -> tuple[ToolErrorCode, str, bool, int | None, int | None]:
+    statuses = [item.response.status_code for item in failures if isinstance(item, httpx.HTTPStatusError)]
+    timeouts = [item for item in failures if isinstance(item, httpx.TimeoutException)]
+    unique_statuses = sorted(set(statuses))
+    status_code = unique_statuses[0] if len(unique_statuses) == 1 else None
+
+    if statuses and len(statuses) == len(failures) and all(status == 429 for status in statuses):
+        retry_values: list[int] = []
+        for item in failures:
+            if not isinstance(item, httpx.HTTPStatusError):
+                continue
+            retry = item.response.headers.get("retry-after")
+            try:
+                if retry is not None:
+                    retry_values.append(int(float(retry) * 1000))
+            except ValueError:
+                continue
+        return (
+            ToolErrorCode.RATE_LIMITED,
+            f"{provider_label} rate limited the request (HTTP 429)",
+            True,
+            min(retry_values) if retry_values else None,
+            429,
+        )
+
+    details: list[str] = []
+    if timeouts:
+        details.append(f"{len(timeouts)} timeout(s)")
+    if unique_statuses:
+        details.append("HTTP " + ", ".join(str(status) for status in unique_statuses))
+    suffix = f" ({'; '.join(details)})" if details else ""
+    if timeouts and not statuses:
+        return ToolErrorCode.PROVIDER_TIMEOUT, f"{provider_label} timed out{suffix}", True, None, None
+    retryable = bool(timeouts) or any(status == 429 or status >= 500 for status in statuses)
+    return ToolErrorCode.PROVIDER_ERROR, f"{provider_label} failed{suffix}", retryable, None, status_code
 
 
 class OpenAIEmbeddingProvider:
@@ -203,73 +251,91 @@ class GoogleClaimSearchAdapter:
 
     async def search(self, claim: ExtractedClaim) -> NormalizedToolResult[list[GoogleClaimReviewMatch]]:
         started = perf_counter()
-        try:
+        variants = claim.query_variants
+
+        async def fetch(query):
             response = await self._client.get(
                 self.endpoint,
-                params={
-                    "key": self.api_key,
-                    "query": claim.normalized_text,
-                    "languageCode": claim.language,
-                    "pageSize": 10,
-                },
+                params={"key": self.api_key, "query": query.text, "languageCode": query.language, "pageSize": 10},
             )
-            if response.status_code == 429:
-                return _failure(
-                    ToolName.FACT_CHECK_CORPUS,
-                    self.provider,
-                    self.provider_version,
-                    "claims.search",
-                    started,
-                    ToolErrorCode.RATE_LIMITED,
-                    "Claim Search rate limited the request",
-                    retryable=True,
-                )
             response.raise_for_status()
-            payload = response.json()
+            return response.json()
+
+        responses = await asyncio.gather(*(fetch(query) for query in variants), return_exceptions=True)
+        payloads = [item for item in responses if not isinstance(item, BaseException)]
+        if not payloads:
+            code, message, retryable, retry_after_ms, http_status_code = _provider_failure_details(
+                [item for item in responses if isinstance(item, BaseException)], "Google Claim Search"
+            )
+            return _failure(
+                ToolName.FACT_CHECK_CORPUS,
+                self.provider,
+                self.provider_version,
+                "claims.search",
+                started,
+                code,
+                message,
+                retryable=retryable,
+                retry_after_ms=retry_after_ms,
+                http_status_code=http_status_code,
+                calls=len(variants),
+            )
+
+        try:
             results = []
-            for indexed in payload.get("claims", []):
-                for review in indexed.get("claimReview", []):
-                    publisher = review.get("publisher") or {}
-                    url = review.get("url")
-                    name = publisher.get("name")
-                    if not url or not name:
-                        continue
-                    observed = _now()
-                    decision = self._classify(url, observed) if self._classify else None
-                    tier = str(getattr(decision, "tier", "untrusted")).lower().replace("sourcetier.", "")
-                    trusted = bool(getattr(decision, "trusted_claim_review", False))
-                    date_raw = review.get("reviewDate")
-                    try:
-                        published = datetime.fromisoformat(date_raw.replace("Z", "+00:00")) if date_raw else None
-                        if published is not None and published.tzinfo is None:
-                            published = published.replace(tzinfo=UTC)
-                    except (ValueError, AttributeError):
-                        published = None
-                    results.append(
-                        GoogleClaimReviewMatch(
-                            claim_text=str(indexed.get("text") or claim.normalized_text),
-                            review_ref="claimreview:sha256:" + sha256(f"{url}\0{name}".encode()).hexdigest(),
-                            review_url=url,
-                            reviewer=name,
-                            publisher=name,
-                            title=str(review.get("title") or indexed.get("text") or "ClaimReview"),
-                            textual_rating=review.get("textualRating") or None,
-                            stance=map_google_fact_check_rating(review.get("textualRating")),
-                            source_tier=tier,
-                            trusted_claim_review=trusted,
-                            published_at=published,
-                            observed_at=observed,
+            seen_urls: set[str] = set()
+            for payload in payloads:
+                if not isinstance(payload, dict):
+                    continue
+                for indexed in payload.get("claims", []):
+                    for review in indexed.get("claimReview", []):
+                        publisher = review.get("publisher") or {}
+                        url = review.get("url")
+                        name = publisher.get("name")
+                        if not url or not name or url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+                        observed = _now()
+                        decision = self._classify(url, observed) if self._classify else None
+                        tier = str(getattr(decision, "tier", "untrusted")).lower().replace("sourcetier.", "")
+                        trusted = bool(getattr(decision, "trusted_claim_review", False))
+                        date_raw = review.get("reviewDate")
+                        try:
+                            published = datetime.fromisoformat(date_raw.replace("Z", "+00:00")) if date_raw else None
+                            if published is not None and published.tzinfo is None:
+                                published = published.replace(tzinfo=UTC)
+                        except (ValueError, AttributeError):
+                            published = None
+                        results.append(
+                            GoogleClaimReviewMatch(
+                                claim_text=str(indexed.get("text") or claim.normalized_text),
+                                review_ref="claimreview:sha256:" + sha256(f"{url}\0{name}".encode()).hexdigest(),
+                                review_url=url,
+                                reviewer=name,
+                                publisher=name,
+                                title=str(review.get("title") or indexed.get("text") or "ClaimReview"),
+                                textual_rating=review.get("textualRating") or None,
+                                stance=map_google_fact_check_rating(review.get("textualRating")),
+                                source_tier=tier,
+                                trusted_claim_review=trusted,
+                                published_at=published,
+                                observed_at=observed,
+                            )
                         )
-                    )
             return NormalizedToolResult(
                 status=ToolResultStatus.SUCCESS if results else ToolResultStatus.INCONCLUSIVE,
                 result=results,
                 cache=_miss(),
                 usage=_usage(
-                    self.provider, self.provider_version, "claims.search", started, response_units=len(results)
+                    self.provider,
+                    self.provider_version,
+                    "claims.search",
+                    started,
+                    calls=len(variants),
+                    response_units=len(results),
                 ),
             )
-        except (httpx.TimeoutException, httpx.HTTPError, ValueError):
+        except (TypeError, ValueError):
             return _failure(
                 ToolName.FACT_CHECK_CORPUS,
                 self.provider,
@@ -277,8 +343,9 @@ class GoogleClaimSearchAdapter:
                 "claims.search",
                 started,
                 ToolErrorCode.PROVIDER_ERROR,
-                "Google Claim Search failed",
-                retryable=True,
+                "Google Claim Search returned an invalid response payload",
+                retryable=False,
+                calls=len(variants),
             )
 
     async def aclose(self) -> None:
@@ -339,6 +406,8 @@ class EvidenceChunker:
                             index=index,
                             text=body,
                             canonical_url=item.canonical_url,
+                            title=item.title,
+                            publisher=item.publisher,
                             content_sha256=item.content_sha256,
                             source_tier=item.source_tier,
                             source_version=item.source_version,
@@ -382,14 +451,51 @@ class FlashRankReranker:
                     rerank_score=float(row.get("score", 0)),
                     text=item.text,
                     canonical_url=item.canonical_url,
-                    title="Web evidence",
-                    publisher=urlsplit(item.canonical_url).hostname or "unknown",
+                    title=item.title,
+                    publisher=item.publisher,
                     source_tier=item.source_tier,
                     source_version=item.source_version,
                     published_at=item.published_at,
                 )
             )
         return output
+
+
+class LexicalEvidenceReranker:
+    """Dependency-free fallback used when the optional FlashRank runtime is unavailable."""
+
+    @staticmethod
+    def _tokens(value: str) -> set[str]:
+        return {token for token in re.findall(r"\w+", value.casefold()) if len(token) > 1}
+
+    def rank(
+        self, claim: ExtractedClaim, candidates: Sequence[EvidenceChunk], *, top_k: int = 5
+    ) -> list[RerankedCandidate]:
+        query_tokens = self._tokens(claim.normalized_text)
+
+        def score(item: EvidenceChunk) -> float:
+            candidate_tokens = self._tokens(item.text)
+            if not query_tokens or not candidate_tokens:
+                return 0.0
+            return len(query_tokens & candidate_tokens) / len(query_tokens)
+
+        ranked = sorted(candidates, key=lambda item: (-score(item), item.index, item.chunk_ref))
+        return [
+            RerankedCandidate(
+                chunk_ref=item.chunk_ref,
+                evidence_ref=item.evidence_ref,
+                rank=position,
+                rerank_score=score(item),
+                text=item.text,
+                canonical_url=item.canonical_url,
+                title=item.title,
+                publisher=item.publisher,
+                source_tier=item.source_tier,
+                source_version=item.source_version,
+                published_at=item.published_at,
+            )
+            for position, item in enumerate(ranked[: min(top_k, 5)], 1)
+        ]
 
 
 def clean_reader_content(value: str) -> str:
@@ -409,60 +515,122 @@ class TavilySearchAdapter:
         client: httpx.AsyncClient | None = None,
         timeout: float = 10,
         allowed_domains: Callable[[ExtractedClaim], Sequence[str]] | None = None,
+        official_domains: Callable[[ExtractedClaim], Sequence[str]] | None = None,
         classify_source: Callable[[str, datetime], Any] | None = None,
     ) -> None:
-        self.api_key, self._domains, self._classify = api_key, allowed_domains, classify_source
+        self.api_key = api_key
+        self._domains = allowed_domains
+        self._official_domains = official_domains
+        self._classify = classify_source
         self._client = client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
 
     async def search(self, claim: ExtractedClaim, *, max_results: int = 10) -> NormalizedToolResult[list[WebCandidate]]:
         started = perf_counter()
         maximum = min(max(1, max_results), 10)
-        body: dict[str, Any] = {
-            "api_key": self.api_key,
-            "query": claim.normalized_text,
-            "max_results": maximum,
-            "include_answer": False,
-            "include_raw_content": False,
-        }
+        variants = claim.query_variants
         domains = list(self._domains(claim)) if self._domains else []
-        if domains:
-            body["include_domains"] = domains
-        if claim.claim_date_start:
-            body["start_date"] = claim.claim_date_start.isoformat()
-        if claim.claim_date_end:
-            body["end_date"] = claim.claim_date_end.isoformat()
-        try:
+        official_domains = list(self._official_domains(claim)) if self._official_domains else []
+
+        async def fetch(query):
+            body: dict[str, Any] = {
+                "api_key": self.api_key,
+                "query": query.text,
+                "max_results": maximum,
+                "include_answer": False,
+                "include_raw_content": False,
+            }
+            query_folded = query.text.casefold()
+            official_query = bool(
+                official_domains and any(marker in query_folded for marker in ("official", "chính thức"))
+            )
+            body["search_depth"] = "advanced" if official_query else "basic"
+            preferred_domains = official_domains if official_query else domains
+            if preferred_domains:
+                body["include_domains"] = preferred_domains
+            # Claim dates describe when the asserted event/policy applies,
+            # not when corroborating articles were published. A future policy
+            # can be documented by an article published before its start date.
             response = await self._client.post(self.endpoint, json=body)
             response.raise_for_status()
+            return response.json()
+
+        responses = await asyncio.gather(*(fetch(query) for query in variants), return_exceptions=True)
+        payloads = [item for item in responses if not isinstance(item, BaseException)]
+        if not payloads:
+            code, message, retryable, retry_after_ms, http_status_code = _provider_failure_details(
+                [item for item in responses if isinstance(item, BaseException)], "Tavily search"
+            )
+            return _failure(
+                ToolName.FACT_CHECK_CORPUS,
+                self.provider,
+                self.provider_version,
+                "search",
+                started,
+                code,
+                message,
+                retryable=retryable,
+                retry_after_ms=retry_after_ms,
+                http_status_code=http_status_code,
+                calls=len(variants),
+            )
+
+        try:
             output, seen = [], set()
-            for row in response.json().get("results", [])[:maximum]:
-                url = canonicalize_evidence_url(str(row.get("url", "")))
-                if not url or url in seen:
-                    continue
-                seen.add(url)
-                host = urlsplit(url).hostname or "unknown"
-                decision = self._classify(url, _now()) if self._classify else None
-                tier = getattr(getattr(decision, "tier", None), "value", None) or "untrusted"
-                publisher = getattr(decision, "publisher", None) or host
-                output.append(
-                    WebCandidate(
-                        evidence_ref="web:sha256:" + sha256(url.encode()).hexdigest(),
-                        canonical_url=url,
-                        title=str(row.get("title") or host),
-                        snippet=str(row.get("content") or "No snippet"),
-                        publisher=publisher,
-                        source_tier=str(tier),
-                        source_version=self.provider_version,
+            row_groups = [payload.get("results", []) for payload in payloads if isinstance(payload, dict)]
+            maximum_group_size = max((len(rows) for rows in row_groups), default=0)
+            for index in range(maximum_group_size):
+                for rows in row_groups:
+                    if index >= len(rows):
+                        continue
+                    row = rows[index]
+                    raw_url = str(row.get("url") or "").strip()
+                    if not raw_url:
+                        continue
+                    url = canonicalize_evidence_url(raw_url)
+                    if url in seen:
+                        continue
+                    seen.add(url)
+                    host = urlsplit(url).hostname or "unknown"
+                    decision = self._classify(url, _now()) if self._classify else None
+                    tier = getattr(getattr(decision, "tier", None), "value", None) or "untrusted"
+                    publisher = getattr(decision, "publisher", None) or host
+                    output.append(
+                        WebCandidate(
+                            evidence_ref="web:sha256:" + sha256(url.encode()).hexdigest(),
+                            canonical_url=url,
+                            title=str(row.get("title") or host),
+                            snippet=str(row.get("content") or "No snippet"),
+                            publisher=publisher,
+                            source_tier=str(tier),
+                            source_version=self.provider_version,
+                        )
                     )
-                )
+            unique_publishers: list[WebCandidate] = []
+            repeated_publishers: list[WebCandidate] = []
+            seen_publishers: set[str] = set()
+            for candidate in output:
+                publisher = candidate.publisher.casefold()
+                if publisher in seen_publishers:
+                    repeated_publishers.append(candidate)
+                    continue
+                seen_publishers.add(publisher)
+                unique_publishers.append(candidate)
+            output = (unique_publishers + repeated_publishers)[:maximum]
             return NormalizedToolResult(
                 status=ToolResultStatus.SUCCESS if output else ToolResultStatus.INCONCLUSIVE,
                 result=output,
                 cache=_miss(),
-                usage=_usage(self.provider, self.provider_version, "search", started, response_units=len(output)),
+                usage=_usage(
+                    self.provider,
+                    self.provider_version,
+                    "search",
+                    started,
+                    calls=len(variants),
+                    response_units=len(output),
+                ),
             )
-        except (httpx.HTTPError, ValueError):
+        except (TypeError, ValueError):
             return _failure(
                 ToolName.FACT_CHECK_CORPUS,
                 self.provider,
@@ -470,8 +638,9 @@ class TavilySearchAdapter:
                 "search",
                 started,
                 ToolErrorCode.PROVIDER_ERROR,
-                "Tavily search failed",
-                retryable=True,
+                "Tavily search returned an invalid response payload",
+                retryable=False,
+                calls=len(variants),
             )
 
     async def aclose(self) -> None:
@@ -506,7 +675,10 @@ class JinaReaderAdapter:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             response = await self._client.get("https://r.jina.ai/" + candidate.canonical_url, headers=headers)
             response.raise_for_status()
-            cleaned = clean_reader_content(response.text)
+            reader_content = clean_reader_content(response.text)
+            cleaned = "\n\n".join(
+                part.strip() for part in (candidate.title, candidate.snippet, reader_content) if part and part.strip()
+            )
             digest = sha256(cleaned.encode()).hexdigest()
             result = FetchedEvidence(
                 evidence_ref=candidate.evidence_ref,

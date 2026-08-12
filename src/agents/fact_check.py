@@ -13,7 +13,7 @@ from hashlib import sha256
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.models import ClaimEvidence, ClaimStance, ToolError
 
@@ -31,6 +31,39 @@ class EmbeddingStatus(StrEnum):
     NOT_CONFIGURED = "not_configured"
 
 
+_LANGUAGE_ALIASES = {
+    "english": "en",
+    "eng": "en",
+    "vietnamese": "vi",
+    "vietnam": "vi",
+    "tiếng việt": "vi",
+    "tieng viet": "vi",
+}
+
+
+def normalize_language_tag(value: str) -> str:
+    """Normalize common LLM language names to bounded BCP-47-style tags."""
+    normalized = unicodedata.normalize("NFKC", value).strip().casefold().replace("_", "-")
+    normalized = _LANGUAGE_ALIASES.get(normalized, normalized)
+    if not re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", normalized):
+        raise ValueError("language must be a supported BCP-47-style tag")
+    return normalized
+
+
+class ClaimSearchQuery(BaseModel):
+    """A bounded, language-tagged query derived from the user's claim."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    text: str = Field(min_length=1, max_length=1000)
+    language: str = Field(min_length=2, max_length=35)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, value: str) -> str:
+        return normalize_language_tag(value)
+
+
 class ExtractedClaim(BaseModel):
     """Private, canonical claim representation used by the Wave 2 pipeline."""
 
@@ -42,6 +75,12 @@ class ExtractedClaim(BaseModel):
     is_temporal: bool = False
     claim_date_start: date | None = None
     claim_date_end: date | None = None
+    search_queries: tuple[ClaimSearchQuery, ...] = Field(default=(), max_length=3)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, value: str) -> str:
+        return normalize_language_tag(value)
 
     @model_validator(mode="after")
     def validate_dates(self) -> ExtractedClaim:
@@ -49,7 +88,22 @@ class ExtractedClaim(BaseModel):
             raise ValueError("claim date range is reversed")
         if (self.claim_date_start or self.claim_date_end) and not self.is_temporal:
             raise ValueError("dated claims must be temporal")
+        keys = [item.text.casefold() for item in self.search_queries]
+        if len(keys) != len(set(keys)):
+            raise ValueError("claim search queries must be unique")
         return self
+
+    @property
+    def query_variants(self) -> tuple[ClaimSearchQuery, ...]:
+        variants = [ClaimSearchQuery(text=self.normalized_text, language=self.language), *self.search_queries]
+        output: list[ClaimSearchQuery] = []
+        seen: set[str] = set()
+        for item in variants:
+            key = item.text.casefold()
+            if key not in seen:
+                seen.add(key)
+                output.append(item)
+        return tuple(output)
 
     @classmethod
     def from_text(
@@ -60,17 +114,29 @@ class ExtractedClaim(BaseModel):
         claim_date_start: date | None = None,
         claim_date_end: date | None = None,
         is_temporal: bool | None = None,
+        search_queries: Sequence[ClaimSearchQuery] = (),
     ) -> ExtractedClaim:
         normalized = canonicalize_claim(text)
-        digest = sha256(f"{language}\0{normalized}".encode()).hexdigest()
+        normalized_language = normalize_language_tag(language)
+        digest = sha256(f"{normalized_language}\0{normalized}".encode()).hexdigest()
         temporal = bool(claim_date_start or claim_date_end) if is_temporal is None else is_temporal
+        normalized_queries: list[ClaimSearchQuery] = []
+        seen_query_texts = {normalized.casefold()}
+        for item in search_queries:
+            query = ClaimSearchQuery(text=canonicalize_claim(item.text), language=item.language)
+            key = query.text.casefold()
+            if key in seen_query_texts:
+                continue
+            seen_query_texts.add(key)
+            normalized_queries.append(query)
         return cls(
             claim_id=f"claim:{digest}",
             normalized_text=normalized,
-            language=language,
+            language=normalized_language,
             is_temporal=temporal,
             claim_date_start=claim_date_start,
             claim_date_end=claim_date_end,
+            search_queries=tuple(normalized_queries),
         )
 
 
@@ -211,13 +277,17 @@ def _unwrap(envelope: Any) -> tuple[Any, str | None, ToolError | None]:
     if status in {"blocked", "failed"}:
         error = _get(envelope, "error")
         code = _enum_value(_get(error, "code", "PROVIDER_ERROR"))
+        message = str(_get(error, "message", "Fact-check provider failed"))
+        http_status_code = _get(error, "http_status_code")
+        if http_status_code is not None and f"HTTP {http_status_code}" not in message:
+            message = f"{message} (HTTP {http_status_code})"
         return (
             None,
             usage_ref,
             ToolError(
                 tool=str(_enum_value(_get(error, "tool", "fact_check"))),
                 code=str(code),
-                message=str(_get(error, "message", "Fact-check provider failed")),
+                message=message,
                 retryable=bool(_get(error, "retryable", False)),
             ),
         )
@@ -235,7 +305,13 @@ def _source_tier(value: Any) -> SourceTier:
 
 def _as_candidate(item: Any, *, default_ref_prefix: str) -> EvidenceCandidate:
     record = _get(item, "record", item)
-    source_url = str(_get(record, "source_url", _get(item, "url", _get(item, "canonical_url", ""))))
+    source_url = str(
+        _get(
+            record,
+            "source_url",
+            _get(item, "review_url", _get(item, "url", _get(item, "canonical_url", ""))),
+        )
+    )
     publisher = str(_get(record, "publisher", _get(item, "publisher", _get(item, "reviewer", "unknown"))))
     record_id = str(_get(record, "record_id", _get(item, "review_ref", "")))
     evidence_ref = str(_get(item, "evidence_ref", "")) or (
@@ -257,7 +333,15 @@ def _as_candidate(item: Any, *, default_ref_prefix: str) -> EvidenceCandidate:
         stance=stance,
         title=str(_get(item, "title", f"Fact-check by {publisher}")),
         finding=str(
-            _get(record, "claim", _get(item, "finding", _get(item, "text", "Evidence matched the extracted claim.")))
+            _get(
+                record,
+                "claim",
+                _get(
+                    item,
+                    "finding",
+                    _get(item, "claim_text", _get(item, "text", "Evidence matched the extracted claim.")),
+                ),
+            )
         ),
         observed_at=observed_at,
         published_at=_get(record, "published_at", _get(item, "published_at")),
@@ -273,19 +357,22 @@ def _temporal_compatible(claim: ExtractedClaim, item: EvidenceCandidate) -> bool
     if not claim.is_temporal:
         return True
 
-    if item.effective_from is not None or item.effective_to is not None:
-        evidence_start = item.effective_from
-        evidence_end = item.effective_to
-    else:
-        # Publication time is a point-in-time proxy when no effective interval exists.
-        evidence_start = evidence_end = item.published_at.date() if item.published_at else None
-    if evidence_start is None and evidence_end is None:
-        return False
-
     claim_start = claim.claim_date_start
     claim_end = claim.claim_date_end
     if claim_start is None and claim_end is None:
         return True
+
+    if item.effective_from is None and item.effective_to is None:
+        # Publication date is provenance metadata, not the effective period of
+        # the policy/event discussed by the source. The comparator evaluates
+        # that temporal relationship from the evidence content.
+        return True
+
+    evidence_start = item.effective_from
+    evidence_end = item.effective_to
+    if evidence_start is None and evidence_end is None:
+        return False
+
     if claim_end is not None and evidence_start is not None and evidence_start > claim_end:
         return False
     if claim_start is not None and evidence_end is not None and evidence_end < claim_start:
@@ -544,7 +631,7 @@ class FactCheckOrchestrator:
             limitations.append("Tavily không hoàn tất; không tạo citation thay thế.")
             return []
 
-        approved: list[Any] = []
+        eligible_candidates: list[tuple[Any, str, SourceTier]] = []
         seen_urls: set[str] = set()
         for candidate in candidates:
             url = str(_get(candidate, "canonical_url", _get(candidate, "url", "")))
@@ -552,13 +639,47 @@ class FactCheckOrchestrator:
                 continue
             seen_urls.add(url)
             decision = self.source_registry.classify(url, datetime.now(UTC)) if self.source_registry else candidate
-            if _source_tier(_get(decision, "source_tier", _get(decision, "tier"))) is SourceTier.UNTRUSTED:
+            tier = _source_tier(_get(decision, "source_tier", _get(decision, "tier")))
+            if tier is SourceTier.UNTRUSTED:
                 continue
             if bool(_get(decision, "explicit_deny", False)):
                 continue
+            publisher = str(
+                _get(decision, "publisher", None)
+                or _get(candidate, "publisher", None)
+                or (urlsplit(url).hostname or "unknown")
+            ).casefold()
+            eligible_candidates.append((candidate, publisher, tier))
+
+        # Preserve Tavily relevance order while ensuring the bounded reader
+        # budget covers independent publishers before duplicate outlets.
+        approved: list[Any] = []
+        deferred: list[Any] = []
+        seen_publishers: set[str] = set()
+        tier_a_count = sum(tier is SourceTier.A for _, _, tier in eligible_candidates)
+        unique_limit = 4 if tier_a_count >= 2 else 5
+        for candidate, publisher, _tier in eligible_candidates:
+            if publisher in seen_publishers:
+                deferred.append(candidate)
+                continue
+            seen_publishers.add(publisher)
             approved.append(candidate)
-            if len(approved) == 5:
+            if len(approved) == unique_limit:
                 break
+        if tier_a_count >= 2 and len(approved) < 5:
+            second_tier_a = next(
+                (
+                    candidate
+                    for candidate, _publisher, tier in eligible_candidates
+                    if tier is SourceTier.A and candidate not in approved
+                ),
+                None,
+            )
+            if second_tier_a is not None:
+                approved.append(second_tier_a)
+        if len(approved) < 5:
+            approved.extend(candidate for candidate in deferred if candidate not in approved)
+            approved = approved[:5]
         if self.jina_reader is None or not approved:
             return []
         fetched: list[Any] = []
@@ -590,6 +711,31 @@ class FactCheckOrchestrator:
 
     async def _compare_or_project(self, claim, candidates, limitations, errors, usage_refs):
         eligible = [item for item in candidates if _source_tier(_get(item, "source_tier")) is not SourceTier.UNTRUSTED]
+        projected = [item for item in eligible if _get(item, "stance", ClaimStance.UNRATED) is not ClaimStance.UNRATED]
+
+        def project_rated_sources():
+            stances = {ClaimStance(_enum_value(_get(item, "stance"))) for item in projected}
+            if ClaimStance.SUPPORTS in stances and ClaimStance.REFUTES in stances:
+                limitations.append("Các nguồn fact-check đáng tin cậy đang mâu thuẫn; kết quả claim chưa kết luận.")
+                return []
+            return [self._to_claim_evidence(item, ClaimStance(_enum_value(_get(item, "stance")))) for item in projected]
+
+        def comparator_fallback(reason: str):
+            if projected:
+                return project_rated_sources()
+            limitations.append(f"{reason}; kết quả claim là inconclusive.")
+            return []
+
+        def impactful_comparator_limitations(result: Any) -> list[str]:
+            output: list[str] = []
+            for item in _get(result, "limitations", ()):
+                if not bool(_get(item, "impacts_verdict", False)):
+                    continue
+                message = str(_get(item, "message_vi", "")).strip()
+                if message:
+                    output.append(message)
+            return output
+
         if self.comparator is not None and eligible:
             try:
                 submitted = eligible[:5]
@@ -599,31 +745,25 @@ class FactCheckOrchestrator:
                     usage_refs.append(usage_ref)
                 if error:
                     errors.append(error)
-                    limitations.append("Comparator không hoàn tất; kết quả claim là inconclusive.")
+                    return comparator_fallback("Comparator không hoàn tất")
+                stance_value = _enum_value(_get(result, "stance", "inconclusive"))
+                if stance_value == "inconclusive":
+                    if projected:
+                        return project_rated_sources()
+                    limitations.extend(impactful_comparator_limitations(result))
                     return []
                 allowed_refs = {str(_get(item, "evidence_ref", _get(item, "chunk_ref", ""))) for item in submitted}
                 cited_refs = [str(ref) for ref in _get(result, "evidence_refs", ())]
                 if not cited_refs or any(ref not in allowed_refs for ref in cited_refs):
-                    limitations.append("Comparator trả citation không hợp lệ; kết quả bị loại.")
-                    return []
-                stance_value = _enum_value(_get(result, "stance", "inconclusive"))
-                if stance_value == "inconclusive":
-                    limitations.extend(str(item) for item in _get(result, "limitations", ()))
-                    return []
+                    return comparator_fallback("Comparator trả citation không hợp lệ")
                 stance = ClaimStance(stance_value)
                 by_ref = {str(_get(item, "evidence_ref", _get(item, "chunk_ref", ""))): item for item in submitted}
                 return [self._to_claim_evidence(by_ref[ref], stance) for ref in cited_refs]
             except Exception as exc:
                 errors.append(ToolError(tool="comparator", code="PROVIDER_ERROR", message=str(exc), retryable=True))
-                limitations.append("Comparator không hoàn tất; kết quả claim là inconclusive.")
-                return []
+                return comparator_fallback("Comparator không hoàn tất")
 
-        projected = [item for item in eligible if _get(item, "stance", ClaimStance.UNRATED) is not ClaimStance.UNRATED]
-        stances = {ClaimStance(_enum_value(_get(item, "stance"))) for item in projected}
-        if ClaimStance.SUPPORTS in stances and ClaimStance.REFUTES in stances:
-            limitations.append("Các nguồn fact-check đáng tin cậy đang mâu thuẫn; kết quả claim chưa kết luận.")
-            return []
-        return [self._to_claim_evidence(item, ClaimStance(_enum_value(_get(item, "stance")))) for item in projected]
+        return project_rated_sources()
 
     @staticmethod
     def _to_claim_evidence(item: Any, stance: ClaimStance) -> ClaimEvidence:
@@ -639,6 +779,7 @@ class FactCheckOrchestrator:
 
 
 __all__ = [
+    "ClaimSearchQuery",
     "EmbeddingStatus",
     "EvidenceCandidate",
     "EvidenceSufficiency",
