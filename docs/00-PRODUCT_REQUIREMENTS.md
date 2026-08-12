@@ -60,8 +60,8 @@ cần được kiểm chứng trong Wave 3. Demo bearer token chỉ dành cho de
 6. URL reputation và RDAP/WHOIS có thể chạy song song; redirect được kiểm tra từng hop. Với tối đa
    năm claim đủ điều kiện, agent redact/canonicalize rồi gọi một embeddings batch. Từng claim chạy
    song song Google Claim Search và PostgreSQL FTS/pgvector, sau đó áp evidence-sufficiency gate.
-7. Chỉ khi evidence chưa đủ, Tavily tìm URL theo Source Registry; Jina Reader trích text,
-   `langchain-text-splitters` tạo chunk và FlashRank multilingual chọn top 5. External LLM so sánh
+7. Chỉ khi evidence chưa đủ, Tavily Search tìm URL theo Source Registry; Tavily Extract nhận exact
+   claim để rerank ba đoạn liên quan trên tối đa năm URL. External LLM so sánh
    evidence và trả stance có schema/citation. Risk Engine hợp nhất structured
    evidence thành score/verdict/action deterministic; LLM không ghi trực tiếp ba trường này.
 8. UI cập nhật kết luận cuối, lý do, nguồn, thời điểm quan sát, limitation và hành động khuyến nghị.
@@ -89,8 +89,7 @@ không quá 10 giây khi provider hoạt động bình thường. Timeout phải
 ### 4.2 Advanced intelligence
 
 - Fact-check external-model-first với batch embedding, PostgreSQL FTS + pgvector, Google Fact Check
-  Claim Search, conditional Tavily Search, Jina Reader, `langchain-text-splitters`, local CPU
-  FlashRank multilingual và evidence comparison có citation.
+  Claim Search, conditional Tavily Search/Extract và evidence comparison có citation.
 - Screenshot renderer sandboxed, không cookie/credential/login, có consent và giới hạn tài nguyên.
 - Phát hiện campaign theo cụm URL/domain/claim, không suy diễn danh tính người gửi.
 - Feedback learning theo batch có evaluation và admin approval; không online-learn trực tiếp.
@@ -127,9 +126,8 @@ runtime gates tương ứng đã xanh; không có release MVP ở giữa.
   effective và retrieval date. Effective interval phù hợp được ưu tiên; thiếu effective date có thể
   dùng publication/update date làm proxy với penalty và limitation; không có ngày thì loại.
 - **Cost/latency:** tối đa năm claim dùng một embeddings request, sau đó fan-out tối đa ba claim;
-  chỉ gọi Tavily/Jina sau evidence-sufficiency gate; provider calls tuân deadline/quota/budget.
-- **Model boundary:** embedding/comparison không fallback sang model local. FlashRank là ngoại lệ
-  reranker local CPU, không sinh verdict. Khi embeddings lỗi, pipeline bỏ qua vector retrieval,
+  chỉ gọi Tavily Search/Extract sau evidence-sufficiency gate; provider calls tuân deadline/quota/budget.
+- **Model boundary:** embedding/comparison không fallback sang model local. Khi embeddings lỗi, pipeline bỏ qua vector retrieval,
   tiếp tục Google/corpus lexical và conditional web, đồng thời ghi limitation.
 - **Unsafe navigation:** URL đáng ngờ không hiển thị thành anchor trực tiếp; redirect/screenshot phải
   qua SSRF guard, DNS revalidation, hop/body/time limit.
@@ -140,8 +138,8 @@ runtime gates tương ứng đã xanh; không có release MVP ở giữa.
   release threshold sau khi có baseline, không đặt số tùy ý trước khi đo.
 - Tỷ lệ analysis có evidence/limitation đầy đủ và tỷ lệ no-hit/timeout không bị diễn đạt thành safe.
 - Provisional/final latency p50/p95, tool timeout, cache hit và số call mỗi analysis.
-- Token và chi phí theo embedding/Google/Tavily/Jina/comparison; FTS/vector/cache hit, tỷ lệ tránh
-  Tavily, temporal-incompatible evidence, FlashRank latency, stale rate, 429 và budget-exhausted.
+- Token và chi phí theo embedding/Google/Tavily Search/Extract/comparison; FTS/vector/cache hit, tỷ lệ tránh
+  Tavily, temporal-incompatible evidence, extract latency, stale rate, 429 và budget-exhausted.
 - Tỷ lệ critical case được review, thời gian review, appeal uphold rate và blacklist rollback.
 - Campaign cluster precision phải được reviewer xác nhận trước khi dùng cho broad warning.
 
@@ -170,7 +168,7 @@ runtime gates tương ứng đã xanh; không có release MVP ở giữa.
 | AC-19 | Embedding API timeout/429 | Không tạo embedding fallback local; vẫn chạy Google/FTS và conditional web trong budget, có limitation. |
 | AC-20 | Temporal claim tìm thấy bài semantic-relevant nhưng sai thời điểm | Evidence bị loại hoặc hạ hạng theo effective/publication proxy; semantic score không được lấn át temporal incompatibility. |
 | AC-21 | Google Fact Check trả match | Match được ghi là ClaimReview của publisher/reviewer, không được trình bày như verdict do Google xác minh. |
-| AC-22 | Một Tier A temporal-compatible, một trusted ClaimReview Tier B, hoặc hai Tier B độc lập | Evidence gate đủ; không gọi Tavily/Jina và chuyển thẳng comparator. |
-| AC-23 | Chỉ có Tier C/Untrusted hoặc evidence chưa đủ | Tier C không tự đủ, Untrusted bị loại; Tavily chỉ tìm domain registry cho phép rồi Jina fetch tối đa 5 URL. |
+| AC-22 | Một Tier A temporal-compatible, một trusted ClaimReview Tier B, hoặc hai Tier B độc lập | Evidence gate đủ; không gọi Tavily Search/Extract và chuyển thẳng comparator. |
+| AC-23 | Chỉ có Tier C/Untrusted hoặc evidence chưa đủ | Tier C không tự đủ, Untrusted bị loại; Tavily Search chỉ tìm domain registry cho phép rồi Extract xử lý tối đa 5 URL. |
 | AC-24 | Web evidence mới hợp lệ | Deduplicate rồi cache ngay; chỉ bản Tier A/B đã validate/review mới được promote trusted corpus. |
-| AC-25 | Jina/FlashRank lỗi | Trả evidence khả dụng kèm limitation hoặc `inconclusive`; không bịa citation và không trả safe. |
+| AC-25 | Tavily Extract lỗi toàn phần hoặc một phần | Trả evidence khả dụng kèm limitation hoặc `inconclusive`; không bịa citation và không trả safe. |

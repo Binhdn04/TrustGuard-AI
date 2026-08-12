@@ -109,7 +109,7 @@ Các structured output nội bộ:
 
 Wave 2 đã thêm representation tối đa năm claim có language/temporal metadata và `ClaimAssessment`
 cho comparison stance/citation. Đây là private workflow state, không thêm field vào public
-`AnalysisResponse`. Production factory compose PostgreSQL hybrid corpus, chunker, FlashRank và
+`AnalysisResponse`. Production factory compose PostgreSQL hybrid corpus, Tavily Search/Extract và
 schema-bound comparator; adapter thiếu key vẫn fail closed/inconclusive, còn
 `LIVE_PROVIDERS_REQUIRED=true` biến thiếu key thành lỗi startup/readiness.
 
@@ -128,8 +128,7 @@ tế là model `gpt-4o-mini`, temperature `0.7`, timeout 30 giây, `max_retries=
 | External embedding | `OpenAIEmbeddingProvider` — `text-embedding-3-small` | Inject khi có OpenAI key; không có local-model fallback |
 | Existing corpus | PostgreSQL FTS + pgvector/RRF implementation | Inject trong production worker |
 | Web discovery | `TavilySearch` | Chỉ sau sufficiency miss; domain filter từ Source Registry |
-| Web extraction | `JinaReader` | Tối đa 5 canonical URL đã qua policy |
-| Chunking/rerank | `langchain-text-splitters` + FlashRank `ms-marco-MultiBERT-L-12` | Local CPU; top 5; Docker preload model; không sinh verdict |
+| Web extraction/rerank | `TavilyExtract` | Tối đa 5 canonical URL đã qua policy; 3 relevance-ranked chunks mỗi nguồn |
 | Domain intelligence | Lazy `RdapDomainIntelligence` | Inject sẵn; chỉ tạo request sau consent/policy |
 | Redirect resolver | `GuardedRedirectResolver` | Inject sẵn; revalidate từng hop |
 | Offline tools | Fake URL/claim/domain/blacklist adapters | Test only |
@@ -215,9 +214,8 @@ flowchart TB
     Worker --> Reputation[GSB / Web Risk / VirusTotal]
     Worker --> Domain[RDAP-first WHOIS + redirect resolver]
     Worker --> Facts[Google Claim Search + PostgreSQL hybrid]
-    Facts -. insufficient .-> WebEvidence[Tavily + Jina Reader]
+    Facts -. insufficient .-> WebEvidence[Tavily Search + Extract]
     Worker --> Embed[text-embedding-3-small API]
-    Worker --> Rerank[langchain splitters + FlashRank CPU]
     Worker --> LLM[GPT-4o-mini extraction/comparison]
     Worker -. advanced + consent .-> Screenshot[Sandbox screenshot renderer]
 ```
@@ -278,7 +276,7 @@ domain/redirect signals; hypothesis chỉ hiện trong admin và không có code
 ### 9.3 Fact-check: retrieve first, search web only when needed
 
 `gpt-4o-mini` dùng Structured Outputs để extract tối đa năm claim và so sánh evidence;
-`text-embedding-3-small` tạo một embeddings batch cho semantic retrieval. FlashRank là ngoại lệ local:
+`text-embedding-3-small` tạo một embeddings batch cho semantic retrieval. Nhánh web không tải model local:
 reranker CPU chỉ sắp hạng candidate, không xác minh claim và không ghi risk score. Tham chiếu:
 [GPT-4o mini](https://developers.openai.com/api/docs/models/gpt-4o-mini),
 [text-embedding-3-small](https://developers.openai.com/api/docs/models/text-embedding-3-small).
@@ -299,13 +297,11 @@ flowchart TD
     J --> K
     K --> L{Evidence sufficient?}
     L -->|Yes| R[Candidate set]
+    R --> T
     L -->|No| M[Tavily Search max 10]
     M --> N[Source Registry + canonical URL dedupe]
-    N -->|max 5 URLs| O[Jina Reader]
-    O --> P[RecursiveCharacterTextSplitter]
-    P --> R
-    R --> S[FlashRank multilingual CPU]
-    S -->|top 5| T[GPT-4o-mini evidence comparison]
+    N -->|max 5 URLs| O[Tavily Extract]
+    O -->|query rerank, 3 chunks/source| T[GPT-4o-mini evidence comparison]
     T --> U[supports / refutes / mixed / inconclusive + citations]
     U --> V[Persist cache + provenance]
     V --> W[Deterministic Risk Engine]
@@ -349,29 +345,24 @@ effective interval, `updated_at`/`published_at` được dùng làm proxy với 
 không có bất kỳ ngày nào thì loại khỏi temporal comparison. Semantic relevance không được override
 temporal incompatibility.
 
-#### Conditional web retrieval, chunking và rerank
+#### Conditional web retrieval và intent-based extraction
 
 Chỉ evidence-sufficiency miss mới gọi Tavily, giúp giảm cost/latency/token và phụ thuộc external API.
 Request dùng `max_results=10`, không lấy generated answer/raw content, truyền `include_domains` từ
 Source Registry; temporal query dùng news/date range tương ứng. Sau policy check và canonical URL
-dedupe, tối đa năm URL đi qua Jina Reader để lấy cleaned text/Markdown. Xem
-[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) và
-[Jina Reader](https://jina.ai/reader/).
-
-`RecursiveCharacterTextSplitter` dùng `chunk_size=1200`, `chunk_overlap=150` và separator ưu tiên
-paragraph/sentence; mỗi chunk giữ source/version/date/content hash. FlashRank singleton chạy CPU với
-`ms-marco-MultiBERT-L-12`, `max_length=512`, chọn top 5 trên toàn bộ candidate. Model phải được bundle
-hoặc cache trong image, không download lúc request. Xem
-[LangChain text splitters](https://docs.langchain.com/oss/python/integrations/splitters/recursive_text_splitter)
-và [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank).
+dedupe, tối đa năm URL được gửi trong một Tavily Extract batch. Extract nhận exact claim qua `query`,
+`chunks_per_source=3`, `extract_depth=basic` và trả các đoạn tối đa 500 ký tự đã rerank theo relevance
+trong từng nguồn. Search score tiếp tục quyết định thứ tự nguồn; Source Registry quyết định eligibility.
+Xem [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) và
+[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract).
 
 Comparator chỉ nhận top 5 evidence đủ policy, trả `supports | refutes | mixed | inconclusive`, opaque
 citation refs, contradiction refs và limitations; citation ngoài input/sai schema/timeout thành
 `inconclusive`. Evidence web mới được canonicalize, dedupe theo URL + cleaned-content hash + source
 version rồi cache ngay. Chỉ Tier A/B đã validate/review mới được promote vào trusted corpus; Tier C
 không auto-promote. Runtime stance không bao giờ tự trở thành trusted record. Các boundary nội bộ là
-`GoogleClaimSearch`, `HybridCorpusRetriever`, `EvidenceSufficiencyGate`, `TavilySearch`, `JinaReader`,
-`Chunker`, `Reranker`, `SourceRegistry` và `EvidenceComparator`.
+`GoogleClaimSearch`, `HybridCorpusRetriever`, `EvidenceSufficiencyGate`, `TavilySearch`,
+`TavilyExtract`, `SourceRegistry` và `EvidenceComparator`.
 
 ### 9.4 Campaign và feedback
 
@@ -399,7 +390,7 @@ và phê duyệt, không online-learn trực tiếp.
 | Jobs | Durable worker/outbox, lease/retry/idempotency | Mở rộng chaos/recovery tests |
 | URL reputation | Web Risk primary, VirusTotal policy-gated secondary; fake default test | Provider operations hardening |
 | Domain/redirect | Lazy RDAP sau consent + guarded redirect resolver | Mở rộng provider coverage |
-| Fact-check | FTS/pgvector + Google chạy trước; conditional Tavily/Jina → chunk → FlashRank → comparator đã compose | Live-provider smoke, corpus ingestion operations và quality eval |
+| Fact-check | FTS/pgvector + Google chạy trước; conditional Tavily Search → Extract rerank → comparator đã compose | Live-provider smoke, corpus ingestion operations và quality eval |
 | Screenshot | Consent field, capture coordinator, guarded Playwright renderer, signed artifact API/UI và retention schema đã có | Production isolation/egress tests và operational evidence |
 | Feedback | Report/review, appeal/action, campaign detector/persistence/review, metrics và source admin đã có | Complete hosted E2E audit gates |
 | Deploy | Compose tách API/worker/frontend, PostgreSQL/Redis/Alembic và readiness đã có | Hosted rollout với secrets và rollback evidence |

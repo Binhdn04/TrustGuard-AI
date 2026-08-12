@@ -29,7 +29,6 @@ class Settings(BaseSettings):
 
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
-    jina_timeout_seconds: float = Field(default=20.0, gt=0.0, le=60.0)
     google_web_risk_api_key: str = ""
     virustotal_api_key: str = ""
     reputation_secondary_enabled: bool = True
@@ -37,7 +36,6 @@ class Settings(BaseSettings):
     google_safe_browsing_api_key: str = ""
     google_fact_check_api_key: str = ""
     tavily_api_key: str = ""
-    jina_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     live_providers_required: bool = False
     analysis_deadline_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
@@ -45,8 +43,9 @@ class Settings(BaseSettings):
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
-    flashrank_model: str = "ms-marco-MultiBERT-L-12"
-    flashrank_cache_dir: str = "./data/flashrank"
+    source_discovery_enabled: bool = True
+    source_provisional_enabled: bool = True
+    source_auto_promotion_enabled: bool = True
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
@@ -100,7 +99,6 @@ class Settings(BaseSettings):
                 "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
                 "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
                 "TAVILY_API_KEY": self.tavily_api_key,
-                "JINA_API_KEY": self.jina_api_key,
             }
             missing = [name for name, value in required.items() if not value]
             if missing:

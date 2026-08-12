@@ -57,7 +57,13 @@ export function ClaimResultCard({ claim }: ClaimResultCardProps) {
         <div className="flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-background shadow-sm border border-border", config.color)}>
-              {config.label}
+              {claim.provisional
+                ? claim.stance === "supports"
+                  ? "Xác nhận tạm thời"
+                  : claim.stance === "refutes"
+                    ? "Bác bỏ tạm thời"
+                    : "Kết luận tạm thời"
+                : config.label}
             </span>
             {claim.confidence !== null && (
               <span className="text-xs font-medium text-muted-foreground">
@@ -97,6 +103,11 @@ export function ClaimResultCard({ claim }: ClaimResultCardProps) {
                           {source.official && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/10 text-primary uppercase">
                               Chính thức
+                            </span>
+                          )}
+                          {source.provisional && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-700 uppercase">
+                              Tier C chưa duyệt
                             </span>
                           )}
                         </div>

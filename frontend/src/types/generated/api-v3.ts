@@ -309,6 +309,27 @@ export interface SourcePolicyRecordV3 extends SourcePolicyCreateRequestV3 {
   reviewed_at: string;
 }
 
+export interface SourceDiscoveryRecordV3 {
+  domain: string;
+  publisher: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  search_count: number;
+  extract_success_count: number;
+  independent_claim_count: number;
+  curated_comparison_count: number;
+  curated_agreement_count: number;
+  curated_conflict_count: number;
+  representative_urls: string[];
+  status: "observing" | "promoted" | "demoted" | "denied";
+  eligible_for_auto_promotion: boolean;
+}
+
+export interface SourceDiscoveryDecisionRequestV3 {
+  decision: "promote" | "deny" | "demote";
+  note: string;
+}
+
 export interface CapabilitiesResponseV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
   profile: "offline" | "partial" | "live";

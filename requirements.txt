@@ -9,9 +9,7 @@ httpx>=0.28.1
 # AI / LangChain
 langchain>=0.3.0
 langchain-openai>=0.3.0
-langchain-text-splitters>=0.3.0
 langgraph>=0.2.0
-flashrank>=0.2.10,<1.0.0
 
 # Durable platform runtime
 alembic>=1.14.0

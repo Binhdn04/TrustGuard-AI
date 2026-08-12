@@ -32,6 +32,8 @@ import type {
   ScreenshotStatusResponseV3,
   SourcePolicyCreateRequestV3,
   SourcePolicyRecordV3,
+  SourceDiscoveryRecordV3,
+  SourceDiscoveryDecisionRequestV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
@@ -75,6 +77,8 @@ export interface AnalysisApi {
   reviewCampaign(campaignId: string, request: CampaignDecisionRequestV3): Promise<CampaignDetailV3>;
   listSourcePolicies(): Promise<SourcePolicyRecordV3[]>;
   createSourcePolicy(request: SourcePolicyCreateRequestV3): Promise<SourcePolicyRecordV3>;
+  listSourceDiscoveries(): Promise<SourceDiscoveryRecordV3[]>;
+  decideSourceDiscovery(domain: string, request: SourceDiscoveryDecisionRequestV3): Promise<SourceDiscoveryRecordV3>;
   getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3>;
 
   // Admin APIs for review queue

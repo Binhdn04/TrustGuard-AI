@@ -19,18 +19,12 @@ RUN --mount=type=cache,id=p068-pip-v2,target=/root/.cache/pip,sharing=locked \
 FROM python:3.11.15-slim-bookworm AS runtime-base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    FLASHRANK_CACHE_DIR=/ms-flashrank
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
-
-# Keep reranking deterministic at runtime and avoid a first-request model download.
-RUN mkdir -p /ms-flashrank \
-    && /opt/venv/bin/python -c "from flashrank import Ranker; Ranker(model_name='ms-marco-MultiBERT-L-12', cache_dir='/ms-flashrank')" \
-    && chmod -R 755 /ms-flashrank
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/data \

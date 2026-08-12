@@ -56,6 +56,7 @@ from src.services.platform_wave2 import (
     CampaignWrite,
     FactCheckCorpusRecordWrite,
     FactCheckResultWrite,
+    SourceDiscoveryRecord,
     SourceRegistryEntry,
     SourceTier,
     UsageLedgerEntry,
@@ -1026,6 +1027,177 @@ class PostgresPlatformRepository:
             )
             for row in rows
         ]
+
+    async def observe_source_discovery(
+        self,
+        *,
+        url: str,
+        publisher: str,
+        event: str,
+        claim_hash: str | None,
+        agrees_with_curated: bool | None,
+        allow_auto_promotion: bool = True,
+    ) -> None:
+        from src.agents.fact_check import registrable_domain  # noqa: PLC0415
+
+        domain = registrable_domain(url)
+        if not domain:
+            return
+        pool = await self._get_pool()
+        now = datetime.now(UTC)
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                "SELECT * FROM source_discoveries WHERE domain=$1 FOR UPDATE", domain
+            )
+            urls = list(dict.fromkeys([*(_json_value(row["representative_urls"]) if row else []), url]))[-5:]
+            claims = list(_json_value(row["claim_hashes"]) if row else [])
+            if claim_hash and claim_hash not in claims:
+                claims.append(claim_hash)
+            claims = claims[-1000:]
+            search_delta = int(event == "search")
+            extract_delta = int(event == "extract")
+            comparison_delta = int(event == "comparison" and agrees_with_curated is not None)
+            agreement_delta = int(event == "comparison" and agrees_with_curated is True)
+            conflict_delta = int(event == "comparison" and agrees_with_curated is False)
+            await connection.execute(
+                """INSERT INTO source_discoveries(
+                       domain,publisher,first_seen_at,last_seen_at,search_count,extract_success_count,
+                       claim_hashes,curated_comparison_count,curated_agreement_count,curated_conflict_count,
+                       representative_urls,status
+                   ) VALUES($1,$2,$3,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,'observing')
+                   ON CONFLICT(domain) DO UPDATE SET
+                     publisher=EXCLUDED.publisher,last_seen_at=EXCLUDED.last_seen_at,
+                     search_count=source_discoveries.search_count+EXCLUDED.search_count,
+                     extract_success_count=source_discoveries.extract_success_count+EXCLUDED.extract_success_count,
+                     claim_hashes=EXCLUDED.claim_hashes,
+                     curated_comparison_count=source_discoveries.curated_comparison_count+EXCLUDED.curated_comparison_count,
+                     curated_agreement_count=source_discoveries.curated_agreement_count+EXCLUDED.curated_agreement_count,
+                     curated_conflict_count=source_discoveries.curated_conflict_count+EXCLUDED.curated_conflict_count,
+                     representative_urls=EXCLUDED.representative_urls""",
+                domain,
+                publisher,
+                now,
+                search_delta,
+                extract_delta,
+                json.dumps(claims),
+                comparison_delta,
+                agreement_delta,
+                conflict_delta,
+                json.dumps(urls),
+            )
+            await connection.execute(
+                """INSERT INTO source_discovery_observations(
+                       id,domain,event,claim_hash,agrees_with_curated,observed_at
+                   ) VALUES($1,$2,$3,$4,$5,$6)""",
+                uuid4(), domain, event, claim_hash, agrees_with_curated, now,
+            )
+            current = await connection.fetchrow("SELECT * FROM source_discoveries WHERE domain=$1", domain)
+            comparisons = current["curated_comparison_count"]
+            agreement_rate = current["curated_agreement_count"] / comparisons if comparisons else 0.0
+            conflict_rate = current["curated_conflict_count"] / comparisons if comparisons else 0.0
+            eligible = (
+                now - current["first_seen_at"] >= timedelta(days=30)
+                and current["extract_success_count"] >= 20
+                and len(_json_value(current["claim_hashes"])) >= 10
+                and comparisons >= 10
+                and agreement_rate >= 0.9
+                and conflict_rate <= 0.05
+            )
+            if allow_auto_promotion and eligible and current["status"] == "observing":
+                await connection.execute(
+                    """INSERT INTO fact_check_sources(
+                           id,publisher,normalized_pattern,tier,source_type,active,explicit_deny,
+                           trusted_claim_review,allowed_operations,policy_version,effective_from,
+                           default_freshness_seconds,reviewer_id,reviewed_at,created_at
+                       VALUES($1,$2,$3,'B','auto_reviewed_web',true,false,false,$4::jsonb,$5,$6,21600,
+                              'system-auto-promotion',$6,$6)
+                       ON CONFLICT(normalized_pattern,policy_version) DO NOTHING""",
+                    uuid4(),
+                    publisher,
+                    f"*.{domain}",
+                    json.dumps(["search", "read", "compare"]),
+                    f"auto-tier-b-{now.date().isoformat()}",
+                    now,
+                )
+                await connection.execute(
+                    "UPDATE source_discoveries SET status='promoted' WHERE domain=$1", domain
+                )
+            rolling = await connection.fetchrow(
+                """SELECT count(*) FILTER (WHERE event='comparison') AS comparisons,
+                          count(*) FILTER (WHERE event='comparison' AND agrees_with_curated=false) AS conflicts
+                   FROM source_discovery_observations
+                   WHERE domain=$1 AND observed_at >= $2""",
+                domain,
+                now - timedelta(days=30),
+            )
+            rolling_comparisons = int(rolling["comparisons"] or 0)
+            rolling_conflict_rate = (
+                int(rolling["conflicts"] or 0) / rolling_comparisons if rolling_comparisons else 0.0
+            )
+            if current["status"] == "promoted" and rolling_comparisons >= 10 and rolling_conflict_rate > 0.1:
+                await connection.execute(
+                    """UPDATE fact_check_sources SET active=false,effective_to=$2
+                       WHERE normalized_pattern=$1 AND source_type='auto_reviewed_web' AND active""",
+                    f"*.{domain}",
+                    now,
+                )
+                await connection.execute(
+                    "UPDATE source_discoveries SET status='demoted' WHERE domain=$1", domain
+                )
+
+    async def list_source_discoveries(self) -> list[SourceDiscoveryRecord]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch("SELECT * FROM source_discoveries ORDER BY last_seen_at DESC")
+        output = []
+        for row in rows:
+            comparisons = row["curated_comparison_count"]
+            eligible = (
+                datetime.now(UTC) - row["first_seen_at"] >= timedelta(days=30)
+                and row["extract_success_count"] >= 20
+                and len(_json_value(row["claim_hashes"])) >= 10
+                and comparisons >= 10
+                and row["curated_agreement_count"] / comparisons >= 0.9
+                and row["curated_conflict_count"] / comparisons <= 0.05
+            ) if comparisons else False
+            output.append(
+                SourceDiscoveryRecord(
+                    domain=row["domain"], publisher=row["publisher"], first_seen_at=row["first_seen_at"],
+                    last_seen_at=row["last_seen_at"], search_count=row["search_count"],
+                    extract_success_count=row["extract_success_count"],
+                    independent_claim_count=len(_json_value(row["claim_hashes"])),
+                    curated_comparison_count=comparisons,
+                    curated_agreement_count=row["curated_agreement_count"],
+                    curated_conflict_count=row["curated_conflict_count"],
+                    representative_urls=list(_json_value(row["representative_urls"])), status=row["status"],
+                    eligible_for_auto_promotion=eligible,
+                )
+            )
+        return output
+
+    async def set_source_discovery_status(
+        self, domain: str, status: str, *, decision: str, note: str, reviewer_id: str
+    ) -> None:
+        pool = await self._get_pool()
+        now = datetime.now(UTC)
+        async with pool.acquire() as connection, connection.transaction():
+            result = await connection.execute(
+                "UPDATE source_discoveries SET status=$2 WHERE domain=$1", domain, status
+            )
+            if result == "UPDATE 0":
+                return
+            await connection.execute(
+                """INSERT INTO source_discovery_decisions(id,domain,decision,note,reviewer_id,decided_at)
+                   VALUES($1,$2,$3,$4,$5,$6)""",
+                uuid4(), domain, decision, note, reviewer_id, now,
+            )
+            if status in {"demoted", "denied"}:
+                await connection.execute(
+                    """UPDATE fact_check_sources SET active=false,effective_to=$2
+                       WHERE normalized_pattern=$1 AND active AND NOT explicit_deny""",
+                    f"*.{domain}",
+                    now,
+                )
 
     async def cache_fact_check_result(self, result: FactCheckResultWrite) -> UUID:
         pool = await self._get_pool()

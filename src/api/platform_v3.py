@@ -69,6 +69,8 @@ from src.models import (
     ReviewQueueDecisionRequest,
     ReviewQueueItem,
     ScreenshotStatusResponseV3,
+    SourceDiscoveryDecisionRequestV3,
+    SourceDiscoveryRecordV3,
     SourcePolicyCreateRequestV3,
     SourcePolicyRecordV3,
     StepTransitionEventPayload,
@@ -99,7 +101,6 @@ async def capabilities_v3(principal: PrincipalDependency) -> CapabilitiesRespons
         "openai": bool(settings.openai_api_key),
         "google_fact_check": bool(settings.google_fact_check_api_key),
         "tavily": bool(settings.tavily_api_key),
-        "jina": bool(settings.jina_api_key),
         "web_risk": bool(settings.google_web_risk_api_key),
         "virustotal": bool(settings.virustotal_api_key),
         "postgresql": settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")),
@@ -657,6 +658,35 @@ async def create_source_policy_v3(
     )
     await wave2.register_source(entry)
     return SourcePolicyRecordV3.model_validate(entry.model_dump())
+
+
+@router.get(
+    "/admin/source-discoveries",
+    response_model=list[SourceDiscoveryRecordV3],
+    responses=_PLANNED_ERRORS,
+)
+async def list_source_discoveries_v3(
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SourceDiscoveryRecordV3]:
+    require_security_admin(principal)
+    return [SourceDiscoveryRecordV3.model_validate(item.model_dump()) for item in await wave2.list_source_discoveries()]
+
+
+@router.post(
+    "/admin/source-discoveries/{domain}/decision",
+    response_model=SourceDiscoveryRecordV3,
+    responses=_PLANNED_ERRORS,
+)
+async def decide_source_discovery_v3(
+    domain: str,
+    request: SourceDiscoveryDecisionRequestV3,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> SourceDiscoveryRecordV3:
+    require_security_admin(principal)
+    result = await wave2.decide_source_discovery(domain, request.decision, request.note, principal.user_id)
+    return SourceDiscoveryRecordV3.model_validate(result.model_dump())
 
 
 @router.get("/admin/metrics", response_model=OperationsMetricsResponseV3, responses=_PLANNED_ERRORS)

@@ -14,6 +14,8 @@ export interface FactCheckSource {
   relevance: number;
   observedAt: string;
   official: boolean;
+  tier?: "a" | "b" | "c" | "untrusted" | null;
+  provisional?: boolean;
 }
 
 export interface ClaimResult {
@@ -23,12 +25,14 @@ export interface ClaimResult {
   confidence: number | null;
   explanation: string;
   sources: FactCheckSource[];
+  provisional?: boolean;
 }
 
 export interface FactCheckResult {
   overallStance: ClaimStance;
   summary: string;
   confidence: number | null;
+  basis?: "reviewed" | "provisional" | "inconclusive";
   claims: ClaimResult[];
 }
 

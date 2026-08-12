@@ -120,6 +120,22 @@ class SourcePolicyDecision(PlatformInternalModel):
         return not self.explicit_deny and operation in self.allowed_operations
 
 
+class SourceDiscoveryRecord(PlatformInternalModel):
+    domain: str
+    publisher: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    search_count: int = 0
+    extract_success_count: int = 0
+    independent_claim_count: int = 0
+    curated_comparison_count: int = 0
+    curated_agreement_count: int = 0
+    curated_conflict_count: int = 0
+    representative_urls: list[str] = Field(default_factory=list, max_length=5)
+    status: str = "observing"
+    eligible_for_auto_promotion: bool = False
+
+
 class EvidenceSnapshotWrite(PlatformInternalModel):
     evidence_ref: str
     source: str
@@ -367,10 +383,38 @@ def default_source_policies() -> list[SourceRegistryEntry]:
                 source_type="reviewed_news",
                 allowed_operations={"search", "read", "compare"},
                 policy_version="source-policy-v2",
-                effective_from=datetime(2026, 8, 11, tzinfo=UTC),
+                effective_from=reviewed_at,
                 default_freshness_seconds=21600,
                 reviewer_id="system-bootstrap",
-                reviewed_at=datetime(2026, 8, 11, tzinfo=UTC),
+                reviewed_at=reviewed_at,
+            )
+        )
+    for publisher, pattern, source_type in (
+        ("FIFA", "*.fifa.com", "sports_governing_body"),
+        ("UEFA", "*.uefa.com", "sports_governing_body"),
+        ("Olympics", "*.olympics.com", "sports_governing_body"),
+        ("World Health Organization", "*.who.int", "international_organization"),
+        ("United Nations", "*.un.org", "international_organization"),
+        ("World Bank", "*.worldbank.org", "international_organization"),
+        ("International Monetary Fund", "*.imf.org", "international_organization"),
+        ("OECD", "*.oecd.org", "international_organization"),
+        ("European Union", "*.europa.eu", "international_organization"),
+        ("CDC", "*.cdc.gov", "government_health"),
+        ("NIH", "*.nih.gov", "government_health"),
+        ("FDA", "*.fda.gov", "government_health"),
+    ):
+        policies.append(
+            SourceRegistryEntry(
+                publisher=publisher,
+                normalized_pattern=pattern,
+                tier=SourceTier.A,
+                source_type=source_type,
+                allowed_operations={"search", "read", "compare", "promote"},
+                policy_version="source-policy-international-v1",
+                effective_from=reviewed_at,
+                default_freshness_seconds=21600,
+                reviewer_id="system-bootstrap",
+                reviewed_at=reviewed_at,
             )
         )
     for publisher, pattern in (
@@ -397,7 +441,148 @@ def default_source_policies() -> list[SourceRegistryEntry]:
                 reviewed_at=reviewed_at,
             )
         )
+    vietnam_tier_a = (
+        ("National Legal Document Database", "vbpl.vn"),
+        ("Ministry of Justice", "moj.gov.vn"),
+        ("National Assembly of Vietnam", "quochoi.vn"),
+        ("National Statistics Office", "nso.gov.vn"),
+        ("Ministry of Finance", "mof.gov.vn"),
+        ("State Bank of Vietnam", "sbv.gov.vn"),
+        ("General Department of Taxation", "gdt.gov.vn"),
+        ("Vietnam Customs", "customs.gov.vn"),
+        ("State Securities Commission", "ssc.gov.vn"),
+        ("Ho Chi Minh Stock Exchange", "hsx.vn"),
+        ("Hanoi Stock Exchange", "hnx.vn"),
+        ("Ministry of Health", "moh.gov.vn"),
+        ("Drug Administration of Vietnam", "dav.gov.vn"),
+        ("Vietnam Food Administration", "vfa.gov.vn"),
+        ("Ministry of Education and Training", "moet.gov.vn"),
+        ("Ministry of Science and Technology", "mst.gov.vn"),
+        ("Vietnam Academy of Science and Technology", "vast.gov.vn"),
+        ("Ministry of Agriculture and Environment", "mae.gov.vn"),
+        ("Center for Environmental Monitoring", "cem.gov.vn"),
+        ("Nature and Biodiversity Conservation Agency", "nbca.gov.vn"),
+        ("Plant Production and Protection Department", "ppd.gov.vn"),
+        ("Ministry of Construction", "moc.gov.vn"),
+        ("Ministry of Industry and Trade", "moit.gov.vn"),
+        ("Ministry of Public Security", "mps.gov.vn"),
+        ("Ministry of National Defence", "mod.gov.vn"),
+        ("Ministry of Foreign Affairs", "mofa.gov.vn"),
+        ("Vietnam Social Security", "baohiemxahoi.gov.vn"),
+        ("National Center for Hydro-Meteorological Forecasting", "nchmf.gov.vn"),
+        ("Vietnam Disaster Management Authority", "phongchongthientai.mard.gov.vn"),
+        ("Hanoi Portal", "hanoi.gov.vn"),
+        ("Ho Chi Minh City Portal", "hochiminhcity.gov.vn"),
+        ("Da Nang Portal", "danang.gov.vn"),
+        ("Authority of Information Security", "ais.gov.vn"),
+        ("Directorate for Roads of Vietnam", "drvn.gov.vn"),
+        ("Vietnam National Authority of Tourism", "vietnamtourism.gov.vn"),
+        ("Vietnam Administration of Forestry", "lamnghiep.gov.vn"),
+    )
+    vietnam_tier_b = (
+        ("Vietnam Electricity", "evn.com.vn", "official_enterprise"),
+        ("Bao Tin Tuc", "baotintuc.vn", "reviewed_news"),
+        ("VietnamNet", "vietnamnet.vn", "reviewed_news"),
+        ("Lao Dong", "laodong.vn", "reviewed_news"),
+        ("Dan Tri", "dantri.com.vn", "reviewed_news"),
+        ("Tien Phong", "tienphong.vn", "reviewed_news"),
+        ("Quan doi Nhan dan", "qdnd.vn", "reviewed_news"),
+        ("Cong an Nhan dan", "cand.com.vn", "reviewed_news"),
+        ("VnEconomy", "vneconomy.vn", "reviewed_news"),
+        ("Vietnam Investment Review", "vir.com.vn", "reviewed_news"),
+        ("CafeF", "cafef.vn", "reviewed_news"),
+        ("Thoi bao Tai chinh Viet Nam", "thoibaotaichinhvietnam.vn", "reviewed_news"),
+        ("Bao Dau tu", "baodautu.vn", "reviewed_news"),
+        ("Suc khoe va Doi song", "suckhoedoisong.vn", "reviewed_news"),
+        ("Giao duc va Thoi dai", "giaoducthoidai.vn", "reviewed_news"),
+        ("Khoa hoc va Phat trien", "khoahocphattrien.vn", "reviewed_news"),
+        ("Bao Cong Thuong", "congthuong.vn", "reviewed_news"),
+        ("Bao Nong nghiep va Moi truong", "nongnghiepmoitruong.vn", "reviewed_news"),
+        ("Bao Xay dung", "baoxaydung.vn", "reviewed_news"),
+        ("Ha Noi Moi", "hanoimoi.vn", "reviewed_news"),
+        ("Sai Gon Giai Phong", "sggp.org.vn", "reviewed_news"),
+        ("Thu Vien Phap Luat", "thuvienphapluat.vn", "legal_reference"),
+        ("Phap Luat TP.HCM", "plo.vn", "reviewed_news"),
+        ("Bao Cong ly", "congly.vn", "reviewed_news"),
+        ("Dan Viet", "danviet.vn", "reviewed_news"),
+        ("Tap chi Bao hiem Xa hoi", "tapchibaohiemxahoi.gov.vn", "specialized_news"),
+        ("Bach Mai Hospital", "bachmai.gov.vn", "healthcare_provider"),
+        ("Cho Ray Hospital", "choray.vn", "healthcare_provider"),
+        ("Military Central Hospital 108", "benhvien108.vn", "healthcare_provider"),
+        ("Vinmec", "vinmec.com", "healthcare_provider"),
+        ("Vietnam National University Hanoi", "vnu.edu.vn", "academic_institution"),
+        ("Vietnam National University HCMC", "vnuhcm.edu.vn", "academic_institution"),
+        ("Hanoi University of Science and Technology", "hust.edu.vn", "academic_institution"),
+        ("National Economics University", "neu.edu.vn", "academic_institution"),
+        ("Can Tho University", "ctu.edu.vn", "academic_institution"),
+        ("Giao duc Viet Nam", "giaoduc.net.vn", "reviewed_news"),
+        ("Viettel", "viettel.com.vn", "official_enterprise"),
+        ("VNPT", "vnpt.com.vn", "official_enterprise"),
+        ("FPT", "fpt.com.vn", "official_enterprise"),
+        ("ICT Vietnam", "ictvietnam.vn", "specialized_news"),
+        ("Tinh Te", "tinhte.vn", "specialized_news"),
+        ("Vietcombank", "vietcombank.com.vn", "financial_institution"),
+        ("BIDV", "bidv.com.vn", "financial_institution"),
+        ("VietinBank", "vietinbank.vn", "financial_institution"),
+        ("Agribank", "agribank.com.vn", "financial_institution"),
+        ("Bao Ngan hang", "baonganhang.vn", "specialized_news"),
+        ("Brands Vietnam", "brandsvietnam.com", "specialized_news"),
+        ("Vietnam Airlines", "vietnamairlines.com", "official_enterprise"),
+        ("Vietnam Railways", "vnr.com.vn", "official_enterprise"),
+        ("Airports Corporation of Vietnam", "vietnamairport.vn", "official_enterprise"),
+        ("The thao va Van hoa", "thethaovanhoa.vn", "reviewed_news"),
+        ("Bao Van Hoa", "baovanhoa.vn", "reviewed_news"),
+        ("WebTheThao", "webthethao.vn", "specialized_news"),
+        ("Batdongsan.com.vn", "batdongsan.com.vn", "specialized_portal"),
+        ("Reatimes", "reatimes.vn", "specialized_news"),
+    )
+    existing_patterns = {item.normalized_pattern for item in policies}
+    for publisher, domain in vietnam_tier_a:
+        pattern = f"*.{domain}"
+        if pattern in existing_patterns:
+            continue
+        existing_patterns.add(pattern)
+        policies.append(
+            SourceRegistryEntry(
+                publisher=publisher,
+                normalized_pattern=pattern,
+                tier=SourceTier.A,
+                source_type="government_or_official",
+                allowed_operations={"search", "read", "compare", "promote"},
+                policy_version="source-policy-vietnam-expanded-v1",
+                effective_from=reviewed_at,
+                default_freshness_seconds=21600,
+                reviewer_id="system-bootstrap",
+                reviewed_at=reviewed_at,
+            )
+        )
+    for publisher, domain, source_type in vietnam_tier_b:
+        pattern = f"*.{domain}"
+        if pattern in existing_patterns:
+            continue
+        existing_patterns.add(pattern)
+        policies.append(
+            SourceRegistryEntry(
+                publisher=publisher,
+                normalized_pattern=pattern,
+                tier=SourceTier.B,
+                source_type=source_type,
+                allowed_operations={"search", "read", "compare"},
+                policy_version="source-policy-vietnam-expanded-v1",
+                effective_from=reviewed_at,
+                default_freshness_seconds=21600,
+                reviewer_id="system-bootstrap",
+                reviewed_at=reviewed_at,
+            )
+        )
     return policies
+
+
+def effective_source_policies(configured: list[SourceRegistryEntry]) -> list[SourceRegistryEntry]:
+    """Merge built-ins with persisted policies, allowing persisted patterns to override defaults."""
+    by_pattern = {item.normalized_pattern: item for item in default_source_policies()}
+    by_pattern.update({item.normalized_pattern: item for item in configured})
+    return list(by_pattern.values())
 
 
 @dataclass(slots=True)
@@ -408,6 +593,7 @@ class MemoryWave2Repository:
     actions: dict[UUID, AdminActionRecordV3] = field(default_factory=dict)
     campaigns: dict[UUID, CampaignDetailV3] = field(default_factory=dict)
     sources: list[SourceRegistryEntry] = field(default_factory=default_source_policies)
+    source_discoveries: dict[str, SourceDiscoveryRecord] = field(default_factory=dict)
     fact_results: dict[UUID, FactCheckResultWrite] = field(default_factory=dict)
     corpus_records: dict[UUID, FactCheckCorpusRecordWrite] = field(default_factory=dict)
     usage: list[UsageLedgerEntry] = field(default_factory=list)
@@ -655,6 +841,73 @@ class MemoryWave2Repository:
                 raise _conflict("This source policy version already exists.")
             self.sources.append(entry)
 
+    async def observe_source_discovery(
+        self,
+        *,
+        url: str,
+        publisher: str,
+        event: str,
+        claim_hash: str | None,
+        agrees_with_curated: bool | None,
+        allow_auto_promotion: bool = True,
+    ) -> None:
+        del allow_auto_promotion
+        from src.agents.fact_check import registrable_domain  # noqa: PLC0415
+
+        domain = registrable_domain(url)
+        if not domain:
+            return
+        now = datetime.now(UTC)
+        current = self.source_discoveries.get(domain)
+        if current is None:
+            current = SourceDiscoveryRecord(
+                domain=domain,
+                publisher=publisher,
+                first_seen_at=now,
+                last_seen_at=now,
+                representative_urls=[url],
+            )
+        updates: dict[str, Any] = {"last_seen_at": now, "publisher": publisher}
+        if event == "search":
+            updates["search_count"] = current.search_count + 1
+        elif event == "extract":
+            updates["extract_success_count"] = current.extract_success_count + 1
+            updates["independent_claim_count"] = current.independent_claim_count + int(bool(claim_hash))
+        elif event == "comparison" and agrees_with_curated is not None:
+            updates["curated_comparison_count"] = current.curated_comparison_count + 1
+            field_name = "curated_agreement_count" if agrees_with_curated else "curated_conflict_count"
+            updates[field_name] = getattr(current, field_name) + 1
+        urls = list(dict.fromkeys([*current.representative_urls, url]))[-5:]
+        updates["representative_urls"] = urls
+        self.source_discoveries[domain] = current.model_copy(update=updates)
+
+    async def list_source_discoveries(self) -> list[SourceDiscoveryRecord]:
+        return sorted(self.source_discoveries.values(), key=lambda item: item.last_seen_at, reverse=True)
+
+    async def set_source_discovery_status(
+        self, domain: str, status: str, *, decision: str, note: str, reviewer_id: str
+    ) -> None:
+        current = self.source_discoveries.get(domain)
+        if current is not None:
+            self.source_discoveries[domain] = current.model_copy(update={"status": status})
+        if status == "demoted":
+            self.sources = [
+                item.model_copy(update={"active": False, "effective_to": datetime.now(UTC)})
+                if item.normalized_pattern == f"*.{domain}" and item.active and not item.explicit_deny
+                else item
+                for item in self.sources
+            ]
+        self.audit.append(
+            {
+                "event_type": "source_discovery.decision",
+                "domain": domain,
+                "decision": decision,
+                "note": note,
+                "reviewer_id": reviewer_id,
+                "decided_at": datetime.now(UTC),
+            }
+        )
+
     async def load_source_policies(self, at: datetime) -> list[SourceRegistryEntry]:
         return [
             item.model_copy(deep=True)
@@ -767,6 +1020,16 @@ class MemoryWave2Repository:
 class VersionedSourceRegistry:
     def __init__(self, policies: list[SourceRegistryEntry]) -> None:
         self._policies = policies
+        self._discovery_store: Any | None = None
+        self._discovery_enabled = True
+        self._auto_promotion_enabled = True
+
+    def bind_discovery_store(
+        self, store: Any, *, enabled: bool = True, auto_promotion_enabled: bool = True
+    ) -> None:
+        self._discovery_store = store
+        self._discovery_enabled = enabled
+        self._auto_promotion_enabled = auto_promotion_enabled
 
     def replace(self, policies: list[SourceRegistryEntry]) -> None:
         self._policies = list(policies)
@@ -790,6 +1053,46 @@ class VersionedSourceRegistry:
 
     def official_domains(self, operation: str = "search") -> tuple[str, ...]:
         return self.allowed_domains(operation, tiers={SourceTier.A})
+
+    def denied_domains(self) -> tuple[str, ...]:
+        now = datetime.now(UTC)
+        return tuple(
+            sorted(
+                item.normalized_pattern.removeprefix("*.")
+                for item in self._policies
+                if item.active
+                and item.explicit_deny
+                and item.effective_from <= now
+                and (item.effective_to is None or item.effective_to > now)
+            )
+        )
+
+    async def observe_discovery(
+        self,
+        *,
+        url: str,
+        publisher: str,
+        event: str,
+        claim_hash: str | None = None,
+        agrees_with_curated: bool | None = None,
+    ) -> None:
+        if (
+            not self._discovery_enabled
+            or self._discovery_store is None
+            or not hasattr(self._discovery_store, "observe_source_discovery")
+        ):
+            return
+        decision = self.classify(url, datetime.now(UTC))
+        if decision.explicit_deny or decision.tier in {SourceTier.A, SourceTier.B}:
+            return
+        await self._discovery_store.observe_source_discovery(
+            url=url,
+            publisher=publisher,
+            event=event,
+            claim_hash=claim_hash,
+            agrees_with_curated=agrees_with_curated,
+            allow_auto_promotion=self._auto_promotion_enabled,
+        )
 
     def classify(self, url: str, at: datetime) -> SourcePolicyDecision:
         hostname = (urlsplit(url).hostname or "").lower().rstrip(".")
@@ -966,6 +1269,7 @@ class Wave2PlatformService:
 
     async def source_registry(self, at: datetime | None = None) -> VersionedSourceRegistry:
         policies = await self.repository.load_source_policies(at or datetime.now(UTC))  # type: ignore[attr-defined]
+        policies = effective_source_policies(policies)
         if self._active_source_registry is not None:
             self._active_source_registry.replace(policies)
             return self._active_source_registry
@@ -975,10 +1279,54 @@ class Wave2PlatformService:
         await self.repository.register_source(entry)  # type: ignore[attr-defined]
         if self._active_source_registry is not None:
             policies = await self.repository.load_source_policies(datetime.now(UTC))  # type: ignore[attr-defined]
-            self._active_source_registry.replace(policies)
+            self._active_source_registry.replace(effective_source_policies(policies))
+
+    async def list_source_discoveries(self) -> list[SourceDiscoveryRecord]:
+        if not hasattr(self.repository, "list_source_discoveries"):
+            return []
+        return await self.repository.list_source_discoveries()
+
+    async def decide_source_discovery(
+        self, domain: str, decision: str, note: str, reviewer_id: str
+    ) -> SourceDiscoveryRecord:
+        from src.agents.fact_check import registrable_domain  # noqa: PLC0415
+
+        domain = registrable_domain(f"https://{domain}")
+        rows = {item.domain: item for item in await self.list_source_discoveries()}
+        discovery = rows.get(domain)
+        if discovery is None:
+            raise _not_found("Source discovery was not found.")
+        now = datetime.now(UTC)
+        if decision in {"promote", "deny"}:
+            entry = SourceRegistryEntry(
+                publisher=discovery.publisher,
+                normalized_pattern=f"*.{domain}",
+                tier=SourceTier.B if decision == "promote" else SourceTier.UNTRUSTED,
+                source_type="admin_reviewed_web" if decision == "promote" else "denied_discovery",
+                explicit_deny=decision == "deny",
+                allowed_operations={"search", "read", "compare"} if decision == "promote" else set(),
+                policy_version=f"admin-discovery-{decision}-{now.strftime('%Y%m%d%H%M%S%f')}",
+                effective_from=now,
+                default_freshness_seconds=21600,
+                reviewer_id=reviewer_id,
+                reviewed_at=now,
+            )
+            await self.register_source(entry)
+        if not hasattr(self.repository, "set_source_discovery_status"):
+            raise _conflict("Discovery decisions are not supported by this repository.")
+        status_value = {"promote": "promoted", "deny": "denied", "demote": "demoted"}[decision]
+        await self.repository.set_source_discovery_status(
+            domain, status_value, decision=decision, note=note, reviewer_id=reviewer_id
+        )
+        if self._active_source_registry is not None:
+            policies = await self.repository.load_source_policies(now)
+            self._active_source_registry.replace(effective_source_policies(policies))
+        updated = {item.domain: item for item in await self.list_source_discoveries()}.get(domain)
+        return updated or discovery.model_copy(update={"status": status_value})
 
     async def list_sources(self, at: datetime | None = None) -> list[SourceRegistryEntry]:
-        return await self.repository.load_source_policies(at or datetime.now(UTC))  # type: ignore[attr-defined]
+        policies = await self.repository.load_source_policies(at or datetime.now(UTC))  # type: ignore[attr-defined]
+        return effective_source_policies(policies)
 
     async def issue_artifact_access(self, artifact_id: UUID, principal: Principal) -> ArtifactAccess:
         artifact = await self.repository.get_artifact(artifact_id)  # type: ignore[attr-defined]
@@ -1176,6 +1524,7 @@ __all__ = [
     "FactCheckResultWrite",
     "FactCheckCorpusRecordWrite",
     "MemoryWave2Repository",
+    "SourceDiscoveryRecord",
     "SourcePolicyDecision",
     "SourceRegistryEntry",
     "SourceTier",
@@ -1183,4 +1532,5 @@ __all__ = [
     "VersionedSourceRegistry",
     "Wave2PlatformService",
     "default_source_policies",
+    "effective_source_policies",
 ]

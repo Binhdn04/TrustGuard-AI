@@ -20,7 +20,7 @@ capability Core product và Advanced intelligence trong PRD đều nằm trong D
 - LangGraph workflow với provisional node, bounded planning, deterministic risk/explanation, Wave 2
   fact-check orchestration seam, campaign/calibration implementation và deterministic fallback.
 - Consent/SSRF gate, redirect + RDAP, Web Risk/VirusTotal cascade, Google Claim Search, OpenAI
-  embedding, Tavily/Jina, FlashRank và sandbox screenshot implementations.
+  embedding, Tavily Search/Extract và sandbox screenshot implementations.
 - PostgreSQL/pgvector schema qua migration `0007_runtime_integration`, durable job/lease/retry,
   transactional outbox, Redis notification, retention và re-embedding worker.
 - FastAPI `/api/v3` analysis/events/WebSocket cùng appeal, reviewed action, campaign, metrics,
@@ -31,7 +31,7 @@ capability Core product và Advanced intelligence trong PRD đều nằm trong D
 
 ### Integration đã hoàn tất trong baseline hiện tại
 
-- Default graph factory inject PostgreSQL hybrid retriever, chunker, preloaded FlashRank, evidence
+- Default graph factory inject PostgreSQL hybrid retriever, Tavily Search/Extract, evidence
   comparator và repository-backed campaign detector.
 - Progress/provisional sink persist typed event trực tiếp trong planning loop; WebSocket và polling
   replay cùng event sequence.
@@ -198,13 +198,13 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 - Mở rộng GPT-4o-mini claim extraction thành tối đa năm item có `claim_date_start/end`; redact,
   canonicalize, gửi một `text-embedding-3-small` batch rồi fan-out tối đa ba claim.
 - Mỗi claim chạy Google Claim Search và Existing Corpus hybrid song song, áp temporal/source policy,
-  rồi chạy deterministic evidence-sufficiency gate trước mọi Tavily/Jina call.
+  rồi chạy deterministic evidence-sufficiency gate trước mọi Tavily Search/Extract call.
 - Gate đủ khi có một Tier A temporal-compatible, một trusted ClaimReview Tier B, hoặc hai Tier B độc
   lập; Tier C không đủ một mình và Untrusted bị loại trước comparator.
-- Orchestrate conditional Tavily → Jina → chunk → FlashRank top 5 → GPT-4o-mini comparison.
+- Orchestrate conditional Tavily Search → policy filter → Tavily Extract rerank → GPT-4o-mini comparison.
   Comparator trả stance/citation có schema; Risk Engine giữ độc quyền score/verdict/action.
-- Khi embedding timeout/429, bỏ nhánh vector nhưng tiếp tục Google/FTS/conditional web; FlashRank là
-  local CPU rerank exception, không phải embedding/comparison fallback.
+- Khi embedding timeout/429, bỏ nhánh vector nhưng tiếp tục Google/FTS/conditional web; không tải
+  model rerank local trong request path.
 - Implement campaign clustering job theo exact registrable domain/redirect target và claim embedding;
   default window 24 giờ, cosine threshold 0,85, tối thiểu 3 analyses, tất cả configurable/versioned.
 - Cluster chỉ tạo admin hypothesis; không tự block/broad warn và không suy diễn sender identity.
@@ -220,12 +220,10 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 - Implement PostgreSQL hybrid retrieval: FTS `simple` top 20 + pgvector cosine top 20, filter
   model/version/dimensions/language/source/temporal, dedupe record-version và RRF `k=60`.
 - Implement Tavily Search (`max_results=10`, registry domain/date filter, không answer/raw content)
-  và Jina Reader cho tối đa năm canonical URL sau source-policy validation.
-- Chunk bằng `RecursiveCharacterTextSplitter` (`1200/150`, paragraph/sentence separators) và rerank
-  local CPU bằng FlashRank `ms-marco-MultiBERT-L-12`, `max_length=512`, top 5. Bundle/cache model
-  trong image; không download trong request path.
+  và Tavily Extract cho tối đa năm canonical URL sau source-policy validation. Extract dùng exact
+  claim, `chunks_per_source=3`, basic depth và một batch mỗi claim.
 - Canonicalize và dedupe evidence theo URL + cleaned-content hash + source version; giữ temporal
-  metadata và citation mapping xuyên suốt search/fetch/chunk/rerank.
+  metadata và citation mapping xuyên suốt Search/Extract.
 - Implement Playwright/Chromium screenshot worker cô lập: fresh context, không cookie/login/
   credential/persistent storage, download disabled, SSRF/DNS revalidation và resource limits.
 - Screenshot chỉ được planner dùng sau explicit consent khi static evidence thiếu; output chỉ gồm
@@ -263,15 +261,15 @@ Mục tiêu: hoàn thành fact-check corpus, screenshot, campaign, appeal và op
 - Một analysis 1–5 claim chỉ tạo một embeddings request; claim fan-out không vượt concurrency 3.
 - Google Claim Search và FTS/pgvector chạy trước; Google match giữ publisher/reviewer provenance và
   không được mô tả là Google tự fact-check.
-- Evidence đủ không gọi Tavily/Jina; thiếu mới gọi Tavily tối đa 10, Jina tối đa 5 URL, chunk và
-  FlashRank top 5. No-match/conflict trả limitation/inconclusive.
+- Evidence đủ không gọi Tavily; thiếu mới gọi Search tối đa 10 và Extract tối đa 5 URL với ba
+  relevance-ranked chunks mỗi nguồn. No-match/conflict trả limitation/inconclusive.
 - Semantic-high nhưng temporal-wrong bị loại/hạ hạng đúng policy; publication proxy có penalty và
   limitation; temporal evidence không có ngày bị loại.
 - `*.gov.vn` suffix match đúng hostname, deny override hoạt động; Untrusted không vào comparator,
   Tier C-only không qua gate và hai Tier B phải độc lập publisher.
 - Embedding timeout/429 không load local embedding model, vẫn thử Google/FTS/web trong budget và lưu
   `embedding_status=pending` nếu có completed comparison.
-- Tavily/Jina/FlashRank failure có limitation và không sinh safe/giả citation.
+- Tavily Search/Extract failure có limitation và không sinh safe/giả citation.
 - Runtime cache dedupe idempotent; chỉ reviewed Tier A/B được promote trusted corpus.
 - Screenshot private IP, credential URL, redirect escape, download và timeout đều fail closed.
 - Appeal overturn tạo corrective decision/blacklist disable, không sửa/xóa audit cũ.

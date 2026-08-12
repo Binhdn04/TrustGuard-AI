@@ -5,7 +5,7 @@ TrustGuard AI lập kế hoạch điều tra, thu thập bằng chứng từ rul
 điểm rủi ro deterministic rồi giải thích cảnh báo bằng ngôn ngữ dễ hiểu.
 
 > **Trạng thái:** Baseline hiện tại (2026-08-11, phát triển tiếp từ `7715ea0`) đã đóng runtime
-> integration gate Wave 2. PostgreSQL hybrid retrieval, conditional Tavily/Jina, FlashRank,
+> integration gate Wave 2. PostgreSQL hybrid retrieval, conditional Tavily Search/Extract,
 > schema-bound comparator, campaign persistence, live progress/provisional events, source registry
 > admin và topology API/worker/frontend đã được compose. Hosted rollout và live-provider smoke bằng
 > secret thật vẫn là release gate Wave 3.
@@ -19,7 +19,7 @@ tuyên bố đang lan truyền. TrustGuard AI cung cấp:
   tool và LLM hoàn tất;
 - risk score, verdict, evidence, limitation và khuyến nghị rõ ràng;
 - kiểm tra URL/domain qua adapter reputation và RDAP/WHOIS; fact-check claim bằng Google ClaimReview
-  retrieval, PostgreSQL FTS/pgvector và Tavily/Jina fallback theo Source Registry;
+  retrieval, PostgreSQL FTS/pgvector và Tavily Search/Extract fallback theo Source Registry;
 - memory blacklist có nguồn gốc và audit;
 - chuyển case nghiêm trọng cho Security Admin mà không trì hoãn cảnh báo cá nhân;
 - Human-in-the-loop bắt buộc trước khi chặn domain hoặc phát cảnh báo diện rộng.
@@ -38,10 +38,10 @@ flowchart LR
     C --> E[URL/domain scan]
     C --> F[Google Claim Search + FTS/pgvector]
     F --> M{Evidence đủ?}
-    M -->|Có| O[FlashRank top 5]
-    M -->|Không| N[Tavily → Jina → chunk]
-    N --> O[FlashRank top 5]
-    O --> P[GPT-4o-mini evidence comparison]
+    M -->|Có| P[GPT-4o-mini evidence comparison]
+    M -->|Không| N[Tavily Search → policy filter]
+    N --> O[Tavily Extract rerank 3 chunks/source]
+    O --> P
     E --> G[Risk Engine]
     P --> G
     G --> H[Giải thích grounded]
@@ -52,8 +52,8 @@ flowchart LR
 ```
 
 LLM `gpt-4o-mini` hỗ trợ extract tối đa năm claim có temporal interval, so sánh evidence theo schema
-và viết giải thích. OpenAI `text-embedding-3-small` tạo vector; FlashRank multilingual là ngoại lệ
-local-model duy nhất và chỉ rerank. LLM comparison tạo stance có citation, còn score/verdict/action
+và viết giải thích. OpenAI `text-embedding-3-small` tạo vector; Tavily Extract dùng exact claim để
+rerank các đoạn trong từng nguồn. LLM comparison tạo stance có citation, còn score/verdict/action
 vẫn do Risk Engine deterministic quyết định.
 
 ## Công nghệ và kiến trúc
@@ -66,8 +66,7 @@ vẫn do Risk Engine deterministic quyết định.
 | URL reputation | Google Web Risk primary, VirusTotal policy-gated secondary | Đã wire; fake adapters mặc định trong test |
 | Domain intelligence | RDAP-first/WHOIS; guarded redirect | Đã wire lazy sau consent |
 | Fact-check retrieval | Google Fact Check Claim Search + PostgreSQL FTS/pgvector | Đã compose trong production worker |
-| Web fallback | Tavily Search → Jina Reader → LangChain splitter | Chỉ chạy sau deterministic sufficiency miss |
-| Rerank | FlashRank `ms-marco-MultiBERT-L-12` | Đã wire; Docker image preload model |
+| Web fallback | Tavily Search → source-policy filter → Tavily Extract | Tối đa 5 URL, 3 relevance-ranked chunks mỗi nguồn |
 | Backend | FastAPI `/api/v3` + `/api/v2` compatibility | Product path v3 đang hoạt động |
 | Frontend | Next.js/React với warning banner | Dashboard/history/appeal/platform admin gọi API thật |
 | Realtime | Persisted event polling + ticketed WebSocket | Live step/provisional event được persist ngay khi graph chạy |
@@ -90,8 +89,8 @@ Chi tiết: [kiến trúc](docs/01-ARCHITECTURE.md), [yêu cầu sản phẩm](d
 
 ### Advanced intelligence
 
-- Fact-check optimized retrieval: Google ClaimReview + FTS/pgvector trước; chỉ fallback Tavily/Jina
-  khi chưa đủ evidence, rồi FlashRank và comparison có citation.
+- Fact-check optimized retrieval: Google ClaimReview + FTS/pgvector trước; chỉ fallback Tavily
+  Search/Extract khi chưa đủ evidence, rồi comparison có citation.
 - Screenshot renderer cô lập, không cookie/đăng nhập và chỉ chạy sau consent khi scan tĩnh chưa đủ.
 - Phát hiện chiến dịch lan truyền theo cụm và dashboard xu hướng tin giả.
 - Học có kiểm duyệt từ báo cáo người dùng; feedback không tự động đổi model/score.
@@ -170,8 +169,8 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Lần build đầu sẽ tải FlashRank model cho cả runtime base và Chromium cho riêng worker, nên sẽ lâu
-hơn các lần sau. BuildKit cache pip/npm và các Docker layers giúp các lần build tiếp theo không tải
+Lần build đầu sẽ tải Chromium cho riêng worker, nên sẽ lâu hơn các lần sau. BuildKit cache pip/npm
+và các Docker layers giúp các lần build tiếp theo không tải
 lại khi dependency không đổi. Backend tự chạy `alembic upgrade head` trước khi mở API.
 
 Các địa chỉ sau sẽ khả dụng khi service healthy:

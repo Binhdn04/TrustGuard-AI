@@ -229,6 +229,33 @@ async def test_admin_can_register_and_list_reviewed_sources(client, wave2_platfo
 
 
 @pytest.mark.asyncio
+async def test_admin_can_review_discovered_tier_c_source(client, wave2_platform):
+    _, repository, _service = wave2_platform
+    await repository.observe_source_discovery(
+        url="https://new-source.example/report",
+        publisher="New Source",
+        event="extract",
+        claim_hash=sha256(b"claim").hexdigest(),
+        agrees_with_curated=None,
+    )
+
+    listed = await client.get("/api/v3/admin/source-discoveries", headers=ADMIN_HEADERS)
+    assert listed.status_code == 200
+    assert listed.json()[0]["domain"] == "new-source.example"
+
+    promoted = await client.post(
+        "/api/v3/admin/source-discoveries/new-source.example/decision",
+        headers=ADMIN_HEADERS,
+        json={"decision": "promote", "note": "Reviewed source ownership and editorial policy."},
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["status"] == "promoted"
+
+    policies = await client.get("/api/v3/admin/sources", headers=ADMIN_HEADERS)
+    assert any(item["normalized_pattern"] == "*.new-source.example" for item in policies.json())
+
+
+@pytest.mark.asyncio
 async def test_source_registry_deny_promotion_and_artifact_signing(wave2_platform):
     _, repository, service = wave2_platform
     await repository.register_source(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.agents.state import AgentState
-from src.models import CaseStatus, RecommendedAction, RiskLevel, Verdict
+from src.models import CaseStatus, ClaimStance, RecommendedAction, RiskLevel, Verdict
 
 _SUMMARY = {
     Verdict.SAFE: "Các nguồn đã kiểm tra chưa ghi nhận dấu hiệu rủi ro đáng kể.",
@@ -20,7 +20,26 @@ def explain_result(state: AgentState) -> dict:
             reasons.append(reason)
     if not reasons:
         reasons.append("Không có evidence có cấu trúc đủ mạnh để đưa ra kết luận chắc chắn.")
-    return {"summary": _SUMMARY[state["verdict"]], "reasons": reasons[:6]}
+    relevant_stances = {
+        item.stance for item in state.get("claim_findings", []) if item.relevance >= 0.6
+    }
+    if relevant_stances == {ClaimStance.SUPPORTS}:
+        summary = (
+            "Các nguồn Tier C độc lập tạm thời xác nhận claim."
+            if state.get("fact_check_basis") == "provisional"
+            else "Các nguồn được trích dẫn xác nhận claim."
+        )
+    elif relevant_stances == {ClaimStance.REFUTES}:
+        summary = (
+            "Các nguồn Tier C độc lập tạm thời bác bỏ claim."
+            if state.get("fact_check_basis") == "provisional"
+            else "Các nguồn được trích dẫn bác bỏ claim."
+        )
+    elif relevant_stances and relevant_stances <= {ClaimStance.SUPPORTS, ClaimStance.REFUTES, ClaimStance.MIXED}:
+        summary = "Các nguồn cho thấy claim đúng một phần hoặc còn mâu thuẫn."
+    else:
+        summary = _SUMMARY[state["verdict"]]
+    return {"summary": summary, "reasons": reasons[:6]}
 
 
 def route_action(state: AgentState) -> dict:

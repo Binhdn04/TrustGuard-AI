@@ -48,4 +48,22 @@ describe("analysis v3 mapper", () => {
     expect(view.factCheck?.overallStance).toBe("refutes");
     expect(view.factCheck?.claims[0].stance).toBe("refutes");
   });
+
+  it("maps provisional Tier C evidence and uses fact-check confidence", () => {
+    const response = completedResponse();
+    response.fact_check_basis = "provisional";
+    response.fact_check_confidence = 0.65;
+    response.evidence![0].source_tier = "c";
+    response.evidence![0].provisional = true;
+
+    const view = mapAnalysisResponseToViewModel(response, {
+      originalContent: "COVID vaccines contain microchips",
+      consentToScanUrls: false,
+    });
+
+    expect(view.factCheck?.basis).toBe("provisional");
+    expect(view.factCheck?.confidence).toBe(0.65);
+    expect(view.factCheck?.claims[0].provisional).toBe(true);
+    expect(view.factCheck?.claims[0].sources[0].tier).toBe("c");
+  });
 });

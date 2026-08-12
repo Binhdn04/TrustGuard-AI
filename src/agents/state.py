@@ -60,6 +60,8 @@ class WorkflowState(AgentState, total=False):
     """Serializable private state used only while the graph is executing."""
 
     summary: str
+    fact_check_basis: Literal["reviewed", "provisional", "inconclusive"]
+    fact_check_confidence: float | None
     consent_to_capture_screenshot: bool
     extracted_claims: list[ExtractedClaim]
     next_tool: ToolRoute
@@ -92,6 +94,7 @@ class WorkflowState(AgentState, total=False):
     embedding_status: EmbeddingStatus
     usage_records: list[Any]
     claim_feature_vectors: list[tuple[str, tuple[float, ...]]]
+    examined_evidence: list[ClaimEvidence]
     llm_model: str
     llm_context: str
     llm_emotion: str

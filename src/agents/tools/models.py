@@ -261,6 +261,7 @@ class GoogleClaimReviewMatch(ToolContractModel):
     stance: ClaimStance = ClaimStance.UNRATED
     source_tier: str = "untrusted"
     trusted_claim_review: bool = False
+    policy_version: str = "unregistered"
     published_at: datetime | None = None
     observed_at: datetime
 
@@ -284,44 +285,25 @@ class WebCandidate(ToolContractModel):
     source_tier: str = "untrusted"
     published_at: datetime | None = None
     source_version: str
+    search_score: float = Field(default=0.0, ge=0, le=1)
+    policy_version: str = "unregistered"
 
 
-class FetchedEvidence(ToolContractModel):
+class ExtractedWebEvidence(ToolContractModel):
     evidence_ref: str
     canonical_url: str
     title: str
-    cleaned_content: str
+    text: str
     content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     publisher: str
     source_tier: str
     source_version: str
+    search_score: float = Field(default=0.0, ge=0, le=1)
     published_at: datetime | None = None
     observed_at: datetime
+    policy_version: str = "unregistered"
 
 
-class EvidenceChunk(ToolContractModel):
-    chunk_ref: str
-    evidence_ref: str
-    index: int = Field(ge=0)
-    text: str
-    canonical_url: str
-    title: str = "Web evidence"
-    publisher: str = "unknown"
-    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    source_tier: str
-    source_version: str
-    published_at: datetime | None = None
-
-
-class RerankedCandidate(ToolContractModel):
-    chunk_ref: str
-    evidence_ref: str
-    rank: int = Field(ge=1)
-    rerank_score: float
-    text: str
-    canonical_url: str
-    title: str
-    publisher: str
-    source_tier: str
-    source_version: str
-    published_at: datetime | None = None
+class TavilyExtractBatch(ToolContractModel):
+    evidence: list[ExtractedWebEvidence]
+    failed_urls: list[str] = Field(default_factory=list)

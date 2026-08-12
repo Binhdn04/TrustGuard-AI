@@ -76,7 +76,7 @@ luôn thắng wildcard `*.gov.vn`, và suffix match phải kiểm tra đúng ran
    and embedding in one transaction. If embedding was unavailable, commit with
    `embedding_status='pending'` and enqueue an idempotent re-embedding job keyed by
    result/model/version. Re-embedding never changes stance/evidence provenance.
-7. Tavily/Jina evidence is canonicalized and inserted idempotently by canonical URL + cleaned-content
+7. Tavily Search/Extract evidence is canonicalized and inserted idempotently by canonical URL + content
    hash + source version, then chunked deterministically. Cache insertion does not confer trust.
    Promotion is a separate reviewed transaction that records reviewer/policy version and permits only
    validated Tier A/B records; Tier C and runtime comparator stances cannot auto-promote.

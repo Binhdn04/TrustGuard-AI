@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from src.agents.contracts import LiveStepTransition
-from src.agents.fact_check import ExtractedClaim, FactCheckOrchestrator
+from src.agents.fact_check import ExtractedClaim, FactCheckOrchestrator, registrable_domain
 from src.agents.nodes.example_node import analyze_node, respond_node
 from src.agents.nodes.explanation import explain_result, route_action
 from src.agents.nodes.extraction import classify_input, extract_indicators
@@ -416,12 +416,11 @@ def build_graph(
     google_claim_search: Any | None = None,
     hybrid_corpus_retriever: Any | None = None,
     tavily_search: Any | None = None,
-    jina_reader: Any | None = None,
-    chunker: Any | None = None,
-    reranker: Any | None = None,
+    tavily_extract: Any | None = None,
     evidence_comparator: Any | None = None,
     source_registry: Any | None = None,
     max_claim_concurrency: int = 3,
+    provisional_tier_c_enabled: bool = True,
     fact_check_timeout_seconds: float | None = None,
     post_processing_reserve_seconds: float = 0.0,
     blacklist: BlacklistRepository | None = None,
@@ -441,9 +440,7 @@ def build_graph(
         google_claim_search,
         hybrid_corpus_retriever,
         tavily_search,
-        jina_reader,
-        chunker,
-        reranker,
+        tavily_extract,
         evidence_comparator,
         source_registry,
     )
@@ -453,12 +450,11 @@ def build_graph(
             google_claim_search=google_claim_search,
             corpus_retriever=hybrid_corpus_retriever,
             tavily_search=tavily_search,
-            jina_reader=jina_reader,
-            chunker=chunker,
-            reranker=reranker,
+            tavily_extract=tavily_extract,
             comparator=evidence_comparator,
             source_registry=source_registry,
             max_claim_concurrency=max_claim_concurrency,
+            provisional_tier_c_enabled=provisional_tier_c_enabled,
         )
     graph.add_node("classify_input", _classify_node)
     graph.add_node("extract_indicators", _extract_node)
@@ -555,11 +551,27 @@ def build_graph(
                     finding=finding.finding,
                     stance=finding.stance,
                     observed_at=finding.observed_at,
+                    source_tier=finding.source_tier,
+                    policy_version=finding.policy_version,
+                    provisional=finding.provisional,
                 )
             )
+        findings = list(result.claim_findings)
+        provisional_findings = [item for item in findings if item.provisional]
+        reviewed_findings = [item for item in findings if not item.provisional]
+        if reviewed_findings:
+            fact_check_basis, fact_check_confidence = "reviewed", 0.9
+        elif provisional_findings:
+            domains = {registrable_domain(item.url or "") for item in provisional_findings}
+            domains.discard("")
+            fact_check_basis = "provisional"
+            fact_check_confidence = min(0.7, 0.5 + 0.05 * len(domains))
+        else:
+            fact_check_basis, fact_check_confidence = "inconclusive", None
         return {
             "extracted_claims": extracted[:5],
             "claim_findings": list(state.get("claim_findings", [])) + list(result.claim_findings),
+            "examined_evidence": list(result.examined_evidence),
             "evidence": evidence,
             "limitations": list(dict.fromkeys([*state.get("limitations", []), *result.limitations])),
             "errors": [*state.get("errors", []), *result.errors],
@@ -567,6 +579,8 @@ def build_graph(
             "embedding_status": result.embedding_status,
             "usage_records": list(result.usage_records),
             "claim_feature_vectors": list(result.claim_feature_vectors),
+            "fact_check_basis": fact_check_basis,
+            "fact_check_confidence": fact_check_confidence,
         }
 
     graph.add_node("verify_fact_checks", verify_fact_checks)
@@ -623,12 +637,10 @@ def build_legacy_graph():
 
 
 def build_openai_graph(**kwargs):
-    from src.agents.tools.advanced import EvidenceChunker, LexicalEvidenceReranker
     from src.agents.tools.integration import build_provider_adapters
     from src.agents.tools.runtime import (
         OpenAIEvidenceComparator,
         PostgresHybridCorpusRetriever,
-        build_flashrank_reranker,
     )
     from src.config import get_settings
     from src.services.llm import get_llm
@@ -640,14 +652,8 @@ def build_openai_graph(**kwargs):
     repository = kwargs.get("blacklist")
     if repository is not None and hasattr(repository, "search_fact_check_corpus"):
         kwargs.setdefault("hybrid_corpus_retriever", PostgresHybridCorpusRetriever(repository))
-    kwargs.setdefault("chunker", EvidenceChunker())
     if llm is not None:
         kwargs.setdefault("evidence_comparator", OpenAIEvidenceComparator(llm))
-    if "tavily_search" in owned_adapters and "jina_reader" in owned_adapters and "reranker" not in kwargs:
-        try:
-            kwargs["reranker"] = build_flashrank_reranker(settings.flashrank_model, settings.flashrank_cache_dir)
-        except RuntimeError:
-            kwargs["reranker"] = LexicalEvidenceReranker()
     graph_adapter_names = {
         "url_scanner",
         "url_reputation",
@@ -659,12 +665,11 @@ def build_openai_graph(**kwargs):
         "google_claim_search",
         "hybrid_corpus_retriever",
         "tavily_search",
-        "jina_reader",
-        "chunker",
-        "reranker",
+        "tavily_extract",
         "evidence_comparator",
         "source_registry",
         "max_claim_concurrency",
+        "provisional_tier_c_enabled",
         "fact_check_timeout_seconds",
         "post_processing_reserve_seconds",
     }
@@ -672,6 +677,7 @@ def build_openai_graph(**kwargs):
         if name in graph_adapter_names:
             kwargs.setdefault(name, adapter)
     kwargs.setdefault("max_claim_concurrency", settings.max_claim_concurrency)
+    kwargs.setdefault("provisional_tier_c_enabled", settings.source_provisional_enabled)
     kwargs.setdefault("fact_check_timeout_seconds", settings.fact_check_timeout_seconds)
     kwargs.setdefault("post_processing_reserve_seconds", settings.post_processing_reserve_seconds)
     graph = build_graph(llm=llm, **kwargs)
