@@ -103,7 +103,7 @@ capability, không tạo một điểm dừng MVP. Việc triển khai được 
 
 ## Chạy local
 
-Yêu cầu Python 3.11+, Node.js 20+ và npm.
+Yêu cầu Python 3.11+, Node.js 22+ và npm.
 
 ```bash
 uv sync
@@ -115,7 +115,17 @@ uv run uvicorn src.main:app --reload --port 8000
 `.env.example` mặc định dùng SQLite để lệnh trên chạy ngay mà không cần Docker. Nếu chọn PostgreSQL,
 hãy chạy PostgreSQL/Redis, thay `DATABASE_URL`, rồi chạy `uv run alembic upgrade head` trước khi mở API.
 
-Nếu không dùng `uv`, có thể tạo virtualenv và cài `requirements.txt` bằng `pip` như trước.
+Nếu không dùng `uv`, có thể cài bằng `pip`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+playwright install chromium
+```
+
+`requirements-dev.txt` bao gồm runtime dependencies trong `requirements.txt` và các công cụ
+test/lint dành cho development.
 
 Ở terminal khác:
 
@@ -128,10 +138,96 @@ npm run dev
 Đặt `NEXT_PUBLIC_API_URL=http://localhost:8000` và `NEXT_PUBLIC_USE_MOCK_API=false` trong
 `frontend/.env.local` khi kiểm thử HTTP integration. Swagger UI: `http://localhost:8000/docs`.
 
-Để bật profile dữ liệu/provider thật, điền sáu khóa provider trong `.env`, đặt
-`LIVE_PROVIDERS_REQUIRED=true`, rồi chạy `docker compose up --build`. Compose chạy migration, API,
-durable worker, frontend, PostgreSQL/pgvector và Redis; readiness sẽ fail nếu database/Redis hoặc
-provider profile bắt buộc chưa sẵn sàng trong production profile.
+## Chạy bằng Docker Compose
+
+Yêu cầu Docker Engine hoặc Docker Desktop có Compose v2. Stack gồm frontend, API, durable worker,
+PostgreSQL/pgvector và Redis. Chromium chỉ được cài trong worker image để phục vụ screenshot sau
+consent; frontend và API image không mang browser.
+
+### 1. Tạo cấu hình
+
+```bash
+cp .env.example .env
+```
+
+Mặc định file này chạy development với demo authentication. Trước lần chạy đầu tiên, nên đổi ít
+nhất `DATABASE_ENCRYPTION_KEY` và `ARTIFACT_SIGNING_KEY`. Các biến kết nối PostgreSQL/Redis và vai
+trò API/worker được Compose đặt lại theo network nội bộ, vì vậy không cần sửa `DATABASE_URL`,
+`REDIS_URL` hoặc `RUN_DURABLE_WORKER` để chạy stack local.
+
+Frontend nhận các biến `NEXT_PUBLIC_*` tại thời điểm build. Giá trị mặc định phù hợp khi truy cập
+trên cùng máy tại `http://localhost:3000`:
+
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_USE_MOCK_API=false
+```
+
+### 2. Build và khởi động
+
+```bash
+docker compose up --build -d
+docker compose ps
+```
+
+Lần build đầu sẽ tải FlashRank model cho cả runtime base và Chromium cho riêng worker, nên sẽ lâu
+hơn các lần sau. BuildKit cache pip/npm và các Docker layers giúp các lần build tiếp theo không tải
+lại khi dependency không đổi. Backend tự chạy `alembic upgrade head` trước khi mở API.
+
+Các địa chỉ sau sẽ khả dụng khi service healthy:
+
+- Frontend: `http://localhost:3000`
+- API documentation: `http://localhost:8000/docs`
+- API readiness: `http://localhost:8000/health/ready`
+
+Xem trạng thái và log:
+
+```bash
+docker compose ps
+docker compose logs -f backend worker
+```
+
+Nếu thay đổi `NEXT_PUBLIC_*`, cần build lại frontend vì các giá trị này được đóng vào browser bundle:
+
+```bash
+docker compose build frontend
+docker compose up -d frontend
+```
+
+### 3. Bật provider thật
+
+Điền sáu khóa provider trong `.env` và đặt:
+
+```dotenv
+LIVE_PROVIDERS_REQUIRED=true
+```
+
+Sau đó rebuild/restart backend và worker:
+
+```bash
+docker compose up --build -d backend worker
+```
+
+Trong production, đồng thời đặt `APP_ENV=production`, `DEMO_AUTH_ENABLED=false`, để trống
+`DEMO_USER_TOKEN`/`DEMO_ADMIN_TOKEN`, cấu hình OIDC, đổi toàn bộ signing/encryption keys, đặt
+`CORS_ORIGINS` và dùng `NEXT_PUBLIC_API_URL` là URL public của API. Có thể đặt
+`NEXT_PUBLIC_OIDC_LOGIN_URL` cho entrypoint đăng nhập hosted.
+
+### 4. Dừng hoặc xóa dữ liệu
+
+```bash
+docker compose down
+```
+
+Lệnh trên giữ PostgreSQL/Redis named volumes và thư mục `./data`. Chỉ dùng lệnh sau khi thực sự muốn
+xóa named volumes của PostgreSQL và Redis; dữ liệu trong `./data` vẫn được giữ:
+
+```bash
+docker compose down -v
+```
+
+Compose readiness sẽ fail nếu database/Redis hoặc provider profile bắt buộc chưa sẵn sàng trong
+production profile.
 
 Sau khi các service healthy, chạy một smoke bằng claim/URL công khai đang cần kiểm chứng (script
 không in lại message hay token):
