@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
 from time import perf_counter
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -363,7 +364,12 @@ class FlashRankReranker:
         self, claim: ExtractedClaim, candidates: Sequence[EvidenceChunk], *, top_k: int = 5
     ) -> list[RerankedCandidate]:
         passages = [{"id": c.chunk_ref, "text": c.text, "meta": c} for c in candidates]
-        ranked = self.ranker.rerank({"query": claim.normalized_text, "passages": passages}, max_length=self.max_length)
+        # FlashRank 0.2.x configures max_length on Ranker construction; rerank
+        # accepts a RerankRequest-like object as its only argument. Keep this
+        # provider boundary structural so importing this module remains safe
+        # when the optional live dependency is not installed.
+        request = SimpleNamespace(query=claim.normalized_text, passages=passages)
+        ranked = self.ranker.rerank(request)
         by_ref = {c.chunk_ref: c for c in candidates}
         output = []
         for position, row in enumerate(ranked[: min(top_k, 5)], 1):
