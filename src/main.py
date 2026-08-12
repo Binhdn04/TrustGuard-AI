@@ -132,7 +132,6 @@ async def readiness():
                 settings.google_web_risk_api_key,
                 settings.virustotal_api_key,
                 settings.tavily_api_key,
-                settings.jina_api_key,
             )
         )
     status_code = 200 if all(checks.values()) else 503

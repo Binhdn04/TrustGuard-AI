@@ -13,7 +13,6 @@ services:
       DATABASE_ENCRYPTION_KEY: ${DATABASE_ENCRYPTION_KEY:-development-only-change-me}
       REDIS_URL: redis://redis:6379/0
       LIVE_PROVIDERS_REQUIRED: ${LIVE_PROVIDERS_REQUIRED:-false}
-      FLASHRANK_CACHE_DIR: /ms-flashrank
       RUN_DURABLE_WORKER: "false"
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]
     volumes:
@@ -37,7 +36,6 @@ services:
       DATABASE_ENCRYPTION_KEY: ${DATABASE_ENCRYPTION_KEY:-development-only-change-me}
       REDIS_URL: redis://redis:6379/0
       LIVE_PROVIDERS_REQUIRED: ${LIVE_PROVIDERS_REQUIRED:-false}
-      FLASHRANK_CACHE_DIR: /ms-flashrank
       RUN_DURABLE_WORKER: "true"
     volumes:
       - ./data:/app/data

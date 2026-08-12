@@ -35,6 +35,8 @@ import type {
   ScreenshotStatusResponseV3,
   SourcePolicyCreateRequestV3,
   SourcePolicyRecordV3,
+  SourceDiscoveryRecordV3,
+  SourceDiscoveryDecisionRequestV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
@@ -587,6 +589,19 @@ export class MockAnalysisApi implements AnalysisApi {
     };
     sourcePolicies.push(item);
     return item;
+  }
+
+  async listSourceDiscoveries(): Promise<SourceDiscoveryRecordV3[]> {
+    return [];
+  }
+
+  async decideSourceDiscovery(
+    _domain: string,
+    _request: SourceDiscoveryDecisionRequestV3,
+  ): Promise<SourceDiscoveryRecordV3> {
+    void _domain;
+    void _request;
+    throw new Error("Không tìm thấy source discovery.");
   }
 
   async getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3> {

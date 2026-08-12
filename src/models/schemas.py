@@ -176,6 +176,9 @@ class Evidence(ContractModel):
     finding: str
     stance: ClaimStance | None = None
     observed_at: datetime
+    source_tier: Literal["a", "b", "c", "untrusted"] | None = None
+    policy_version: str | None = None
+    provisional: bool = False
 
 
 class InvestigationStep(ContractModel):
@@ -204,6 +207,9 @@ class ClaimEvidence(ContractModel):
     relevance: float = Field(ge=0.0, le=1.0)
     stance: ClaimStance = ClaimStance.UNRATED
     observed_at: datetime
+    source_tier: Literal["a", "b", "c", "untrusted"] | None = None
+    policy_version: str | None = None
+    provisional: bool = False
 
 
 class DomainIntelligenceResult(ContractModel):
@@ -247,9 +253,12 @@ class AnalysisResponse(ContractModel):
     verdict: Verdict | None = None
     recommended_action: RecommendedAction | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    fact_check_basis: Literal["reviewed", "provisional", "inconclusive"] | None = None
+    fact_check_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     summary: str | None = None
     reasons: list[str] | None = None
     evidence: list[Evidence] | None = None
+    examined_evidence: list[ClaimEvidence] | None = None
     limitations: list[str] | None = None
     case_status: CaseStatus | None = None
     scoring_version: str | None = None
@@ -793,6 +802,27 @@ class SourcePolicyRecordV3(SourcePolicyCreateRequestV3):
     active: bool
     reviewer_id: str
     reviewed_at: datetime
+
+
+class SourceDiscoveryRecordV3(ContractModel):
+    domain: str
+    publisher: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    search_count: int = Field(ge=0)
+    extract_success_count: int = Field(ge=0)
+    independent_claim_count: int = Field(ge=0)
+    curated_comparison_count: int = Field(ge=0)
+    curated_agreement_count: int = Field(ge=0)
+    curated_conflict_count: int = Field(ge=0)
+    representative_urls: list[str] = Field(default_factory=list, max_length=5)
+    status: Literal["observing", "promoted", "demoted", "denied"]
+    eligible_for_auto_promotion: bool
+
+
+class SourceDiscoveryDecisionRequestV3(ContractModel):
+    decision: Literal["promote", "deny", "demote"]
+    note: str = Field(min_length=1, max_length=1000)
 
 
 class CapabilitiesResponseV3(ContractModel):

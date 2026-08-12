@@ -28,6 +28,7 @@ import type {
   OperationsMetricsResponseV3,
   ReviewDecisionV3,
   SourcePolicyRecordV3,
+  SourceDiscoveryRecordV3,
 } from "@/types/generated/api-v3";
 
 type Tab = "appeals" | "actions" | "campaigns" | "sources";
@@ -47,6 +48,10 @@ const statusStyle: Record<string, string> = {
   rejected: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300",
   failed: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300",
   confirmed: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  observing: "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+  promoted: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  demoted: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  denied: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300",
 };
 
 function StatusBadge({ value }: { value: string }) {
@@ -70,6 +75,7 @@ export function PlatformOperations() {
   const [actions, setActions] = useState<AdminActionRecordV3[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignSummaryV3[]>([]);
   const [sources, setSources] = useState<SourcePolicyRecordV3[]>([]);
+  const [sourceDiscoveries, setSourceDiscoveries] = useState<SourceDiscoveryRecordV3[]>([]);
   const [campaignDetails, setCampaignDetails] = useState<Record<string, CampaignDetailV3>>({});
   const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -91,9 +97,10 @@ export function PlatformOperations() {
         api.listAdminActions({ limit: 100 }),
         api.listCampaigns({ limit: 100 }),
         api.listSourcePolicies(),
+        api.listSourceDiscoveries(),
     ] as const);
     const warnings: string[] = [];
-    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult] = results;
+    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult, discoveriesResult] = results;
     if (metricsResult.status === "fulfilled") setMetrics(metricsResult.value);
     else { setMetrics(null); warnings.push("metrics"); }
     if (appealsResult.status === "fulfilled") setAppeals(appealsResult.value.items);
@@ -104,6 +111,8 @@ export function PlatformOperations() {
     else { setCampaigns([]); warnings.push("campaigns"); }
     if (sourcesResult.status === "fulfilled") setSources(sourcesResult.value);
     else { setSources([]); warnings.push("source registry"); }
+    if (discoveriesResult.status === "fulfilled") setSourceDiscoveries(discoveriesResult.value);
+    else { setSourceDiscoveries([]); warnings.push("source discovery"); }
     setDataWarnings(warnings);
     setLoading(false);
   }, [timeRange]);
@@ -259,7 +268,7 @@ export function PlatformOperations() {
         {!loading && activeTab === "appeals" && <AppealList items={appeals} onDecide={(item) => openDecision({ kind: "appeal", id: item.appeal_id, title: `Xử lý khiếu nại ${item.appeal_id.slice(0, 8)}` })} />}
         {!loading && activeTab === "actions" && <ActionList items={actions} onDecide={(item) => openDecision({ kind: "action", id: item.action_id, title: `Phê duyệt ${item.action.replaceAll("_", " ")}` })} />}
         {!loading && activeTab === "campaigns" && <><div className="mb-4 flex justify-end"><select aria-label="Lọc campaign theo reviewer state" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm"><option value="all">Tất cả reviewer state</option><option value="pending_review">Pending review</option><option value="confirmed">Confirmed</option><option value="rejected">Rejected</option></select></div><CampaignList items={filteredCampaigns} details={campaignDetails} expanded={expandedCampaign} onToggle={(id) => void toggleCampaign(id)} onDecide={(item) => openDecision({ kind: "campaign", id: item.campaign_id, title: `Review campaign ${item.campaign_id.slice(0, 8)}` })} /></>}
-        {!loading && activeTab === "sources" && <SourceRegistryList items={sources} onCreated={load} />}
+        {!loading && activeTab === "sources" && <SourceRegistryList items={sources} discoveries={sourceDiscoveries} onCreated={load} />}
       </section>
 
       {decision && (
@@ -320,7 +329,7 @@ function CampaignList({ items, details, expanded, onToggle, onDecide }: { items:
   return <div className="space-y-4">{items.map((item) => { const detail = details[item.campaign_id]; const isOpen = expanded === item.campaign_id; return <article key={item.campaign_id} className="overflow-hidden rounded-2xl border border-border bg-card"><button type="button" aria-expanded={isOpen} onClick={() => onToggle(item.campaign_id)} className="flex w-full items-start gap-4 p-5 text-left hover:bg-muted/30"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-500/10 text-violet-600"><GitBranch className="size-5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><StatusBadge value={item.reviewer_status} /><span className="text-xs text-muted-foreground">{item.analysis_count} analyses</span></span><span className="mt-2 block font-semibold">{item.hypothesis}</span><span className="mt-1 block text-xs text-muted-foreground">Cửa sổ: {formatDate(item.window_started_at)} → {formatDate(item.window_ended_at)}</span><span className="mt-2 flex flex-wrap gap-2">{item.aggregate_signals.map((signal) => <span key={signal.signal} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{signal.signal}: {signal.count}</span>)}</span></span><ChevronDown className={cn("mt-2 size-4 shrink-0 transition-transform", isOpen && "rotate-180")} /></button>{item.reviewer_status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="mx-5 mb-4 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Review campaign</button>}{isOpen && <div className="border-t border-border bg-muted/20 p-5">{detail ? <div className="grid gap-5 text-sm md:grid-cols-3"><DetailList title="Domains" items={detail.registrable_domains} /><DetailList title="Redirect targets" items={detail.redirect_targets} /><DetailList title="Evidence refs" items={detail.evidence_refs} /></div> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Đang tải chi tiết…</div>}</div>}</article>; })}</div>;
 }
 
-function SourceRegistryList({ items, onCreated }: { items: SourcePolicyRecordV3[]; onCreated: () => Promise<void> }) {
+function SourceRegistryList({ items, discoveries, onCreated }: { items: SourcePolicyRecordV3[]; discoveries: SourceDiscoveryRecordV3[]; onCreated: () => Promise<void> }) {
   const [publisher, setPublisher] = useState("");
   const [pattern, setPattern] = useState("");
   const [saving, setSaving] = useState(false);
@@ -337,7 +346,18 @@ function SourceRegistryList({ items, onCreated }: { items: SourcePolicyRecordV3[
       setPublisher(""); setPattern(""); await onCreated();
     } finally { setSaving(false); }
   };
-  return <div className="space-y-4"><div className="grid gap-3 rounded-2xl border border-border bg-card p-5 md:grid-cols-[1fr_1fr_auto]"><input aria-label="Publisher" value={publisher} onChange={(event) => setPublisher(event.target.value)} placeholder="Publisher" className="rounded-xl border border-border bg-background px-3 py-2" /><input aria-label="Domain pattern" value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder="*.example.vn" className="rounded-xl border border-border bg-background px-3 py-2" /><button type="button" disabled={saving || !publisher.trim() || !pattern.trim()} onClick={() => void create()} className="rounded-xl bg-primary px-4 py-2 font-semibold text-primary-foreground disabled:opacity-50">Thêm Tier B</button></div><div className="space-y-3">{items.map((item) => <article key={item.source_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={`Tier ${item.tier}`} /><strong>{item.publisher}</strong><code className="text-xs text-muted-foreground">{item.normalized_pattern}</code></div><p className="mt-2 text-xs text-muted-foreground">{item.policy_version} · {item.allowed_operations.join(", ")} · reviewer {item.reviewer_id}</p></article>)}</div></div>;
+  const decide = async (item: SourceDiscoveryRecordV3, decision: "promote" | "deny" | "demote") => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await getAnalysisApi().decideSourceDiscovery(item.domain, {
+        decision,
+        note: `Admin ${decision} từ source discovery dashboard`,
+      });
+      await onCreated();
+    } finally { setSaving(false); }
+  };
+  return <div className="space-y-6"><div className="grid gap-3 rounded-2xl border border-border bg-card p-5 md:grid-cols-[1fr_1fr_auto]"><input aria-label="Publisher" value={publisher} onChange={(event) => setPublisher(event.target.value)} placeholder="Publisher" className="rounded-xl border border-border bg-background px-3 py-2" /><input aria-label="Domain pattern" value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder="*.example.vn" className="rounded-xl border border-border bg-background px-3 py-2" /><button type="button" disabled={saving || !publisher.trim() || !pattern.trim()} onClick={() => void create()} className="rounded-xl bg-primary px-4 py-2 font-semibold text-primary-foreground disabled:opacity-50">Thêm Tier B</button></div><section className="space-y-3"><h2 className="font-semibold">Domain được Tavily phát hiện ({discoveries.length})</h2>{discoveries.map((item) => { const comparisons = item.curated_comparison_count; const agreement = comparisons ? Math.round(item.curated_agreement_count / comparisons * 100) : 0; return <article key={item.domain} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.status} /><strong>{item.publisher}</strong><code className="text-xs text-muted-foreground">{item.domain}</code>{item.eligible_for_auto_promotion && <StatusBadge value="eligible" />}</div><p className="mt-2 text-xs text-muted-foreground">Search {item.search_count} · Extract {item.extract_success_count} · {item.independent_claim_count} claim · đồng thuận {agreement}%/{comparisons} đối chiếu</p><div className="mt-3 flex gap-2">{item.status !== "promoted" && <button disabled={saving} onClick={() => void decide(item, "promote")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Nâng Tier B</button>}{item.status === "promoted" && <button disabled={saving} onClick={() => void decide(item, "demote")} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Hạ Tier</button>}{item.status !== "denied" && <button disabled={saving} onClick={() => void decide(item, "deny")} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Chặn</button>}</div></article>; })}{!discoveries.length && <EmptyState icon={ExternalLink} text="Chưa có domain Tier C được phát hiện." />}</section><section className="space-y-3"><h2 className="font-semibold">Source Registry ({items.length})</h2>{items.map((item) => <article key={item.source_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={`Tier ${item.tier}`} /><strong>{item.publisher}</strong><code className="text-xs text-muted-foreground">{item.normalized_pattern}</code></div><p className="mt-2 text-xs text-muted-foreground">{item.policy_version} · {item.allowed_operations.join(", ")} · reviewer {item.reviewer_id}</p></article>)}</section></div>;
 }
 
 function DetailList({ title, items }: { title: string; items: string[] }) {

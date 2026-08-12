@@ -58,8 +58,8 @@ class TavilySearch(Protocol):
     async def search(self, claim: Any, *, max_results: int = 10) -> Any: ...
 
 
-class JinaReader(Protocol):
-    async def read(self, candidate: Any) -> Any: ...
+class TavilyExtract(Protocol):
+    async def extract(self, claim: Any, candidates: Sequence[Any]) -> Any: ...
 
 
 class UrlScanner(Protocol):

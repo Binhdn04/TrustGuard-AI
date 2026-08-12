@@ -51,6 +51,16 @@ export function FactCheckSummary({ result }: FactCheckSummaryProps) {
   };
 
   const config = getOverallConfig(result.overallStance);
+  const title = result.basis === "provisional"
+    ? result.overallStance === "supports"
+      ? "Xác Nhận Tạm Thời"
+      : result.overallStance === "refutes"
+        ? "Bác Bỏ Tạm Thời"
+        : "Kết Luận Tạm Thời"
+    : config.title;
+  const description = result.basis === "provisional"
+    ? "Kết luận dựa trên nguồn chưa được duyệt trong Source Registry."
+    : config.description;
   const Icon = config.icon;
 
   return (
@@ -63,10 +73,10 @@ export function FactCheckSummary({ result }: FactCheckSummaryProps) {
           </div>
           <div className="flex-1 space-y-2">
             <h2 className={cn("text-2xl sm:text-3xl font-extrabold tracking-tight", config.color)}>
-              {config.title}
+              {title}
             </h2>
             <p className="text-foreground/80 font-medium">
-              {config.description}
+              {description}
             </p>
           </div>
         </div>

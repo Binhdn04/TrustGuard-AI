@@ -30,6 +30,7 @@ from src.services.platform_wave2 import (
     VersionedSourceRegistry,
     Wave2PlatformService,
     default_source_policies,
+    effective_source_policies,
 )
 from src.services.processor import LangGraphAnalysisProcessor
 from src.services.realtime import (
@@ -53,9 +54,7 @@ _source_registry = VersionedSourceRegistry(default_source_policies())
 
 def _effective_source_policies(configured):
     """Keep reviewed built-ins available while allowing persisted policies to override them."""
-    by_pattern = {item.normalized_pattern: item for item in default_source_policies()}
-    by_pattern.update({item.normalized_pattern: item for item in configured or []})
-    return list(by_pattern.values())
+    return effective_source_policies(list(configured or []))
 
 
 @lru_cache
@@ -70,6 +69,11 @@ def get_analysis_service() -> AnalysisService:
         )
         if postgres
         else SQLiteBlacklistRepository(settings.security_database_path)
+    )
+    _source_registry.bind_discovery_store(
+        blacklist,
+        enabled=settings.source_discovery_enabled,
+        auto_promotion_enabled=settings.source_auto_promotion_enabled,
     )
     processor = None
     if not postgres or settings.run_durable_worker:

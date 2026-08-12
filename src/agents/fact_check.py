@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -178,6 +177,7 @@ class EvidenceCandidate:
     source_url: str
     publisher: str
     source_tier: SourceTier
+    relevance: float = 1.0
     stance: ClaimStance = ClaimStance.UNRATED
     title: str = "Fact-check evidence"
     finding: str = "Evidence matched the extracted claim."
@@ -188,6 +188,8 @@ class EvidenceCandidate:
     trusted_claim_review: bool = False
     reviewer: str | None = None
     publication_date_is_proxy: bool = False
+    policy_version: str = "unregistered"
+    content_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,12 +203,28 @@ class EvidenceSufficiency:
 @dataclass(frozen=True, slots=True)
 class FactCheckPipelineResult:
     claim_findings: tuple[ClaimEvidence, ...]
+    examined_evidence: tuple[ClaimEvidence, ...]
     limitations: tuple[str, ...]
     errors: tuple[ToolError, ...]
     tool_usage_refs: tuple[str, ...]
     embedding_status: EmbeddingStatus
     usage_records: tuple[Any, ...]
     claim_feature_vectors: tuple[tuple[str, tuple[float, ...]], ...] = ()
+
+
+_COMMON_SECOND_LEVEL_SUFFIXES = frozenset(
+    {"co.uk", "org.uk", "gov.uk", "com.au", "gov.au", "com.vn", "org.vn", "gov.vn", "co.jp"}
+)
+
+
+def registrable_domain(url: str) -> str:
+    """Return a conservative, dependency-free registrable-domain approximation."""
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    suffix2 = ".".join(labels[-2:])
+    return ".".join(labels[-3:]) if suffix2 in _COMMON_SECOND_LEVEL_SUFFIXES else suffix2
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,16 +257,8 @@ class TavilySearch(Protocol):
     async def search(self, claim: ExtractedClaim, *, max_results: int = 10) -> Any: ...
 
 
-class JinaReader(Protocol):
-    async def read(self, candidate: Any) -> Any: ...
-
-
-class Chunker(Protocol):
-    def split(self, evidence: Sequence[Any]) -> Sequence[Any]: ...
-
-
-class Reranker(Protocol):
-    def rank(self, claim: ExtractedClaim, candidates: Sequence[Any], *, top_k: int = 5) -> Sequence[Any]: ...
+class TavilyExtract(Protocol):
+    async def extract(self, claim: ExtractedClaim, candidates: Sequence[Any]) -> Any: ...
 
 
 class EvidenceComparator(Protocol):
@@ -330,6 +340,10 @@ def _as_candidate(item: Any, *, default_ref_prefix: str) -> EvidenceCandidate:
         source_url=source_url,
         publisher=publisher,
         source_tier=_source_tier(_get(item, "source_tier", _get(record, "source_tier"))),
+        relevance=max(
+            0.0,
+            min(1.0, float(_get(item, "search_score", _get(item, "similarity", 1.0)))),
+        ),
         stance=stance,
         title=str(_get(item, "title", f"Fact-check by {publisher}")),
         finding=str(
@@ -350,6 +364,8 @@ def _as_candidate(item: Any, *, default_ref_prefix: str) -> EvidenceCandidate:
         trusted_claim_review=bool(_get(item, "trusted_claim_review", _get(item, "is_trusted_claim_review", False))),
         reviewer=_get(item, "reviewer"),
         publication_date_is_proxy=bool(_get(item, "publication_date_is_proxy", False)),
+        policy_version=str(_get(item, "policy_version", "unregistered")),
+        content_sha256=_get(item, "content_sha256"),
     )
 
 
@@ -399,11 +415,17 @@ def evaluate_evidence_sufficiency(claim: ExtractedClaim, evidence: Sequence[Evid
     publishers = {item.publisher.casefold() for item in tier_b}
     if len(publishers) >= 2:
         return EvidenceSufficiency(True, "two_independent_tier_b", tuple(item.evidence_ref for item in tier_b), ())
+    tier_c = [item for item in eligible if item.source_tier is SourceTier.C]
+    if tier_c:
+        return EvidenceSufficiency(True, "one_tier_c", tuple(item.evidence_ref for item in tier_c), ())
     return EvidenceSufficiency(
         False,
         None,
         tuple(item.evidence_ref for item in eligible),
-        ("Cần một nguồn Tier A, một ClaimReview Tier B tin cậy, hoặc hai publisher Tier B độc lập.",),
+        (
+            "Cần một nguồn Tier A, một ClaimReview Tier B tin cậy, hai publisher Tier B độc lập, "
+            "hoặc một nguồn Tier C cho kết luận tạm thời.",
+        ),
     )
 
 
@@ -436,12 +458,11 @@ class FactCheckOrchestrator:
         google_claim_search: GoogleClaimSearch | None = None,
         corpus_retriever: HybridCorpusRetriever | None = None,
         tavily_search: TavilySearch | None = None,
-        jina_reader: JinaReader | None = None,
-        chunker: Chunker | None = None,
-        reranker: Reranker | None = None,
+        tavily_extract: TavilyExtract | None = None,
         comparator: EvidenceComparator | None = None,
         source_registry: SourceRegistry | None = None,
         max_claim_concurrency: int = 3,
+        provisional_tier_c_enabled: bool = True,
     ) -> None:
         if not 1 <= max_claim_concurrency <= 3:
             raise ValueError("claim concurrency must be between one and three")
@@ -449,12 +470,11 @@ class FactCheckOrchestrator:
         self.google_claim_search = google_claim_search
         self.corpus_retriever = corpus_retriever
         self.tavily_search = tavily_search
-        self.jina_reader = jina_reader
-        self.chunker = chunker
-        self.reranker = reranker
+        self.tavily_extract = tavily_extract
         self.comparator = comparator
         self.source_registry = source_registry
         self.max_claim_concurrency = max_claim_concurrency
+        self.provisional_tier_c_enabled = provisional_tier_c_enabled
         self._usage_records: ContextVar[list[Any] | None] = ContextVar("fact_check_usage", default=None)
 
     def _unwrap(self, envelope: Any):
@@ -483,7 +503,7 @@ class FactCheckOrchestrator:
     async def verify(self, claims: Sequence[ExtractedClaim]) -> FactCheckPipelineResult:
         selected = tuple(claims[:5])
         if not selected:
-            return FactCheckPipelineResult((), (), (), (), EmbeddingStatus.NOT_CONFIGURED, ())
+            return FactCheckPipelineResult((), (), (), (), (), EmbeddingStatus.NOT_CONFIGURED, ())
         usage_records: list[Any] = []
         token = self._usage_records.set(usage_records)
         try:
@@ -530,13 +550,16 @@ class FactCheckOrchestrator:
 
         outputs = await asyncio.gather(*(bounded(index, claim) for index, claim in enumerate(selected)))
         findings: list[ClaimEvidence] = []
-        for claim_findings, claim_limitations, claim_errors, claim_usage in outputs:
+        examined: list[ClaimEvidence] = []
+        for claim_findings, claim_examined, claim_limitations, claim_errors, claim_usage in outputs:
             findings.extend(claim_findings)
+            examined.extend(claim_examined)
             limitations.extend(claim_limitations)
             errors.extend(claim_errors)
             usage_refs.extend(claim_usage)
         return FactCheckPipelineResult(
             tuple(findings),
+            tuple(examined),
             tuple(dict.fromkeys(limitations)),
             tuple(errors),
             tuple(dict.fromkeys(usage_refs)),
@@ -588,16 +611,35 @@ class FactCheckOrchestrator:
             limitations.append("Evidence không tương thích thời gian hoặc không có ngày đã bị loại.")
         if any(item.publication_date_is_proxy for item in evidence):
             limitations.append("Một số evidence chỉ có ngày xuất bản proxy và được hạ độ tin cậy.")
-        gate = evaluate_evidence_sufficiency(claim, evidence)
+        def configured_gate(items: Sequence[EvidenceCandidate]) -> EvidenceSufficiency:
+            result = evaluate_evidence_sufficiency(claim, items)
+            if result.matched_rule == "one_tier_c" and not self.provisional_tier_c_enabled:
+                return EvidenceSufficiency(
+                    False,
+                    None,
+                    result.eligible_refs,
+                    ("Kết luận tạm thời từ Tier C đang bị tắt bởi cấu hình.",),
+                )
+            return result
+
+        gate = configured_gate(evidence)
         comparison_input: list[Any] = [
             item
             for item in evidence
             if item.source_tier is not SourceTier.UNTRUSTED and _temporal_compatible(claim, item)
         ]
+        examined_candidates: list[Any] = list(comparison_input)
+        web_attempted = False
         if not gate.sufficient:
+            web_attempted = True
             web_items = await self._conditional_web(claim, limitations, errors, usage_refs)
             combined = [*evidence, *(_as_candidate(item, default_ref_prefix="web") for item in web_items)]
-            gate = evaluate_evidence_sufficiency(claim, combined)
+            gate = configured_gate(combined)
+            examined_candidates = [
+                item
+                for item in combined
+                if item.source_tier is not SourceTier.UNTRUSTED and _temporal_compatible(claim, item)
+            ]
             if gate.sufficient:
                 comparison_input = [
                     item
@@ -608,10 +650,63 @@ class FactCheckOrchestrator:
                 comparison_input = []
                 limitations.extend(gate.missing_requirements)
 
-        findings = await self._compare_or_project(claim, comparison_input, limitations, errors, usage_refs)
+        # Comparator limitations are provisional until the single bounded web
+        # fallback has had a chance to resolve an adjacent or temporally unclear
+        # first-pass result.
+        comparison_limitations: list[str] = []
+        findings = await self._compare_or_project(
+            claim, comparison_input, comparison_limitations, errors, usage_refs
+        )
+        if not findings and not web_attempted and self.tavily_search is not None:
+            web_attempted = True
+            web_items = await self._conditional_web(claim, limitations, errors, usage_refs)
+            web_evidence = [_as_candidate(item, default_ref_prefix="web") for item in web_items]
+            if web_evidence:
+                # Put fresh web extracts first so a bounded five-record compare
+                # cannot be monopolized by adjacent ClaimReview matches.
+                raw_combined = [*web_evidence, *evidence]
+                seen_refs: set[str] = set()
+                combined: list[EvidenceCandidate] = []
+                for item in raw_combined:
+                    if item.evidence_ref in seen_refs:
+                        continue
+                    seen_refs.add(item.evidence_ref)
+                    combined.append(item)
+                gate = configured_gate(combined)
+                examined_candidates = [
+                    item
+                    for item in combined
+                    if item.source_tier is not SourceTier.UNTRUSTED and _temporal_compatible(claim, item)
+                ]
+                if gate.sufficient:
+                    second_pass_limitations: list[str] = []
+                    findings = await self._compare_or_project(
+                        claim,
+                        examined_candidates,
+                        second_pass_limitations,
+                        errors,
+                        usage_refs,
+                    )
+                    if not findings:
+                        limitations.extend(second_pass_limitations or comparison_limitations)
+                else:
+                    limitations.extend(gate.missing_requirements)
+                    limitations.extend(comparison_limitations)
+            else:
+                limitations.extend(comparison_limitations)
+        elif not findings:
+            limitations.extend(comparison_limitations)
         if not findings:
             limitations.append("Không có đủ evidence nhất quán để kết luận claim.")
-        return findings, limitations, errors, usage_refs
+        examined = [
+            self._to_claim_evidence(
+                item,
+                ClaimStance.UNRATED,
+                provisional=_source_tier(_get(item, "source_tier")) is SourceTier.C,
+            )
+            for item in examined_candidates[:5]
+        ]
+        return findings, examined, limitations, errors, usage_refs
 
     async def _conditional_web(self, claim, limitations, errors, usage_refs):
         if self.tavily_search is None:
@@ -640,18 +735,25 @@ class FactCheckOrchestrator:
             seen_urls.add(url)
             decision = self.source_registry.classify(url, datetime.now(UTC)) if self.source_registry else candidate
             tier = _source_tier(_get(decision, "source_tier", _get(decision, "tier")))
-            if tier is SourceTier.UNTRUSTED:
-                continue
             if bool(_get(decision, "explicit_deny", False)):
                 continue
+            if tier is SourceTier.UNTRUSTED:
+                tier = SourceTier.C
             publisher = str(
                 _get(decision, "publisher", None)
                 or _get(candidate, "publisher", None)
                 or (urlsplit(url).hostname or "unknown")
             ).casefold()
+            if _source_tier(_get(candidate, "source_tier")) is not tier:
+                if hasattr(candidate, "model_copy"):
+                    candidate = candidate.model_copy(
+                        update={"source_tier": tier.value, "publisher": publisher}
+                    )
+                elif isinstance(candidate, Mapping):
+                    candidate = {**candidate, "source_tier": tier.value, "publisher": publisher}
             eligible_candidates.append((candidate, publisher, tier))
 
-        # Preserve Tavily relevance order while ensuring the bounded reader
+        # Preserve Tavily relevance order while ensuring the bounded extract
         # budget covers independent publishers before duplicate outlets.
         approved: list[Any] = []
         deferred: list[Any] = []
@@ -680,33 +782,24 @@ class FactCheckOrchestrator:
         if len(approved) < 5:
             approved.extend(candidate for candidate in deferred if candidate not in approved)
             approved = approved[:5]
-        if self.jina_reader is None or not approved:
+        if self.tavily_extract is None or not approved:
             return []
-        fetched: list[Any] = []
-        results = await asyncio.gather(*(self.jina_reader.read(item) for item in approved), return_exceptions=True)
-        for envelope in results:
-            if isinstance(envelope, BaseException):
-                limitations.append("Jina Reader không đọc được một nguồn; nguồn đó bị bỏ qua.")
-                continue
+        try:
+            envelope = await self.tavily_extract.extract(claim, approved)
             result, usage_ref, error = self._unwrap(envelope)
             if usage_ref:
                 usage_refs.append(usage_ref)
             if error:
                 errors.append(error)
-                limitations.append("Jina Reader không đọc được một nguồn; nguồn đó bị bỏ qua.")
-            elif result is not None:
-                fetched.append(result)
-        if not fetched or self.chunker is None or self.reranker is None:
-            return []
-        try:
-            chunks = list(self.chunker.split(fetched))
-            ranked = self.reranker.rank(claim, chunks, top_k=5)
-            if inspect.isawaitable(ranked):
-                ranked = await ranked
-            return list(ranked)[:5]
+                limitations.append("Tavily Extract không hoàn tất; không tạo citation thay thế.")
+                return []
+            failed_urls = list(_get(result, "failed_urls", ()))
+            if failed_urls:
+                limitations.append(f"Tavily Extract không đọc được {len(failed_urls)} nguồn; các nguồn đó bị bỏ qua.")
+            return list(_get(result, "evidence", ()))[:5]
         except Exception as exc:
-            errors.append(ToolError(tool="reranker", code="PROVIDER_ERROR", message=str(exc), retryable=False))
-            limitations.append("FlashRank không hoàn tất; không tạo citation hoặc safe verdict giả.")
+            errors.append(ToolError(tool="tavily_extract", code="PROVIDER_ERROR", message=str(exc), retryable=True))
+            limitations.append("Tavily Extract không hoàn tất; không tạo citation thay thế.")
             return []
 
     async def _compare_or_project(self, claim, candidates, limitations, errors, usage_refs):
@@ -721,8 +814,6 @@ class FactCheckOrchestrator:
             return [self._to_claim_evidence(item, ClaimStance(_enum_value(_get(item, "stance")))) for item in projected]
 
         def comparator_fallback(reason: str):
-            if projected:
-                return project_rated_sources()
             limitations.append(f"{reason}; kết quả claim là inconclusive.")
             return []
 
@@ -748,8 +839,6 @@ class FactCheckOrchestrator:
                     return comparator_fallback("Comparator không hoàn tất")
                 stance_value = _enum_value(_get(result, "stance", "inconclusive"))
                 if stance_value == "inconclusive":
-                    if projected:
-                        return project_rated_sources()
                     limitations.extend(impactful_comparator_limitations(result))
                     return []
                 allowed_refs = {str(_get(item, "evidence_ref", _get(item, "chunk_ref", ""))) for item in submitted}
@@ -757,8 +846,50 @@ class FactCheckOrchestrator:
                 if not cited_refs or any(ref not in allowed_refs for ref in cited_refs):
                     return comparator_fallback("Comparator trả citation không hợp lệ")
                 stance = ClaimStance(stance_value)
+                scope_relation = _get(result, "scope_relation")
+                if scope_relation is not None and not (
+                    scope_relation == "matches_claim"
+                    or (scope_relation == "narrower_than_claim" and stance is ClaimStance.REFUTES)
+                ):
+                    limitations.extend(impactful_comparator_limitations(result))
+                    if not limitations:
+                        limitations.append("Evidence chỉ đề cập claim lân cận hoặc không khớp đầy đủ phạm vi.")
+                    return []
                 by_ref = {str(_get(item, "evidence_ref", _get(item, "chunk_ref", ""))): item for item in submitted}
-                return [self._to_claim_evidence(by_ref[ref], stance) for ref in cited_refs]
+                cited = [by_ref[ref] for ref in cited_refs]
+                cited_tiers = {_source_tier(_get(item, "source_tier")) for item in cited}
+                provisional = bool(cited_tiers) and cited_tiers <= {SourceTier.C}
+                if provisional:
+                    contradiction_refs = [str(ref) for ref in _get(result, "contradiction_refs", ())]
+                    if contradiction_refs:
+                        limitations.append(
+                            "Evidence Tier C còn mâu thuẫn; kết quả claim chưa kết luận."
+                        )
+                        return []
+                elif self.source_registry is not None and hasattr(self.source_registry, "observe_discovery"):
+                    has_curated = any(
+                        _source_tier(_get(item, "source_tier")) in {SourceTier.A, SourceTier.B} for item in cited
+                    )
+                    if has_curated:
+                        claim_hash = sha256(claim.normalized_text.encode()).hexdigest()
+                        contradiction_refs = {str(ref) for ref in _get(result, "contradiction_refs", ())}
+                        for item in submitted:
+                            if _source_tier(_get(item, "source_tier")) is not SourceTier.C:
+                                continue
+                            ref = str(_get(item, "evidence_ref", _get(item, "chunk_ref", "")))
+                            if ref not in cited_refs and ref not in contradiction_refs:
+                                continue
+                            url = str(
+                                _get(item, "source_url", _get(item, "canonical_url", _get(item, "url", "")))
+                            )
+                            await self.source_registry.observe_discovery(
+                                url=url,
+                                publisher=str(_get(item, "publisher", urlsplit(url).hostname or "unknown")),
+                                event="comparison",
+                                claim_hash=claim_hash,
+                                agrees_with_curated=ref in cited_refs,
+                            )
+                return [self._to_claim_evidence(item, stance, provisional=provisional) for item in cited]
             except Exception as exc:
                 errors.append(ToolError(tool="comparator", code="PROVIDER_ERROR", message=str(exc), retryable=True))
                 return comparator_fallback("Comparator không hoàn tất")
@@ -766,15 +897,26 @@ class FactCheckOrchestrator:
         return project_rated_sources()
 
     @staticmethod
-    def _to_claim_evidence(item: Any, stance: ClaimStance) -> ClaimEvidence:
+    def _to_claim_evidence(item: Any, stance: ClaimStance, *, provisional: bool = False) -> ClaimEvidence:
+        tier = _source_tier(_get(item, "source_tier"))
         return ClaimEvidence(
             source=str(_get(item, "publisher", _get(item, "source", "Fact-check source"))),
             title=str(_get(item, "title", "Fact-check evidence")),
-            url=_get(item, "source_url", _get(item, "safe_url", _get(item, "url"))),
-            finding=str(_get(item, "finding", "Evidence matched the extracted claim.")),
-            relevance=max(0.0, min(1.0, float(_get(item, "rerank_score", _get(item, "similarity", 1.0))))),
+            url=_get(
+                item,
+                "source_url",
+                _get(item, "canonical_url", _get(item, "safe_url", _get(item, "url"))),
+            ),
+            finding=str(_get(item, "finding", _get(item, "text", "Evidence matched the extracted claim."))),
+            relevance=max(
+                0.0,
+                min(1.0, float(_get(item, "relevance", _get(item, "similarity", 1.0)))),
+            ),
             stance=stance,
             observed_at=_get(item, "observed_at", datetime.now(UTC)),
+            source_tier=tier.value,
+            policy_version=str(_get(item, "policy_version", "discovery-v1" if provisional else "unknown")),
+            provisional=provisional,
         )
 
 

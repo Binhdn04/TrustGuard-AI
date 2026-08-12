@@ -60,25 +60,29 @@ function mapFactCheck(response: AnalysisResponseV3): FactCheckResult | null {
       title: item.title,
       url: item.url,
       finding: item.finding,
-      relevance: response.confidence ?? 0,
+      relevance: response.fact_check_confidence ?? response.confidence ?? 0,
       observedAt: item.observed_at,
-      official: item.type === "official_source",
+      official: item.type === "official_source" || item.source_tier === "a",
+      tier: item.source_tier ?? null,
+      provisional: item.provisional ?? false,
     }));
 
   const claims = (response.claims ?? []).map<ClaimResult>((claim, index) => ({
     id: `${response.analysis_id}:claim:${index}`,
     text: claim,
     stance: overallStance,
-    confidence: response.confidence,
+    confidence: response.fact_check_confidence ?? null,
     explanation:
       response.reasons?.[index] ?? response.summary ?? "Chưa có giải thích cho phát biểu này.",
     sources,
+    provisional: response.fact_check_basis === "provisional",
   }));
 
   return {
     overallStance,
     summary: response.summary ?? "Chưa có bản tóm tắt kết quả.",
-    confidence: response.confidence,
+    confidence: response.fact_check_confidence ?? null,
+    basis: response.fact_check_basis ?? (overallStance === "unrated" ? "inconclusive" : "reviewed"),
     claims,
   };
 }

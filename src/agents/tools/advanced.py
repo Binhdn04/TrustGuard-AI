@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import html
-import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
 from time import perf_counter
-from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -20,13 +17,12 @@ from .models import (
     CacheStatus,
     EmbeddingBatch,
     EmbeddingVector,
-    EvidenceChunk,
-    FetchedEvidence,
+    ExtractedWebEvidence,
     GoogleClaimReviewMatch,
     NormalizedToolError,
     NormalizedToolResult,
-    RerankedCandidate,
     ScreenshotResult,
+    TavilyExtractBatch,
     ToolErrorCode,
     ToolName,
     ToolResultStatus,
@@ -318,6 +314,7 @@ class GoogleClaimSearchAdapter:
                                 stance=map_google_fact_check_rating(review.get("textualRating")),
                                 source_tier=tier,
                                 trusted_claim_review=trusted,
+                                policy_version=str(getattr(decision, "policy_version", "unregistered")),
                                 published_at=published,
                                 observed_at=observed,
                             )
@@ -375,134 +372,6 @@ def canonicalize_evidence_url(url: str) -> str:
     return urlunsplit((parts.scheme.lower(), host + port, parts.path or "/", parts.query, ""))
 
 
-class EvidenceChunker:
-    def __init__(self, *, chunk_size: int = 1200, overlap: int = 150) -> None:
-        if not 0 <= overlap < chunk_size:
-            raise ValueError("overlap must be smaller than chunk size")
-        self.chunk_size, self.overlap = chunk_size, overlap
-
-    def split(self, evidence: Sequence[FetchedEvidence]) -> list[EvidenceChunk]:
-        output = []
-        for item in evidence:
-            text = "\n".join(
-                part.strip() for part in re.split(r"\n\s*\n|(?<=[.!?])\s+", item.cleaned_content) if part.strip()
-            )
-            start = 0
-            index = 0
-            while start < len(text):
-                end = min(len(text), start + self.chunk_size)
-                if end < len(text):
-                    boundary = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
-                    if boundary > start + self.chunk_size // 2:
-                        end = boundary
-                body = text[start:end].strip()
-                if body:
-                    ref_seed = "\0".join((item.evidence_ref, str(index), body))
-                    ref = f"chunk:sha256:{sha256(ref_seed.encode()).hexdigest()}"
-                    output.append(
-                        EvidenceChunk(
-                            chunk_ref=ref,
-                            evidence_ref=item.evidence_ref,
-                            index=index,
-                            text=body,
-                            canonical_url=item.canonical_url,
-                            title=item.title,
-                            publisher=item.publisher,
-                            content_sha256=item.content_sha256,
-                            source_tier=item.source_tier,
-                            source_version=item.source_version,
-                            published_at=item.published_at,
-                        )
-                    )
-                    index += 1
-                if end >= len(text):
-                    break
-                start = max(start + 1, end - self.overlap)
-        return output
-
-
-class FlashRankReranker:
-    model_name = "ms-marco-MultiBERT-L-12"
-
-    def __init__(self, ranker: Any, *, max_length: int = 512) -> None:
-        if ranker is None:
-            raise ValueError("a preloaded FlashRank ranker is required")
-        self.ranker, self.max_length = ranker, max_length
-
-    def rank(
-        self, claim: ExtractedClaim, candidates: Sequence[EvidenceChunk], *, top_k: int = 5
-    ) -> list[RerankedCandidate]:
-        passages = [{"id": c.chunk_ref, "text": c.text, "meta": c} for c in candidates]
-        # FlashRank 0.2.x configures max_length on Ranker construction; rerank
-        # accepts a RerankRequest-like object as its only argument. Keep this
-        # provider boundary structural so importing this module remains safe
-        # when the optional live dependency is not installed.
-        request = SimpleNamespace(query=claim.normalized_text, passages=passages)
-        ranked = self.ranker.rerank(request)
-        by_ref = {c.chunk_ref: c for c in candidates}
-        output = []
-        for position, row in enumerate(ranked[: min(top_k, 5)], 1):
-            item = by_ref[str(row.get("id"))]
-            output.append(
-                RerankedCandidate(
-                    chunk_ref=item.chunk_ref,
-                    evidence_ref=item.evidence_ref,
-                    rank=position,
-                    rerank_score=float(row.get("score", 0)),
-                    text=item.text,
-                    canonical_url=item.canonical_url,
-                    title=item.title,
-                    publisher=item.publisher,
-                    source_tier=item.source_tier,
-                    source_version=item.source_version,
-                    published_at=item.published_at,
-                )
-            )
-        return output
-
-
-class LexicalEvidenceReranker:
-    """Dependency-free fallback used when the optional FlashRank runtime is unavailable."""
-
-    @staticmethod
-    def _tokens(value: str) -> set[str]:
-        return {token for token in re.findall(r"\w+", value.casefold()) if len(token) > 1}
-
-    def rank(
-        self, claim: ExtractedClaim, candidates: Sequence[EvidenceChunk], *, top_k: int = 5
-    ) -> list[RerankedCandidate]:
-        query_tokens = self._tokens(claim.normalized_text)
-
-        def score(item: EvidenceChunk) -> float:
-            candidate_tokens = self._tokens(item.text)
-            if not query_tokens or not candidate_tokens:
-                return 0.0
-            return len(query_tokens & candidate_tokens) / len(query_tokens)
-
-        ranked = sorted(candidates, key=lambda item: (-score(item), item.index, item.chunk_ref))
-        return [
-            RerankedCandidate(
-                chunk_ref=item.chunk_ref,
-                evidence_ref=item.evidence_ref,
-                rank=position,
-                rerank_score=score(item),
-                text=item.text,
-                canonical_url=item.canonical_url,
-                title=item.title,
-                publisher=item.publisher,
-                source_tier=item.source_tier,
-                source_version=item.source_version,
-                published_at=item.published_at,
-            )
-            for position, item in enumerate(ranked[: min(top_k, 5)], 1)
-        ]
-
-
-def clean_reader_content(value: str) -> str:
-    value = re.sub(r"<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>", " ", value, flags=re.I | re.S)
-    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", value)).split())
-
-
 class TavilySearchAdapter:
     endpoint = "https://api.tavily.com/search"
     provider = "tavily"
@@ -514,14 +383,16 @@ class TavilySearchAdapter:
         *,
         client: httpx.AsyncClient | None = None,
         timeout: float = 10,
-        allowed_domains: Callable[[ExtractedClaim], Sequence[str]] | None = None,
+        excluded_domains: Callable[[ExtractedClaim], Sequence[str]] | None = None,
         official_domains: Callable[[ExtractedClaim], Sequence[str]] | None = None,
         classify_source: Callable[[str, datetime], Any] | None = None,
+        discovery_observer: Callable[..., Any] | None = None,
     ) -> None:
         self.api_key = api_key
-        self._domains = allowed_domains
+        self._excluded_domains = excluded_domains
         self._official_domains = official_domains
         self._classify = classify_source
+        self._observe_discovery = discovery_observer
         self._client = client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
 
@@ -529,12 +400,11 @@ class TavilySearchAdapter:
         started = perf_counter()
         maximum = min(max(1, max_results), 10)
         variants = claim.query_variants
-        domains = list(self._domains(claim)) if self._domains else []
+        excluded_domains = list(self._excluded_domains(claim))[:150] if self._excluded_domains else []
         official_domains = list(self._official_domains(claim)) if self._official_domains else []
 
         async def fetch(query):
             body: dict[str, Any] = {
-                "api_key": self.api_key,
                 "query": query.text,
                 "max_results": maximum,
                 "include_answer": False,
@@ -545,13 +415,18 @@ class TavilySearchAdapter:
                 official_domains and any(marker in query_folded for marker in ("official", "chính thức"))
             )
             body["search_depth"] = "advanced" if official_query else "basic"
-            preferred_domains = official_domains if official_query else domains
-            if preferred_domains:
-                body["include_domains"] = preferred_domains
+            if official_query:
+                body["include_domains"] = official_domains
+            elif excluded_domains:
+                body["exclude_domains"] = excluded_domains
             # Claim dates describe when the asserted event/policy applies,
             # not when corroborating articles were published. A future policy
             # can be documented by an article published before its start date.
-            response = await self._client.post(self.endpoint, json=body)
+            response = await self._client.post(
+                self.endpoint,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=body,
+            )
             response.raise_for_status()
             return response.json()
 
@@ -593,8 +468,19 @@ class TavilySearchAdapter:
                     seen.add(url)
                     host = urlsplit(url).hostname or "unknown"
                     decision = self._classify(url, _now()) if self._classify else None
-                    tier = getattr(getattr(decision, "tier", None), "value", None) or "untrusted"
+                    denied = bool(getattr(decision, "explicit_deny", False))
+                    if denied:
+                        continue
+                    tier = getattr(getattr(decision, "tier", None), "value", None) or "c"
+                    if str(tier).casefold() == "untrusted":
+                        tier = "c"
                     publisher = getattr(decision, "publisher", None) or host
+                    raw_policy_version = getattr(decision, "policy_version", None)
+                    policy_version = (
+                        "discovery-v1"
+                        if str(tier).casefold() == "c" and raw_policy_version in {None, "unregistered"}
+                        else raw_policy_version or "unregistered"
+                    )
                     output.append(
                         WebCandidate(
                             evidence_ref="web:sha256:" + sha256(url.encode()).hexdigest(),
@@ -604,8 +490,19 @@ class TavilySearchAdapter:
                             publisher=publisher,
                             source_tier=str(tier),
                             source_version=self.provider_version,
+                            search_score=max(0.0, min(1.0, float(row.get("score", 0.0)))),
+                            policy_version=policy_version,
                         )
                     )
+                    if str(tier).casefold() == "c" and self._observe_discovery is not None:
+                        observed = self._observe_discovery(
+                            url=url,
+                            publisher=publisher,
+                            event="search",
+                            claim_hash=sha256(claim.normalized_text.encode()).hexdigest(),
+                        )
+                        if hasattr(observed, "__await__"):
+                            await observed
             unique_publishers: list[WebCandidate] = []
             repeated_publishers: list[WebCandidate] = []
             seen_publishers: set[str] = set()
@@ -648,68 +545,151 @@ class TavilySearchAdapter:
             await self._client.aclose()
 
 
-class JinaReaderAdapter:
-    provider = "jina-reader"
+class TavilyExtractAdapter:
+    endpoint = "https://api.tavily.com/extract"
+    provider = "tavily"
     provider_version = "v1"
 
     def __init__(
         self,
-        api_key: str = "",
+        api_key: str,
         *,
         client: httpx.AsyncClient | None = None,
         guard: SsrfGuard | None = None,
         timeout: float = 10,
+        discovery_observer: Callable[..., Any] | None = None,
     ) -> None:
+        if not api_key.strip():
+            raise ValueError("Tavily API key is required")
         self.api_key = api_key
+        self._timeout = max(1.0, min(float(timeout), 60.0))
         self._client = client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = client is None
         self._guard = guard or SsrfGuard()
+        self._observe_discovery = discovery_observer
 
-    async def read(self, candidate: WebCandidate) -> NormalizedToolResult[FetchedEvidence]:
+    async def extract(
+        self,
+        claim: ExtractedClaim,
+        candidates: Sequence[WebCandidate],
+    ) -> NormalizedToolResult[TavilyExtractBatch]:
         started = perf_counter()
+        selected = list(candidates[:5])
         try:
-            # Validate the original source immediately before delegating the fetch.
-            await self._guard.validate(candidate.canonical_url)
-            headers = {"Accept": "text/plain"}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-            response = await self._client.get("https://r.jina.ai/" + candidate.canonical_url, headers=headers)
+            if not selected:
+                return NormalizedToolResult(
+                    status=ToolResultStatus.INCONCLUSIVE,
+                    result=TavilyExtractBatch(evidence=[], failed_urls=[]),
+                    cache=_miss(),
+                    usage=_usage(self.provider, self.provider_version, "extract", started, calls=0),
+                )
+            validated: list[WebCandidate] = []
+            blocked_urls: list[str] = []
+            for candidate in selected:
+                try:
+                    await self._guard.validate(candidate.canonical_url)
+                    validated.append(candidate)
+                except (ValueError, RuntimeError):
+                    blocked_urls.append(candidate.canonical_url)
+            if not validated:
+                return NormalizedToolResult(
+                    status=ToolResultStatus.INCONCLUSIVE,
+                    result=TavilyExtractBatch(evidence=[], failed_urls=blocked_urls),
+                    cache=_miss(),
+                    usage=_usage(self.provider, self.provider_version, "extract", started, calls=0),
+                )
+            response = await self._client.post(
+                self.endpoint,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "urls": [item.canonical_url for item in validated],
+                    "query": claim.normalized_text,
+                    "chunks_per_source": 3,
+                    "extract_depth": "basic",
+                    "format": "markdown",
+                    "include_images": False,
+                    "timeout": self._timeout,
+                    "include_usage": True,
+                },
+            )
             response.raise_for_status()
-            reader_content = clean_reader_content(response.text)
-            cleaned = "\n\n".join(
-                part.strip() for part in (candidate.title, candidate.snippet, reader_content) if part and part.strip()
-            )
-            digest = sha256(cleaned.encode()).hexdigest()
-            result = FetchedEvidence(
-                evidence_ref=candidate.evidence_ref,
-                canonical_url=candidate.canonical_url,
-                title=candidate.title,
-                cleaned_content=cleaned,
-                content_sha256=digest,
-                publisher=candidate.publisher,
-                source_tier=candidate.source_tier,
-                source_version=candidate.source_version,
-                published_at=candidate.published_at,
-                observed_at=_now(),
-            )
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Tavily Extract response must be an object")
+            by_url = {item.canonical_url: item for item in validated}
+            evidence: list[ExtractedWebEvidence] = []
+            returned_urls: set[str] = set()
+            for row in payload.get("results", []):
+                if not isinstance(row, dict):
+                    continue
+                url = canonicalize_evidence_url(str(row.get("url") or ""))
+                candidate = by_url.get(url)
+                raw_content = str(row.get("raw_content") or "").strip()
+                if candidate is None or not raw_content:
+                    continue
+                returned_urls.add(url)
+                text = "\n\n".join((candidate.title, candidate.snippet, raw_content))
+                evidence.append(
+                    ExtractedWebEvidence(
+                        evidence_ref=candidate.evidence_ref,
+                        canonical_url=url,
+                        title=candidate.title,
+                        text=text,
+                        content_sha256=sha256(text.encode()).hexdigest(),
+                        publisher=candidate.publisher,
+                        source_tier=candidate.source_tier,
+                        source_version=f"{candidate.source_version}+extract-{self.provider_version}",
+                        search_score=candidate.search_score,
+                        published_at=candidate.published_at,
+                        observed_at=_now(),
+                        policy_version=candidate.policy_version,
+                    )
+                )
+                if str(candidate.source_tier).casefold() == "c" and self._observe_discovery is not None:
+                    observed = self._observe_discovery(
+                        url=url,
+                        publisher=candidate.publisher,
+                        event="extract",
+                        claim_hash=sha256(claim.normalized_text.encode()).hexdigest(),
+                    )
+                    if hasattr(observed, "__await__"):
+                        await observed
+            failed_urls = [*blocked_urls]
+            for row in payload.get("failed_results", []):
+                if not isinstance(row, dict):
+                    continue
+                raw_url = str(row.get("url") or "")
+                if raw_url:
+                    failed_urls.append(canonicalize_evidence_url(raw_url))
+            failed_urls.extend(url for url in by_url if url not in returned_urls and url not in failed_urls)
+            batch = TavilyExtractBatch(evidence=evidence, failed_urls=list(dict.fromkeys(failed_urls)))
             return NormalizedToolResult(
-                status=ToolResultStatus.SUCCESS,
-                result=result,
+                status=ToolResultStatus.SUCCESS if evidence else ToolResultStatus.INCONCLUSIVE,
+                result=batch,
                 cache=_miss(),
                 usage=_usage(
-                    self.provider, self.provider_version, "read", started, response_units=len(cleaned.encode())
+                    self.provider,
+                    self.provider_version,
+                    "extract",
+                    started,
+                    response_units=sum(len(item.text.encode()) for item in evidence),
                 ),
             )
-        except (httpx.HTTPError, ValueError, RuntimeError):
+        except (httpx.TimeoutException, httpx.HTTPError, TypeError, ValueError, KeyError) as exc:
+            code, message, retryable, retry_after_ms, http_status_code = _provider_failure_details(
+                [exc], "Tavily Extract"
+            )
             return _failure(
                 ToolName.FACT_CHECK_CORPUS,
                 self.provider,
                 self.provider_version,
-                "read",
+                "extract",
                 started,
-                ToolErrorCode.PROVIDER_ERROR,
-                "Jina Reader failed",
-                retryable=True,
+                code,
+                message,
+                retryable=retryable,
+                retry_after_ms=retry_after_ms,
+                http_status_code=http_status_code,
             )
 
     async def aclose(self) -> None:

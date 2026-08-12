@@ -43,6 +43,29 @@ describe("Kết quả phân tích", () => {
     expect(screen.getByText(/Chưa đủ bằng chứng/i)).toBeInTheDocument();
   });
 
+  it("hiển thị rõ kết luận provisional từ Tier C", () => {
+    const mockFactCheck: FactCheckResult = {
+      overallStance: "supports",
+      basis: "provisional",
+      summary: "Ba nguồn độc lập cùng xác nhận.",
+      confidence: 0.65,
+      claims: [{
+        id: "1", text: "Claim", stance: "supports", confidence: 0.65,
+        explanation: "Provisional", provisional: true,
+        sources: [{
+          id: "s1", publisher: "Source", title: "Report", url: "https://source.example/report",
+          finding: "Supports", relevance: 0.8, observedAt: "2026-08-12T00:00:00Z",
+          official: false, tier: "c", provisional: true,
+        }],
+      }],
+    };
+
+    render(<FactCheckSummary result={mockFactCheck} />);
+
+    expect(screen.getByRole("heading", { name: /Xác Nhận Tạm Thời/i })).toBeInTheDocument();
+    expect(screen.getByText(/Tier C chưa duyệt/i)).toBeInTheDocument();
+  });
+
   it("Không consent không hiển thị URL an toàn", () => {
     const mockLinkSafety: LinkSafetyResult = {
       status: "not_scanned",

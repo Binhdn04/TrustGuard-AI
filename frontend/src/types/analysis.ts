@@ -66,6 +66,9 @@ export interface Evidence {
   finding: string;
   stance?: "supports" | "refutes" | "mixed" | "unrated" | null;
   observed_at: string;
+  source_tier?: "a" | "b" | "c" | "untrusted" | null;
+  policy_version?: string | null;
+  provisional?: boolean;
 }
 
 export interface AnalysisResponse {
@@ -81,9 +84,23 @@ export interface AnalysisResponse {
   verdict: Verdict | null;
   recommended_action: RecommendedAction | null;
   confidence: number | null;
+  fact_check_basis?: "reviewed" | "provisional" | "inconclusive" | null;
+  fact_check_confidence?: number | null;
   summary: string | null;
   reasons: string[] | null;
   evidence: Evidence[] | null;
+  examined_evidence?: Array<{
+    source: string;
+    title: string;
+    url: string | null;
+    finding: string;
+    relevance: number;
+    stance: "supports" | "refutes" | "mixed" | "unrated";
+    observed_at: string;
+    source_tier?: "a" | "b" | "c" | "untrusted" | null;
+    policy_version?: string | null;
+    provisional?: boolean;
+  }> | null;
   limitations: string[] | null;
   case_status: CaseStatus | null;
   scoring_version: string | null;
@@ -176,4 +193,3 @@ export interface ErrorEnvelope {
     details: Record<string, unknown>;
   };
 }
-

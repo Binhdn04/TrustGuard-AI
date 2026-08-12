@@ -39,10 +39,10 @@ flowchart TB
     Worker --> Reputation[GSB / Web Risk / VirusTotal]
     Worker --> Domain[RDAP-first WHOIS + redirects]
     Worker --> Facts[Google Claim Search + FTS/pgvector]
-    Facts -. evidence chưa đủ .-> Web[Tavily + Jina Reader]
-    Facts --> Rank[FlashRank multilingual]
-    Web --> Rank
-    Rank --> LLM[GPT-4o-mini comparison]
+    Facts -. evidence chưa đủ .-> Web[Tavily Search + source policy]
+    Web --> Extract[Tavily Extract rerank]
+    Facts --> LLM[GPT-4o-mini comparison]
+    Extract --> LLM
     Worker -. advanced, consented .-> Shot[Sandbox screenshot renderer]
     Admin[Security Admin] --> API
     API --> Audit[Review + appeal + audit]
@@ -50,8 +50,8 @@ flowchart TB
 
 Đường URL ưu tiên local rule, approved blacklist và cached reputation để tạo cảnh báo sơ bộ. Đường
 claim chạy Google Fact Check Claim Search và PostgreSQL FTS/pgvector trước; Google chỉ tìm các
-ClaimReview đã tồn tại. Tavily Search và Jina Reader chỉ chạy khi deterministic sufficiency gate cho
-biết evidence chưa đủ. FlashRank multilingual rerank candidate; GPT-4o-mini so sánh top 5 thành
+ClaimReview đã tồn tại. Tavily Search và Extract chỉ chạy khi deterministic sufficiency gate cho
+biết evidence chưa đủ. Extract dùng exact claim để chọn ba đoạn liên quan mỗi nguồn; GPT-4o-mini so sánh tối đa năm nguồn thành
 stance có citation; Risk Engine vẫn quyết định score/verdict/action deterministic.
 
 `/api/v3` là product contract hiện tại. `/api/v2` được giữ read-compatible trong release v3 đầu tiên.

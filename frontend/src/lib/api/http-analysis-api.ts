@@ -33,6 +33,8 @@ import type {
   ScreenshotStatusResponseV3,
   SourcePolicyCreateRequestV3,
   SourcePolicyRecordV3,
+  SourceDiscoveryRecordV3,
+  SourceDiscoveryDecisionRequestV3,
   WebSocketTicketResponseV3,
 } from "@/types/generated/api-v3";
 
@@ -307,6 +309,20 @@ export class HttpAnalysisApi implements AnalysisApi {
 
   async createSourcePolicy(request: SourcePolicyCreateRequestV3): Promise<SourcePolicyRecordV3> {
     return this.postV3<SourcePolicyRecordV3>("admin/sources", request);
+  }
+
+  async listSourceDiscoveries(): Promise<SourceDiscoveryRecordV3[]> {
+    return this.getV3<SourceDiscoveryRecordV3[]>("admin/source-discoveries");
+  }
+
+  async decideSourceDiscovery(
+    domain: string,
+    request: SourceDiscoveryDecisionRequestV3,
+  ): Promise<SourceDiscoveryRecordV3> {
+    return this.postV3<SourceDiscoveryRecordV3>(
+      `admin/source-discoveries/${encodeURIComponent(domain)}/decision`,
+      request,
+    );
   }
 
   async getOperationsMetrics(from: string, to: string): Promise<OperationsMetricsResponseV3> {

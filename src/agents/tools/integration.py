@@ -4,8 +4,8 @@ from typing import Any
 
 from src.agents.tools.advanced import (
     GoogleClaimSearchAdapter,
-    JinaReaderAdapter,
     OpenAIEmbeddingProvider,
+    TavilyExtractAdapter,
     TavilySearchAdapter,
 )
 from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
@@ -56,14 +56,15 @@ def build_provider_adapters(settings: Any, source_registry: Any | None = None) -
         adapters["tavily_search"] = TavilySearchAdapter(
             settings.tavily_api_key,
             timeout=timeout,
-            allowed_domains=(lambda _claim: source_registry.allowed_domains("search")) if source_registry else None,
+            excluded_domains=(lambda _claim: source_registry.denied_domains()) if source_registry else None,
             official_domains=(lambda _claim: source_registry.official_domains("search")) if source_registry else None,
             classify_source=source_registry.classify if source_registry else None,
+            discovery_observer=source_registry.observe_discovery if source_registry else None,
         )
-    if getattr(settings, "jina_api_key", ""):
-        adapters["jina_reader"] = JinaReaderAdapter(
-            settings.jina_api_key,
-            timeout=getattr(settings, "jina_timeout_seconds", timeout),
+        adapters["tavily_extract"] = TavilyExtractAdapter(
+            settings.tavily_api_key,
+            timeout=timeout,
+            discovery_observer=source_registry.observe_discovery if source_registry else None,
         )
     # These constructors perform no I/O. Consent is checked in the executor
     # before either lazy RDAP lookup or redirect resolution is called.

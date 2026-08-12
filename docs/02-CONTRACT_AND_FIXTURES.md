@@ -308,20 +308,14 @@ class EvidenceSufficiencyGate(Protocol):
 class TavilySearch(Protocol):
     async def search(self, query: WebSearchQuery) -> NormalizedToolResult[list[WebCandidate]]: ...
 
-class JinaReader(Protocol):
-    async def read(self, candidate: WebCandidate) -> NormalizedToolResult[FetchedEvidence]: ...
-
-class Chunker(Protocol):
-    def split(self, evidence: list[FetchedEvidence]) -> list[EvidenceChunk]: ...
-
-class Reranker(Protocol):
-    def rank(self, claim: ExtractedClaim, candidates: list[EvidenceChunk], top_k: int = 5) -> list[RerankedCandidate]: ...
+class TavilyExtract(Protocol):
+    async def extract(self, claim: ExtractedClaim, candidates: list[WebCandidate]) -> NormalizedToolResult[TavilyExtractBatch]: ...
 
 class SourceRegistry(Protocol):
     def classify(self, canonical_url: str, at: datetime) -> SourcePolicyDecision: ...
 
 class EvidenceComparator(Protocol):
-    async def compare(self, claim: ExtractedClaim, evidence: list[RerankedCandidate]) -> NormalizedToolResult[ClaimAssessment]: ...
+    async def compare(self, claim: ExtractedClaim, evidence: list[EvidenceCandidate]) -> NormalizedToolResult[ClaimAssessment]: ...
 
 class DomainIntelligence(Protocol):
     async def lookup(self, domain: str) -> DomainIntelligenceResult: ...
@@ -503,9 +497,7 @@ GoogleClaimSearch.search      -> NormalizedToolResult[list[GoogleClaimReviewMatc
 HybridCorpusRetriever.search -> NormalizedToolResult[list[CorpusCandidate]]
 EvidenceSufficiencyGate.eval  -> EvidenceSufficiency
 TavilySearch.search           -> NormalizedToolResult[list[WebCandidate]]
-JinaReader.read               -> NormalizedToolResult[FetchedEvidence]
-Chunker.split                 -> list[EvidenceChunk]
-Reranker.rank                 -> list[RerankedCandidate]
+TavilyExtract.extract         -> NormalizedToolResult[TavilyExtractBatch]
 SourceRegistry.classify       -> SourcePolicyDecision
 EvidenceComparator.compare   -> NormalizedToolResult[ClaimAssessment]
 ScreenshotRenderer.render     -> NormalizedToolResult[ScreenshotResult]
@@ -535,10 +527,9 @@ GoogleClaimReviewMatch claim/review refs, reviewer/publisher, rating, url, dates
 TemporalMetadata     claim_start/end, published_at, effective_from/to, retrieved_at, proxy_penalty
 CorpusCandidate      evidence_ref, record/version, FTS/vector ranks, RRF score, temporal status
 EvidenceSufficiency  sufficient, matched rule, eligible refs, missing requirements
-WebCandidate         canonical_url, title, registry decision, publication hint
-FetchedEvidence      evidence_ref, source/version, safe_url, cleaned text, temporal metadata, hash
-EvidenceChunk        chunk_ref, evidence_ref, index, text, source tier/version, dates, content hash
-RerankedCandidate    chunk_ref, rank, rerank score
+WebCandidate         canonical_url, title, snippet, search score, registry decision, publication hint
+ExtractedWebEvidence evidence_ref, source/version, canonical URL, ranked text, temporal metadata, hash
+TavilyExtractBatch   evidence[], failed_urls[]
 ClaimAssessment      stance, evidence_refs[], contradiction_refs[], limitations[], comparator_version
 ```
 
@@ -553,13 +544,12 @@ claim; fan-out tiếp theo giới hạn ba claim. Mỗi claim chạy Google Clai
 FTS `simple` top 20 + pgvector cosine top 20, dedupe record/version và RRF `k=60`.
 
 Evidence gate là rule-based: đủ khi có một Tier A temporal-compatible, một trusted ClaimReview Tier B,
-hoặc hai Tier B độc lập. Nếu chưa đủ, Tavily lấy tối đa 10 kết quả theo registry domain/date filter;
-Jina Reader chỉ đọc tối đa năm canonical URL. `RecursiveCharacterTextSplitter` dùng 1200 ký tự,
-overlap 150. FlashRank local CPU `ms-marco-MultiBERT-L-12`, `max_length=512`, chọn top 5; model này
-chỉ rerank, không tạo stance. Untrusted bị loại trước comparator, Tier C chỉ corroboration.
+hoặc hai Tier B độc lập. Nếu chưa đủ, Tavily Search lấy tối đa 10 kết quả theo registry domain/date
+filter; Tavily Extract xử lý tối đa năm canonical URL trong một batch với exact claim và ba chunk
+rerank mỗi nguồn. Untrusted bị loại trước comparator, Tier C chỉ corroboration.
 
 Embedding timeout/429 tạo vector bypass chứ không tạo local embedding fallback. Pipeline tiếp tục
-Google, FTS rồi conditional Tavily/Jina trong budget. Nếu comparison hoàn tất nhưng chưa có vector, result mang
+Google, FTS rồi conditional Tavily Search/Extract trong budget. Nếu comparison hoàn tất nhưng chưa có vector, result mang
 `embedding_status=pending`; background re-embedding dùng idempotency key theo result/model/version.
 
 ### 11.5 Fixture additions trước final v3 release gate
@@ -576,10 +566,10 @@ download/timeout). Tất cả đều offline và validate qua đúng normalized 
 - Google ClaimReview giữ reviewer/publisher provenance và không trở thành “Google verdict”;
 - temporal exact interval, publication proxy có penalty, semantic-high/time-wrong và missing-date;
 - sufficiency gate: một Tier A, một trusted ClaimReview Tier B, hai Tier B độc lập, Tier C-only miss;
-- sufficient evidence không gọi Tavily/Jina; miss mới gọi Tavily tối đa 10 và Jina tối đa 5 URL;
+- sufficient evidence không gọi Tavily; miss mới gọi Search tối đa 10 và Extract tối đa 5 URL;
 - embedding outage bỏ vector nhưng vẫn chạy Google/FTS/conditional web, không tạo local embedding model;
 - source suffix/deny, Untrusted exclusion, Tier C no-auto-promotion và two-publisher independence;
-- chunk boundary/metadata, FlashRank multilingual top 5 và reranker failure limitation;
+- Extract query/chunks-per-source, partial failure metadata và extract failure limitation;
 - comparator thiếu/giả citation bị reject;
 - screenshot SSRF/redirect/download/cookie isolation;
 - appeal uphold/overturn và blacklist disable có immutable audit;
