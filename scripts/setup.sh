@@ -14,7 +14,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # Create .env if not exists
 if [ ! -f .env ]; then

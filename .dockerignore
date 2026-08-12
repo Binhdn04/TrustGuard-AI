@@ -1,21 +1,44 @@
+# Source control and local tooling
 .git
-.gitignore
+.github
+.agents
+.ai-log
+.claude
+.codex
+.cursor
+.gemini
+.idea
+.vscode
+
+# Secrets and local environments
 .env
+.env.*
 .venv
 .uv-cache
-.tmp-*
-__pycache__
-*.pyc
-**/node_modules
-frontend/.next
-frontend/tsconfig.tsbuildinfo
-.pytest_cache
-.ruff_cache
-docs/
-presentation/
-eval/
+
+# Python caches, test output, and local data
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.pytest_*
+**/.ruff_cache
+**/.mypy_cache
+**/.coverage*
+**/htmlcov
+data
+tests
+
+# Non-runtime project content
+docs
+eval
+frontend
+presentation
+scripts
 *.md
-!requirements.txt
+.tmp-*
+
+# Docker metadata is not needed inside the image
 .dockerignore
 Dockerfile
-docker-compose.yml
+docker-compose*.yml
+docker-compose*.yaml
