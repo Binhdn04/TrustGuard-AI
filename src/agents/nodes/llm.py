@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.agents.fact_check import ExtractedClaim
+from src.agents.nodes.rules import NO_VERIFIABLE_INPUT_LIMITATION
 from src.agents.state import WorkflowState
 
 LLM_MODEL = "gpt-4o-mini"
@@ -209,9 +210,13 @@ def build_analyze_message_node(llm: Any | None):
                     by_text[item.normalized_text] = item
                 except ValueError:
                     continue
+        limitations = list(state.get("limitations", []))
+        if claims:
+            limitations = [item for item in limitations if item != NO_VERIFIABLE_INPUT_LIMITATION]
         return {
             "claims": claims[:5],
             "extracted_claims": list(by_text.values())[:5],
+            "limitations": limitations,
             "llm_context": result.context,
             "llm_emotion": result.dominant_emotion,
             "llm_sender_intent": result.sender_intent,

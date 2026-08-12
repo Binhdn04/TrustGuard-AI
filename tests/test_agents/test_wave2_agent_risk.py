@@ -29,9 +29,11 @@ from src.agents.fact_check import (
     evaluate_evidence_sufficiency,
 )
 from src.agents.graph import build_graph
+from src.agents.tools.advanced import FlashRankReranker
 from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
+    EvidenceChunk,
     FactCheckCorpusMatch,
     FactCheckCorpusRecord,
     FactCheckSearchResult,
@@ -42,6 +44,36 @@ from src.agents.tools.models import (
 from src.models import ClaimStance, RiskLevel, Verdict
 
 NOW = datetime(2026, 8, 9, 12, tzinfo=UTC)
+
+
+def test_flashrank_adapter_uses_the_supported_rerank_signature() -> None:
+    class Ranker:
+        def __init__(self):
+            self.request = None
+
+        def rerank(self, request):
+            self.request = request
+            return [{**request.passages[0], "score": 0.91}]
+
+    ranker = Ranker()
+    adapter = FlashRankReranker(ranker)
+    chunk = EvidenceChunk(
+        chunk_ref="chunk:1",
+        evidence_ref="evidence:1",
+        index=0,
+        text="Nước chanh không phải là thuốc chữa ung thư.",
+        canonical_url="https://example.gov.vn/health/claim",
+        content_sha256="a" * 64,
+        source_tier="A",
+        source_version="source-policy-v1",
+        published_at=NOW,
+    )
+
+    result = adapter.rank(ExtractedClaim.from_text("Nước chanh chữa ung thư"), [chunk])
+
+    assert ranker.request.query == "Nước chanh chữa ung thư"
+    assert ranker.request.passages == [{"id": "chunk:1", "text": chunk.text, "meta": chunk}]
+    assert result[0].rerank_score == pytest.approx(0.91)
 
 
 class Corpus:

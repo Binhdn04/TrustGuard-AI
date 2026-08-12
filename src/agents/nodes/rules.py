@@ -10,6 +10,7 @@ from src.models import Evidence, EvidenceType
 
 _CREDENTIAL_TOKENS = ("login", "signin", "verify", "account", "dang-nhap", "xac-minh")
 _BRAND_LURE_TOKENS = ("-qua", "-gift", "khuyen-mai", "free-gift")
+NO_VERIFIABLE_INPUT_LIMITATION = "Không trích xuất được URL hoặc claim có thể kiểm chứng từ nội dung."
 
 
 def normalize_url(raw_url: str) -> str | None:
@@ -126,7 +127,7 @@ def build_rule_check_node(blacklist: BlacklistRepository | None):
         if normalized and not state.get("consent_to_scan_urls", False):
             limitations.append("Người dùng chưa đồng ý quét URL bằng provider bên ngoài.")
         if not normalized and not state.get("claims"):
-            limitations.append("Không trích xuất được URL hoặc claim có thể kiểm chứng từ nội dung.")
+            limitations.append(NO_VERIFIABLE_INPUT_LIMITATION)
         return {
             "normalized_urls": normalized,
             "blocked_urls": blocked,

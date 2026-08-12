@@ -4,6 +4,7 @@ import src.agents.graph as graph_module
 from src.agents.graph import agent
 from src.agents.nodes.extraction import classify_input, extract_indicators
 from src.agents.nodes.llm import build_analyze_message_node
+from src.agents.nodes.rules import NO_VERIFIABLE_INPUT_LIMITATION
 
 
 @pytest.mark.asyncio
@@ -65,3 +66,32 @@ async def test_invalid_structured_output_uses_deterministic_fallback():
 
     assert result["llm_errors"] == ["phân tích ngữ nghĩa"]
     assert "deterministic" in result["limitations"][0]
+
+
+@pytest.mark.asyncio
+async def test_llm_claim_removes_stale_no_verifiable_input_limitation():
+    class Runnable:
+        async def ainvoke(self, _messages):
+            return {
+                "context": "Khẳng định về tác dụng chữa bệnh của nước chanh.",
+                "dominant_emotion": "neutral",
+                "sender_intent": "informational",
+                "suspected_scam_intent": False,
+                "scam_indicators": [],
+                "claims": ["Uống nước chanh mỗi ngày có thể chữa khỏi ung thư."],
+            }
+
+    class Llm:
+        def with_structured_output(self, _schema):
+            return Runnable()
+
+    analyze = build_analyze_message_node(Llm())
+    result = await analyze(
+        {
+            "message": "Uống nước chanh mỗi ngày có thể chữa khỏi ung thư.",
+            "limitations": [NO_VERIFIABLE_INPUT_LIMITATION, "Một giới hạn khác."],
+        }
+    )
+
+    assert result["claims"] == ["Uống nước chanh mỗi ngày có thể chữa khỏi ung thư."]
+    assert result["limitations"] == ["Một giới hạn khác."]
