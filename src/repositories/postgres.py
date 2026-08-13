@@ -10,8 +10,10 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
+from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST, normalize_hostname
 from src.core.errors import PlatformError
 from src.models import (
+    AdminActionAuditRecordV3,
     AdminActionDecisionResponseV3,
     AdminActionRecordV3,
     AdminActionStatus,
@@ -1171,6 +1173,7 @@ class PostgresPlatformRepository:
         self,
         *,
         analysis_id: UUID | None,
+        security_analysis_id: UUID | None = None,
         campaign_id: UUID | None,
         action: ReviewedAction,
         target: str | None,
@@ -1181,6 +1184,7 @@ class PostgresPlatformRepository:
         record = AdminActionRecordV3(
             action_id=action_id,
             analysis_id=analysis_id,
+            security_analysis_id=security_analysis_id,
             campaign_id=campaign_id,
             action=action,
             target=canonical,
@@ -1190,19 +1194,48 @@ class PostgresPlatformRepository:
         )
         pool = await self._get_pool()
         async with pool.acquire() as connection:
-            await connection.execute(
+            existing = await connection.fetchrow(
+                """SELECT * FROM admin_actions
+                   WHERE security_analysis_id IS NOT DISTINCT FROM $1
+                     AND analysis_id IS NOT DISTINCT FROM $2
+                     AND campaign_id IS NOT DISTINCT FROM $3
+                     AND action=$4 AND canonical_target IS NOT DISTINCT FROM $5
+                   ORDER BY proposed_at DESC LIMIT 1""",
+                security_analysis_id,
+                analysis_id,
+                campaign_id,
+                action.value,
+                canonical,
+            )
+            if existing is not None:
+                return self._admin_action(existing)
+            inserted = await connection.fetchrow(
                 """INSERT INTO admin_actions(
-                       id,analysis_id,campaign_id,action,canonical_target,status,
+                       id,analysis_id,security_analysis_id,campaign_id,action,canonical_target,status,
                        evidence_snapshot,proposed_at
-                   ) VALUES($1,$2,$3,$4,$5,'pending_review',$6::jsonb,$7)""",
+                   ) VALUES($1,$2,$3,$4,$5,$6,'pending_review',$7::jsonb,$8)
+                   ON CONFLICT(security_analysis_id,action,canonical_target)
+                     WHERE security_analysis_id IS NOT NULL DO NOTHING
+                   RETURNING *""",
                 action_id,
                 analysis_id,
+                security_analysis_id,
                 campaign_id,
                 action.value,
                 canonical,
                 json.dumps([item.model_dump(mode="json") for item in evidence]),
                 now,
             )
+            if inserted is None and security_analysis_id is not None:
+                concurrent = await connection.fetchrow(
+                    """SELECT * FROM admin_actions
+                       WHERE security_analysis_id=$1 AND action=$2 AND canonical_target=$3""",
+                    security_analysis_id,
+                    action.value,
+                    canonical,
+                )
+                if concurrent is not None:
+                    return self._admin_action(concurrent)
         return record
 
     async def list_admin_actions(
@@ -1233,6 +1266,34 @@ class PostgresPlatformRepository:
             row = await connection.fetchrow("SELECT * FROM admin_actions WHERE id=$1", action_id)
         return self._admin_action(row) if row else None
 
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT d.id,d.action_id,d.reviewer_id,d.decision,d.action,d.evidence_snapshot,
+                          d.note,d.decided_at,d.execution_status,d.execution_error
+                   FROM review_decisions d
+                   WHERE d.action_id=$1 ORDER BY d.decided_at""",
+                action_id,
+            )
+        return [
+            AdminActionAuditRecordV3(
+                decision_id=row["id"],
+                action_id=row["action_id"],
+                reviewer_id=row["reviewer_id"],
+                decision=ReviewDecision(row["decision"]),
+                action=ReviewedAction(row["action"]),
+                execution_status=AdminActionStatus(row["execution_status"]),
+                evidence_snapshot=[
+                    Evidence.model_validate(item) for item in _json_value(row["evidence_snapshot"])
+                ],
+                note=row["note"],
+                decided_at=row["decided_at"],
+                execution_error=row["execution_error"],
+            )
+            for row in rows
+        ]
+
     async def decide_admin_action(
         self,
         action_id: UUID,
@@ -1250,10 +1311,13 @@ class PostgresPlatformRepository:
                 raise _platform_conflict("The admin action has already been reviewed.")
             approved = decision is ReviewDecision.APPROVED
             new_status = AdminActionStatus.APPROVED if approved else AdminActionStatus.REJECTED
+            executed_at = None
+            execution_error = None
             await connection.execute(
                 """INSERT INTO review_decisions(
-                       id,analysis_id,action_id,reviewer_id,decision,action,evidence_snapshot,note,decided_at
-                   ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)""",
+                       id,analysis_id,action_id,reviewer_id,decision,action,evidence_snapshot,note,
+                       decided_at,execution_status
+                   ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)""",
                 decision_id,
                 action["analysis_id"],
                 action_id,
@@ -1263,6 +1327,7 @@ class PostgresPlatformRepository:
                 json.dumps(_json_value(action["evidence_snapshot"])),
                 note.strip(),
                 now,
+                new_status.value,
             )
             await connection.execute(
                 """UPDATE admin_actions SET status=$2,reviewer_id=$3,review_note=$4,
@@ -1288,8 +1353,10 @@ class PostgresPlatformRepository:
                     decision_id,
                     now,
                 )
+                new_status = AdminActionStatus.EXECUTED
+                executed_at = now
             elif approved and action["action"] == ReviewedAction.DISABLE_BLACKLIST.value:
-                await connection.execute(
+                result = await connection.execute(
                     """UPDATE blacklist_entries SET active=false,disabling_decision_id=$2,
                               updated_at=$3,version=version+1
                        WHERE canonical_domain=$1 AND active""",
@@ -1297,12 +1364,39 @@ class PostgresPlatformRepository:
                     decision_id,
                     now,
                 )
+                executed_at = now
+                if result.endswith(" 0"):
+                    new_status = AdminActionStatus.FAILED
+                    execution_error = "BLACKLIST_TARGET_NOT_ACTIVE"
+                else:
+                    new_status = AdminActionStatus.EXECUTED
+            elif approved:
+                new_status = AdminActionStatus.FAILED
+                executed_at = now
+                execution_error = "ACTION_SINK_NOT_CONFIGURED"
+            if approved:
+                await connection.execute(
+                    """UPDATE admin_actions SET status=$2,executed_at=$3,execution_error=$4,
+                              version=version+1 WHERE id=$1""",
+                    action_id,
+                    new_status.value,
+                    executed_at,
+                    execution_error,
+                )
+            await connection.execute(
+                """UPDATE review_decisions SET execution_status=$2,execution_error=$3 WHERE id=$1""",
+                decision_id,
+                new_status.value,
+                execution_error,
+            )
         return AdminActionDecisionResponseV3(
             action_id=action_id,
             decision_id=decision_id,
             action=ReviewedAction(action["action"]),
             status=new_status,
             reviewed_at=now,
+            executed_at=executed_at,
+            execution_error=execution_error,
         )
 
     @staticmethod
@@ -1310,6 +1404,7 @@ class PostgresPlatformRepository:
         return AdminActionRecordV3(
             action_id=row["id"],
             analysis_id=row["analysis_id"],
+            security_analysis_id=row["security_analysis_id"],
             campaign_id=row["campaign_id"],
             action=ReviewedAction(row["action"]),
             target=row["canonical_target"],
@@ -1319,6 +1414,8 @@ class PostgresPlatformRepository:
             reviewer_id=row["reviewer_id"],
             review_note=row["review_note"],
             reviewed_at=row["reviewed_at"],
+            executed_at=row["executed_at"],
+            execution_error=row["execution_error"],
         )
 
     async def register_source(self, entry: SourceRegistryEntry) -> None:
@@ -2382,7 +2479,12 @@ def _canonical_domain_or_target(value: str) -> str:
         parsed = urlsplit(target if "://" in target else f"https://{target}")
     except ValueError:
         return target[:500]
-    return (parsed.hostname or target).rstrip(".")[:500]
+    if parsed.hostname is None:
+        raise ValueError("admin action target must contain a hostname")
+    hostname = normalize_hostname(parsed.hostname)
+    if DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(hostname) is None:
+        raise ValueError("admin action target must be a registrable domain")
+    return hostname
 
 
 def _platform_conflict(message: str) -> PlatformError:

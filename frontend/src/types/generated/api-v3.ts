@@ -218,6 +218,7 @@ export interface AdminActionRecordV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
   action_id: string;
   analysis_id: string | null;
+  security_analysis_id: string | null;
   campaign_id: string | null;
   action: ReviewedActionV3;
   target: string | null;
@@ -227,6 +228,8 @@ export interface AdminActionRecordV3 {
   reviewer_id: string | null;
   review_note: string | null;
   reviewed_at: string | null;
+  executed_at: string | null;
+  execution_error: string | null;
 }
 
 export interface AdminActionPageV3 {
@@ -247,8 +250,24 @@ export interface AdminActionDecisionResponseV3 {
   action_id: string;
   decision_id: string;
   action: ReviewedActionV3;
-  status: "approved" | "rejected";
+  status: "approved" | "rejected" | "executed" | "failed";
   reviewed_at: string;
+  executed_at: string | null;
+  execution_error: string | null;
+}
+
+export interface AdminActionAuditRecordV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  decision_id: string;
+  action_id: string;
+  reviewer_id: string;
+  decision: ReviewDecisionV3;
+  action: ReviewedActionV3;
+  execution_status: AdminActionStatusV3;
+  evidence_snapshot: import("@/types/analysis").Evidence[];
+  note: string;
+  decided_at: string;
+  execution_error: string | null;
 }
 
 export interface CampaignSummaryV3 {

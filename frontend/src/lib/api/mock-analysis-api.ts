@@ -20,6 +20,7 @@ import type {
   AnalysisResponseV3,
   AdminActionDecisionRequestV3,
   AdminActionDecisionResponseV3,
+  AdminActionAuditRecordV3,
   AdminActionPageV3,
   AppealCreateRequestV3,
   AppealDecisionRequestV3,
@@ -552,9 +553,16 @@ export class MockAnalysisApi implements AnalysisApi {
       action_id: actionId,
       decision_id: crypto.randomUUID(),
       action: "none",
-      status: request.decision,
+      status: request.decision === "approved" ? "failed" : "rejected",
       reviewed_at: new Date().toISOString(),
+      executed_at: request.decision === "approved" ? new Date().toISOString() : null,
+      execution_error: request.decision === "approved" ? "ACTION_SINK_NOT_CONFIGURED" : null,
     };
+  }
+
+  async listAdminActionAudit(_actionId: string): Promise<AdminActionAuditRecordV3[]> {
+    void _actionId;
+    return [];
   }
 
   async listCampaigns(): Promise<CampaignPageV3> {

@@ -28,6 +28,7 @@ from src.config import get_settings
 from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
+    AdminActionAuditRecordV3,
     AdminActionDecisionRequestV3,
     AdminActionDecisionResponseV3,
     AdminActionPageV3,
@@ -589,6 +590,20 @@ async def get_admin_action_v3(
 ) -> AdminActionRecordV3:
     require_security_admin(principal)
     return await wave2.get_admin_action(action_id)
+
+
+@router.get(
+    "/admin/actions/{action_id}/audit",
+    response_model=list[AdminActionAuditRecordV3],
+    responses=_PLANNED_ERRORS,
+)
+async def list_admin_action_audit_v3(
+    action_id: UUID,
+    wave2: Wave2ServiceDependency,
+    principal: PrincipalDependency,
+) -> list[AdminActionAuditRecordV3]:
+    require_security_admin(principal)
+    return await wave2.list_admin_action_audit(action_id)
 
 
 @router.get("/admin/campaigns", response_model=CampaignPageV3, responses=_PLANNED_ERRORS)

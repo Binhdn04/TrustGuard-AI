@@ -50,6 +50,8 @@ function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): Securit
     listReports: vi.fn().mockResolvedValue([]),
     createAppeal: vi.fn(),
     listAnalysisAppeals: vi.fn().mockResolvedValue([]),
+    listBrands: vi.fn().mockResolvedValue([]),
+    listWhitelist: vi.fn().mockResolvedValue([]),
   };
 }
 

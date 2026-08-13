@@ -18,9 +18,11 @@ import {
 } from "lucide-react";
 
 import { getAnalysisApi } from "@/lib/api/analysis-api";
+import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import { cn } from "@/lib/utils";
 import type {
   AdminActionRecordV3,
+  AdminActionAuditRecordV3,
   AppealAdminRecordV3,
   AppealOutcomeV3,
   CampaignDetailV3,
@@ -30,8 +32,9 @@ import type {
   SourcePolicyRecordV3,
   SourceDiscoveryRecordV3,
 } from "@/types/generated/api-v3";
+import type { BrandRecordV4, WhitelistRecordV4 } from "@/types/generated/api-v4";
 
-type Tab = "appeals" | "actions" | "campaigns" | "sources";
+type Tab = "appeals" | "actions" | "trust" | "campaigns" | "sources";
 type TimeRange = "24h" | "7d" | "30d";
 type DecisionTarget =
   | { kind: "appeal"; id: string; title: string }
@@ -73,6 +76,10 @@ export function PlatformOperations() {
   const [metrics, setMetrics] = useState<OperationsMetricsResponseV3 | null>(null);
   const [appeals, setAppeals] = useState<AppealAdminRecordV3[]>([]);
   const [actions, setActions] = useState<AdminActionRecordV3[]>([]);
+  const [brands, setBrands] = useState<BrandRecordV4[]>([]);
+  const [whitelist, setWhitelist] = useState<WhitelistRecordV4[]>([]);
+  const [actionAudits, setActionAudits] = useState<Record<string, AdminActionAuditRecordV3[]>>({});
+  const [expandedAction, setExpandedAction] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignSummaryV3[]>([]);
   const [sources, setSources] = useState<SourcePolicyRecordV3[]>([]);
   const [sourceDiscoveries, setSourceDiscoveries] = useState<SourceDiscoveryRecordV3[]>([]);
@@ -91,6 +98,7 @@ export function PlatformOperations() {
     const hours = timeRange === "24h" ? 24 : timeRange === "7d" ? 24 * 7 : 24 * 30;
     const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
     const api = getAnalysisApi();
+    const securityApi = getSecurityAnalysisApi();
     const results = await Promise.allSettled([
         api.getOperationsMetrics(from.toISOString(), to.toISOString()),
         api.listAdminAppeals({ limit: 100 }),
@@ -98,9 +106,11 @@ export function PlatformOperations() {
         api.listCampaigns({ limit: 100 }),
         api.listSourcePolicies(),
         api.listSourceDiscoveries(),
+        securityApi.listBrands(),
+        securityApi.listWhitelist(),
     ] as const);
     const warnings: string[] = [];
-    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult, discoveriesResult] = results;
+    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult, discoveriesResult, brandsResult, whitelistResult] = results;
     if (metricsResult.status === "fulfilled") setMetrics(metricsResult.value);
     else { setMetrics(null); warnings.push("metrics"); }
     if (appealsResult.status === "fulfilled") setAppeals(appealsResult.value.items);
@@ -113,6 +123,10 @@ export function PlatformOperations() {
     else { setSources([]); warnings.push("source registry"); }
     if (discoveriesResult.status === "fulfilled") setSourceDiscoveries(discoveriesResult.value);
     else { setSourceDiscoveries([]); warnings.push("source discovery"); }
+    if (brandsResult.status === "fulfilled") setBrands(brandsResult.value);
+    else { setBrands([]); warnings.push("brand registry"); }
+    if (whitelistResult.status === "fulfilled") setWhitelist(whitelistResult.value);
+    else { setWhitelist([]); warnings.push("security whitelist"); }
     setDataWarnings(warnings);
     setLoading(false);
   }, [timeRange]);
@@ -188,6 +202,21 @@ export function PlatformOperations() {
     }
   };
 
+  const toggleActionAudit = async (actionId: string) => {
+    if (expandedAction === actionId) {
+      setExpandedAction(null);
+      return;
+    }
+    setExpandedAction(actionId);
+    if (actionAudits[actionId]) return;
+    try {
+      const audit = await getAnalysisApi().listAdminActionAudit(actionId);
+      setActionAudits((current) => ({ ...current, [actionId]: audit }));
+    } catch (auditError) {
+      setError(auditError instanceof Error ? auditError.message : "Không thể tải audit trail.");
+    }
+  };
+
   return (
     <div className="space-y-8">
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
@@ -256,6 +285,7 @@ export function PlatformOperations() {
           {([
             ["appeals", `Khiếu nại (${appeals.length})`],
             ["actions", `Hành động (${actions.length})`],
+            ["trust", `Trust (${brands.length + whitelist.length})`],
             ["campaigns", `Chiến dịch (${campaigns.length})`],
             ["sources", `Nguồn (${sources.length})`],
           ] as Array<[Tab, string]>).map(([tab, label]) => (
@@ -266,7 +296,8 @@ export function PlatformOperations() {
         {loading && <div aria-live="polite" className="grid place-items-center py-20"><Loader2 className="size-7 animate-spin text-primary" /></div>}
 
         {!loading && activeTab === "appeals" && <AppealList items={appeals} onDecide={(item) => openDecision({ kind: "appeal", id: item.appeal_id, title: `Xử lý khiếu nại ${item.appeal_id.slice(0, 8)}` })} />}
-        {!loading && activeTab === "actions" && <ActionList items={actions} onDecide={(item) => openDecision({ kind: "action", id: item.action_id, title: `Phê duyệt ${item.action.replaceAll("_", " ")}` })} />}
+        {!loading && activeTab === "actions" && <ActionList items={actions} audits={actionAudits} expanded={expandedAction} onToggleAudit={(id) => void toggleActionAudit(id)} onDecide={(item) => openDecision({ kind: "action", id: item.action_id, title: `Phê duyệt ${item.action.replaceAll("_", " ")}` })} />}
+        {!loading && activeTab === "trust" && <TrustRegistryList brands={brands} whitelist={whitelist} />}
         {!loading && activeTab === "campaigns" && <><div className="mb-4 flex justify-end"><select aria-label="Lọc campaign theo reviewer state" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm"><option value="all">Tất cả reviewer state</option><option value="pending_review">Pending review</option><option value="confirmed">Confirmed</option><option value="rejected">Rejected</option></select></div><CampaignList items={filteredCampaigns} details={campaignDetails} expanded={expandedCampaign} onToggle={(id) => void toggleCampaign(id)} onDecide={(item) => openDecision({ kind: "campaign", id: item.campaign_id, title: `Review campaign ${item.campaign_id.slice(0, 8)}` })} /></>}
         {!loading && activeTab === "sources" && <SourceRegistryList items={sources} discoveries={sourceDiscoveries} onCreated={load} />}
       </section>
@@ -319,9 +350,13 @@ function AppealList({ items, onDecide }: { items: AppealAdminRecordV3[]; onDecid
   return <div className="space-y-4">{items.map((item) => <article key={item.appeal_id} className="rounded-2xl border border-border bg-card p-5"><div className="flex flex-col justify-between gap-5 md:flex-row"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.status} /><span className="text-xs text-muted-foreground">{formatDate(item.created_at)}</span></div><h2 className="mt-3 font-semibold">{item.reason}</h2>{item.comment && <p className="mt-2 text-sm text-muted-foreground">{item.comment}</p>}<p className="mt-3 font-mono text-xs text-muted-foreground">Analysis: {item.analysis_id} · Owner: {item.owner_id}</p>{item.status === "resolved" && <div className="mt-4 rounded-xl bg-muted/50 p-3 text-sm"><strong>{item.outcome}</strong><p className="mt-1 text-muted-foreground">{item.resolution_note}</p></div>}</div>{item.status !== "resolved" && <button type="button" onClick={() => onDecide(item)} className="inline-flex h-fit shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground"><Scale className="size-4" />Xử lý</button>}</div></article>)}</div>;
 }
 
-function ActionList({ items, onDecide }: { items: AdminActionRecordV3[]; onDecide: (item: AdminActionRecordV3) => void }) {
+function ActionList({ items, audits, expanded, onToggleAudit, onDecide }: { items: AdminActionRecordV3[]; audits: Record<string, AdminActionAuditRecordV3[]>; expanded: string | null; onToggleAudit: (id: string) => void; onDecide: (item: AdminActionRecordV3) => void }) {
   if (!items.length) return <EmptyState icon={ShieldCheck} text="Không có hành động được đề xuất." />;
-  return <div className="space-y-4">{items.map((item) => <article key={item.action_id} className="rounded-2xl border border-border bg-card p-5"><div className="flex flex-col justify-between gap-5 md:flex-row"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.status} /><span className="text-xs text-muted-foreground">{formatDate(item.proposed_at)}</span></div><h2 className="mt-3 font-semibold capitalize">{item.action.replaceAll("_", " ")}</h2>{item.target && <p className="mt-1 break-all text-sm text-muted-foreground">Target: {item.target}</p>}<p className="mt-3 text-xs text-muted-foreground">Evidence snapshot: {item.evidence_snapshot.length} mục</p>{item.review_note && <p className="mt-3 rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">{item.review_note}</p>}</div>{item.status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="inline-flex h-fit shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground"><CheckCircle2 className="size-4" />Review</button>}</div></article>)}</div>;
+  return <div className="space-y-4">{items.map((item) => { const isOpen = expanded === item.action_id; const audit = audits[item.action_id]; return <article key={item.action_id} className="rounded-2xl border border-border bg-card p-5"><div className="flex flex-col justify-between gap-5 md:flex-row"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.status} /><span className="text-xs text-muted-foreground">{formatDate(item.proposed_at)}</span></div><h2 className="mt-3 font-semibold capitalize">{item.action.replaceAll("_", " ")}</h2>{item.target && <p className="mt-1 break-all text-sm text-muted-foreground">Target: {item.target}</p>}<p className="mt-2 font-mono text-xs text-muted-foreground">{item.security_analysis_id ? `Security analysis: ${item.security_analysis_id}` : item.analysis_id ? `Legacy analysis: ${item.analysis_id}` : "Không gắn analysis"}</p><p className="mt-3 text-xs text-muted-foreground">Evidence snapshot: {item.evidence_snapshot.length} mục</p>{item.review_note && <p className="mt-3 rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">{item.review_note}</p>}{item.execution_error && <p role="alert" className="mt-3 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300">Execution: {item.execution_error}</p>}<button type="button" aria-expanded={isOpen} onClick={() => onToggleAudit(item.action_id)} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary">Audit trail <ChevronDown className={cn("size-4 transition-transform", isOpen && "rotate-180")} /></button>{isOpen && <div className="mt-3 space-y-2 rounded-xl border border-border bg-muted/20 p-3">{audit ? audit.map((entry) => <div key={entry.decision_id} className="text-xs"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={entry.execution_status} /><strong>{entry.decision}</strong><span className="text-muted-foreground">{formatDate(entry.decided_at)} · {entry.reviewer_id}</span></div><p className="mt-1 text-muted-foreground">{entry.note}</p><p className="mt-1 text-muted-foreground">Evidence snapshot: {entry.evidence_snapshot.length} mục</p></div>) : <span className="text-xs text-muted-foreground">Đang tải audit…</span>}{audit?.length === 0 && <span className="text-xs text-muted-foreground">Chưa có quyết định.</span>}</div>}</div>{item.status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="inline-flex h-fit shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground"><CheckCircle2 className="size-4" />Review</button>}</div></article>; })}</div>;
+}
+
+function TrustRegistryList({ brands, whitelist }: { brands: BrandRecordV4[]; whitelist: WhitelistRecordV4[] }) {
+  return <div className="grid gap-6 xl:grid-cols-2"><section className="space-y-3"><div><h2 className="font-semibold">Brand registry</h2><p className="text-xs text-muted-foreground">Domain/contact chính thức có provenance và reviewer.</p></div>{brands.map((item) => <article key={item.brand_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.lifecycle} /><strong>{item.name}</strong><span className="text-xs text-muted-foreground">{item.policy_version}</span></div><p className="mt-2 break-all text-sm text-muted-foreground">{item.official_domains.join(", ")}</p><p className="mt-2 text-xs text-muted-foreground">Reviewer {item.reviewer_id} · {item.provenance}</p></article>)}{!brands.length && <EmptyState icon={ShieldCheck} text="Chưa có brand registry record." />}</section><section className="space-y-3"><div><h2 className="font-semibold">Security whitelist</h2><p className="text-xs text-muted-foreground">Domain, URL và contact đã được reviewer phê duyệt.</p></div>{whitelist.map((item) => <article key={item.whitelist_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.lifecycle} /><StatusBadge value={item.scope} /><strong className="break-all">{item.indicator}</strong></div><p className="mt-2 text-xs text-muted-foreground">{item.policy_version} · reviewer {item.reviewer_id}</p><p className="mt-1 text-xs text-muted-foreground">{item.provenance}</p></article>)}{!whitelist.length && <EmptyState icon={ShieldCheck} text="Chưa có whitelist record." />}</section></div>;
 }
 
 function CampaignList({ items, details, expanded, onToggle, onDecide }: { items: CampaignSummaryV3[]; details: Record<string, CampaignDetailV3>; expanded: string | null; onToggle: (id: string) => void; onDecide: (item: CampaignSummaryV3) => void }) {

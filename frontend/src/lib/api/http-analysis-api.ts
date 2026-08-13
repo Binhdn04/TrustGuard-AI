@@ -18,6 +18,7 @@ import type {
   AnalysisResponseV3,
   AdminActionDecisionRequestV3,
   AdminActionDecisionResponseV3,
+  AdminActionAuditRecordV3,
   AdminActionPageV3,
   AppealCreateRequestV3,
   AppealDecisionRequestV3,
@@ -275,6 +276,12 @@ export class HttpAnalysisApi implements AnalysisApi {
     return this.postV3<AdminActionDecisionResponseV3>(
       `admin/actions/${encodeURIComponent(actionId)}/decision`,
       request,
+    );
+  }
+
+  async listAdminActionAudit(actionId: string): Promise<AdminActionAuditRecordV3[]> {
+    return this.getV3<AdminActionAuditRecordV3[]>(
+      `admin/actions/${encodeURIComponent(actionId)}/audit`,
     );
   }
 

@@ -16,9 +16,11 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST, normalize_hostname
 from src.core.auth import Principal, UserRole
 from src.core.errors import PlatformError
 from src.models import (
+    AdminActionAuditRecordV3,
     AdminActionDecisionResponseV3,
     AdminActionPageV3,
     AdminActionRecordV3,
@@ -51,6 +53,9 @@ from src.models import (
     ScreenshotArtifactV3,
     ScreenshotStatus,
     ScreenshotStatusResponseV3,
+    SecurityEvidenceTypeV4,
+    SecurityRiskV4,
+    SecurityScopeResponseV4,
     UsageMetricV3,
 )
 
@@ -290,6 +295,17 @@ class ArtifactAccess(PlatformInternalModel):
 
 
 class Wave2Repository(Protocol):
+    async def propose_admin_action(
+        self,
+        *,
+        analysis_id: UUID | None,
+        security_analysis_id: UUID | None,
+        campaign_id: UUID | None,
+        action: ReviewedAction,
+        target: str | None,
+        evidence: list[Evidence],
+    ) -> AdminActionRecordV3: ...
+
     async def create_appeal(
         self, analysis_id: UUID, owner_id: str, request: AppealCreateRequestV3, evidence: list[Evidence]
     ) -> AppealReceiptV3: ...
@@ -311,6 +327,8 @@ class Wave2Repository(Protocol):
     ) -> tuple[list[AdminActionRecordV3], int]: ...
 
     async def get_admin_action(self, action_id: UUID) -> AdminActionRecordV3 | None: ...
+
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]: ...
 
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
@@ -600,6 +618,8 @@ class MemoryWave2Repository:
     artifacts: dict[UUID, ArtifactRecord] = field(default_factory=dict)
     notifications: list[dict[str, Any]] = field(default_factory=list)
     audit: list[dict[str, Any]] = field(default_factory=list)
+    action_sink: Any | None = None
+    executed_blacklist: set[str] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def create_appeal(
@@ -696,17 +716,35 @@ class MemoryWave2Repository:
         self,
         *,
         analysis_id: UUID | None,
+        security_analysis_id: UUID | None = None,
         campaign_id: UUID | None,
         action: ReviewedAction,
         target: str | None,
         evidence: list[Evidence],
     ) -> AdminActionRecordV3:
+        canonical = _canonical_action_target(action, target) if target else None
+        async with self._lock:
+            existing = next(
+                (
+                    item
+                    for item in self.actions.values()
+                    if item.analysis_id == analysis_id
+                    and item.security_analysis_id == security_analysis_id
+                    and item.campaign_id == campaign_id
+                    and item.action is action
+                    and item.target == canonical
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing.model_copy(deep=True)
         record = AdminActionRecordV3(
             action_id=uuid4(),
             analysis_id=analysis_id,
+            security_analysis_id=security_analysis_id,
             campaign_id=campaign_id,
             action=action,
-            target=_canonical_target(target) if target else None,
+            target=canonical,
             status=AdminActionStatus.PENDING_REVIEW,
             evidence_snapshot=evidence,
             proposed_at=datetime.now(UTC),
@@ -726,6 +764,10 @@ class MemoryWave2Repository:
         item = self.actions.get(action_id)
         return item.model_copy(deep=True) if item else None
 
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        rows = [item for item in self.audit if item.get("action_id") == action_id]
+        return [AdminActionAuditRecordV3.model_validate(item) for item in rows]
+
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
     ) -> AdminActionDecisionResponseV3 | None:
@@ -736,13 +778,44 @@ class MemoryWave2Repository:
             if item.status is not AdminActionStatus.PENDING_REVIEW:
                 raise _conflict("The admin action has already been reviewed.")
             now, decision_id = datetime.now(UTC), uuid4()
-            status = AdminActionStatus.APPROVED if decision is ReviewDecision.APPROVED else AdminActionStatus.REJECTED
+            status = AdminActionStatus.REJECTED
+            executed_at = None
+            execution_error = None
+            if decision is ReviewDecision.APPROVED:
+                executed_at = now
+                try:
+                    if item.action is ReviewedAction.ADD_TO_BLACKLIST:
+                        if self.action_sink is not None:
+                            linked_analysis_id = item.security_analysis_id or item.analysis_id
+                            await self.action_sink.apply_decision(
+                                decision_id=str(decision_id),
+                                analysis_id=str(linked_analysis_id) if linked_analysis_id else None,
+                                reviewer_id=reviewer_id,
+                                decision=decision.value,
+                                action=item.action.value,
+                                note=note,
+                                domains=[item.target],
+                            )
+                        else:
+                            self.executed_blacklist.add(item.target)
+                        status = AdminActionStatus.EXECUTED
+                    elif item.action is ReviewedAction.DISABLE_BLACKLIST and self.action_sink is None:
+                        self.executed_blacklist.discard(item.target)
+                        status = AdminActionStatus.EXECUTED
+                    else:
+                        status = AdminActionStatus.FAILED
+                        execution_error = "ACTION_SINK_NOT_CONFIGURED"
+                except Exception:
+                    status = AdminActionStatus.FAILED
+                    execution_error = "ACTION_EXECUTION_FAILED"
             reviewed = item.model_copy(
                 update={
                     "status": status,
                     "reviewer_id": reviewer_id,
                     "review_note": note,
                     "reviewed_at": now,
+                    "executed_at": executed_at,
+                    "execution_error": execution_error,
                 }
             )
             self.actions[action_id] = reviewed
@@ -752,8 +825,12 @@ class MemoryWave2Repository:
                     "action_id": action_id,
                     "reviewer_id": reviewer_id,
                     "decision": decision.value,
+                    "action": item.action.value,
+                    "execution_status": status.value,
+                    "execution_error": execution_error,
                     "evidence_snapshot": [e.model_dump(mode="json") for e in item.evidence_snapshot],
                     "decided_at": now,
+                    "note": note,
                 }
             )
             return AdminActionDecisionResponseV3(
@@ -762,6 +839,8 @@ class MemoryWave2Repository:
                 action=item.action,
                 status=status,
                 reviewed_at=now,
+                executed_at=executed_at,
+                execution_error=execution_error,
             )
 
     async def record_campaign(self, campaign: CampaignWrite) -> CampaignDetailV3:
@@ -1223,11 +1302,60 @@ class Wave2PlatformService:
         items, total = await self.repository.list_admin_actions(status, limit, offset)
         return AdminActionPageV3(items=items, total=total, limit=limit, offset=offset)
 
+    async def propose_security_admin_actions(
+        self, response: SecurityScopeResponseV4
+    ) -> list[AdminActionRecordV3]:
+        """Produce idempotent HITL proposals from completed v4 risk evidence."""
+        if response.risk not in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
+            return []
+        context = response.security_context
+        if context is None or not context.urls:
+            return []
+        referenced = set(response.explanation_evidence_refs)
+        candidates = [item for item in response.evidence if not referenced or item.evidence_ref in referenced]
+        proposals: list[AdminActionRecordV3] = []
+        for raw_url in context.urls:
+            try:
+                target = _canonical_action_target(ReviewedAction.ADD_TO_BLACKLIST, raw_url)
+            except ValueError:
+                continue
+            if any(
+                item.type is SecurityEvidenceTypeV4.BLACKLIST
+                and item.signal == "approved_blacklist_hit"
+                and _evidence_matches_domain(item.target, target)
+                for item in response.evidence
+            ):
+                continue
+            evidence = [
+                _security_action_evidence(item, target)
+                for item in candidates
+                if item.target in {None, "message"} or _evidence_matches_domain(item.target, target)
+            ]
+            evidence = [item for item in evidence if item is not None]
+            if not evidence:
+                continue
+            proposals.append(
+                await self.repository.propose_admin_action(
+                    analysis_id=None,
+                    security_analysis_id=response.analysis_id,
+                    campaign_id=None,
+                    action=ReviewedAction.ADD_TO_BLACKLIST,
+                    target=target,
+                    evidence=evidence,
+                )
+            )
+        return proposals
+
     async def get_admin_action(self, action_id: UUID) -> AdminActionRecordV3:
         result = await self.repository.get_admin_action(action_id)
         if result is None:
             raise _not_found("Admin action was not found.")
         return result
+
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        if await self.repository.get_admin_action(action_id) is None:
+            raise _not_found("Admin action was not found.")
+        return await self.repository.list_admin_action_audit(action_id)
 
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
@@ -1417,11 +1545,56 @@ def _hostname_matches(hostname: str, pattern: str) -> bool:
     return hostname == pattern
 
 
+def _canonical_action_target(action: ReviewedAction, target: str) -> str:
+    if action is ReviewedAction.NONE:
+        raise ValueError("none action cannot have a target")
+    value = target.strip()
+    try:
+        parsed = urlsplit(value if "://" in value else f"https://{value}")
+    except ValueError as exc:
+        raise ValueError("admin action target is invalid") from exc
+    if parsed.hostname is None:
+        raise ValueError("admin action target must contain a hostname")
+    hostname = normalize_hostname(parsed.hostname)
+    if DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(hostname) is None:
+        raise ValueError("admin action target must be a registrable domain")
+    return hostname
+
+
 def _canonical_target(target: str) -> str:
-    value = target.strip().lower()
-    parsed = urlsplit(value if "://" in value else f"https://{value}")
-    hostname = (parsed.hostname or "").rstrip(".")
-    return hostname or value[:500]
+    return _canonical_action_target(ReviewedAction.ADD_TO_BLACKLIST, target)
+
+
+def _evidence_matches_domain(value: str | None, domain: str) -> bool:
+    if value is None:
+        return False
+    try:
+        parsed = urlsplit(value if "://" in value else f"https://{value}")
+    except ValueError:
+        return False
+    return (parsed.hostname or "").casefold().rstrip(".") == domain
+
+
+def _security_action_evidence(item, domain: str) -> Evidence | None:
+    type_map = {
+        SecurityEvidenceTypeV4.BLACKLIST: "BLACKLIST",
+        SecurityEvidenceTypeV4.REDIRECT: "REDIRECT",
+        SecurityEvidenceTypeV4.RDAP: "DOMAIN_REGISTRATION",
+        SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION: "OFFICIAL_SOURCE",
+        SecurityEvidenceTypeV4.LOCAL_URL_RULE: "URL_RULE",
+    }
+    from src.models import EvidenceType  # noqa: PLC0415
+
+    evidence_type = EvidenceType[type_map.get(item.type, "DOMAIN_REPUTATION")]
+    return Evidence(
+        type=evidence_type,
+        source=item.source,
+        title=item.signal,
+        url=f"https://{domain}/",
+        finding=item.description,
+        observed_at=item.observed_at,
+        policy_version=item.provenance_ref,
+    )
 
 
 def _aggregate_metrics(

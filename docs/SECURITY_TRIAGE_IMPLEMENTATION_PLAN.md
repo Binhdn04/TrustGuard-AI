@@ -1,7 +1,7 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
 **Cập nhật:** 13/08/2026  
-**Trạng thái:** WP0–WP6 hoàn tất; sẵn sàng triển khai WP7
+**Trạng thái:** WP0–WP7 hoàn tất; sẵn sàng triển khai WP8
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
 
@@ -597,7 +597,7 @@ SQLite/PostgreSQL repositories, `migrations/versions/0012_security_feedback.py` 
 
 ## 11. WP7 — HITL & Security Admin Actions
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 Không viết lại hạ tầng review đã có. Nối runtime producer vào v3/vNext admin action flow và hoàn thiện
 ít nhất `ADD_TO_BLACKLIST` trước:
@@ -611,10 +611,10 @@ high-risk analysis
 → kết quả blacklist ảnh hưởng analysis sau
 ```
 
-Hiện PostgreSQL apply blacklist ngay khi decision được approved nhưng response vẫn trả `APPROVED`, dù
-enum đã có `EXECUTED/FAILED`. WP7 phải chốt rõ transaction/state machine; không ghi “execute hoàn chỉnh”
-chỉ vì side effect SQL tồn tại. Memory/dev v3 cần behavior tương đương hoặc được ghi rõ là test double
-không hỗ trợ execution.
+State machine đã chốt: `PENDING_REVIEW → REJECTED` hoặc approval đi qua trạng thái nội bộ
+`APPROVED → EXECUTED/FAILED` trong cùng review/execution transaction. API trả trạng thái cuối; không còn
+trả `APPROVED` khi blacklist side effect đã chạy. Memory/dev executor gọi audited SQLite sink trước khi
+đánh dấu `EXECUTED`; standalone memory test double có deterministic in-memory blacklist.
 
 Không cho action chạy nếu thiếu approved decision, reviewer/note, evidence snapshot hoặc canonical
 target. Test unauthorized access, reject, duplicate decision/execution, transaction rollback và audit.
@@ -623,8 +623,31 @@ Sau action tối thiểu, bổ sung whitelist/domain/threat/audit views. `BLOCK_
 `PUBLISH_BROAD_WARNING` và AI Security Copilot chỉ được đánh dấu done khi có sink/behavior thật; nếu
 hoãn phải ghi scope deviation.
 
-**File/symbol cần sửa sau này:** `propose_admin_action`, `decide_admin_action`, `AdminActionStatus`,
-PostgreSQL/memory repositories, vNext risk/action producer và admin UI.
+### Đã hoàn thành
+
+- V4 `HIGH_RISK`/`MALICIOUS` có URL tạo `ADD_TO_BLACKLIST` proposal idempotent theo
+  `security_analysis_id + action + canonical target`; analysis đã có approved-blacklist evidence không
+  tạo proposal lặp. Target bắt buộc là domain IDNA/registrable hợp lệ.
+- Evidence snapshot chỉ lấy evidence ref đã dùng bởi risk explanation, đổi URL thành origin domain và
+  không lưu query/token hoặc raw private conversation.
+- Approval `ADD_TO_BLACKLIST` thực thi audited blacklist write rồi trả `EXECUTED`; reject không có side
+  effect; duplicate review trả conflict. Sink/transaction lỗi trả `FAILED` với execution code và không
+  ghi blacklist một phần.
+- PostgreSQL lưu immutable execution status/error trên `review_decisions`, liên kết action với
+  `security_analyses` mà không dùng nhầm FK legacy; migration `0013_security_hitl_actions` thêm constraint,
+  index idempotency và execution-state invariant.
+- Admin API có action audit view; UI hiển thị security-analysis link, canonical domain, threat evidence,
+  execution failure, immutable audit trail và brand/whitelist trust views. Tất cả vẫn yêu cầu
+  security-admin role.
+
+**Scope deviation:** `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Security Copilot chưa có external
+sink/behavior thật. Approval các action này kết thúc `FAILED/ACTION_SINK_NOT_CONFIGURED`; chúng không
+được tuyên bố đã triển khai. `DISABLE_BLACKLIST` có PostgreSQL executor cũ nhưng chưa được đưa vào v4
+runtime producer nên không tính là deliverable WP7.
+
+**File/symbol đã triển khai:** `propose_security_admin_actions`, `propose_admin_action`,
+`decide_admin_action`, `AdminActionRecordV3`, `AdminActionAuditRecordV3`, PostgreSQL/memory repositories,
+`migrations/versions/0013_security_hitl_actions.py`, v4 runtime producer, v3 audit API và admin UI.
 
 ---
 
@@ -720,7 +743,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP4 | DONE | 17 test trust/admin mới; full backend 266 pass/1 skip; Ruff pass | Không có; hosted official-verifier/PostgreSQL/Redis smoke vẫn là release evidence WP9 |
 | WP5 | DONE | 6 test conversation mới; full backend 272 pass/1 skip; Ruff pass | Không có; hosted PostgreSQL/retention-worker smoke vẫn là release evidence WP9 |
 | WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
-| WP7 | NOT_STARTED | — | Toàn bộ WP7 |
+| WP7 | DONE | 6 test WP7 mới; full backend 279 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass | Scope deviation: BLOCK_DOMAIN, PUBLISH_BROAD_WARNING, Copilot chưa có sink; DISABLE_BLACKLIST chưa có v4 producer |
 | WP8 | NOT_STARTED | — | Toàn bộ WP8 |
 | WP9 | NOT_STARTED | — | Toàn bộ WP9 |
 

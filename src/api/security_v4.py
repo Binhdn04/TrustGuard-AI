@@ -20,6 +20,7 @@ from src.api.dependencies import (
     get_security_analysis_service,
     get_ticket_manager,
     resolve_security_investigation_service,
+    resolve_wave2_service,
 )
 from src.core.errors import PlatformError
 from src.models import (
@@ -105,6 +106,16 @@ async def create_security_analysis_v4(
             details={"analysis_id": str(scoped.analysis_id)},
         ) from exc
     await analyses.persist_completed(scoped, principal)
+    if scoped.risk is not None:
+        try:
+            wave2 = await resolve_wave2_service(http_request)
+            await wave2.propose_security_admin_actions(scoped)
+        except Exception:
+            limitations = list(
+                dict.fromkeys([*scoped.limitations, "Không thể tạo đề xuất HITL cho Security Admin."])
+            )
+            scoped = scoped.model_copy(update={"limitations": limitations})
+            await analyses.persist_completed(scoped, principal)
     return scoped
 
 

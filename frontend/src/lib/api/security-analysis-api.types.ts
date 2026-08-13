@@ -5,6 +5,8 @@ import type {
   SecurityScopeResponseV4,
   SecurityTriageCreateRequestV4,
   SecurityWebSocketTicketResponseV4,
+  BrandRecordV4,
+  WhitelistRecordV4,
 } from "@/types/generated/api-v4";
 
 import type { AnalysisEventQuery } from "./analysis-api.types";
@@ -19,4 +21,6 @@ export interface SecurityAnalysisApi {
   listReports(analysisId: string): Promise<SecurityReportRecordV4[]>;
   createAppeal(analysisId: string, request: { reason: string; comment?: string | null }): Promise<SecurityAppealRecordV4>;
   listAnalysisAppeals(analysisId: string): Promise<SecurityAppealRecordV4[]>;
+  listBrands(): Promise<BrandRecordV4[]>;
+  listWhitelist(): Promise<WhitelistRecordV4[]>;
 }

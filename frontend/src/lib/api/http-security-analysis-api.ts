@@ -6,6 +6,8 @@ import type {
   SecurityScopeResponseV4,
   SecurityTriageCreateRequestV4,
   SecurityWebSocketTicketResponseV4,
+  BrandRecordV4,
+  WhitelistRecordV4,
 } from "@/types/generated/api-v4";
 
 import { ApiError } from "./http-analysis-api";
@@ -104,6 +106,14 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async listAnalysisAppeals(analysisId: string): Promise<SecurityAppealRecordV4[]> {
     return this.get<SecurityAppealRecordV4[]>(`analyses/${encodeURIComponent(analysisId)}/appeals`);
+  }
+
+  async listBrands(): Promise<BrandRecordV4[]> {
+    return this.get<BrandRecordV4[]>("admin/brands");
+  }
+
+  async listWhitelist(): Promise<WhitelistRecordV4[]> {
+    return this.get<WhitelistRecordV4[]>("admin/whitelist");
   }
 
   private async get<T>(resource: string): Promise<T> {

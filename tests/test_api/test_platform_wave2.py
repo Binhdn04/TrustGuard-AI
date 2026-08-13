@@ -135,8 +135,19 @@ async def test_reviewed_action_requires_one_approved_transaction(client, wave2_p
         json={"decision": "approved", "note": "Evidence snapshot reviewed."},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "approved"
+    assert response.json()["status"] == "executed"
+    assert response.json()["executed_at"] is not None
     assert len(repository.audit) == 1
+
+    audit = await client.get(
+        f"/api/v3/admin/actions/{action.action_id}/audit",
+        headers=ADMIN_HEADERS,
+    )
+    assert audit.status_code == 200
+    assert audit.json()[0]["execution_status"] == "executed"
+
+    unauthorized = await client.get("/api/v3/admin/actions", headers=USER_HEADERS)
+    assert unauthorized.status_code == 403
 
     duplicate = await client.post(
         f"/api/v3/admin/actions/{action.action_id}/decision",

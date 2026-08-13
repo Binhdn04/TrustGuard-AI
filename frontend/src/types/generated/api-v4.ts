@@ -16,6 +16,34 @@ export interface SecurityConsentV4 {
   official_source_lookup: boolean;
 }
 
+export interface BrandRecordV4 {
+  brand_id: string;
+  name: string;
+  aliases: string[];
+  official_domains: string[];
+  official_contacts: string[];
+  provenance: string;
+  policy_version: string;
+  effective_from: string;
+  effective_until: string | null;
+  lifecycle: "active" | "disabled";
+  reviewer_id: string;
+  created_at: string;
+}
+
+export interface WhitelistRecordV4 {
+  whitelist_id: string;
+  indicator: string;
+  scope: "domain" | "url" | "contact";
+  provenance: string;
+  policy_version: string;
+  effective_from: string;
+  effective_until: string | null;
+  lifecycle: "active" | "disabled";
+  reviewer_id: string;
+  created_at: string;
+}
+
 export interface SecurityTriageCreateRequestV4 {
   message: string;
   consent?: Partial<SecurityConsentV4>;

@@ -491,6 +491,7 @@ def get_wave2_service() -> Wave2PlatformService:
     analysis_service = get_analysis_service()
     repository = analysis_service.repository
     if not isinstance(repository, PostgresPlatformRepository):
+        _memory_wave2_repository.action_sink = repository
         repository = _memory_wave2_repository
     signer = ArtifactSigner(settings.artifact_signing_key, settings.artifact_access_ttl_seconds)
     return Wave2PlatformService(repository, signer, _source_registry)

@@ -17,6 +17,7 @@ import type {
   AnalysisResponseV3,
   AdminActionDecisionRequestV3,
   AdminActionDecisionResponseV3,
+  AdminActionAuditRecordV3,
   AdminActionPageV3,
   AppealCreateRequestV3,
   AppealDecisionRequestV3,
@@ -72,6 +73,7 @@ export interface AnalysisApi {
   decideAppeal(appealId: string, request: AppealDecisionRequestV3): Promise<AppealDecisionResponseV3>;
   listAdminActions(query?: PageQuery<"pending_review" | "approved" | "rejected" | "executed" | "failed">): Promise<AdminActionPageV3>;
   decideAdminAction(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3>;
+  listAdminActionAudit(actionId: string): Promise<AdminActionAuditRecordV3[]>;
   listCampaigns(query?: PageQuery<"pending_review" | "confirmed" | "rejected">): Promise<CampaignPageV3>;
   getCampaign(campaignId: string): Promise<CampaignDetailV3>;
   reviewCampaign(campaignId: string, request: CampaignDecisionRequestV3): Promise<CampaignDetailV3>;

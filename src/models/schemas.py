@@ -666,6 +666,7 @@ class AdminActionRecordV3(ContractModel):
     contract_version: Literal["v3"] = CONTRACT_VERSION_V3
     action_id: UUID
     analysis_id: UUID | None = None
+    security_analysis_id: UUID | None = None
     campaign_id: UUID | None = None
     action: ReviewedAction
     target: str | None = None
@@ -675,6 +676,8 @@ class AdminActionRecordV3(ContractModel):
     reviewer_id: str | None = None
     review_note: str | None = None
     reviewed_at: datetime | None = None
+    executed_at: datetime | None = None
+    execution_error: str | None = None
 
     @model_validator(mode="after")
     def validate_review(self) -> Self:
@@ -690,6 +693,13 @@ class AdminActionRecordV3(ContractModel):
             raise ValueError("reviewed action requires a target")
         if self.action is not ReviewedAction.NONE and not self.evidence_snapshot:
             raise ValueError("reviewed action requires an evidence snapshot")
+        if self.analysis_id is not None and self.security_analysis_id is not None:
+            raise ValueError("admin action cannot reference both legacy and security analyses")
+        execution_finished = self.status in {AdminActionStatus.EXECUTED, AdminActionStatus.FAILED}
+        if execution_finished != (self.executed_at is not None):
+            raise ValueError("executed or failed action requires executed_at")
+        if (self.status is AdminActionStatus.FAILED) != (self.execution_error is not None):
+            raise ValueError("failed action requires execution_error")
         return self
 
 
@@ -703,8 +713,29 @@ class AdminActionDecisionResponseV3(ContractModel):
     action_id: UUID
     decision_id: UUID
     action: ReviewedAction
-    status: Literal[AdminActionStatus.APPROVED, AdminActionStatus.REJECTED]
+    status: Literal[
+        AdminActionStatus.APPROVED,
+        AdminActionStatus.REJECTED,
+        AdminActionStatus.EXECUTED,
+        AdminActionStatus.FAILED,
+    ]
     reviewed_at: datetime
+    executed_at: datetime | None = None
+    execution_error: str | None = None
+
+
+class AdminActionAuditRecordV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    decision_id: UUID
+    action_id: UUID
+    reviewer_id: str
+    decision: ReviewDecision
+    action: ReviewedAction
+    execution_status: AdminActionStatus
+    evidence_snapshot: list[Evidence]
+    note: str
+    decided_at: datetime
+    execution_error: str | None = None
 
 
 class AdminActionPageV3(ContractModel):

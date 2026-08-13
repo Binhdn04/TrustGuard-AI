@@ -2,8 +2,9 @@ import logging
 
 import pytest
 
-from src.api.dependencies import get_analysis_service, get_security_investigation_service
+from src.api.dependencies import get_analysis_service, get_security_investigation_service, get_wave2_service
 from src.main import app
+from src.services.platform_wave2 import ArtifactSigner, MemoryWave2Repository, Wave2PlatformService
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
@@ -82,6 +83,31 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     record = next(item for item in caplog.records if item.getMessage() == "http_request_completed")
     assert record.api_contract == "v4"
     assert record.compatibility_usage == "security_write"
+
+
+@pytest.mark.asyncio
+async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
+    repository = MemoryWave2Repository()
+    wave2 = Wave2PlatformService(repository, ArtifactSigner("security-hitl-test-key"))
+    app.dependency_overrides[get_wave2_service] = lambda: wave2
+    try:
+        response = await client.post(
+            "/api/v4/analyses",
+            headers=USER_HEADERS,
+            json={"message": "Đăng nhập https://hitl.example/login và gửi mật khẩu ngay"},
+        )
+        queue = await client.get("/api/v3/admin/actions", headers=ADMIN_HEADERS)
+    finally:
+        app.dependency_overrides.pop(get_wave2_service, None)
+
+    assert response.status_code == 200
+    assert response.json()["risk"] == "HIGH_RISK"
+    assert queue.status_code == 200
+    assert queue.json()["total"] == 1
+    action = queue.json()["items"][0]
+    assert action["security_analysis_id"] == response.json()["analysis_id"]
+    assert action["target"] == "hitl.example"
+    assert action["status"] == "pending_review"
 
 
 @pytest.mark.asyncio

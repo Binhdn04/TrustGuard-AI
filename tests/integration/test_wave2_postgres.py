@@ -6,6 +6,7 @@ import pytest
 
 from src.core.auth import Principal, UserRole
 from src.models import (
+    AdminActionStatus,
     AnalysisCreateRequest,
     AppealCreateRequestV3,
     AppealDecisionRequestV3,
@@ -84,6 +85,7 @@ async def test_wave2_postgres_transactions_and_idempotency() -> None:
             "integration-admin",
         )
         assert action_decision is not None
+        assert action_decision.status is AdminActionStatus.EXECUTED
         assert await repository.contains("wave2-malicious.example")
 
         policies = await repository.load_source_policies(now)
