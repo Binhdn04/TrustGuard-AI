@@ -117,6 +117,7 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "RATE_LIMITED"
     PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    CONFLICT = "CONFLICT"
 
 
 class ContractModel(BaseModel):

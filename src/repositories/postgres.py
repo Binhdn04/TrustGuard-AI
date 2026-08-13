@@ -30,6 +30,7 @@ from src.models import (
     AppealResponseV3,
     AppealStatus,
     BlacklistLookupEntry,
+    BrandRecordV4,
     CacheMetricV3,
     CampaignAggregateSignalV3,
     CampaignDetailV3,
@@ -48,8 +49,15 @@ from src.models import (
     ReviewQueueItem,
     RiskDistributionMetricV3,
     RiskLevel,
+    SecurityAnalysisEventV4,
+    SecurityAppealRecordV4,
+    SecurityConversationV4,
+    SecurityReportRecordV4,
+    SecurityScopeResponseV4,
     ToolError,
+    TrustLifecycleV4,
     UsageMetricV3,
+    WhitelistRecordV4,
 )
 from src.services.platform_wave2 import (
     ArtifactRecord,
@@ -186,6 +194,351 @@ class PostgresPlatformRepository:
                 f"analysis:{analysis_id}:queued:v1",
                 event.occurred_at,
             )
+
+    async def create_brand(self, record: BrandRecordV4) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """INSERT INTO security_brands(
+                       id,name,aliases,official_domains,official_contacts,provenance,policy_version,
+                       lifecycle,effective_from,effective_until,reviewer_id,created_at,record
+                   ) VALUES($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)""",
+                record.brand_id, record.name, json.dumps(record.aliases), json.dumps(record.official_domains),
+                json.dumps(record.official_contacts), record.provenance, record.policy_version,
+                record.lifecycle.value, record.effective_from, record.effective_until,
+                record.reviewer_id, record.created_at, record.model_dump_json(),
+            )
+            await self._insert_trust_audit(
+                connection, "brand", record.brand_id, "created", record.reviewer_id, record.created_at
+            )
+
+    async def list_brands(self) -> list[BrandRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch("SELECT record FROM security_brands ORDER BY created_at")
+        return [BrandRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
+        return [
+            item for item in await self.list_brands()
+            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.effective_from <= at
+            and (item.effective_until is None or at < item.effective_until)
+        ]
+
+    async def disable_brand(self, brand_id: str, reviewer_id: str, at: datetime) -> BrandRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow("SELECT record FROM security_brands WHERE id=$1 FOR UPDATE", UUID(brand_id))
+            if row is None:
+                return None
+            record = BrandRecordV4.model_validate(_json_value(row["record"])).model_copy(
+                update={"lifecycle": TrustLifecycleV4.DISABLED, "reviewer_id": reviewer_id}
+            )
+            await connection.execute(
+                "UPDATE security_brands SET lifecycle='disabled', reviewer_id=$2, record=$3::jsonb WHERE id=$1",
+                UUID(brand_id), reviewer_id, record.model_dump_json(),
+            )
+            await self._insert_trust_audit(connection, "brand", UUID(brand_id), "disabled", reviewer_id, at)
+        return record
+
+    async def create_whitelist(self, record: WhitelistRecordV4) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """INSERT INTO security_whitelist(
+                       id,scope,indicator,provenance,policy_version,lifecycle,effective_from,
+                       effective_until,reviewer_id,created_at,record
+                   ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)""",
+                record.whitelist_id, record.scope.value, record.indicator, record.provenance,
+                record.policy_version, record.lifecycle.value, record.effective_from,
+                record.effective_until, record.reviewer_id, record.created_at, record.model_dump_json(),
+            )
+            await self._insert_trust_audit(
+                connection, "whitelist", record.whitelist_id, "created", record.reviewer_id, record.created_at
+            )
+
+    async def list_whitelist(self) -> list[WhitelistRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch("SELECT record FROM security_whitelist ORDER BY created_at")
+        return [WhitelistRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def list_active_whitelist(self, at: datetime) -> list[WhitelistRecordV4]:
+        return [
+            item for item in await self.list_whitelist()
+            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.effective_from <= at
+            and (item.effective_until is None or at < item.effective_until)
+        ]
+
+    async def disable_whitelist(
+        self, whitelist_id: str, reviewer_id: str, at: datetime
+    ) -> WhitelistRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                "SELECT record FROM security_whitelist WHERE id=$1 FOR UPDATE", UUID(whitelist_id)
+            )
+            if row is None:
+                return None
+            record = WhitelistRecordV4.model_validate(_json_value(row["record"])).model_copy(
+                update={"lifecycle": TrustLifecycleV4.DISABLED, "reviewer_id": reviewer_id}
+            )
+            await connection.execute(
+                "UPDATE security_whitelist SET lifecycle='disabled', reviewer_id=$2, record=$3::jsonb WHERE id=$1",
+                UUID(whitelist_id), reviewer_id, record.model_dump_json(),
+            )
+            await self._insert_trust_audit(
+                connection, "whitelist", UUID(whitelist_id), "disabled", reviewer_id, at
+            )
+        return record
+
+    async def _insert_trust_audit(
+        self, connection, resource_type: str, resource_id: UUID, action: str, reviewer_id: str, at: datetime
+    ) -> None:
+        await connection.execute(
+            """INSERT INTO security_trust_audit(
+                   id,resource_type,resource_id,action,reviewer_id,occurred_at
+               ) VALUES($1,$2,$3,$4,$5,$6)""",
+            uuid4(), resource_type, resource_id, action, reviewer_id, at,
+        )
+
+    async def save_security_analysis(
+        self,
+        owner_id: str,
+        response: SecurityScopeResponseV4,
+        events: list[SecurityAnalysisEventV4],
+    ) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """INSERT INTO security_analyses(
+                       id, owner_id, status, response, policy_version, created_at, updated_at,
+                       completed_at, conversation_id
+                   ) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$7,$8)
+                   ON CONFLICT(id) DO UPDATE SET status=excluded.status, response=excluded.response,
+                       policy_version=excluded.policy_version, updated_at=excluded.updated_at,
+                       completed_at=excluded.completed_at, conversation_id=excluded.conversation_id""",
+                response.analysis_id,
+                owner_id,
+                response.status.value,
+                response.model_dump_json(),
+                response.policy_version,
+                response.created_at,
+                response.completed_at,
+                response.conversation_id,
+            )
+            for event in events:
+                await connection.execute(
+                    """INSERT INTO security_analysis_events(
+                           event_id, analysis_id, sequence, event_type, payload, occurred_at
+                       ) VALUES($1,$2,$3,$4,$5::jsonb,$6)
+                       ON CONFLICT(analysis_id, sequence) DO NOTHING""",
+                    event.event_id,
+                    response.analysis_id,
+                    event.sequence,
+                    event.step,
+                    event.model_dump_json(),
+                    event.occurred_at,
+                )
+            await connection.execute(
+                """INSERT INTO outbox(
+                       id, aggregate_type, aggregate_id, event_type, payload, idempotency_key, created_at
+                   ) VALUES($1,'security_analysis',$2,'security_analysis.completed',$3::jsonb,$4,$5)
+                   ON CONFLICT(idempotency_key) DO NOTHING""",
+                uuid4(),
+                response.analysis_id,
+                json.dumps({"analysis_id": str(response.analysis_id)}),
+                f"security-analysis:{response.analysis_id}:completed:v1",
+                response.completed_at,
+            )
+
+    async def save_security_conversation(
+        self,
+        owner_id: str,
+        record: SecurityConversationV4,
+        *,
+        expected_version: int | None,
+    ) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            if expected_version is None:
+                status = await connection.execute(
+                    """INSERT INTO security_conversations(
+                           id,owner_id,status,active_analysis_id,context_version,summary,
+                           created_at,updated_at,expires_at
+                       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
+                       ON CONFLICT(id) DO NOTHING""",
+                    record.conversation_id, owner_id, record.status.value, record.active_analysis_id,
+                    record.context_version, record.model_dump_json(), record.created_at,
+                    record.updated_at, record.expires_at,
+                )
+                updated = status.endswith("1")
+            else:
+                row = await connection.fetchrow(
+                    """UPDATE security_conversations SET status=$3,active_analysis_id=$4,
+                           context_version=$5,summary=$6::jsonb,updated_at=$7,expires_at=$8
+                       WHERE id=$1 AND owner_id=$2 AND context_version=$9 RETURNING id""",
+                    record.conversation_id, owner_id, record.status.value, record.active_analysis_id,
+                    record.context_version, record.model_dump_json(), record.updated_at,
+                    record.expires_at, expected_version,
+                )
+                updated = row is not None
+            if not updated:
+                raise PlatformError(
+                    status_code=409, code=ErrorCode.CONFLICT,
+                    message="Security conversation was updated by another turn.", retryable=True,
+                )
+            await connection.execute(
+                """INSERT INTO security_conversation_turns(
+                       conversation_id,context_version,analysis_id,created_at
+                   ) VALUES($1,$2,$3,$4)""",
+                record.conversation_id, record.context_version, record.active_analysis_id, record.updated_at,
+            )
+
+    async def finalize_security_conversation(
+        self, owner_id: str, record: SecurityConversationV4
+    ) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """UPDATE security_conversations SET summary=$3::jsonb,updated_at=$4
+                   WHERE id=$1 AND owner_id=$2 AND context_version=$5""",
+                record.conversation_id, owner_id, record.model_dump_json(), record.updated_at,
+                record.context_version,
+            )
+
+    async def load_security_conversation(self, conversation_id: str):
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT owner_id,summary FROM security_conversations WHERE id=$1", UUID(conversation_id)
+            )
+        if row is None:
+            return None
+        return row["owner_id"], SecurityConversationV4.model_validate(_json_value(row["summary"]))
+
+    async def expire_security_conversations(self, cutoff: datetime) -> int:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            result = await connection.execute(
+                "DELETE FROM security_conversations WHERE expires_at <= $1", cutoff
+            )
+        return int(result.rsplit(" ", 1)[-1])
+
+    async def load_security_analysis(self, analysis_id: str):
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT owner_id, response FROM security_analyses WHERE id=$1", UUID(analysis_id)
+            )
+            if row is None:
+                return None
+            events = await connection.fetch(
+                "SELECT payload FROM security_analysis_events WHERE analysis_id=$1 ORDER BY sequence",
+                UUID(analysis_id),
+            )
+        return (
+            row["owner_id"],
+            SecurityScopeResponseV4.model_validate(_json_value(row["response"])),
+            [SecurityAnalysisEventV4.model_validate(_json_value(item["payload"])) for item in events],
+        )
+
+    async def list_security_analyses(self, owner_id: str) -> list[SecurityScopeResponseV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT response FROM security_analyses WHERE owner_id=$1 ORDER BY created_at DESC",
+                owner_id,
+            )
+        return [SecurityScopeResponseV4.model_validate(_json_value(row["response"])) for row in rows]
+
+    async def save_security_report(self, owner_id: str, record: SecurityReportRecordV4) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """INSERT INTO security_analysis_reports_v4(
+                       id,analysis_id,owner_id,record,created_at
+                   ) VALUES($1,$2,$3,$4::jsonb,$5)""",
+                record.report_id, record.analysis_id, owner_id, record.model_dump_json(), record.created_at,
+            )
+
+    async def list_security_reports(
+        self, analysis_id: str, owner_id: str
+    ) -> list[SecurityReportRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT record FROM security_analysis_reports_v4
+                   WHERE analysis_id=$1 AND owner_id=$2 ORDER BY created_at""",
+                UUID(analysis_id), owner_id,
+            )
+        return [SecurityReportRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def save_security_appeal(self, owner_id: str, record: SecurityAppealRecordV4) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """INSERT INTO security_analysis_appeals_v4(
+                       id,analysis_id,owner_id,status,record,created_at
+                   ) VALUES($1,$2,$3,$4,$5::jsonb,$6)""",
+                record.appeal_id, record.analysis_id, owner_id, record.status.value,
+                record.model_dump_json(), record.created_at,
+            )
+
+    async def list_security_appeals(
+        self, analysis_id: str, owner_id: str
+    ) -> list[SecurityAppealRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                """SELECT record FROM security_analysis_appeals_v4
+                   WHERE analysis_id=$1 AND owner_id=$2 ORDER BY created_at""",
+                UUID(analysis_id), owner_id,
+            )
+        return [SecurityAppealRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def claim_security_tool_execution(
+        self, analysis_id: str, step_id: str, target: str, provider: str
+    ) -> bool:
+        pool = await self._get_pool()
+        now = datetime.now(UTC)
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                """SELECT status, attempt_count FROM security_tool_executions
+                   WHERE analysis_id=$1 AND step_id=$2 AND target_ref=$3 AND provider=$4 FOR UPDATE""",
+                UUID(analysis_id), step_id, target, provider,
+            )
+            if row is None:
+                await connection.execute(
+                    """INSERT INTO security_tool_executions(
+                           analysis_id,step_id,target_ref,provider,status,attempt_count,updated_at
+                       ) VALUES($1,$2,$3,$4,'running',1,$5)""",
+                    UUID(analysis_id), step_id, target, provider, now,
+                )
+                return True
+            if row["status"] != "failed":
+                return False
+            await connection.execute(
+                """UPDATE security_tool_executions SET status='running', attempt_count=$5, updated_at=$6
+                   WHERE analysis_id=$1 AND step_id=$2 AND target_ref=$3 AND provider=$4""",
+                UUID(analysis_id), step_id, target, provider, row["attempt_count"] + 1, now,
+            )
+            return True
+
+    async def finish_security_tool_execution(
+        self, analysis_id: str, step_id: str, target: str, provider: str, status: str
+    ) -> None:
+        if status not in {"completed", "failed", "skipped"}:
+            raise ValueError("tool execution status must be terminal")
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            updated = await connection.execute(
+                """UPDATE security_tool_executions SET status=$5, updated_at=$6
+                   WHERE analysis_id=$1 AND step_id=$2 AND target_ref=$3 AND provider=$4""",
+                UUID(analysis_id), step_id, target, provider, status, datetime.now(UTC),
+            )
+        if updated != "UPDATE 1":
+            raise LookupError("security tool execution was not claimed")
 
     async def load_analysis(self, analysis_id: str):
         pool = await self._get_pool()

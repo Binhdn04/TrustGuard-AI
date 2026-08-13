@@ -1,7 +1,7 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
 **Cập nhật:** 13/08/2026  
-**Trạng thái:** WP0–WP2 hoàn tất; sẵn sàng triển khai WP3
+**Trạng thái:** WP0–WP6 hoàn tất; sẵn sàng triển khai WP7
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
 
@@ -352,7 +352,7 @@ normalize; general fact-check không quay lại route vNext.
 
 ## 7. WP3 — Security Risk Engine & Single-turn API
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 ### Risk contract
 
@@ -402,15 +402,32 @@ determinism cùng policy version và persistence/event round-trip.
 Single-turn chạy end-to-end từ API → scope → context → plan/tools → evidence → risk → explanation →
 persistence/realtime, và không còn fact-check semantics trong output vNext.
 
-**File/symbol cần sửa sau này:** `src/agents/nodes/risk.py`, `src/agents/nodes/explanation.py`,
-`src/agents/seams.py`, `src/services/analysis.py`, `src/services/processor.py`, vNext API/models và
-migration additive.
+### Đã triển khai
+
+- Thêm policy thuần deterministic `security-risk-v1` trong `assess_security_risk`; score cao từ một
+  security context vẫn chỉ là `HIGH_RISK`, còn `MALICIOUS` yêu cầu approved blacklist hoặc confirmed
+  threat-intelligence evidence. V4 không import/consume `ClaimStance`.
+- Thêm risk class, score, confidence, threat type, recommended actions và explanation chỉ dựa trên
+  evidence refs. Provider no-hit/timeout tiếp tục là limitation và không tạo `SAFE`.
+- `POST /api/v4/analyses` chạy trọn scope → investigation → risk trong một turn; OOS và
+  NEED_MORE_INFO vẫn terminal trước investigation.
+- Thêm owner-scoped `GET /api/v4/analyses/{id}`, cursor polling `/events`, single-use WebSocket ticket
+  và replay stream. Lifecycle `queued/running/completed/failed` được persist riêng khỏi v2/v3.
+- Thêm SQLite tables và PostgreSQL migration `0009_security_triage_v4` cho security analysis, event và
+  v4 tool-execution ledger; không persist raw message/OTP/password/token. PostgreSQL final event có
+  transactional outbox notification.
+- Legacy `risk-v2`, `AnalysisService`, route/model v2/v3 và fact-check path không đổi.
+
+**File/symbol đã triển khai:** `src/agents/security_risk.py`, `src/services/security_analysis.py`,
+`src/models/security_v4.py`, `src/api/security_v4.py`, `src/api/dependencies.py`,
+`src/repositories/blacklist.py`, `src/repositories/postgres.py`,
+`migrations/versions/0009_security_triage_v4.py` và test WP3 tương ứng.
 
 ---
 
 ## 8. WP4 — Brand, Whitelist & Official Verification
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 ### Brand registry/matcher
 
@@ -458,14 +475,34 @@ contradicted/not-found và forbidden general fact request.
 Brand/whitelist evidence có provenance; official verifier bị bound theo purpose/budget; risk engine
 consume trust evidence đúng false-positive policy.
 
-**File/symbol cần sửa sau này:** migrations mới, repository protocols + SQLite/PostgreSQL
-implementations, admin/vNext API, planner và risk policy.
+### Đã triển khai
+
+- Thêm brand registry versioned gồm aliases, official domains/contacts, provenance, effective interval,
+  lifecycle và reviewer; matcher deterministic tạo `official_match`, `official_contact_match`,
+  `lookalike_domain`, `homograph_domain` hoặc `domain_mismatch` cùng provenance ref.
+- Thêm whitelist first-class cho domain/URL/contact với canonicalization, effective interval,
+  lifecycle, reviewer và immutable audit. URL/contact evidence chỉ persist target đã privacy-minimize.
+- Thêm admin API v4 create/list/disable cho brand và whitelist, bắt buộc security-admin role.
+- Thêm `OfficialClaimVerifier` riêng với đúng purpose allowlist, tối đa 1 claim, 2 query và 5 source;
+  local allowlist filter loại source ngoài official domains. Consent official-source tách khỏi URL consent.
+- Thêm HTTP adapter cấu hình bằng `OFFICIAL_VERIFIER_API_URL`/`OFFICIAL_VERIFIER_API_KEY`; khi không
+  cấu hình hoặc provider lỗi, kết quả là `INSUFFICIENT_EVIDENCE`/limitation, không suy ra phủ định.
+- Trust steps xuất hiện trong investigation plan và official query tính vào external-call budget.
+- Risk policy chạy whitelist trước weak domain/URL signals, nhưng approved whitelist/official match
+  không che approved blacklist hoặc confirmed threat-intelligence hit.
+- Thêm SQLite schema và PostgreSQL migration `0010_security_trust_registry` cho brand, whitelist và
+  audit; legacy source registry/fact-check contract không đổi.
+
+**File/symbol đã triển khai:** `src/agents/security_trust.py`, `src/services/security_trust.py`,
+`src/models/security_v4.py`, `src/agents/security_risk.py`, `src/api/security_v4.py`,
+`src/api/dependencies.py`, `src/repositories/blacklist.py`, `src/repositories/postgres.py`,
+`migrations/versions/0010_security_trust_registry.py` và test WP4 tương ứng.
 
 ---
 
 ## 9. WP5 — Multi-turn Conversation & Case Memory
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 Conversation tối thiểu cần owner, status, active investigation/analysis link, redacted structured
 summary, context version, timestamps và retention. Có thể dùng `conversations` + FK/link trên analysis
@@ -488,14 +525,28 @@ case, redaction, retention và follow-up từ NEED_MORE_INFO.
 `conversation_id` hoạt động end-to-end, context được redacted/versioned/retained và không có cross-user
 hoặc cross-case leakage.
 
-**File/symbol cần sửa sau này:** vNext request/API, `AnalysisService`, repository protocols,
-SQLite/PostgreSQL schema và retention worker.
+### Đã hoàn thành
+
+- Request/response v4 có `conversation_id` và optimistic `conversation_version`; continuation bắt buộc
+  gửi cả hai để stale/concurrent turn trả `409 CONFLICT` thay vì ghi đè context.
+- Conversation/turn được lưu owner-scoped, liên kết active analysis, có structured summary, evidence
+  refs, timestamps, version và expiry; thêm owner-checked `GET /api/v4/conversations/{id}`.
+- Merge chỉ reuse structured entity/scenario/action/URL/security flags; case khác rõ ràng bị từ chối.
+  Consent không nằm trong summary và luôn lấy từ request của turn hiện tại.
+- URL trong case memory bị bỏ user-info, query và fragment; raw message, OTP/password/token không được
+  ghi vào conversation/turn. PostgreSQL và SQLite đều có cleanup theo expiry; retention worker gọi
+  cleanup PostgreSQL.
+- Thêm PostgreSQL migration `0011_security_conversations`; schema SQLite additive tương đương.
+
+**File/symbol đã triển khai:** v4 request/response/conversation models, `SecurityAnalysisService`,
+`src/api/security_v4.py`, SQLite/PostgreSQL repositories, `RetentionWorker`,
+`migrations/versions/0011_security_conversations.py` và test WP5 tương ứng.
 
 ---
 
 ## 10. WP6 — Security Chat Frontend
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 Tái sử dụng HTTP client, ticketed WebSocket, cursor replay/polling fallback, progress, history, report,
 appeal và auth. Thay semantics/component fact-check bằng composer/chat turns, risk summary, threat
@@ -523,8 +574,24 @@ polling fallback, report/appeal và responsive/accessibility states.
 Main user flow dùng contract security vNext, chat nhiều lượt và không còn claim-stance semantics; các
 boundary realtime/auth/report/appeal không regression.
 
-**File/symbol cần sửa sau này:** `analysis-workspace.tsx`, `fact-check-composer.tsx`,
-`fact-check-summary.tsx`, `claim-result-card.tsx`, mapper/types/API client và các page history/home.
+### Đã hoàn thành
+
+- Main workspace và history dùng adapter/type v4 riêng; legacy v3 adapter/component vẫn tách biệt cho
+  compatibility/admin flow, không còn claim-stance hoặc general fact-check semantics trên main flow.
+- Chat composer hỗ trợ multi-turn `conversation_id`/version, focused follow-up, consent URL và consent
+  official-source riêng từng lượt; không còn screenshot consent/panel trong Security Triage profile.
+- Render riêng OOS, NEED_MORE_INFO, RUNNING, PROVISIONAL_WARNING, COMPLETED và FAILED; kết luận risk,
+  recommended actions, limitations, evidence và technical detail dùng security contract.
+- Realtime v4 dùng single-use WebSocket ticket, cursor replay/reconnect và polling fallback; history
+  owner-scoped chỉ hiển thị structured security context, không dựng lại raw private conversation.
+- Thêm v4 owner-scoped history/report/appeal API và persistence để các control tái sử dụng không gửi
+  security analysis ID sang legacy tables; PostgreSQL migration `0012_security_feedback` là additive.
+- Cập nhật browser fixture/E2E cho login → provisional → polling fallback → final → history và axe
+  accessibility; layout responsive giữ mobile-first breakpoints hiện có.
+
+**File/symbol đã triển khai:** `analysis-workspace.tsx`, security composer/risk/technical components,
+v4 generated types/API/event-stream, history/app-shell, report/appeal adapter, v4 feedback/history API,
+SQLite/PostgreSQL repositories, `migrations/versions/0012_security_feedback.py` và test WP6 tương ứng.
 
 ---
 
@@ -649,10 +716,10 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP0 | DONE | Backend 203 pass/1 skip; Ruff pass; frontend 30 pass + lint/typecheck pass | Không có; hosted/PostgreSQL/Redis/E2E vẫn là release evidence WP9 |
 | WP1 | DONE | 22 test v4 mới; full backend 225 pass/1 skip; Ruff + frontend regression pass | Không có; planner/persistence/risk tiếp tục ở WP2/WP3 |
 | WP2 | DONE | 12 test WP2 mới; targeted 42 pass; full backend 237 pass/1 skip; Ruff + frontend 30 test/lint/typecheck pass | Không có; DNS dùng safe resolver và privacy-minimized counts; risk/persistence cấp analysis tiếp tục ở WP3 |
-| WP3 | NOT_STARTED | — | Toàn bộ WP3 |
-| WP4 | NOT_STARTED | — | Toàn bộ WP4 |
-| WP5 | NOT_STARTED | — | Toàn bộ WP5 |
-| WP6 | NOT_STARTED | — | Toàn bộ WP6 |
+| WP3 | DONE | 12 test risk/lifecycle mới; full backend 249 pass/1 skip; Ruff pass | Không có; hosted PostgreSQL/Redis/WebSocket smoke vẫn là release evidence WP9 |
+| WP4 | DONE | 17 test trust/admin mới; full backend 266 pass/1 skip; Ruff pass | Không có; hosted official-verifier/PostgreSQL/Redis smoke vẫn là release evidence WP9 |
+| WP5 | DONE | 6 test conversation mới; full backend 272 pass/1 skip; Ruff pass | Không có; hosted PostgreSQL/retention-worker smoke vẫn là release evidence WP9 |
+| WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
 | WP7 | NOT_STARTED | — | Toàn bộ WP7 |
 | WP8 | NOT_STARTED | — | Toàn bộ WP8 |
 | WP9 | NOT_STARTED | — | Toàn bộ WP9 |

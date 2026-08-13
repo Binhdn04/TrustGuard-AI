@@ -335,7 +335,9 @@ class SecurityInvestigationService:
             provider = self._provider_name(item)
             if self._execution_ledger is not None:
                 try:
-                    claimed = await self._execution_ledger.claim_tool_execution(
+                    claim = getattr(self._execution_ledger, "claim_security_tool_execution", None)
+                    claim = claim or getattr(self._execution_ledger, "claim_tool_execution")
+                    claimed = await claim(
                         str(scope.analysis_id), item.step_id, _ledger_target_ref(item.target), provider
                     )
                 except Exception:
@@ -488,7 +490,9 @@ class SecurityInvestigationService:
             return
         status = "completed" if envelope is not None and envelope.error is None else "failed"
         try:
-            await self._execution_ledger.finish_tool_execution(
+            finish = getattr(self._execution_ledger, "finish_security_tool_execution", None)
+            finish = finish or getattr(self._execution_ledger, "finish_tool_execution")
+            await finish(
                 str(scope.analysis_id), step.step_id, _ledger_target_ref(step.target), provider, status
             )
         except Exception:

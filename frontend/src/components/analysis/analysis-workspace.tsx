@@ -1,241 +1,156 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, RefreshCw, Shield } from "lucide-react";
+import { AlertCircle, MessageSquareWarning, RefreshCw, Shield } from "lucide-react";
 
-import { getAnalysisApi } from "@/lib/api/analysis-api";
-import {
-  subscribeToAnalysisEvents,
-  type AnalysisEventSubscription,
-} from "@/lib/api/analysis-event-stream";
-import { mapAnalysisResponseToViewModel } from "@/lib/mappers/analysis-v3-mapper";
-import type { AnalysisEventV3, ProvisionalWarningEventV3 } from "@/types/generated/api-v3";
-import type { InvestigationStep } from "@/types/analysis";
-import type {
-  AnalysisTransportState,
-  AnalysisUiState,
-  AnalysisViewModel,
-} from "@/types/analysis-view-model";
+import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
+import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
+import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
+import type { AnalysisTransportState } from "@/types/analysis-view-model";
+import type { SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
-import { AnalysisLimitations } from "./analysis-limitations";
 import { AnalysisAppealForm } from "./analysis-appeal-form";
-import { AnalysisProgress } from "./analysis-progress";
+import { AnalysisLimitations } from "./analysis-limitations";
 import { AnalysisReportForm } from "./analysis-report-form";
-import { FactCheckComposer } from "./fact-check-composer";
-import { FactCheckSummary } from "./fact-check-summary";
-import { LinkSafetyPanel } from "./link-safety-panel";
-import { LiveInvestigationPlan } from "./live-investigation-plan";
-import { ProvisionalWarningBanner } from "./provisional-warning-banner";
-import { ScreenshotArtifactPanel } from "./screenshot-artifact-panel";
+import { SecurityChatComposer } from "./security-chat-composer";
+import { SecurityRiskSummary } from "./security-risk-summary";
+import { SecurityTechnicalDetails } from "./security-technical-details";
 
-function upsertLiveStep(current: InvestigationStep[], next: InvestigationStep): InvestigationStep[] {
-  const index = current.findIndex((step) => step.step_id === next.step_id);
-  if (index < 0) return [...current, next];
-  return current.map((step, itemIndex) => (itemIndex === index ? next : step));
+type SecurityUiState =
+  | "IDLE"
+  | "RUNNING"
+  | "PROVISIONAL_WARNING"
+  | "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+  | "NEED_MORE_INFO"
+  | "COMPLETED"
+  | "FAILED";
+
+interface ChatTurn {
+  id: string;
+  message: string;
+  result: SecurityScopeResponseV4 | null;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : "Đã xảy ra lỗi khi kết nối với dịch vụ phân tích.";
+function stateFor(result: SecurityScopeResponseV4): SecurityUiState {
+  if (result.status === "failed") return "FAILED";
+  if (result.scope_decision === "OUT_OF_SCOPE_GENERAL_FACT_CHECK") return "OUT_OF_SCOPE_GENERAL_FACT_CHECK";
+  if (result.scope_decision === "NEED_MORE_INFO") return "NEED_MORE_INFO";
+  if (result.status === "completed") return "COMPLETED";
+  return result.risk === "HIGH_RISK" || result.risk === "MALICIOUS" ? "PROVISIONAL_WARNING" : "RUNNING";
 }
 
-export function AnalysisWorkspace() {
-  const [viewModel, setViewModel] = useState<AnalysisViewModel | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [livePlan, setLivePlan] = useState<InvestigationStep[]>([]);
-  const [provisional, setProvisional] = useState<ProvisionalWarningEventV3["payload"] | null>(null);
-  const [liveLimitations, setLiveLimitations] = useState<string[]>([]);
-  const [uiState, setUiState] = useState<AnalysisUiState>("idle");
+function messageForError(error: unknown): string {
+  return error instanceof Error ? error.message : "Không thể kết nối tới dịch vụ Security Triage.";
+}
+
+export function AnalysisWorkspace({ api = getSecurityAnalysisApi() }: { api?: SecurityAnalysisApi }) {
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [state, setState] = useState<SecurityUiState>("IDLE");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
-  const [screenshotRequested, setScreenshotRequested] = useState(false);
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const eventSubscriptionRef = useRef<AnalysisEventSubscription | null>(null);
-  const generationRef = useRef(0);
+  const [error, setError] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<{ id: string; version: number } | null>(null);
+  const subscription = useRef<{ stop(): void } | null>(null);
+  const generation = useRef(0);
+  const busy = state === "RUNNING" || state === "PROVISIONAL_WARNING";
+  const latest = turns.at(-1)?.result ?? null;
 
   const stopRuntime = useCallback(() => {
-    if (pollTimerRef.current !== null) clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = null;
-    eventSubscriptionRef.current?.stop();
-    eventSubscriptionRef.current = null;
+    subscription.current?.stop();
+    subscription.current = null;
+    setTransport("disconnected");
   }, []);
 
   useEffect(() => () => {
-    generationRef.current += 1;
-    stopRuntime();
-  }, [stopRuntime]);
+    generation.current += 1;
+    subscription.current?.stop();
+  }, []);
 
-  const resetWorkspace = useCallback(() => {
-    generationRef.current += 1;
+  const applyResult = useCallback((turnId: string, result: SecurityScopeResponseV4) => {
+    setTurns((current) => current.map((turn) => turn.id === turnId ? { ...turn, result } : turn));
+    setConversation({ id: result.conversation_id, version: result.conversation_version });
+    setState(stateFor(result));
+  }, []);
+
+  const monitor = useCallback((turnId: string, analysisId: string, activeGeneration: number) => {
+    subscription.current = subscribeToSecurityEvents(api, analysisId, {
+      onEvents: (events) => {
+        if (activeGeneration !== generation.current) return;
+        if (events.some((event) => event.status === "completed" || event.status === "failed")) {
+          void api.getAnalysis(analysisId).then((result) => {
+            if (activeGeneration === generation.current) {
+              applyResult(turnId, result);
+              stopRuntime();
+            }
+          }).catch((pollError) => {
+            setError(messageForError(pollError));
+            setState("FAILED");
+          });
+        }
+      },
+      onTransportChange: setTransport,
+      onError: () => undefined,
+    });
+  }, [api, applyResult, stopRuntime]);
+
+  const submit = async (message: string, externalLookup: boolean, officialLookup: boolean) => {
+    generation.current += 1;
+    const activeGeneration = generation.current;
     stopRuntime();
-    setViewModel(null);
     setError(null);
-    setLivePlan([]);
-    setProvisional(null);
-    setLiveLimitations([]);
-    setUiState("idle");
-    setTransport("disconnected");
-    setScreenshotRequested(false);
-  }, [stopRuntime]);
-
-  const startAnalysis = async (
-    content: string,
-    consentToScanUrls: boolean,
-    consentToCaptureScreenshot: boolean,
-  ) => {
-    generationRef.current += 1;
-    const generation = generationRef.current;
-    stopRuntime();
-    setError(null);
-    setViewModel(null);
-    setLivePlan([]);
-    setProvisional(null);
-    setLiveLimitations([]);
-    setUiState("submitting");
-    setTransport("connecting");
-    setScreenshotRequested(consentToCaptureScreenshot);
-
+    setState("RUNNING");
+    const turnId = crypto.randomUUID();
+    setTurns((current) => [...current, { id: turnId, message, result: null }]);
     try {
-      const api = getAnalysisApi();
-      const accepted = await api.createAnalysis({
-        message: content,
-        consent_to_scan_urls: consentToScanUrls,
-        consent_to_capture_screenshot: consentToCaptureScreenshot,
+      const result = await api.createAnalysis({
+        message,
+        consent: { external_url_lookup: externalLookup, official_source_lookup: officialLookup },
+        ...(conversation ? { conversation_id: conversation.id, conversation_version: conversation.version } : {}),
       });
-      if (generation !== generationRef.current) return;
-      setUiState("queued");
-
-      const handleEvents = (events: AnalysisEventV3[]) => {
-        if (generation !== generationRef.current) return;
-        for (const event of events) {
-          if (event.event_type === "provisional_warning") {
-            setProvisional(event.payload);
-            setUiState("provisional");
-          } else if (event.event_type === "step_transition") {
-            setLivePlan((current) => upsertLiveStep(current, event.payload));
-            setUiState((current) => (current === "provisional" ? current : "investigating"));
-          } else if (event.event_type === "analysis_status" && event.payload.status === "running") {
-            setUiState((current) => (current === "provisional" ? current : "investigating"));
-          } else if (event.event_type === "limitation") {
-            setLiveLimitations((current) =>
-              current.includes(event.payload.message) ? current : [...current, event.payload.message],
-            );
-          }
-        }
-      };
-
-      eventSubscriptionRef.current = subscribeToAnalysisEvents(
-        api,
-        accepted.analysis_id,
-        {
-          onEvents: handleEvents,
-          onTransportChange: (nextTransport) => {
-            if (generation === generationRef.current) setTransport(nextTransport);
-          },
-        },
-      );
-
-      const pollDetail = async () => {
-        const isCurrent = () => generation === generationRef.current;
-        if (!isCurrent()) return;
-        try {
-          const response = await api.getAnalysis(accepted.analysis_id);
-          if (!isCurrent()) return;
-          if (response.investigation_plan.length > 0) setLivePlan(response.investigation_plan);
-          setViewModel(mapAnalysisResponseToViewModel(response, { originalContent: content, consentToScanUrls }));
-
-          if (response.status === "completed") {
-            setProvisional(null);
-            setUiState("final");
-            stopRuntime();
-            return;
-          }
-          if (response.status === "failed") {
-            setProvisional(null);
-            setError("Không thể hoàn tất phiên kiểm chứng này. Vui lòng thử lại.");
-            setUiState("failed");
-            stopRuntime();
-            return;
-          }
-
-          setUiState((current) => current === "queued" ? "investigating" : current);
-          if (!isCurrent()) return;
-          pollTimerRef.current = setTimeout(() => void pollDetail(), 1_500);
-        } catch (pollError) {
-          if (!isCurrent()) return;
-          setError(errorMessage(pollError));
-          setUiState("failed");
-          stopRuntime();
-        }
-      };
-
-      void pollDetail();
+      if (activeGeneration !== generation.current) return;
+      applyResult(turnId, result);
+      if (result.status === "running" || result.status === "queued") monitor(turnId, result.analysis_id, activeGeneration);
     } catch (submitError) {
-      if (generation !== generationRef.current) return;
-      setError(errorMessage(submitError));
-      setUiState("failed");
-      stopRuntime();
+      if (activeGeneration !== generation.current) return;
+      setError(messageForError(submitError));
+      setState("FAILED");
     }
   };
 
-  const isBusy = ["submitting", "queued", "provisional", "investigating"].includes(uiState);
+  const reset = () => {
+    generation.current += 1;
+    stopRuntime();
+    setTurns([]);
+    setConversation(null);
+    setError(null);
+    setState("IDLE");
+  };
 
   return (
-    <div className="min-h-screen bg-background px-4 py-12 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-4xl space-y-8">
-        <div className="space-y-4 text-center">
-          <div className="inline-flex items-center justify-center rounded-full bg-primary/10 p-3">
-            <Shield className="size-8 text-primary" />
-          </div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-foreground">
-            Fact-Check <span className="text-primary">AI</span>
-          </h1>
-        </div>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <header className="text-center">
+        <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary"><Shield className="size-8" /></span>
+        <h1 className="mt-4 text-3xl font-extrabold tracking-tight sm:text-4xl">Trợ lý Security Triage</h1>
+        <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Đánh giá tin nhắn, đường link và yêu cầu đáng ngờ liên quan đến phishing, giả mạo hoặc lừa chuyển tiền.</p>
+      </header>
 
-        {error && (
-          <div role="alert" className="mx-auto flex max-w-2xl items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4">
-            <AlertCircle className="mt-0.5 size-5 shrink-0 text-rose-600" />
-            <div className="flex-1">
-              <h2 className="text-sm font-bold text-rose-800">Lỗi phân tích</h2>
-              <p className="mt-1 text-sm text-rose-700">{error}</p>
-            </div>
-            <button type="button" onClick={resetWorkspace} className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
-              Thử lại
-            </button>
-          </div>
-        )}
-
-        {uiState === "idle" && !error && <FactCheckComposer onSubmit={startAnalysis} isLoading={false} />}
-
-        {provisional && uiState !== "final" && <ProvisionalWarningBanner warning={provisional} />}
-
-        {isBusy && (
-          <>
-            <AnalysisProgress
-              phase={uiState as Exclude<AnalysisUiState, "idle" | "final" | "failed">}
-              transport={transport}
-            />
-            <LiveInvestigationPlan steps={livePlan} />
-            <AnalysisLimitations limitations={liveLimitations} />
-          </>
-        )}
-
-        {uiState === "final" && viewModel?.factCheck && (
-          <div className="space-y-6">
-            <FactCheckSummary result={viewModel.factCheck} />
-            <LinkSafetyPanel result={viewModel.linkSafety} />
-            <AnalysisLimitations limitations={viewModel.limitations} />
-            <AnalysisReportForm analysisId={viewModel.id} />
-            <AnalysisAppealForm analysisId={viewModel.id} />
-            <ScreenshotArtifactPanel analysisId={viewModel.id} requested={screenshotRequested} />
-            <div className="flex justify-center pb-4 pt-4">
-              <button type="button" onClick={resetWorkspace} className="flex items-center gap-2 rounded-full border border-border bg-background px-6 py-3 font-medium text-foreground shadow-sm hover:bg-muted">
-                <RefreshCw className="size-4" /> Kiểm tra nội dung khác
-              </button>
-            </div>
-          </div>
-        )}
+      <div aria-live="polite" aria-busy={busy} className="space-y-5">
+        {turns.map((turn) => (
+          <article key={turn.id} className="space-y-3">
+            <div className="ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-sm text-primary-foreground sm:max-w-[75%]"><p className="whitespace-pre-wrap break-words">{turn.message}</p></div>
+            {turn.result?.scope_decision === "OUT_OF_SCOPE_GENERAL_FACT_CHECK" && <div className="max-w-[90%] rounded-2xl rounded-bl-md border border-border bg-card p-4 text-sm"><p className="font-semibold">Nội dung này nằm ngoài phạm vi Security Triage</p><p className="mt-1 text-muted-foreground">{turn.result.boundary_message}</p></div>}
+            {turn.result?.scope_decision === "NEED_MORE_INFO" && <div className="max-w-[90%] rounded-2xl rounded-bl-md border border-amber-500/20 bg-amber-500/5 p-4 text-sm"><p className="font-semibold">Cần thêm thông tin</p><p className="mt-1">{turn.result.follow_up_question}</p></div>}
+            {turn.result?.scope_decision === "IN_SCOPE" && turn.result.status === "completed" && turn.result.risk && <div className="max-w-[96%]"><SecurityRiskSummary result={turn.result} /></div>}
+          </article>
+        ))}
       </div>
+
+      {busy && <section role="status" className="rounded-2xl border border-primary/20 bg-primary/5 p-4"><div className="flex items-center gap-3"><span className="size-3 animate-pulse rounded-full bg-primary" /><div><p className="font-semibold">Đang đánh giá rủi ro</p><p className="text-xs text-muted-foreground">Kết nối: {transport.replaceAll("_", " ")}</p></div></div>{state === "PROVISIONAL_WARNING" && <p className="mt-3 flex gap-2 text-sm font-medium text-orange-700"><MessageSquareWarning className="size-5" />Có tín hiệu rủi ro cao tạm thời; chưa coi đây là kết luận cuối.</p>}</section>}
+      {error && <div role="alert" className="flex gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-700"><AlertCircle className="size-5 shrink-0" /><div><p className="font-semibold">Không thể hoàn tất đánh giá</p><p className="mt-1">{error}</p></div></div>}
+
+      {latest?.scope_decision === "IN_SCOPE" && latest.status === "completed" && <div className="space-y-4"><SecurityTechnicalDetails result={latest} /><AnalysisLimitations limitations={latest.limitations} /><AnalysisReportForm analysisId={latest.analysis_id} securityApi={api} /><AnalysisAppealForm analysisId={latest.analysis_id} securityApi={api} /></div>}
+
+      {!busy && <SecurityChatComposer onSubmit={submit} busy={false} followUp={state === "NEED_MORE_INFO" ? latest?.follow_up_question : null} />}
+      {turns.length > 0 && !busy && <div className="flex justify-center"><button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm font-semibold hover:bg-muted"><RefreshCw className="size-4" />Bắt đầu trường hợp mới</button></div>}
     </div>
   );
 }

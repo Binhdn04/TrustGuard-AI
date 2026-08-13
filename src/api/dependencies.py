@@ -17,6 +17,7 @@ from src.agents.campaign import (
 )
 from src.agents.graph import build_openai_graph
 from src.agents.security_investigation import SecurityInvestigationService
+from src.agents.security_trust import HttpOfficialSourceSearch, OfficialClaimVerifier, SecurityTrustService
 from src.agents.tools import (
     GoogleWebRiskProvider,
     GuardedRedirectResolver,
@@ -50,7 +51,9 @@ from src.services.realtime import (
     WebSocketTicketManager,
 )
 from src.services.screenshot import ScreenshotCaptureCoordinator
+from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_triage import SecurityTriageScopeService
+from src.services.security_trust import SecurityTrustAdminService
 
 _worker: DurableAnalysisWorker | None = None
 _worker_task = None
@@ -65,6 +68,92 @@ _source_registry = VersionedSourceRegistry(default_source_policies())
 @lru_cache
 def get_security_triage_scope_service() -> SecurityTriageScopeService:
     return SecurityTriageScopeService()
+
+
+@lru_cache
+def get_security_analysis_service() -> SecurityAnalysisService:
+    settings = get_settings()
+    repository = (
+        PostgresPlatformRepository(
+            settings.database_url,
+            settings.database_encryption_key,
+            content_retention_days=settings.artifact_retention_days,
+        )
+        if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
+        else SQLiteBlacklistRepository(settings.security_database_path)
+    )
+    return SecurityAnalysisService(
+        repository,
+        conversation_retention_days=settings.security_conversation_retention_days,
+    )
+
+
+@lru_cache
+def get_security_trust_repository():
+    settings = get_settings()
+    if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+        return PostgresPlatformRepository(
+            settings.database_url,
+            settings.database_encryption_key,
+            content_retention_days=settings.artifact_retention_days,
+        )
+    return SQLiteBlacklistRepository(settings.security_database_path)
+
+
+@lru_cache
+def get_security_trust_service() -> SecurityTrustService:
+    settings = get_settings()
+    search = (
+        HttpOfficialSourceSearch(
+            settings.official_verifier_api_url,
+            settings.official_verifier_api_key,
+            timeout=settings.provider_timeout_seconds,
+        )
+        if settings.official_verifier_api_url
+        else None
+    )
+    return SecurityTrustService(
+        get_security_trust_repository(),
+        verifier=OfficialClaimVerifier(search),
+        max_external_calls=settings.security_investigation_max_external_calls,
+    )
+
+
+@lru_cache
+def get_security_trust_admin_service() -> SecurityTrustAdminService:
+    return SecurityTrustAdminService(get_security_trust_repository())
+
+
+async def resolve_security_trust_service(request: Request) -> SecurityTrustService:
+    override = request.app.dependency_overrides.get(get_security_trust_service)
+    service = get_security_trust_service() if override is None else override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
+
+
+async def resolve_security_trust_admin_service(request: Request) -> SecurityTrustAdminService:
+    override = request.app.dependency_overrides.get(get_security_trust_admin_service)
+    service = get_security_trust_admin_service() if override is None else override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
+
+
+async def resolve_security_analysis_service(request: Request) -> SecurityAnalysisService:
+    override = request.app.dependency_overrides.get(get_security_analysis_service)
+    service = get_security_analysis_service() if override is None else override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
+
+
+async def resolve_security_triage_scope_service(request: Request) -> SecurityTriageScopeService:
+    override = request.app.dependency_overrides.get(get_security_triage_scope_service)
+    service = get_security_triage_scope_service() if override is None else override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
 
 
 @lru_cache
@@ -119,6 +208,30 @@ async def close_security_investigation_service() -> None:
     service = get_security_investigation_service()
     get_security_investigation_service.cache_clear()
     await service.aclose()
+
+
+async def close_security_analysis_service() -> None:
+    if get_security_analysis_service.cache_info().currsize == 0:
+        return
+    service = get_security_analysis_service()
+    get_security_analysis_service.cache_clear()
+    await service.aclose()
+
+
+async def close_security_trust_services() -> None:
+    if get_security_trust_service.cache_info().currsize:
+        service = get_security_trust_service()
+        get_security_trust_service.cache_clear()
+        await service.aclose()
+    get_security_trust_admin_service.cache_clear()
+    if get_security_trust_repository.cache_info().currsize:
+        repository = get_security_trust_repository()
+        get_security_trust_repository.cache_clear()
+        close = getattr(repository, "close", None)
+        if close is not None:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
 
 
 async def resolve_security_investigation_service(request: Request) -> SecurityInvestigationService:
@@ -296,6 +409,14 @@ def get_ticket_manager() -> WebSocketTicketManager:
     return WebSocketTicketManager(store, settings.websocket_ticket_ttl_seconds)
 
 
+async def resolve_ticket_manager(request: Request) -> WebSocketTicketManager:
+    override = request.app.dependency_overrides.get(get_ticket_manager)
+    manager = get_ticket_manager() if override is None else override()
+    if hasattr(manager, "__await__"):
+        return await manager
+    return manager
+
+
 async def close_ticket_manager() -> None:
     if get_ticket_manager.cache_info().currsize:
         manager = get_ticket_manager()
@@ -387,9 +508,14 @@ async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
 
 AnalysisServiceDependency = Annotated[AnalysisService, Depends(resolve_analysis_service)]
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
-TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(get_ticket_manager)]
+TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(resolve_ticket_manager)]
 Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]
 SecurityTriageScopeServiceDependency = Annotated[
     SecurityTriageScopeService,
-    Depends(get_security_triage_scope_service),
+    Depends(resolve_security_triage_scope_service),
+]
+SecurityAnalysisServiceDependency = Annotated[SecurityAnalysisService, Depends(resolve_security_analysis_service)]
+SecurityTrustServiceDependency = Annotated[SecurityTrustService, Depends(resolve_security_trust_service)]
+SecurityTrustAdminServiceDependency = Annotated[
+    SecurityTrustAdminService, Depends(resolve_security_trust_admin_service)
 ]

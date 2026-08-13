@@ -194,6 +194,9 @@ class RetentionWorker:
             for storage_key in storage_keys:
                 await self._delete_object(storage_key)
         minimized = await self._repository.expire_minimized_content(cutoff)
+        expire_conversations = getattr(self._repository, "expire_security_conversations", None)
+        if expire_conversations is not None:
+            await expire_conversations(cutoff)
         return len(storage_keys), minimized
 
     async def run(self) -> None:

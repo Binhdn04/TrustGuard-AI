@@ -17,7 +17,7 @@ import { UserMenu } from "@/components/layout/user-menu";
 import { useAuth } from "@/lib/auth-context";
 
 const navigation = [
-  { label: "Phân tích", icon: SearchIcon, href: "/" },
+  { label: "Security Chat", icon: SearchIcon, href: "/" },
   { label: "Lịch sử", icon: ClockIcon, href: "/history" },
   { label: "Admin review", icon: UsersIcon, href: "/admin", adminOnly: true },
   { label: "Vận hành", icon: ChartIcon, href: "/admin/platform", adminOnly: true },
@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </span>
           <div>
             <p className="text-lg font-bold tracking-tight">AI PROTECT</p>
-            <p className="text-xs text-muted-foreground">Trust intelligence</p>
+            <p className="text-xs text-muted-foreground">Security triage</p>
           </div>
         </div>
 

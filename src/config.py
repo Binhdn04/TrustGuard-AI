@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     security_investigation_max_external_calls: int = Field(default=8, ge=1, le=100)
     security_investigation_max_retries: int = Field(default=1, ge=0, le=3)
     security_investigation_deadline_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
+    official_verifier_api_url: str = ""
+    official_verifier_api_key: str = ""
+    security_conversation_retention_days: int = Field(default=30, ge=1, le=365)
 
     # Demo auth
     demo_auth_enabled: bool = True

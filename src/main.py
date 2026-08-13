@@ -10,7 +10,9 @@ from src.api.dependencies import (
     close_analysis_service,
     close_event_notifier,
     close_rate_limiter,
+    close_security_analysis_service,
     close_security_investigation_service,
+    close_security_trust_services,
     close_ticket_manager,
     get_analysis_service,
     start_durable_worker,
@@ -44,6 +46,8 @@ async def lifespan(app: FastAPI):
         if settings.run_durable_worker:
             await stop_durable_worker()
         await close_analysis_service()
+        await close_security_analysis_service()
+        await close_security_trust_services()
         await close_security_investigation_service()
         await close_ticket_manager()
         await close_event_notifier()

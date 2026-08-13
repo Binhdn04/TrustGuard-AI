@@ -9,20 +9,18 @@ test("login → analyze → provisional → final → history", async ({ page })
   await page.getByRole("button", { name: /Quyền User/i }).click();
   await page.waitForURL("**/");
 
-  await page.getByRole("textbox").first().fill(`Nhận quà tại ${DANGEROUS_URL}`);
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Phân tích" }).click();
+  await page.getByRole("textbox").first().fill(`Nhận quà và đăng nhập tại ${DANGEROUS_URL}`);
+  await page.getByRole("checkbox", { name: /Cho phép kiểm tra URL/i }).check();
+  await page.getByRole("button", { name: /Gửi để đánh giá/i }).click();
 
-  const provisionalBanner = page.getByRole("heading", { name: "Cảnh báo sơ bộ — chưa phải kết luận cuối" });
-  await expect(provisionalBanner).toBeVisible();
-  await expect(page.getByText(/Kế hoạch điều tra trực tiếp/i)).toBeVisible();
-  await expect(page.getByText(/Sai Sự Thật/i)).toBeVisible({ timeout: 10_000 });
-  await expect(provisionalBanner).toHaveCount(0);
-  await expect(page.locator("a", { hasText: DANGEROUS_URL })).toHaveCount(0);
+  await expect(page.getByText(/tín hiệu rủi ro cao tạm thời/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Nguy hiểm" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/Không mở liên kết/i)).toBeVisible();
+  await expect(page.getByText(/tín hiệu rủi ro cao tạm thời/i)).toHaveCount(0);
 
   await page.goto("/history");
-  await expect(page.getByRole("heading", { name: /Lịch sử kiểm chứng/i })).toBeVisible();
-  await expect(page.getByText(/Thông báo nhận quà/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Lịch sử Security Triage/i })).toBeVisible();
+  await expect(page.getByText(/giả mạo chương trình trúng thưởng/i)).toBeVisible();
 
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations).toEqual([]);

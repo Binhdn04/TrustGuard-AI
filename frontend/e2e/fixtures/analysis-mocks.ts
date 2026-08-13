@@ -1,7 +1,8 @@
 import type { Page } from "@playwright/test";
 
 import type { AnalysisResponse } from "../../src/types/analysis";
-import type { AnalysisEventV3, AnalysisResponseV3 } from "../../src/types/generated/api-v3";
+import type { AnalysisResponseV3 } from "../../src/types/generated/api-v3";
+import type { SecurityScopeResponseV4 } from "../../src/types/generated/api-v4";
 
 export const ANALYSIS_ID = "10000000-0000-4000-8000-000000000001";
 export const DANGEROUS_URL = "https://tapdoanx-qua.example/login";
@@ -41,42 +42,51 @@ function completedAnalysis(overrides: Partial<AnalysisResponseV3> = {}): Analysi
 }
 
 export async function installUserAnalysisFlow(page: Page) {
-  let detailReads = 0;
-  const completed = completedAnalysis();
+  const now = "2026-08-13T08:00:00Z";
+  const completed: SecurityScopeResponseV4 = {
+    contract_version: "v4", analysis_id: ANALYSIS_ID,
+    conversation_id: "11000000-0000-4000-8000-000000000001", conversation_version: 1,
+    status: "completed", scope_decision: "IN_SCOPE", terminal: true, next_step: "END",
+    scope_reasons: ["promotion_prize_context", "url_present"],
+    security_context: {
+      schema_version: "security-context-v1", claimed_entity: null, scenario: "promotion_prize",
+      requested_action: "open_link", amount: null, urgency: false, urls: [DANGEROUS_URL],
+      credential_request: true, otp_request: false, payment_request: false,
+      personal_information_request: false, impersonation_signals: [], potential_threat: "PROMOTION_PRIZE_SCAM",
+    },
+    follow_up_question: null, boundary_message: null,
+    limitations: ["Kết quả phản ánh bằng chứng tại thời điểm kiểm tra."],
+    investigation_status: "completed",
+    investigation_plan: [{ step_id: "step-aaaaaaaaaaaa", tool: "local_url_rules", target: DANGEROUS_URL, reason_code: "url_present", depends_on: [], status: "completed", status_reason: null }],
+    evidence: [{ evidence_ref: "evidence:aaaaaaaaaaaaaaaa", type: "local_url_rule", source: "local-url-rules", target: DANGEROUS_URL, signal: "credential_path", description: "URL quà tặng yêu cầu đăng nhập.", observed_at: now, confidence: 0.9, provenance_ref: null }],
+    errors: [], tool_calls_used: 0, risk: "MALICIOUS", score: 95, confidence: 0.94,
+    threat_type: "PROMOTION_PRIZE_SCAM", policy_version: "security-risk-v1",
+    recommended_actions: ["DO_NOT_OPEN_LINK", "REPORT_AND_BLOCK_SENDER"],
+    explanation: "Liên kết có tín hiệu giả mạo chương trình trúng thưởng và yêu cầu đăng nhập.",
+    explanation_evidence_refs: ["evidence:aaaaaaaaaaaaaaaa"], created_at: now, completed_at: now,
+  };
+  const running = { ...completed, status: "running" as const, terminal: false, next_step: "RISK_ASSESSMENT" as const, completed_at: null };
 
-  await page.route("**/api/v3/ws-tickets", (route) => route.fulfill({
+  await page.route("**/api/v4/ws-tickets", (route) => route.fulfill({
     status: 501,
     contentType: "application/json",
     body: JSON.stringify({ error: { code: "NOT_IMPLEMENTED", message: "stream unavailable", retryable: false, details: {} } }),
   }));
-  await page.route(`**/api/v3/analyses/${ANALYSIS_ID}/events*`, (route) => {
+  await page.route(`**/api/v4/analyses/${ANALYSIS_ID}/events*`, (route) => {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
-    const events: AnalysisEventV3[] = cursor
-      ? [{ event_id: "20000000-0000-4000-8000-000000000004", analysis_id: ANALYSIS_ID, sequence: 4, event_type: "final_result", occurred_at: completed.completed_at!, payload: { result_ref: `analysis:${ANALYSIS_ID}:result`, status: "completed" } }]
-      : [
-          { event_id: "20000000-0000-4000-8000-000000000001", analysis_id: ANALYSIS_ID, sequence: 1, event_type: "analysis_status", occurred_at: completed.created_at, payload: { status: "running" } },
-          { event_id: "20000000-0000-4000-8000-000000000002", analysis_id: ANALYSIS_ID, sequence: 2, event_type: "provisional_warning", occurred_at: completed.created_at, payload: { risk_level: "critical", summary: "URL trùng tín hiệu rủi ro cục bộ.", evidence_refs: ["local-rule:1"], is_provisional: true } },
-          { event_id: "20000000-0000-4000-8000-000000000003", analysis_id: ANALYSIS_ID, sequence: 3, event_type: "step_transition", occurred_at: completed.created_at, payload: { step_id: "claim", tool: "claim_retriever", target: "claim", reason_code: "claim_verification", depends_on: ["local"], status: "running" } },
-        ];
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v3", events, next_cursor: cursor ? "4" : "3" }) });
+    const events = [{ event_id: cursor ? "20000000-0000-4000-8000-000000000003" : "20000000-0000-4000-8000-000000000002", analysis_id: ANALYSIS_ID, sequence: cursor ? 3 : 2, status: cursor ? "completed" : "running", step: cursor ? "completed" : "investigation", occurred_at: now }];
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", events, next_cursor: cursor ? "Mw" : "Mg" }) });
   });
-  await page.route(`**/api/v3/analyses/${ANALYSIS_ID}/reports`, (route) => route.fulfill({
-    status: 201,
-    contentType: "application/json",
-    body: JSON.stringify({ contract_version: "v3", report_id: "30000000-0000-4000-8000-000000000001", analysis_id: ANALYSIS_ID, created_at: completed.completed_at }),
-  }));
-  await page.route(`**/api/v3/analyses/${ANALYSIS_ID}`, (route) => {
-    detailReads += 1;
-    const response = detailReads >= 2
-      ? completed
-      : { ...completed, status: "running", risk_score: null, risk_level: null, verdict: null, recommended_action: null, confidence: null, summary: null, reasons: null, evidence: null, limitations: null, completed_at: null };
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
+  await page.route(`**/api/v4/analyses/${ANALYSIS_ID}/reports`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route(`**/api/v4/analyses/${ANALYSIS_ID}/appeals`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route(`**/api/v4/analyses/${ANALYSIS_ID}`, (route) => {
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(completed) });
   });
-  await page.route("**/api/v3/analyses", (route) => {
+  await page.route("**/api/v4/analyses", (route) => {
     if (route.request().method() === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([completed]) });
     }
-    return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ contract_version: "v3", analysis_id: ANALYSIS_ID, status: "queued", created_at: completed.created_at }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(running) });
   });
 }
 
