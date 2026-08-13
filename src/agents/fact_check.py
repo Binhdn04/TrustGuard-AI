@@ -611,6 +611,7 @@ class FactCheckOrchestrator:
             limitations.append("Evidence không tương thích thời gian hoặc không có ngày đã bị loại.")
         if any(item.publication_date_is_proxy for item in evidence):
             limitations.append("Một số evidence chỉ có ngày xuất bản proxy và được hạ độ tin cậy.")
+
         def configured_gate(items: Sequence[EvidenceCandidate]) -> EvidenceSufficiency:
             result = evaluate_evidence_sufficiency(claim, items)
             if result.matched_rule == "one_tier_c" and not self.provisional_tier_c_enabled:
@@ -654,9 +655,7 @@ class FactCheckOrchestrator:
         # fallback has had a chance to resolve an adjacent or temporally unclear
         # first-pass result.
         comparison_limitations: list[str] = []
-        findings = await self._compare_or_project(
-            claim, comparison_input, comparison_limitations, errors, usage_refs
-        )
+        findings = await self._compare_or_project(claim, comparison_input, comparison_limitations, errors, usage_refs)
         if not findings and not web_attempted and self.tavily_search is not None:
             web_attempted = True
             web_items = await self._conditional_web(claim, limitations, errors, usage_refs)
@@ -746,9 +745,7 @@ class FactCheckOrchestrator:
             ).casefold()
             if _source_tier(_get(candidate, "source_tier")) is not tier:
                 if hasattr(candidate, "model_copy"):
-                    candidate = candidate.model_copy(
-                        update={"source_tier": tier.value, "publisher": publisher}
-                    )
+                    candidate = candidate.model_copy(update={"source_tier": tier.value, "publisher": publisher})
                 elif isinstance(candidate, Mapping):
                     candidate = {**candidate, "source_tier": tier.value, "publisher": publisher}
             eligible_candidates.append((candidate, publisher, tier))
@@ -862,9 +859,7 @@ class FactCheckOrchestrator:
                 if provisional:
                     contradiction_refs = [str(ref) for ref in _get(result, "contradiction_refs", ())]
                     if contradiction_refs:
-                        limitations.append(
-                            "Evidence Tier C còn mâu thuẫn; kết quả claim chưa kết luận."
-                        )
+                        limitations.append("Evidence Tier C còn mâu thuẫn; kết quả claim chưa kết luận.")
                         return []
                 elif self.source_registry is not None and hasattr(self.source_registry, "observe_discovery"):
                     has_curated = any(
@@ -879,9 +874,7 @@ class FactCheckOrchestrator:
                             ref = str(_get(item, "evidence_ref", _get(item, "chunk_ref", "")))
                             if ref not in cited_refs and ref not in contradiction_refs:
                                 continue
-                            url = str(
-                                _get(item, "source_url", _get(item, "canonical_url", _get(item, "url", "")))
-                            )
+                            url = str(_get(item, "source_url", _get(item, "canonical_url", _get(item, "url", ""))))
                             await self.source_registry.observe_discovery(
                                 url=url,
                                 publisher=str(_get(item, "publisher", urlsplit(url).hostname or "unknown")),

@@ -1024,9 +1024,7 @@ class VersionedSourceRegistry:
         self._discovery_enabled = True
         self._auto_promotion_enabled = True
 
-    def bind_discovery_store(
-        self, store: Any, *, enabled: bool = True, auto_promotion_enabled: bool = True
-    ) -> None:
+    def bind_discovery_store(self, store: Any, *, enabled: bool = True, auto_promotion_enabled: bool = True) -> None:
         self._discovery_store = store
         self._discovery_enabled = enabled
         self._auto_promotion_enabled = auto_promotion_enabled

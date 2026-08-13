@@ -152,9 +152,7 @@ async def test_comparator_rejects_impossible_future_event_against_as_of_date() -
         def with_structured_output(self, _schema):
             return Runnable()
 
-    comparator = OpenAIEvidenceComparator(
-        Llm(), clock=lambda: datetime(2026, 8, 12, 12, tzinfo=UTC)
-    )
+    comparator = OpenAIEvidenceComparator(Llm(), clock=lambda: datetime(2026, 8, 12, 12, tzinfo=UTC))
     result = await comparator.compare(
         ExtractedClaim.from_text("Tây Ban Nha vô địch World Cup", language="vi"),
         [
@@ -1223,9 +1221,7 @@ async def test_adjacent_claim_review_triggers_one_web_fallback_and_clears_stale_
         source_registry=VersionedSourceRegistry(default_source_policies()),
     )
 
-    result = await pipeline.verify(
-        [ExtractedClaim.from_text("Tây Ban Nha vô địch World Cup", language="vi")]
-    )
+    result = await pipeline.verify([ExtractedClaim.from_text("Tây Ban Nha vô địch World Cup", language="vi")])
 
     assert comparator.calls == 2
     assert [item.stance for item in result.claim_findings] == [ClaimStance.SUPPORTS]

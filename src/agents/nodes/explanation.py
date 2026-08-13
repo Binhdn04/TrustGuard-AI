@@ -20,9 +20,7 @@ def explain_result(state: AgentState) -> dict:
             reasons.append(reason)
     if not reasons:
         reasons.append("Không có evidence có cấu trúc đủ mạnh để đưa ra kết luận chắc chắn.")
-    relevant_stances = {
-        item.stance for item in state.get("claim_findings", []) if item.relevance >= 0.6
-    }
+    relevant_stances = {item.stance for item in state.get("claim_findings", []) if item.relevance >= 0.6}
     if relevant_stances == {ClaimStance.SUPPORTS}:
         summary = (
             "Các nguồn Tier C độc lập tạm thời xác nhận claim."
