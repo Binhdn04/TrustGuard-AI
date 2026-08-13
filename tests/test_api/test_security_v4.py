@@ -2,9 +2,15 @@ import logging
 
 import pytest
 
-from src.api.dependencies import get_analysis_service, get_security_investigation_service, get_wave2_service
+from src.api.dependencies import (
+    get_analysis_service,
+    get_security_investigation_service,
+    get_security_memory_service,
+    get_wave2_service,
+)
 from src.main import app
 from src.services.platform_wave2 import ArtifactSigner, MemoryWave2Repository, Wave2PlatformService
+from src.services.security_memory import SecurityMemoryService
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
@@ -108,6 +114,62 @@ async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
     assert action["security_analysis_id"] == response.json()["analysis_id"]
     assert action["target"] == "hitl.example"
     assert action["status"] == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_v4_security_memory_campaign_admin_review_and_correction(client) -> None:
+    memory = SecurityMemoryService()
+    app.dependency_overrides[get_security_memory_service] = lambda: memory
+    try:
+        created = []
+        for suffix in ("login", "verify", "account"):
+            response = await client.post(
+                "/api/v4/analyses",
+                headers=USER_HEADERS,
+                json={
+                    "message": (
+                        f"ACME gửi https://campaign.example/{suffix} yêu cầu đăng nhập "
+                        "và gửi mật khẩu ngay"
+                    )
+                },
+            )
+            assert response.status_code == 200
+            created.append(response.json())
+
+        forbidden = await client.get("/api/v4/admin/security-memory", headers=USER_HEADERS)
+        records = await client.get("/api/v4/admin/security-memory", headers=ADMIN_HEADERS)
+        campaigns = await client.get("/api/v4/admin/security-campaigns", headers=ADMIN_HEADERS)
+        memory_id = records.json()[0]["memory_id"]
+        correction = await client.post(
+            f"/api/v4/admin/security-memory/{memory_id}/corrections",
+            headers=ADMIN_HEADERS,
+            json={"verdict": "false_positive", "note": "Verified test infrastructure."},
+        )
+        memory_audit = await client.get(
+            f"/api/v4/admin/security-memory/{memory_id}/audit", headers=ADMIN_HEADERS
+        )
+        campaign_id = campaigns.json()[0]["campaign_id"]
+        review = await client.post(
+            f"/api/v4/admin/security-campaigns/{campaign_id}/decision",
+            headers=ADMIN_HEADERS,
+            json={"decision": "confirmed", "note": "Three linked security reports."},
+        )
+        campaign_audit = await client.get(
+            f"/api/v4/admin/security-campaigns/{campaign_id}/audit", headers=ADMIN_HEADERS
+        )
+    finally:
+        app.dependency_overrides.pop(get_security_memory_service, None)
+
+    assert forbidden.status_code == 403
+    assert records.status_code == 200
+    assert {item["analysis_id"] for item in records.json()} == {item["analysis_id"] for item in created}
+    assert all("message" not in item for item in records.json())
+    assert campaigns.status_code == 200
+    assert campaigns.json()[0]["aggregate_signals"]["domain:campaign.example"] == 3
+    assert correction.json()["admin_verdict"] == "false_positive"
+    assert [item["verdict"] for item in memory_audit.json()] == ["false_positive"]
+    assert review.json()["reviewer_status"] == "confirmed"
+    assert campaign_audit.json()[0]["clustering_version"] == "security-clustering-v1"
 
 
 @pytest.mark.asyncio

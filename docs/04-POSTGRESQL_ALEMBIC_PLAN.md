@@ -12,9 +12,16 @@
 | `0006_campaign_artifacts` | retention, campaign clusters/members/signals và artifacts |
 | `0007_runtime_integration` | campaign observations và claim-feature vectors |
 | `0008_source_discovery` | source discovery/decision telemetry và bootstrap nguồn general fact-check |
+| `0009_security_triage_v4` | Security v4 analyses/events và owner-scoped lifecycle |
+| `0010_security_trust_registry` | brand registry, whitelist và trust audit |
+| `0011_security_conversations` | multi-turn conversation summary/version/retention |
+| `0012_security_feedback` | Security v4 reports và appeals |
+| `0013_security_hitl_actions` | v4 action proposal/execution state và immutable decision audit |
+| `0014_security_memory_campaigns` | explainable security memory, campaign members và correction/review audit |
 
 Production repository có implementation cho durable analysis, owner reads, reports/review, appeals,
-admin actions, blacklist, source/corpus, campaigns, artifacts, retention và operations metrics.
+admin actions, blacklist, source/corpus, legacy campaigns, Security v4 memory/campaigns, artifacts,
+retention và operations metrics.
 
 ## 2. Schema phù hợp scope và nên giữ
 
@@ -25,14 +32,14 @@ admin actions, blacklist, source/corpus, campaigns, artifacts, retention và ope
 - `campaign_clusters`, `campaign_members`, `campaign_signals`, sau khi thay feature semantics.
 - Retention/audit-safe artifact metadata chỉ giữ nếu capability liên quan còn được phê duyệt.
 
-## 3. Schema thiếu cho scope mới
+## 3. Schema scope mới đã bổ sung
 
-- `conversations`: owner, active investigation, redacted context summary, retention/version.
-- Scope decision/reason và security-context version trên analysis hoặc structured child table.
-- `whitelist_entries`: canonical indicator, provenance, lifecycle, reviewer/decision/version.
-- `brand_entities` và official domain/contact mappings có provenance/effective interval.
-- `security_memory`: domain/fingerprint/brand/threat/risk/first-last seen/report count/admin verdict.
-- Audit browsing/index nếu `review_decisions` chưa đủ bao phủ mọi admin mutation.
+- `security_analyses`, `security_analysis_events` giữ output v4 và policy version tách khỏi legacy.
+- `security_conversations` và turns giữ redacted context summary, optimistic version và retention.
+- `security_whitelist`, `security_brands`, `security_trust_audit` giữ provenance/lifecycle/reviewer.
+- `security_memory` giữ domain/fingerprint/brand/threat/risk/first-last seen/report count/admin verdict.
+- `security_campaigns_v4`, members và audit giữ hypothesis/review history không dùng claim vectors.
+- Action, memory và campaign đều có audit table/index riêng; không ghi đè lịch sử reviewer.
 
 ## 4. Legacy schema cần freeze rồi remove
 

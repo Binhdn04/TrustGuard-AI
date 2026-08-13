@@ -31,7 +31,13 @@ from src.models import (
     ReviewQueueItem,
     SecurityAnalysisEventV4,
     SecurityAppealRecordV4,
+    SecurityCampaignAuditRecordV4,
+    SecurityCampaignRecordV4,
+    SecurityCampaignReviewerStatusV4,
     SecurityConversationV4,
+    SecurityMemoryAdminVerdictV4,
+    SecurityMemoryAuditRecordV4,
+    SecurityMemoryRecordV4,
     SecurityReportRecordV4,
     SecurityScopeResponseV4,
     ToolError,
@@ -191,6 +197,40 @@ class SQLiteBlacklistRepository:
             CREATE TABLE IF NOT EXISTS security_trust_audit (
                 audit_id TEXT PRIMARY KEY, resource_type TEXT NOT NULL, resource_id TEXT NOT NULL,
                 action TEXT NOT NULL, reviewer_id TEXT NOT NULL, occurred_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS security_memory (
+                memory_id TEXT PRIMARY KEY, analysis_id TEXT NOT NULL UNIQUE,
+                record_json TEXT NOT NULL, admin_verdict TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+                report_count INTEGER NOT NULL DEFAULT 0 CHECK(report_count >= 0),
+                fingerprint_version TEXT NOT NULL, risk_policy_version TEXT NOT NULL,
+                FOREIGN KEY (analysis_id) REFERENCES security_analyses(analysis_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_security_memory_seen
+                ON security_memory(last_seen_at DESC);
+            CREATE TABLE IF NOT EXISTS security_memory_audit (
+                audit_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL,
+                record_json TEXT NOT NULL, occurred_at TEXT NOT NULL,
+                FOREIGN KEY (memory_id) REFERENCES security_memory(memory_id)
+            );
+            CREATE TABLE IF NOT EXISTS security_campaigns (
+                campaign_id TEXT PRIMARY KEY, record_json TEXT NOT NULL,
+                reviewer_status TEXT NOT NULL CHECK(reviewer_status IN ('pending_review','confirmed','rejected')),
+                window_started_at TEXT NOT NULL, window_ended_at TEXT NOT NULL,
+                clustering_version TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_security_campaigns_status_window
+                ON security_campaigns(reviewer_status, window_ended_at DESC);
+            CREATE TABLE IF NOT EXISTS security_campaign_members (
+                campaign_id TEXT NOT NULL, analysis_id TEXT NOT NULL,
+                PRIMARY KEY(campaign_id, analysis_id),
+                FOREIGN KEY (campaign_id) REFERENCES security_campaigns(campaign_id),
+                FOREIGN KEY (analysis_id) REFERENCES security_analyses(analysis_id)
+            );
+            CREATE TABLE IF NOT EXISTS security_campaign_audit (
+                audit_id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL,
+                record_json TEXT NOT NULL, occurred_at TEXT NOT NULL,
+                FOREIGN KEY (campaign_id) REFERENCES security_campaigns(campaign_id)
             );
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
@@ -606,15 +646,225 @@ class SQLiteBlacklistRepository:
             ).fetchall()
         return [SecurityScopeResponseV4.model_validate_json(row[0]) for row in rows]
 
-    async def save_security_report(self, owner_id: str, record: SecurityReportRecordV4) -> None:
+    async def upsert_security_memory(self, record: SecurityMemoryRecordV4) -> SecurityMemoryRecordV4:
         async with self._lock:
             self._connection.execute(
-                """INSERT INTO security_analysis_reports_v4(
-                       report_id,analysis_id,owner_id,record_json,created_at
-                   ) VALUES(?,?,?,?,?)""",
-                (str(record.report_id), str(record.analysis_id), owner_id, record.model_dump_json(), record.created_at.isoformat()),
+                """INSERT OR IGNORE INTO security_memory(
+                       memory_id,analysis_id,record_json,admin_verdict,first_seen_at,last_seen_at,
+                       report_count,fingerprint_version,risk_policy_version
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    str(record.memory_id), str(record.analysis_id), record.model_dump_json(),
+                    record.admin_verdict.value, record.first_seen_at.isoformat(), record.last_seen_at.isoformat(),
+                    record.report_count, record.fingerprint_version, record.risk_policy_version,
+                ),
             )
+            row = self._connection.execute(
+                "SELECT record_json FROM security_memory WHERE analysis_id=?", (str(record.analysis_id),)
+            ).fetchone()
             self._connection.commit()
+        assert row is not None
+        return SecurityMemoryRecordV4.model_validate_json(row[0])
+
+    async def recent_security_memory(self, since: datetime) -> list[SecurityMemoryRecordV4]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_memory WHERE last_seen_at>=? ORDER BY last_seen_at",
+                (since.isoformat(),),
+            ).fetchall()
+        return [SecurityMemoryRecordV4.model_validate_json(row[0]) for row in rows]
+
+    async def list_security_memory(self) -> list[SecurityMemoryRecordV4]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_memory ORDER BY last_seen_at DESC"
+            ).fetchall()
+        return [SecurityMemoryRecordV4.model_validate_json(row[0]) for row in rows]
+
+    async def correct_security_memory(
+        self,
+        memory_id: UUID,
+        verdict: SecurityMemoryAdminVerdictV4,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
+    ) -> SecurityMemoryRecordV4 | None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT record_json FROM security_memory WHERE memory_id=?", (str(memory_id),)
+                ).fetchone()
+                if row is None:
+                    self._connection.rollback()
+                    return None
+                current = SecurityMemoryRecordV4.model_validate_json(row[0])
+                updated = current.model_copy(update={"admin_verdict": verdict})
+                audit = SecurityMemoryAuditRecordV4(
+                    memory_id=memory_id,
+                    previous_verdict=current.admin_verdict,
+                    verdict=verdict,
+                    reviewer_id=reviewer_id,
+                    note=note,
+                    occurred_at=occurred_at,
+                    risk_policy_version=current.risk_policy_version,
+                    fingerprint_version=current.fingerprint_version,
+                    evidence_refs=current.evidence_refs,
+                )
+                self._connection.execute(
+                    "UPDATE security_memory SET record_json=?,admin_verdict=? WHERE memory_id=?",
+                    (updated.model_dump_json(), verdict.value, str(memory_id)),
+                )
+                self._connection.execute(
+                    "INSERT INTO security_memory_audit(audit_id,memory_id,record_json,occurred_at) VALUES(?,?,?,?)",
+                    (str(audit.audit_id), str(memory_id), audit.model_dump_json(), occurred_at.isoformat()),
+                )
+                self._connection.commit()
+                return updated
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def list_security_memory_audit(self, memory_id: UUID) -> list[SecurityMemoryAuditRecordV4]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_memory_audit WHERE memory_id=? ORDER BY occurred_at",
+                (str(memory_id),),
+            ).fetchall()
+        return [SecurityMemoryAuditRecordV4.model_validate_json(row[0]) for row in rows]
+
+    async def upsert_security_campaign(self, record: SecurityCampaignRecordV4) -> SecurityCampaignRecordV4:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO security_campaigns(
+                           campaign_id,record_json,reviewer_status,window_started_at,window_ended_at,
+                           clustering_version,created_at
+                       ) VALUES(?,?,?,?,?,?,?)""",
+                    (
+                        str(record.campaign_id), record.model_dump_json(), record.reviewer_status.value,
+                        record.window_started_at.isoformat(), record.window_ended_at.isoformat(),
+                        record.clustering_version, record.created_at.isoformat(),
+                    ),
+                )
+                for analysis_id in record.analysis_ids:
+                    self._connection.execute(
+                        "INSERT OR IGNORE INTO security_campaign_members(campaign_id,analysis_id) VALUES(?,?)",
+                        (str(record.campaign_id), str(analysis_id)),
+                    )
+                row = self._connection.execute(
+                    "SELECT record_json FROM security_campaigns WHERE campaign_id=?", (str(record.campaign_id),)
+                ).fetchone()
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        assert row is not None
+        return SecurityCampaignRecordV4.model_validate_json(row[0])
+
+    async def list_security_campaigns(self) -> list[SecurityCampaignRecordV4]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_campaigns ORDER BY window_ended_at DESC"
+            ).fetchall()
+        return [SecurityCampaignRecordV4.model_validate_json(row[0]) for row in rows]
+
+    async def get_security_campaign(self, campaign_id: UUID) -> SecurityCampaignRecordV4 | None:
+        async with self._lock:
+            row = self._connection.execute(
+                "SELECT record_json FROM security_campaigns WHERE campaign_id=?", (str(campaign_id),)
+            ).fetchone()
+        return SecurityCampaignRecordV4.model_validate_json(row[0]) if row else None
+
+    async def review_security_campaign(
+        self,
+        campaign_id: UUID,
+        status: SecurityCampaignReviewerStatusV4,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
+    ) -> SecurityCampaignRecordV4 | None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT record_json FROM security_campaigns WHERE campaign_id=?", (str(campaign_id),)
+                ).fetchone()
+                if row is None:
+                    self._connection.rollback()
+                    return None
+                current = SecurityCampaignRecordV4.model_validate_json(row[0])
+                if current.reviewer_status is not SecurityCampaignReviewerStatusV4.PENDING_REVIEW:
+                    raise PlatformError(
+                        status_code=409, code=ErrorCode.CONFLICT,
+                        message="Security campaign was already reviewed.", retryable=False,
+                    )
+                updated = current.model_copy(
+                    update={
+                        "reviewer_status": status,
+                        "reviewer_id": reviewer_id,
+                        "review_note": note,
+                        "reviewed_at": occurred_at,
+                    }
+                )
+                audit = SecurityCampaignAuditRecordV4(
+                    campaign_id=campaign_id,
+                    previous_status=current.reviewer_status,
+                    status=status,
+                    reviewer_id=reviewer_id,
+                    note=note,
+                    occurred_at=occurred_at,
+                    clustering_version=current.clustering_version,
+                    evidence_refs=current.evidence_refs,
+                )
+                self._connection.execute(
+                    "UPDATE security_campaigns SET record_json=?,reviewer_status=? WHERE campaign_id=?",
+                    (updated.model_dump_json(), status.value, str(campaign_id)),
+                )
+                self._connection.execute(
+                    "INSERT INTO security_campaign_audit(audit_id,campaign_id,record_json,occurred_at) VALUES(?,?,?,?)",
+                    (str(audit.audit_id), str(campaign_id), audit.model_dump_json(), occurred_at.isoformat()),
+                )
+                self._connection.commit()
+                return updated
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def list_security_campaign_audit(self, campaign_id: UUID) -> list[SecurityCampaignAuditRecordV4]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_campaign_audit WHERE campaign_id=? ORDER BY occurred_at",
+                (str(campaign_id),),
+            ).fetchall()
+        return [SecurityCampaignAuditRecordV4.model_validate_json(row[0]) for row in rows]
+
+    async def save_security_report(self, owner_id: str, record: SecurityReportRecordV4) -> None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    """INSERT INTO security_analysis_reports_v4(
+                           report_id,analysis_id,owner_id,record_json,created_at
+                       ) VALUES(?,?,?,?,?)""",
+                    (str(record.report_id), str(record.analysis_id), owner_id, record.model_dump_json(), record.created_at.isoformat()),
+                )
+                memory_row = self._connection.execute(
+                    "SELECT memory_id,record_json FROM security_memory WHERE analysis_id=?",
+                    (str(record.analysis_id),),
+                ).fetchone()
+                if memory_row is not None:
+                    memory = SecurityMemoryRecordV4.model_validate_json(memory_row[1])
+                    updated = memory.model_copy(update={"report_count": memory.report_count + 1})
+                    self._connection.execute(
+                        "UPDATE security_memory SET record_json=?,report_count=? WHERE memory_id=?",
+                        (updated.model_dump_json(), updated.report_count, memory_row[0]),
+                    )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
 
     async def list_security_reports(
         self, analysis_id: str, owner_id: str

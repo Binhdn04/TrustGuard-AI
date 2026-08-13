@@ -53,7 +53,13 @@ from src.models import (
     RiskLevel,
     SecurityAnalysisEventV4,
     SecurityAppealRecordV4,
+    SecurityCampaignAuditRecordV4,
+    SecurityCampaignRecordV4,
+    SecurityCampaignReviewerStatusV4,
     SecurityConversationV4,
+    SecurityMemoryAdminVerdictV4,
+    SecurityMemoryAuditRecordV4,
+    SecurityMemoryRecordV4,
     SecurityReportRecordV4,
     SecurityScopeResponseV4,
     ToolError,
@@ -454,15 +460,198 @@ class PostgresPlatformRepository:
             )
         return [SecurityScopeResponseV4.model_validate(_json_value(row["response"])) for row in rows]
 
-    async def save_security_report(self, owner_id: str, record: SecurityReportRecordV4) -> None:
+    async def upsert_security_memory(self, record: SecurityMemoryRecordV4) -> SecurityMemoryRecordV4:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """INSERT INTO security_memory(
+                       id,analysis_id,record,admin_verdict,first_seen_at,last_seen_at,report_count,
+                       fingerprint_version,risk_policy_version
+                   ) VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9)
+                   ON CONFLICT(analysis_id) DO UPDATE SET analysis_id=EXCLUDED.analysis_id
+                   RETURNING record""",
+                record.memory_id, record.analysis_id, record.model_dump_json(), record.admin_verdict.value,
+                record.first_seen_at, record.last_seen_at, record.report_count,
+                record.fingerprint_version, record.risk_policy_version,
+            )
+        return SecurityMemoryRecordV4.model_validate(_json_value(row["record"]))
+
+    async def recent_security_memory(self, since: datetime) -> list[SecurityMemoryRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT record FROM security_memory WHERE last_seen_at >= $1 ORDER BY last_seen_at", since
+            )
+        return [SecurityMemoryRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def list_security_memory(self) -> list[SecurityMemoryRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch("SELECT record FROM security_memory ORDER BY last_seen_at DESC")
+        return [SecurityMemoryRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def correct_security_memory(
+        self,
+        memory_id: UUID,
+        verdict: SecurityMemoryAdminVerdictV4,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
+    ) -> SecurityMemoryRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                "SELECT record FROM security_memory WHERE id=$1 FOR UPDATE", memory_id
+            )
+            if row is None:
+                return None
+            current = SecurityMemoryRecordV4.model_validate(_json_value(row["record"]))
+            updated = current.model_copy(update={"admin_verdict": verdict})
+            audit = SecurityMemoryAuditRecordV4(
+                memory_id=memory_id,
+                previous_verdict=current.admin_verdict,
+                verdict=verdict,
+                reviewer_id=reviewer_id,
+                note=note,
+                occurred_at=occurred_at,
+                risk_policy_version=current.risk_policy_version,
+                fingerprint_version=current.fingerprint_version,
+                evidence_refs=current.evidence_refs,
+            )
+            await connection.execute(
+                "UPDATE security_memory SET record=$2::jsonb,admin_verdict=$3 WHERE id=$1",
+                memory_id, updated.model_dump_json(), verdict.value,
+            )
+            await connection.execute(
+                "INSERT INTO security_memory_audit(id,memory_id,record,occurred_at) VALUES($1,$2,$3::jsonb,$4)",
+                audit.audit_id, memory_id, audit.model_dump_json(), occurred_at,
+            )
+        return updated
+
+    async def list_security_memory_audit(self, memory_id: UUID) -> list[SecurityMemoryAuditRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT record FROM security_memory_audit WHERE memory_id=$1 ORDER BY occurred_at", memory_id
+            )
+        return [SecurityMemoryAuditRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def upsert_security_campaign(self, record: SecurityCampaignRecordV4) -> SecurityCampaignRecordV4:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                """INSERT INTO security_campaigns_v4(
+                       id,record,reviewer_status,window_started_at,window_ended_at,
+                       clustering_version,created_at
+                   ) VALUES($1,$2::jsonb,$3,$4,$5,$6,$7)
+                   ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING record""",
+                record.campaign_id, record.model_dump_json(), record.reviewer_status.value,
+                record.window_started_at, record.window_ended_at, record.clustering_version, record.created_at,
+            )
+            for analysis_id in record.analysis_ids:
+                await connection.execute(
+                    """INSERT INTO security_campaign_members_v4(campaign_id,analysis_id)
+                       VALUES($1,$2) ON CONFLICT DO NOTHING""",
+                    record.campaign_id, analysis_id,
+                )
+        return SecurityCampaignRecordV4.model_validate(_json_value(row["record"]))
+
+    async def list_security_campaigns(self) -> list[SecurityCampaignRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT record FROM security_campaigns_v4 ORDER BY window_ended_at DESC"
+            )
+        return [SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def get_security_campaign(self, campaign_id: UUID) -> SecurityCampaignRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT record FROM security_campaigns_v4 WHERE id=$1", campaign_id
+            )
+        return SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) if row else None
+
+    async def review_security_campaign(
+        self,
+        campaign_id: UUID,
+        status: SecurityCampaignReviewerStatusV4,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
+    ) -> SecurityCampaignRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                "SELECT record,reviewer_status FROM security_campaigns_v4 WHERE id=$1 FOR UPDATE",
+                campaign_id,
+            )
+            if row is None:
+                return None
+            if row["reviewer_status"] != SecurityCampaignReviewerStatusV4.PENDING_REVIEW.value:
+                raise PlatformError(
+                    status_code=409, code=ErrorCode.CONFLICT,
+                    message="Security campaign was already reviewed.", retryable=False,
+                )
+            current = SecurityCampaignRecordV4.model_validate(_json_value(row["record"]))
+            updated = current.model_copy(
+                update={
+                    "reviewer_status": status,
+                    "reviewer_id": reviewer_id,
+                    "review_note": note,
+                    "reviewed_at": occurred_at,
+                }
+            )
+            audit = SecurityCampaignAuditRecordV4(
+                campaign_id=campaign_id,
+                previous_status=current.reviewer_status,
+                status=status,
+                reviewer_id=reviewer_id,
+                note=note,
+                occurred_at=occurred_at,
+                clustering_version=current.clustering_version,
+                evidence_refs=current.evidence_refs,
+            )
+            await connection.execute(
+                """UPDATE security_campaigns_v4 SET record=$2::jsonb,reviewer_status=$3,
+                       reviewer_id=$4,review_note=$5,reviewed_at=$6 WHERE id=$1""",
+                campaign_id, updated.model_dump_json(), status.value, reviewer_id, note, occurred_at,
+            )
+            await connection.execute(
+                """INSERT INTO security_campaign_audit(id,campaign_id,record,occurred_at)
+                   VALUES($1,$2,$3::jsonb,$4)""",
+                audit.audit_id, campaign_id, audit.model_dump_json(), occurred_at,
+            )
+        return updated
+
+    async def list_security_campaign_audit(self, campaign_id: UUID) -> list[SecurityCampaignAuditRecordV4]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT record FROM security_campaign_audit WHERE campaign_id=$1 ORDER BY occurred_at",
+                campaign_id,
+            )
+        return [SecurityCampaignAuditRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def save_security_report(self, owner_id: str, record: SecurityReportRecordV4) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
             await connection.execute(
                 """INSERT INTO security_analysis_reports_v4(
                        id,analysis_id,owner_id,record,created_at
                    ) VALUES($1,$2,$3,$4::jsonb,$5)""",
                 record.report_id, record.analysis_id, owner_id, record.model_dump_json(), record.created_at,
             )
+            row = await connection.fetchrow(
+                "SELECT id,record FROM security_memory WHERE analysis_id=$1 FOR UPDATE", record.analysis_id
+            )
+            if row is not None:
+                memory = SecurityMemoryRecordV4.model_validate(_json_value(row["record"]))
+                updated = memory.model_copy(update={"report_count": memory.report_count + 1})
+                await connection.execute(
+                    "UPDATE security_memory SET record=$2::jsonb,report_count=$3 WHERE id=$1",
+                    row["id"], updated.model_dump_json(), updated.report_count,
+                )
 
     async def list_security_reports(
         self, analysis_id: str, owner_id: str

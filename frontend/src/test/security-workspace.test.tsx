@@ -52,6 +52,13 @@ function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): Securit
     listAnalysisAppeals: vi.fn().mockResolvedValue([]),
     listBrands: vi.fn().mockResolvedValue([]),
     listWhitelist: vi.fn().mockResolvedValue([]),
+    listSecurityMemory: vi.fn().mockResolvedValue([]),
+    correctSecurityMemory: vi.fn(),
+    listSecurityMemoryAudit: vi.fn().mockResolvedValue([]),
+    listSecurityCampaigns: vi.fn().mockResolvedValue([]),
+    getSecurityCampaign: vi.fn(),
+    reviewSecurityCampaign: vi.fn(),
+    listSecurityCampaignAudit: vi.fn().mockResolvedValue([]),
   };
 }
 

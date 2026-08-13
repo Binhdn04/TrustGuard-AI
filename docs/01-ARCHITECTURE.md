@@ -1,129 +1,125 @@
-# Architecture — Current Runtime and Target
+# Architecture — Current Security Runtime
 
-[scope.md](scope.md) định nghĩa goal; [implementation-status.md](implementation-status.md) định nghĩa
-trạng thái code tại lần audit gần nhất.
+[scope.md](scope.md) định nghĩa product goal; [implementation-status.md](implementation-status.md)
+định nghĩa trạng thái code hiện tại; [SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md](SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md)
+là nguồn theo dõi WP và release gate.
 
-## 1. Kiến trúc đang chạy
+## 1. Hai product profile đang tồn tại
 
-```mermaid
-flowchart TB
-    UI[Next.js frontend] --> API[FastAPI /api/v3 + /api/v2]
-    API --> Auth[Demo token hoặc OIDC/JWKS]
-    API --> Service[AnalysisService]
-    Service --> SQLite[(SQLite local)]
-    Service --> PG[(PostgreSQL production)]
-    PG --> Worker[Durable worker]
-    Worker --> Graph[LangGraph v2 workflow]
-    Graph --> Rules[URL rules + blacklist]
-    Graph --> URL[Reputation + redirect + RDAP]
-    Graph --> Facts[Deprecated general fact-check]
-    Graph --> Risk[Deterministic risk-v2]
-    PG --> Outbox[Transactional outbox]
-    Outbox --> Redis[Redis notification]
-    Redis --> WS[Ticketed WebSocket]
-    API --> Admin[Report / appeal / action / campaign / metrics]
-```
+Runtime hiện có hai profile tách biệt:
 
-`AnalysisService` tạo job và persist lifecycle. Với PostgreSQL, worker claim job bằng lease và
-idempotency; events được persist trước khi outbox đánh thức WebSocket. Với SQLite, analysis chạy bằng
-background task trong process.
+- `/api/v4` là Security Triage product path mà frontend đang sử dụng.
+- `/api/v2` và `/api/v3` là legacy analysis compatibility path. V3 admin review/action/metrics vẫn được
+  v4 tái sử dụng ở những chỗ đã có hạ tầng đúng semantics.
 
-## 2. Workflow đang chạy
+Middleware chỉ phân loại route theo path/method để ghi `security_read/security_write` hoặc
+`legacy_read/legacy_write`; không đọc body, query hay token. Việc freeze và xóa legacy writer thuộc WP9.
 
-```text
-classify_input
-→ extract_indicators
-→ normalize_and_check_rules
-→ provisional_warning
-→ LLM analyze_message
-→ plan_tools
-→ URL/domain/claim tools
-→ general fact-check orchestrator
-→ campaign detection
-→ deterministic risk-v2
-→ LLM review/explanation
-→ route action
-```
-
-`classify_input` chỉ phân loại text/URL, không phải security scope gate. `extract_indicators` dùng URL
-regex và claim marker, trong đó có cả medical/general-fact markers. Planner luôn thêm URL, domain và
-claim retriever steps khi có target. Vì vậy workflow này chưa đáp ứng product boundary mới.
-
-## 3. Thành phần reusable
-
-- API/auth/ownership/rate-limit/logging boundaries.
-- Analysis lifecycle, persistence, durable jobs, outbox và realtime replay.
-- URL normalization, local credential-path/punycode/lure rules.
-- Blacklist, URL reputation cascade, RDAP và guarded redirect.
-- Tool budgets, deadline, retry và normalized provider errors.
-- Deterministic scoring seam và grounded fallback seam.
-- Report queue, appeal, campaign review, operations metrics và retention.
-
-## 4. Kiến trúc đích theo scope
+## 2. Kiến trúc Security v4 hiện tại
 
 ```mermaid
 flowchart TD
-    A[Message / URL / follow-up] --> B[Validate + redact]
-    B --> C[Security Scope Classifier]
-    C -->|OUT_OF_SCOPE| D[Explain boundary; no tool calls]
-    C -->|NEED_MORE_INFO| E[Ask focused follow-up]
-    C -->|IN_SCOPE| F[Structured scam understanding]
-    F --> G[Security investigation planner]
-    G --> H[Rules + whitelist + blacklist]
-    G --> I[URL reputation + RDAP/DNS + redirect]
-    G --> J[Brand/organization matcher]
-    G -. security-relevant claim only .-> K[OfficialClaimVerifier]
-    H --> L[Versioned evidence set]
-    I --> L
-    J --> L
-    K --> L
-    L --> M[Security Risk Engine]
-    M --> N[Grounded warning + recommendation]
-    M --> O[Admin proposal when needed]
+    UI[Next.js Security Chat] --> API[FastAPI /api/v4]
+    API --> Auth[Demo token dev hoặc OIDC/JWKS]
+    API --> Scope[Security scope + structured context]
+    Scope -->|OUT_OF_SCOPE| Boundary[Terminal boundary; zero investigation calls]
+    Scope -->|NEED_MORE_INFO| FollowUp[Focused follow-up + conversation version]
+    Scope -->|IN_SCOPE| Planner[Allowlisted investigation planner]
+    Planner --> Local[Local URL rules + blacklist]
+    Planner --> External[DNS + redirect + RDAP + reputation]
+    Planner --> Trust[Brand + whitelist + bounded official verifier]
+    Local --> Evidence[Versioned evidence]
+    External --> Evidence
+    Trust --> Evidence
+    Evidence --> Risk[Deterministic security-risk-v1]
+    Risk --> Result[Grounded warning + recommendations]
+    Result --> Store[(SQLite local / PostgreSQL production)]
+    Store --> Events[Owner-scoped events + ticketed WebSocket replay]
+    Result --> HITL[Idempotent admin action proposal]
+    Result --> Memory[Security fingerprint + memory]
+    Memory --> Campaign[Explainable campaign hypothesis]
+    HITL --> Admin[Security Admin review / execute / audit]
+    Campaign --> Admin
 ```
 
-## 5. Delta bắt buộc
+`POST /api/v4/analyses` hiện xử lý scope, investigation, trust enrichment và deterministic risk trong
+request lifecycle, sau đó persist terminal snapshot và ba lifecycle event `queued/running/completed`
+hoặc `failed`. Polling và WebSocket cung cấp owner-scoped replay; v4 chưa được chuyển sang durable worker
+async như legacy PostgreSQL analysis path.
 
-### Before tools
+## 3. Security workflow và policy boundaries
 
-- Thêm scope decision vào state/contract và dừng graph sớm cho out-of-scope.
-- Thêm `conversation_id` và case-memory summary có owner/retention.
-- Thay claim-centric `MessageAnalysis` bằng organization/scenario/requested-action/payment/OTP schema.
+```text
+validate request/conversation version
+→ scope decision + SecurityContextV4
+→ terminal OUT_OF_SCOPE / NEED_MORE_INFO, hoặc investigation
+→ local rules and consent-gated external tools
+→ brand/whitelist/official trust enrichment
+→ deterministic risk and grounded explanation
+→ terminal persistence
+→ HITL proposal and Security Memory producers
+```
 
-### Investigation
+Các invariant đang enforce:
 
-- Thêm first-class whitelist và brand registry/matcher.
-- Tách DNS evidence khỏi resolver nội bộ nếu DNS là output product.
-- Thay general FactCheckOrchestrator bằng bounded OfficialClaimVerifier.
-- Chuyển campaign similarity từ general-claim embeddings sang security fingerprint phù hợp.
+- Out-of-scope kết thúc trước khi resolve investigation hoặc legacy analysis service.
+- Planner chỉ nhận normalized target từ `SecurityContextV4`; external URL lookup cần consent.
+- DNS/redirect/reputation dùng SSRF guard; redirect revalidate từng hop.
+- Brand và whitelist record có provenance, lifecycle, reviewer và policy version.
+- Official verifier bị giới hạn purpose, một claim, tối đa hai query và năm official sources;
+  `NOT_FOUND` không đồng nghĩa false hoặc malicious.
+- Risk/score/action là deterministic policy output; LLM không có quyền tự ghi verdict.
+- Whitelist chạy trước negative scoring; mismatch, domain age, provider no-hit hoặc timeout đứng riêng
+  không đủ tạo `MALICIOUS`.
 
-### Risk/output
+## 4. Conversation, persistence và privacy
 
-- Loại rule “claim refuted ⇒ malicious”.
-- Map sang taxonomy scope: `SAFE`, `LOW_RISK`, `SUSPICIOUS`, `HIGH_RISK`, `MALICIOUS`,
-  `INSUFFICIENT_EVIDENCE`.
-- Enforce whitelist precedence và strong-evidence threshold cho malicious.
+`SecurityAnalysisService` quản lý owner-scoped analysis, report, appeal và conversation. Conversation
+dùng optimistic `conversation_version`, redacted structured summary và retention interval. Raw private
+message không được persist trong Security v4 analysis/memory.
 
-### Product/admin
+SQLite là durable local/dev store. PostgreSQL là production source of truth và có Alembic schema đến
+`0014_security_memory_campaigns`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
+hình; không phải source of truth.
 
-- Thay fact-check form/results/history bằng multi-turn security chat.
-- Thêm whitelist/domain/threat/audit admin views.
-- Hoàn tất proposal → review → execute cho wide actions.
+Security Memory chỉ giữ canonical domain, query-free URL fingerprint, redirect domain, claimed brand,
+scenario/action pattern, threat/risk/policy version, timestamps, report count, admin verdict và evidence
+refs. Campaign v4 cluster theo named security signals trong time window, không đọc claim embeddings.
 
-## 6. Trust boundaries hiện có
+## 5. Human-in-the-loop và admin
 
-- External URL/domain work bị hard-gate bằng consent trong executor và tool node.
-- SSRF guard chặn non-public target; redirect/screenshot revalidate destination.
-- Request log chỉ ghi route, status, latency và request ID, không ghi body/query/token.
-- OIDC access token được validate bằng issuer/audience/JWKS; production cấm demo auth.
-- PostgreSQL giữ source of truth; Redis chỉ giữ queue/notification/ticket/rate-limit state.
-- User read filter theo owner; admin route yêu cầu role.
+Completed `HIGH_RISK`/`MALICIOUS` URL analysis có thể tạo idempotent `ADD_TO_BLACKLIST` proposal liên kết
+bằng `security_analysis_id`. Action bắt buộc canonical target, evidence snapshot, reviewer identity và
+review note. State machine là:
 
-Các boundary này cần được giữ khi thay workflow nghiệp vụ.
+```text
+pending_review → rejected
+pending_review → approved attempt → executed | failed
+```
 
-## 7. Deprecated boundaries
+Chỉ `ADD_TO_BLACKLIST` có execution sink thật và ảnh hưởng lookup sau đó. `BLOCK_DOMAIN`,
+`PUBLISH_BROAD_WARNING` và AI Copilot chưa có sink; approved attempt phải kết thúc `FAILED` với reason
+code, không được giả là đã execute.
 
-- `/api/v2/chat` starter graph và `/api/v2` contract sau compatibility window.
-- Google Fact Check, Tavily, fact-check corpus/source discovery và claim comparator.
-- Screenshot flow trừ khi scope được mở rộng rõ ràng.
-- Frontend claim stance và Source Registry administration.
+Admin product hiện có action/audit, brand, whitelist, Security Memory correction, campaign
+review/audit, report/appeal và operations views. Dedicated domain/threat explorer và audit browser tổng
+hợp vẫn là phần hoàn thiện/cutover của WP9.
+
+## 6. Hạ tầng legacy còn được giữ
+
+Legacy v2/v3 vẫn có `AnalysisService`, durable PostgreSQL worker, outbox, general fact-check providers,
+claim corpus/embeddings, source discovery, screenshot artifacts và claim-vector campaign path. Chúng
+không được Security v4 scope/investigation/memory path import hoặc gọi, nhưng chưa bị xóa để giữ
+compatibility và rollback an toàn.
+
+WP9 phải đo zero legacy reader/writer trong compatibility window, kiểm chứng backup/restore rồi mới
+drop schema/pgvector, provider config, frontend compatibility components và routes deprecated.
+
+## 7. Trust boundaries cần giữ khi cutover
+
+- Request log không ghi body/query/token; persisted URL loại query khi không cần thiết.
+- User read luôn filter theo owner; admin route yêu cầu `security_admin`.
+- OIDC validate issuer/audience/JWKS; production không dùng demo token.
+- External provider errors được normalize, bounded retry/deadline và không tự tạo safe verdict.
+- Admin decision, execution result và evidence snapshot được audit bất biến.
+- Schema removal chỉ diễn ra sau telemetry, backup/export và rollback rehearsal.

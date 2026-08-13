@@ -175,3 +175,71 @@ export interface SecurityAppealRecordV4 {
   created_at: string;
   resolved_at: string | null;
 }
+
+export type SecurityMemoryAdminVerdictV4 = "unreviewed" | "suspicious" | "malicious" | "safe" | "false_positive";
+export type SecurityCampaignReviewerStatusV4 = "pending_review" | "confirmed" | "rejected";
+
+export interface SecurityMemoryRecordV4 {
+  contract_version: "v4";
+  memory_id: string;
+  analysis_id: string;
+  canonical_domains: string[];
+  url_fingerprints: string[];
+  redirect_targets: string[];
+  claimed_brand: string | null;
+  scenario: SecurityContextV4["scenario"];
+  requested_action: string | null;
+  security_patterns: string[];
+  lexical_features: string[];
+  threat_type: string;
+  risk: SecurityRiskV4;
+  risk_policy_version: string;
+  fingerprint_version: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  report_count: number;
+  admin_verdict: SecurityMemoryAdminVerdictV4;
+  evidence_refs: string[];
+}
+
+export interface SecurityMemoryAuditRecordV4 {
+  audit_id: string;
+  memory_id: string;
+  previous_verdict: SecurityMemoryAdminVerdictV4;
+  verdict: SecurityMemoryAdminVerdictV4;
+  reviewer_id: string;
+  note: string;
+  occurred_at: string;
+  risk_policy_version: string;
+  fingerprint_version: string;
+  evidence_refs: string[];
+}
+
+export interface SecurityCampaignRecordV4 {
+  contract_version: "v4";
+  campaign_id: string;
+  hypothesis: string;
+  analysis_ids: string[];
+  window_started_at: string;
+  window_ended_at: string;
+  aggregate_signals: Record<string, number>;
+  reviewer_status: SecurityCampaignReviewerStatusV4;
+  clustering_version: string;
+  evidence_refs: string[];
+  reviewer_id: string | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface SecurityCampaignAuditRecordV4 {
+  audit_id: string;
+  campaign_id: string;
+  previous_status: SecurityCampaignReviewerStatusV4;
+  status: SecurityCampaignReviewerStatusV4;
+  reviewer_id: string;
+  note: string;
+  occurred_at: string;
+  clustering_version: string;
+  evidence_refs: string[];
+}

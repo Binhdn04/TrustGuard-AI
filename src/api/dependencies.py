@@ -52,6 +52,7 @@ from src.services.realtime import (
 )
 from src.services.screenshot import ScreenshotCaptureCoordinator
 from src.services.security_analysis import SecurityAnalysisService
+from src.services.security_memory import SecurityMemoryService
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_trust import SecurityTrustAdminService
 
@@ -124,6 +125,11 @@ def get_security_trust_admin_service() -> SecurityTrustAdminService:
     return SecurityTrustAdminService(get_security_trust_repository())
 
 
+@lru_cache
+def get_security_memory_service() -> SecurityMemoryService:
+    return SecurityMemoryService(get_security_trust_repository())
+
+
 async def resolve_security_trust_service(request: Request) -> SecurityTrustService:
     override = request.app.dependency_overrides.get(get_security_trust_service)
     service = get_security_trust_service() if override is None else override()
@@ -135,6 +141,14 @@ async def resolve_security_trust_service(request: Request) -> SecurityTrustServi
 async def resolve_security_trust_admin_service(request: Request) -> SecurityTrustAdminService:
     override = request.app.dependency_overrides.get(get_security_trust_admin_service)
     service = get_security_trust_admin_service() if override is None else override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
+
+
+async def resolve_security_memory_service(request: Request) -> SecurityMemoryService:
+    override = request.app.dependency_overrides.get(get_security_memory_service)
+    service = get_security_memory_service() if override is None else override()
     if hasattr(service, "__await__"):
         return await service
     return service
@@ -224,6 +238,7 @@ async def close_security_trust_services() -> None:
         get_security_trust_service.cache_clear()
         await service.aclose()
     get_security_trust_admin_service.cache_clear()
+    get_security_memory_service.cache_clear()
     if get_security_trust_repository.cache_info().currsize:
         repository = get_security_trust_repository()
         get_security_trust_repository.cache_clear()
@@ -515,6 +530,7 @@ SecurityTriageScopeServiceDependency = Annotated[
     SecurityTriageScopeService,
     Depends(resolve_security_triage_scope_service),
 ]
+SecurityMemoryServiceDependency = Annotated[SecurityMemoryService, Depends(resolve_security_memory_service)]
 SecurityAnalysisServiceDependency = Annotated[SecurityAnalysisService, Depends(resolve_security_analysis_service)]
 SecurityTrustServiceDependency = Annotated[SecurityTrustService, Depends(resolve_security_trust_service)]
 SecurityTrustAdminServiceDependency = Annotated[

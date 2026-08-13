@@ -25,21 +25,26 @@ import type {
   AdminActionAuditRecordV3,
   AppealAdminRecordV3,
   AppealOutcomeV3,
-  CampaignDetailV3,
-  CampaignSummaryV3,
   OperationsMetricsResponseV3,
   ReviewDecisionV3,
   SourcePolicyRecordV3,
   SourceDiscoveryRecordV3,
 } from "@/types/generated/api-v3";
-import type { BrandRecordV4, WhitelistRecordV4 } from "@/types/generated/api-v4";
+import type {
+  BrandRecordV4,
+  SecurityCampaignRecordV4,
+  SecurityMemoryAdminVerdictV4,
+  SecurityMemoryRecordV4,
+  WhitelistRecordV4,
+} from "@/types/generated/api-v4";
 
 type Tab = "appeals" | "actions" | "trust" | "campaigns" | "sources";
 type TimeRange = "24h" | "7d" | "30d";
 type DecisionTarget =
   | { kind: "appeal"; id: string; title: string }
   | { kind: "action"; id: string; title: string }
-  | { kind: "campaign"; id: string; title: string };
+  | { kind: "campaign"; id: string; title: string }
+  | { kind: "memory"; id: string; title: string };
 
 const statusStyle: Record<string, string> = {
   submitted: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -51,6 +56,11 @@ const statusStyle: Record<string, string> = {
   rejected: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300",
   failed: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300",
   confirmed: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  unreviewed: "border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-300",
+  suspicious: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  malicious: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+  safe: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  false_positive: "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300",
   observing: "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300",
   promoted: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   demoted: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -72,24 +82,24 @@ function formatDate(value: string): string {
 export function PlatformOperations() {
   const [activeTab, setActiveTab] = useState<Tab>("appeals");
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
-  const [campaignFilter, setCampaignFilter] = useState<"all" | CampaignSummaryV3["reviewer_status"]>("all");
+  const [campaignFilter, setCampaignFilter] = useState<"all" | SecurityCampaignRecordV4["reviewer_status"]>("all");
   const [metrics, setMetrics] = useState<OperationsMetricsResponseV3 | null>(null);
   const [appeals, setAppeals] = useState<AppealAdminRecordV3[]>([]);
   const [actions, setActions] = useState<AdminActionRecordV3[]>([]);
   const [brands, setBrands] = useState<BrandRecordV4[]>([]);
   const [whitelist, setWhitelist] = useState<WhitelistRecordV4[]>([]);
+  const [securityMemory, setSecurityMemory] = useState<SecurityMemoryRecordV4[]>([]);
   const [actionAudits, setActionAudits] = useState<Record<string, AdminActionAuditRecordV3[]>>({});
   const [expandedAction, setExpandedAction] = useState<string | null>(null);
-  const [campaigns, setCampaigns] = useState<CampaignSummaryV3[]>([]);
+  const [campaigns, setCampaigns] = useState<SecurityCampaignRecordV4[]>([]);
   const [sources, setSources] = useState<SourcePolicyRecordV3[]>([]);
   const [sourceDiscoveries, setSourceDiscoveries] = useState<SourceDiscoveryRecordV3[]>([]);
-  const [campaignDetails, setCampaignDetails] = useState<Record<string, CampaignDetailV3>>({});
   const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dataWarnings, setDataWarnings] = useState<string[]>([]);
   const [decision, setDecision] = useState<DecisionTarget | null>(null);
-  const [decisionValue, setDecisionValue] = useState<AppealOutcomeV3 | ReviewDecisionV3 | "confirmed">("uphold");
+  const [decisionValue, setDecisionValue] = useState<AppealOutcomeV3 | ReviewDecisionV3 | "confirmed" | SecurityMemoryAdminVerdictV4>("uphold");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -103,21 +113,22 @@ export function PlatformOperations() {
         api.getOperationsMetrics(from.toISOString(), to.toISOString()),
         api.listAdminAppeals({ limit: 100 }),
         api.listAdminActions({ limit: 100 }),
-        api.listCampaigns({ limit: 100 }),
+        securityApi.listSecurityCampaigns(),
         api.listSourcePolicies(),
         api.listSourceDiscoveries(),
         securityApi.listBrands(),
         securityApi.listWhitelist(),
+        securityApi.listSecurityMemory(),
     ] as const);
     const warnings: string[] = [];
-    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult, discoveriesResult, brandsResult, whitelistResult] = results;
+    const [metricsResult, appealsResult, actionsResult, campaignsResult, sourcesResult, discoveriesResult, brandsResult, whitelistResult, memoryResult] = results;
     if (metricsResult.status === "fulfilled") setMetrics(metricsResult.value);
     else { setMetrics(null); warnings.push("metrics"); }
     if (appealsResult.status === "fulfilled") setAppeals(appealsResult.value.items);
     else { setAppeals([]); warnings.push("appeals"); }
     if (actionsResult.status === "fulfilled") setActions(actionsResult.value.items);
     else { setActions([]); warnings.push("reviewed actions"); }
-    if (campaignsResult.status === "fulfilled") setCampaigns(campaignsResult.value.items);
+    if (campaignsResult.status === "fulfilled") setCampaigns(campaignsResult.value);
     else { setCampaigns([]); warnings.push("campaigns"); }
     if (sourcesResult.status === "fulfilled") setSources(sourcesResult.value);
     else { setSources([]); warnings.push("source registry"); }
@@ -127,6 +138,8 @@ export function PlatformOperations() {
     else { setBrands([]); warnings.push("brand registry"); }
     if (whitelistResult.status === "fulfilled") setWhitelist(whitelistResult.value);
     else { setWhitelist([]); warnings.push("security whitelist"); }
+    if (memoryResult.status === "fulfilled") setSecurityMemory(memoryResult.value);
+    else { setSecurityMemory([]); warnings.push("security memory"); }
     setDataWarnings(warnings);
     setLoading(false);
   }, [timeRange]);
@@ -152,7 +165,7 @@ export function PlatformOperations() {
 
   const openDecision = (target: DecisionTarget) => {
     setDecision(target);
-    setDecisionValue(target.kind === "appeal" ? "uphold" : target.kind === "campaign" ? "confirmed" : "approved");
+    setDecisionValue(target.kind === "appeal" ? "uphold" : target.kind === "campaign" ? "confirmed" : target.kind === "memory" ? "suspicious" : "approved");
     setNote("");
   };
 
@@ -172,9 +185,14 @@ export function PlatformOperations() {
           decision: decisionValue as ReviewDecisionV3,
           note: note.trim(),
         });
-      } else {
-        await api.reviewCampaign(decision.id, {
+      } else if (decision.kind === "campaign") {
+        await getSecurityAnalysisApi().reviewSecurityCampaign(decision.id, {
           decision: decisionValue as "confirmed" | "rejected",
+          note: note.trim(),
+        });
+      } else {
+        await getSecurityAnalysisApi().correctSecurityMemory(decision.id, {
+          verdict: decisionValue as SecurityMemoryAdminVerdictV4,
           note: note.trim(),
         });
       }
@@ -187,19 +205,12 @@ export function PlatformOperations() {
     }
   };
 
-  const toggleCampaign = async (campaignId: string) => {
+  const toggleCampaign = (campaignId: string) => {
     if (expandedCampaign === campaignId) {
       setExpandedCampaign(null);
       return;
     }
     setExpandedCampaign(campaignId);
-    if (campaignDetails[campaignId]) return;
-    try {
-      const detail = await getAnalysisApi().getCampaign(campaignId);
-      setCampaignDetails((current) => ({ ...current, [campaignId]: detail }));
-    } catch (detailError) {
-      setError(detailError instanceof Error ? detailError.message : "Không thể tải chi tiết chiến dịch.");
-    }
   };
 
   const toggleActionAudit = async (actionId: string) => {
@@ -285,7 +296,7 @@ export function PlatformOperations() {
           {([
             ["appeals", `Khiếu nại (${appeals.length})`],
             ["actions", `Hành động (${actions.length})`],
-            ["trust", `Trust (${brands.length + whitelist.length})`],
+            ["trust", `Trust (${brands.length + whitelist.length + securityMemory.length})`],
             ["campaigns", `Chiến dịch (${campaigns.length})`],
             ["sources", `Nguồn (${sources.length})`],
           ] as Array<[Tab, string]>).map(([tab, label]) => (
@@ -297,8 +308,8 @@ export function PlatformOperations() {
 
         {!loading && activeTab === "appeals" && <AppealList items={appeals} onDecide={(item) => openDecision({ kind: "appeal", id: item.appeal_id, title: `Xử lý khiếu nại ${item.appeal_id.slice(0, 8)}` })} />}
         {!loading && activeTab === "actions" && <ActionList items={actions} audits={actionAudits} expanded={expandedAction} onToggleAudit={(id) => void toggleActionAudit(id)} onDecide={(item) => openDecision({ kind: "action", id: item.action_id, title: `Phê duyệt ${item.action.replaceAll("_", " ")}` })} />}
-        {!loading && activeTab === "trust" && <TrustRegistryList brands={brands} whitelist={whitelist} />}
-        {!loading && activeTab === "campaigns" && <><div className="mb-4 flex justify-end"><select aria-label="Lọc campaign theo reviewer state" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm"><option value="all">Tất cả reviewer state</option><option value="pending_review">Pending review</option><option value="confirmed">Confirmed</option><option value="rejected">Rejected</option></select></div><CampaignList items={filteredCampaigns} details={campaignDetails} expanded={expandedCampaign} onToggle={(id) => void toggleCampaign(id)} onDecide={(item) => openDecision({ kind: "campaign", id: item.campaign_id, title: `Review campaign ${item.campaign_id.slice(0, 8)}` })} /></>}
+        {!loading && activeTab === "trust" && <div className="space-y-6"><TrustRegistryList brands={brands} whitelist={whitelist} /><SecurityMemoryList items={securityMemory} onCorrect={(item) => openDecision({ kind: "memory", id: item.memory_id, title: `Correct memory ${item.memory_id.slice(0, 8)}` })} /></div>}
+        {!loading && activeTab === "campaigns" && <><div className="mb-4 flex justify-end"><select aria-label="Lọc campaign theo reviewer state" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm"><option value="all">Tất cả reviewer state</option><option value="pending_review">Pending review</option><option value="confirmed">Confirmed</option><option value="rejected">Rejected</option></select></div><CampaignList items={filteredCampaigns} expanded={expandedCampaign} onToggle={toggleCampaign} onDecide={(item) => openDecision({ kind: "campaign", id: item.campaign_id, title: `Review campaign ${item.campaign_id.slice(0, 8)}` })} /></>}
         {!loading && activeTab === "sources" && <SourceRegistryList items={sources} discoveries={sourceDiscoveries} onCreated={load} />}
       </section>
 
@@ -308,8 +319,8 @@ export function PlatformOperations() {
             <h2 id="wave2-decision-title" className="text-lg font-bold">{decision.title}</h2>
             <p className="mt-1 text-sm text-muted-foreground">Quyết định và ghi chú sẽ được lưu vào audit trail.</p>
             <label htmlFor="decision-value" className="mt-5 block text-sm font-medium">Quyết định</label>
-            <select id="decision-value" value={decisionValue} onChange={(event) => setDecisionValue(event.target.value as AppealOutcomeV3 | ReviewDecisionV3 | "confirmed")} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm">
-              {decision.kind === "appeal" ? <><option value="uphold">Giữ nguyên kết quả</option><option value="overturn">Đảo ngược kết quả</option><option value="inconclusive">Chưa đủ bằng chứng</option></> : decision.kind === "campaign" ? <><option value="confirmed">Xác nhận campaign</option><option value="rejected">Từ chối</option></> : <><option value="approved">Phê duyệt</option><option value="rejected">Từ chối</option></>}
+            <select id="decision-value" value={decisionValue} onChange={(event) => setDecisionValue(event.target.value as AppealOutcomeV3 | ReviewDecisionV3 | "confirmed" | SecurityMemoryAdminVerdictV4)} className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm">
+              {decision.kind === "appeal" ? <><option value="uphold">Giữ nguyên kết quả</option><option value="overturn">Đảo ngược kết quả</option><option value="inconclusive">Chưa đủ bằng chứng</option></> : decision.kind === "campaign" ? <><option value="confirmed">Xác nhận campaign</option><option value="rejected">Từ chối</option></> : decision.kind === "memory" ? <><option value="suspicious">Suspicious</option><option value="malicious">Malicious</option><option value="safe">Safe</option><option value="false_positive">False positive</option></> : <><option value="approved">Phê duyệt</option><option value="rejected">Từ chối</option></>}
             </select>
             <label htmlFor="decision-note" className="mt-4 block text-sm font-medium">Ghi chú reviewer</label>
             <textarea id="decision-note" autoFocus maxLength={5000} value={note} onChange={(event) => setNote(event.target.value)} className="mt-1.5 min-h-28 w-full rounded-xl border border-border bg-background p-3 text-sm" />
@@ -359,9 +370,13 @@ function TrustRegistryList({ brands, whitelist }: { brands: BrandRecordV4[]; whi
   return <div className="grid gap-6 xl:grid-cols-2"><section className="space-y-3"><div><h2 className="font-semibold">Brand registry</h2><p className="text-xs text-muted-foreground">Domain/contact chính thức có provenance và reviewer.</p></div>{brands.map((item) => <article key={item.brand_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.lifecycle} /><strong>{item.name}</strong><span className="text-xs text-muted-foreground">{item.policy_version}</span></div><p className="mt-2 break-all text-sm text-muted-foreground">{item.official_domains.join(", ")}</p><p className="mt-2 text-xs text-muted-foreground">Reviewer {item.reviewer_id} · {item.provenance}</p></article>)}{!brands.length && <EmptyState icon={ShieldCheck} text="Chưa có brand registry record." />}</section><section className="space-y-3"><div><h2 className="font-semibold">Security whitelist</h2><p className="text-xs text-muted-foreground">Domain, URL và contact đã được reviewer phê duyệt.</p></div>{whitelist.map((item) => <article key={item.whitelist_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.lifecycle} /><StatusBadge value={item.scope} /><strong className="break-all">{item.indicator}</strong></div><p className="mt-2 text-xs text-muted-foreground">{item.policy_version} · reviewer {item.reviewer_id}</p><p className="mt-1 text-xs text-muted-foreground">{item.provenance}</p></article>)}{!whitelist.length && <EmptyState icon={ShieldCheck} text="Chưa có whitelist record." />}</section></div>;
 }
 
-function CampaignList({ items, details, expanded, onToggle, onDecide }: { items: CampaignSummaryV3[]; details: Record<string, CampaignDetailV3>; expanded: string | null; onToggle: (id: string) => void; onDecide: (item: CampaignSummaryV3) => void }) {
+function SecurityMemoryList({ items, onCorrect }: { items: SecurityMemoryRecordV4[]; onCorrect: (item: SecurityMemoryRecordV4) => void }) {
+  return <section className="space-y-3"><div><h2 className="font-semibold">Security memory</h2><p className="text-xs text-muted-foreground">Fingerprint có thể giải thích; không lưu raw conversation hay URL query.</p></div>{items.map((item) => <article key={item.memory_id} className="rounded-xl border border-border bg-card p-4"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={item.admin_verdict} /><StatusBadge value={item.risk} /><strong>{item.claimed_brand ?? item.canonical_domains[0] ?? item.scenario}</strong><span className="text-xs text-muted-foreground">{item.report_count} reports</span></div><p className="mt-2 text-sm text-muted-foreground">{[...item.canonical_domains.map((value) => `domain:${value}`), ...item.redirect_targets.map((value) => `redirect:${value}`), ...item.security_patterns].join(" · ") || "No public indicator"}</p><p className="mt-2 text-xs text-muted-foreground">{item.fingerprint_version} · {item.risk_policy_version} · {formatDate(item.last_seen_at)}</p><p className="mt-1 font-mono text-xs text-muted-foreground">Analysis: {item.analysis_id} · Evidence: {item.evidence_refs.length}</p><button type="button" onClick={() => onCorrect(item)} className="mt-3 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-muted">Correct verdict</button></article>)}{!items.length && <EmptyState icon={ShieldCheck} text="Chưa có Security Memory record." />}</section>;
+}
+
+function CampaignList({ items, expanded, onToggle, onDecide }: { items: SecurityCampaignRecordV4[]; expanded: string | null; onToggle: (id: string) => void; onDecide: (item: SecurityCampaignRecordV4) => void }) {
   if (!items.length) return <EmptyState icon={GitBranch} text="Chưa phát hiện cụm chiến dịch nào." />;
-  return <div className="space-y-4">{items.map((item) => { const detail = details[item.campaign_id]; const isOpen = expanded === item.campaign_id; return <article key={item.campaign_id} className="overflow-hidden rounded-2xl border border-border bg-card"><button type="button" aria-expanded={isOpen} onClick={() => onToggle(item.campaign_id)} className="flex w-full items-start gap-4 p-5 text-left hover:bg-muted/30"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-500/10 text-violet-600"><GitBranch className="size-5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><StatusBadge value={item.reviewer_status} /><span className="text-xs text-muted-foreground">{item.analysis_count} analyses</span></span><span className="mt-2 block font-semibold">{item.hypothesis}</span><span className="mt-1 block text-xs text-muted-foreground">Cửa sổ: {formatDate(item.window_started_at)} → {formatDate(item.window_ended_at)}</span><span className="mt-2 flex flex-wrap gap-2">{item.aggregate_signals.map((signal) => <span key={signal.signal} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{signal.signal}: {signal.count}</span>)}</span></span><ChevronDown className={cn("mt-2 size-4 shrink-0 transition-transform", isOpen && "rotate-180")} /></button>{item.reviewer_status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="mx-5 mb-4 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Review campaign</button>}{isOpen && <div className="border-t border-border bg-muted/20 p-5">{detail ? <div className="grid gap-5 text-sm md:grid-cols-3"><DetailList title="Domains" items={detail.registrable_domains} /><DetailList title="Redirect targets" items={detail.redirect_targets} /><DetailList title="Evidence refs" items={detail.evidence_refs} /></div> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Đang tải chi tiết…</div>}</div>}</article>; })}</div>;
+  return <div className="space-y-4">{items.map((item) => { const isOpen = expanded === item.campaign_id; return <article key={item.campaign_id} className="overflow-hidden rounded-2xl border border-border bg-card"><button type="button" aria-expanded={isOpen} onClick={() => onToggle(item.campaign_id)} className="flex w-full items-start gap-4 p-5 text-left hover:bg-muted/30"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-500/10 text-violet-600"><GitBranch className="size-5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><StatusBadge value={item.reviewer_status} /><span className="text-xs text-muted-foreground">{item.analysis_ids.length} analyses</span><span className="text-xs text-muted-foreground">{item.clustering_version}</span></span><span className="mt-2 block font-semibold">{item.hypothesis}</span><span className="mt-1 block text-xs text-muted-foreground">Cửa sổ: {formatDate(item.window_started_at)} → {formatDate(item.window_ended_at)}</span><span className="mt-2 flex flex-wrap gap-2">{Object.entries(item.aggregate_signals).map(([signal, count]) => <span key={signal} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{signal}: {count}</span>)}</span></span><ChevronDown className={cn("mt-2 size-4 shrink-0 transition-transform", isOpen && "rotate-180")} /></button>{item.reviewer_status === "pending_review" && <button type="button" onClick={() => onDecide(item)} className="mx-5 mb-4 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Review campaign</button>}{isOpen && <div className="border-t border-border bg-muted/20 p-5"><div className="grid gap-5 text-sm md:grid-cols-3"><DetailList title="Analysis IDs" items={item.analysis_ids} /><DetailList title="Evidence refs" items={item.evidence_refs} /><DetailList title="Review" items={item.review_note ? [`${item.reviewer_id}: ${item.review_note}`] : ["Reviewer required before any broad action"]} /></div></div>}</article>; })}</div>;
 }
 
 function SourceRegistryList({ items, discoveries, onCreated }: { items: SourcePolicyRecordV3[]; discoveries: SourceDiscoveryRecordV3[]; onCreated: () => Promise<void> }) {

@@ -13,6 +13,7 @@ from src.agents.security_risk import assess_security_risk
 from src.api.dependencies import (
     PrincipalDependency,
     SecurityAnalysisServiceDependency,
+    SecurityMemoryServiceDependency,
     SecurityTriageScopeServiceDependency,
     SecurityTrustAdminServiceDependency,
     SecurityTrustServiceDependency,
@@ -20,6 +21,7 @@ from src.api.dependencies import (
     get_security_analysis_service,
     get_ticket_manager,
     resolve_security_investigation_service,
+    resolve_security_memory_service,
     resolve_wave2_service,
 )
 from src.core.errors import PlatformError
@@ -33,7 +35,13 @@ from src.models import (
     SecurityAnalysisEventPageV4,
     SecurityAppealCreateRequestV4,
     SecurityAppealRecordV4,
+    SecurityCampaignAuditRecordV4,
+    SecurityCampaignDecisionRequestV4,
+    SecurityCampaignRecordV4,
     SecurityConversationV4,
+    SecurityMemoryAuditRecordV4,
+    SecurityMemoryCorrectionRequestV4,
+    SecurityMemoryRecordV4,
     SecurityReportCreateRequestV4,
     SecurityReportRecordV4,
     SecurityScopeResponseV4,
@@ -108,6 +116,15 @@ async def create_security_analysis_v4(
     await analyses.persist_completed(scoped, principal)
     if scoped.risk is not None:
         try:
+            memory = await resolve_security_memory_service(http_request)
+            await memory.record(scoped)
+        except Exception:
+            limitations = list(
+                dict.fromkeys([*scoped.limitations, "Không thể cập nhật Security Memory."])
+            )
+            scoped = scoped.model_copy(update={"limitations": limitations})
+            await analyses.persist_completed(scoped, principal)
+        try:
             wave2 = await resolve_wave2_service(http_request)
             await wave2.propose_security_admin_actions(scoped)
         except Exception:
@@ -117,6 +134,93 @@ async def create_security_analysis_v4(
             scoped = scoped.model_copy(update={"limitations": limitations})
             await analyses.persist_completed(scoped, principal)
     return scoped
+
+
+@router.get("/admin/security-memory", response_model=list[SecurityMemoryRecordV4], responses=_COMMON_ERRORS)
+async def list_security_memory_v4(
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SecurityMemoryRecordV4]:
+    return await memory.list_memory(principal)
+
+
+@router.post(
+    "/admin/security-memory/{memory_id}/corrections",
+    response_model=SecurityMemoryRecordV4,
+    responses=_COMMON_ERRORS,
+)
+async def correct_security_memory_v4(
+    memory_id: UUID,
+    request: SecurityMemoryCorrectionRequestV4,
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityMemoryRecordV4:
+    return await memory.correct_memory(memory_id, request.verdict, request.note, principal)
+
+
+@router.get(
+    "/admin/security-memory/{memory_id}/audit",
+    response_model=list[SecurityMemoryAuditRecordV4],
+    responses=_COMMON_ERRORS,
+)
+async def security_memory_audit_v4(
+    memory_id: UUID,
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SecurityMemoryAuditRecordV4]:
+    return await memory.memory_audit(memory_id, principal)
+
+
+@router.get(
+    "/admin/security-campaigns",
+    response_model=list[SecurityCampaignRecordV4],
+    responses=_COMMON_ERRORS,
+)
+async def list_security_campaigns_v4(
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SecurityCampaignRecordV4]:
+    return await memory.list_campaigns(principal)
+
+
+@router.get(
+    "/admin/security-campaigns/{campaign_id}",
+    response_model=SecurityCampaignRecordV4,
+    responses=_COMMON_ERRORS,
+)
+async def get_security_campaign_v4(
+    campaign_id: UUID,
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityCampaignRecordV4:
+    return await memory.get_campaign(campaign_id, principal)
+
+
+@router.post(
+    "/admin/security-campaigns/{campaign_id}/decision",
+    response_model=SecurityCampaignRecordV4,
+    responses=_COMMON_ERRORS,
+)
+async def review_security_campaign_v4(
+    campaign_id: UUID,
+    request: SecurityCampaignDecisionRequestV4,
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityCampaignRecordV4:
+    return await memory.review_campaign(campaign_id, request.decision, request.note, principal)
+
+
+@router.get(
+    "/admin/security-campaigns/{campaign_id}/audit",
+    response_model=list[SecurityCampaignAuditRecordV4],
+    responses=_COMMON_ERRORS,
+)
+async def security_campaign_audit_v4(
+    campaign_id: UUID,
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SecurityCampaignAuditRecordV4]:
+    return await memory.campaign_audit(campaign_id, principal)
 
 
 @router.get(

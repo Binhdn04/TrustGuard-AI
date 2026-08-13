@@ -1,82 +1,101 @@
-# Implementation Plan to Reach `scope.md`
+# Implementation Plan Summary
 
-Backlog này chỉ chứa gap được xác nhận từ code audit. Chi tiết capability/status nằm tại
-[implementation-status.md](implementation-status.md).
+Tài liệu này là roadmap rút gọn. Trạng thái WP, command test và scope deviation chi tiết nằm tại
+[SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md](SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md). Trạng thái code tổng
+thể nằm tại [implementation-status.md](implementation-status.md).
 
-## Phase 0 — Stop scope leakage
+**Hiện tại:** Phase 0–3 và phần Security Memory/Campaign của Phase 4 đã hoàn thành qua WP0–WP8.
+Legacy cutover/cleanup và release evidence thuộc WP9.
 
-- [ ] Thêm feature flags để tắt general fact-check orchestrator, Source Registry discovery và admin
-  source UI/API khỏi product profile.
-- [ ] Thêm Security Scope Classifier làm node đầu tiên có thể kết thúc graph.
-- [ ] Test zero provider/tool calls cho news, politics, sports, science và medical fact-check.
-- [ ] Bỏ medical/general claim markers và examples khỏi user-facing path.
-- [ ] Bỏ scoring rule `REFUTES => +70/MALICIOUS`.
+## Phase 0 — Product boundary và scope gate — DONE FOR SECURITY V4
 
-Exit: product không còn xử lý general fact-check dù legacy code/schema vẫn tồn tại.
+- [x] Tách `/api/v4` Security Triage khỏi `/api/v2`/`/api/v3` legacy profile.
+- [x] Security Scope Classifier kết thúc sớm cho general fact-check/news/politics/sports/science/medical.
+- [x] Test terminal out-of-scope không resolve investigation hoặc legacy analysis service.
+- [x] Security frontend không hiển thị claim stance, medical/news examples hoặc screenshot semantics.
+- [x] Security v4 risk không dùng legacy rule `REFUTES => MALICIOUS`.
+- [ ] Freeze và disable toàn bộ legacy writer/source-discovery product profile — WP9.
 
-## Phase 1 — Contract và core triage
+Exit hiện đạt cho Security v4; legacy code/schema vẫn tồn tại có chủ đích cho compatibility.
 
-- [ ] Tạo contract vNext với scope decision, structured security context và risk taxonomy mới.
-- [ ] Implement scenario/threat extraction cho phishing, impersonation, financial, recruitment,
-  promotion/prize và credential/OTP theft.
-- [ ] Thêm `conversation_id`, owner-scoped case memory và retention.
-- [ ] Thêm planner allowlist theo consent/budget/deadline; out-of-scope không vào planner.
-- [ ] Giữ deterministic fallback khi LLM/provider lỗi.
+## Phase 1 — Contract và core triage — DONE
 
-Exit: text, URL, message + URL và multi-turn fixtures chạy end-to-end đúng scope.
+- [x] Contract v4 có scope decision, structured security context và security risk taxonomy.
+- [x] Scenario/threat extraction cho phishing, impersonation, financial, recruitment, promotion/prize
+  và credential/OTP theft.
+- [x] Owner-scoped conversation, optimistic version, redacted summary và retention.
+- [x] Planner allowlist theo normalized target, consent, budget, retry và deadline.
+- [x] DNS, redirect, RDAP, reputation và blacklist evidence với normalized provider error.
+- [x] Deterministic risk/explanation fallback; provider failure không làm hỏng core result.
 
-## Phase 2 — Brand, whitelist và official verification
+Exit: text, URL, text + URL, no-consent và multi-turn tests chạy đúng Security scope.
 
-- [ ] Brand/organization registry với official domain/contact provenance.
-- [ ] Typosquat/lookalike/homograph matcher trả structured signal, không tự tạo malicious.
-- [ ] First-class whitelist table/repository/admin API/UI và precedence trong scoring.
-- [ ] Bounded OfficialClaimVerifier theo allowed purposes; `NOT_FOUND != FALSE`.
-- [ ] DNS evidence tool nếu vẫn giữ DNS trong product scope summary.
+## Phase 2 — Brand, whitelist và official verification — DONE
 
-Exit: safe-official, domain-mismatch-only và official-not-found regression pass.
+- [x] Brand registry có alias, official domain/contact, provenance, lifecycle và reviewer.
+- [x] Brand mismatch/lookalike signal không tự tạo malicious.
+- [x] First-class whitelist SQLite/PostgreSQL/admin API/UI và precedence trong risk policy.
+- [x] Bounded OfficialClaimVerifier theo allowed purpose; `NOT_FOUND != FALSE`.
+- [x] DNS là investigation evidence/tool riêng, vẫn dùng safe resolver/SSRF guard.
 
-## Phase 3 — Risk, UI và Human-in-the-loop
+Exit: safe official, domain mismatch only, Unicode/homograph và official-not-found regressions pass.
 
-- [ ] Security Risk Engine policy version mới với strong-evidence threshold cho malicious.
-- [ ] Chat UI nhiều lượt; out-of-scope và need-more-info states.
-- [ ] Thay claim stance/history/admin copy bằng threat/risk/evidence/recommendation.
-- [ ] Hoàn tất proposal creation và execution adapter cho block/global blacklist/broad warning.
-- [ ] Thêm whitelist, domains, threats và audit-log views.
+## Phase 3 — Risk, Security Chat và HITL — DONE WITH EXPLICIT SINK LIMITS
 
-Exit: individual warning không chờ admin; wide action không thể bypass review/audit.
+- [x] `security-risk-v1` với strong-evidence threshold và grounded evidence refs.
+- [x] Multi-turn Security Chat; out-of-scope và need-more-info có presentation riêng.
+- [x] History/result/admin copy dùng threat/risk/evidence/recommendation semantics.
+- [x] High-risk v4 producer tạo idempotent reviewed `ADD_TO_BLACKLIST` proposal.
+- [x] Approve/reject/executed/failed state machine, rollback semantics và immutable action audit.
+- [x] Admin views cho action audit, brand, whitelist, memory và campaign.
+- [ ] Execution sink thật cho `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Copilot — chỉ triển khai khi
+  có downstream system thật; hiện approved attempt phải `FAILED/ACTION_SINK_NOT_CONFIGURED`.
+- [ ] Dedicated domain/threat explorer và audit-log browser tổng hợp — WP9 product hardening.
 
-## Phase 4 — Security memory, campaign và legacy removal
+Exit đạt cho individual warning và blacklist action: user warning không chờ admin; side effect không thể
+bypass review/audit. Không tuyên bố wide-action coverage cho action chưa có sink.
 
-- [ ] Security-memory store cho domain/fingerprint/brand/threat/report count/admin verdict.
-- [ ] Campaign clustering dùng security fingerprint thay claim embedding.
-- [ ] Ngừng toàn bộ writer vào `fact_check_*` và source-discovery tables.
-- [ ] Đo zero reader/writer qua một release window; backup/export dữ liệu cần giữ.
-- [ ] Alembic migration drop legacy tables/index/pgvector nếu không còn consumer.
-- [ ] Xóa deprecated providers/config, frontend components, v2 routes và fixtures.
+## Phase 4 — Security Memory, campaign và legacy removal — PARTIAL
 
-Exit: production profile không import/configure general fact-check modules.
+### Hoàn thành ở WP8
 
-## Phase 5 — Release evidence
+- [x] Structured Security Memory cho domain/URL fingerprint/brand/threat/risk/report count/admin verdict.
+- [x] Privacy-minimized persistence: không raw conversation hoặc URL query token.
+- [x] Explainable `security-fingerprint-v1`/`security-clustering-v1`, không dùng claim embeddings.
+- [x] Reviewer-gated campaign hypothesis và immutable correction/review audit.
+- [x] SQLite/PostgreSQL schema/store và admin Memory/Campaign views.
 
-- [ ] Versioned evaluation set theo threat và out-of-scope routing.
-- [ ] Báo cáo precision/recall/false-positive, routing accuracy, grounding, latency và cost.
-- [ ] Hosted deployment với OIDC, PostgreSQL worker, Redis và real security-provider smoke.
-- [ ] Backup/restore, migration rollback, load, SSRF, auth/RBAC và prompt-injection tests.
-- [ ] Runbook provider disable, scoring rollback, incident response và retention.
+### Còn lại ở WP9
 
-## Dependency order
+- [ ] Freeze toàn bộ writer vào `fact_check_*` và source-discovery tables.
+- [ ] Đo zero legacy reader/writer qua compatibility window.
+- [ ] Backup/export/restore rehearsal cho dữ liệu cần giữ.
+- [ ] Archive/drop legacy tables, claim vectors và pgvector khi không còn consumer.
+- [ ] Xóa deprecated providers/config, frontend compatibility components, v2 routes và legacy fixtures.
+
+Exit chỉ đạt khi production profile không import/configure/call general fact-check modules và rollback
+evidence đã được lưu.
+
+## Phase 5 — Evaluation và release evidence — NOT_STARTED (WP9)
+
+- [ ] Versioned evaluation set theo threat, safe/mismatch/no-hit/OOS/multi-turn/wide-action.
+- [ ] Báo cáo routing accuracy, provider-call rate, precision/recall/false-positive, grounding,
+  latency và cost.
+- [ ] Hosted deployment smoke với OIDC, PostgreSQL worker/readiness, Redis và real security providers.
+- [ ] PostgreSQL migration upgrade/downgrade, backup/restore và retention verification.
+- [ ] Load, SSRF/redirect, auth/RBAC, prompt-injection, lease-loss và idempotency tests.
+- [ ] Runbook provider disable, scoring/schema rollback, incident response và retention.
+
+## Dependency order còn lại
 
 ```text
-Scope gate
-  → contract vNext
-  → structured security context
-  → brand + whitelist + official verifier
-  → risk-vNext
-  → chat/admin UI
-  → security memory/campaign migration
-  → legacy removal
-  → hosted release evidence
+WP0–WP8 complete
+  → freeze legacy writers
+  → versioned evaluation + hosted smoke
+  → compatibility telemetry reaches zero
+  → backup/restore and rollback rehearsal
+  → remove legacy routes/providers/schema
+  → final release evidence
 ```
 
-Không bắt đầu destructive schema removal trước khi product flow mới chạy, telemetry cho thấy zero
-legacy usage và backup/restore đã được kiểm chứng.
+Không thực hiện destructive schema removal trước telemetry zero-usage, backup/export và restore test.

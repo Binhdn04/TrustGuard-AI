@@ -1,7 +1,7 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
 **Cập nhật:** 13/08/2026  
-**Trạng thái:** WP0–WP7 hoàn tất; sẵn sàng triển khai WP8
+**Trạng thái:** WP0–WP8 hoàn tất; sẵn sàng triển khai WP9
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
 
@@ -653,7 +653,7 @@ runtime producer nên không tính là deliverable WP7.
 
 ## 12. WP8 — Security Memory & Campaign
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 Security memory lưu structured intelligence có provenance: canonical domain/URL fingerprint, brand,
 threat type, risk/policy version, first/last seen, report count, admin verdict và evidence refs. Không
@@ -679,8 +679,34 @@ pattern, unrelated cases không cluster, time window, admin correction và prove
 Security path không phụ thuộc claim embeddings để cluster; cluster giải thích được bằng security
 signals; admin verdict/correction phản ánh trong memory mà không xóa audit history.
 
-**File/symbol cần sửa sau này:** `src/agents/campaign.py`, campaign contracts/store, PostgreSQL/SQLite
+**File/symbol thuộc phạm vi:** `src/agents/campaign.py`, campaign contracts/store, PostgreSQL/SQLite
 schema và admin campaign views.
+
+### Đã triển khai
+
+- Security v4 terminal producer tạo `SecurityMemoryRecordV4` idempotent từ context/risk/evidence đã
+  chuẩn hóa. Record chỉ giữ domain, URL hash đã bỏ query, redirect domain, claimed brand, scenario,
+  requested action, credential/OTP/payment flags và lexical feature; không giữ message, query token
+  hoặc raw conversation.
+- `security-fingerprint-v1` và `security-clustering-v1` cluster theo named signal. Security path không
+  gọi claim encoder/embedding; repeated domain, shared redirect, brand và scenario/action pattern đều
+  có aggregate signal giải thích được. SAFE/LOW_RISK/INSUFFICIENT_EVIDENCE và admin verdict
+  SAFE/FALSE_POSITIVE không tham gia hypothesis mới.
+- Campaign luôn bắt đầu ở `pending_review`. Confirm/reject yêu cầu Security Admin và reviewer note;
+  campaign audit giữ snapshot version/evidence. Không có broad-warning side effect trong WP8.
+- Memory correction cho phép reviewer cập nhật verdict nhiều lần; mỗi correction append audit chứa
+  previous/current verdict, reviewer, note, policy/fingerprint version và evidence refs. Lịch sử cũ
+  không bị ghi đè. Report v4 tăng `report_count` theo transaction.
+- SQLite và PostgreSQL có schema/store riêng cho security memory, campaign members và immutable audit;
+  migration head là `0014_security_memory_campaigns`. API admin v4 cung cấp memory list/correction và
+  campaign list/detail/decision/audit,
+  frontend hiển thị memory provenance, named cluster signals và review controls.
+- Legacy `campaign_claim_features` chỉ còn phục vụ compatibility path trước cutover; Security v4 producer
+  và clustering hoàn toàn không đọc bảng/vector này. Việc xóa legacy path thuộc WP9.
+
+**File/symbol đã triển khai:** `SecurityCampaignConfig`, `build_security_memory_record`,
+`cluster_security_memory`, `SecurityMemoryService`, security memory/campaign v4 contracts và admin API,
+PostgreSQL/SQLite repositories, `migrations/versions/0014_security_memory_campaigns.py`, admin platform UI.
 
 ---
 
@@ -744,7 +770,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP5 | DONE | 6 test conversation mới; full backend 272 pass/1 skip; Ruff pass | Không có; hosted PostgreSQL/retention-worker smoke vẫn là release evidence WP9 |
 | WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
 | WP7 | DONE | 6 test WP7 mới; full backend 279 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass | Scope deviation: BLOCK_DOMAIN, PUBLISH_BROAD_WARNING, Copilot chưa có sink; DISABLE_BLACKLIST chưa có v4 producer |
-| WP8 | NOT_STARTED | — | Toàn bộ WP8 |
+| WP8 | DONE | 9 test WP8 mới; full backend 288 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass; Alembic 0014 head | Không có; legacy claim-vector compatibility path được giữ đến cleanup WP9 nhưng Security v4 không phụ thuộc embeddings |
 | WP9 | NOT_STARTED | — | Toàn bộ WP9 |
 
 Trạng thái hợp lệ: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.

@@ -155,6 +155,20 @@ class OfficialVerificationVerdictV4(StrEnum):
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
+class SecurityMemoryAdminVerdictV4(StrEnum):
+    UNREVIEWED = "unreviewed"
+    SUSPICIOUS = "suspicious"
+    MALICIOUS = "malicious"
+    SAFE = "safe"
+    FALSE_POSITIVE = "false_positive"
+
+
+class SecurityCampaignReviewerStatusV4(StrEnum):
+    PENDING_REVIEW = "pending_review"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
 class InvestigationStepV4(SecurityContractModel):
     step_id: str = Field(pattern=r"^step-[a-f0-9]{12}$")
     tool: SecurityInvestigationToolV4
@@ -441,6 +455,110 @@ class SecurityAppealRecordV4(SecurityAppealCreateRequestV4):
     resolved_at: datetime | None = None
 
 
+class SecurityMemoryRecordV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    memory_id: UUID = Field(default_factory=uuid4)
+    analysis_id: UUID
+    canonical_domains: list[str] = Field(default_factory=list, max_length=10)
+    url_fingerprints: list[str] = Field(default_factory=list, max_length=10)
+    redirect_targets: list[str] = Field(default_factory=list, max_length=10)
+    claimed_brand: str | None = None
+    scenario: SecurityScenarioV4
+    requested_action: RequestedActionV4 | None = None
+    security_patterns: list[str] = Field(default_factory=list, max_length=20)
+    lexical_features: list[str] = Field(default_factory=list, max_length=30)
+    threat_type: PotentialThreatV4
+    risk: SecurityRiskV4
+    risk_policy_version: str
+    fingerprint_version: str = Field(default="security-fingerprint-v1", pattern=r"^[a-z0-9._-]+$")
+    first_seen_at: datetime
+    last_seen_at: datetime
+    report_count: int = Field(default=0, ge=0)
+    admin_verdict: SecurityMemoryAdminVerdictV4 = SecurityMemoryAdminVerdictV4.UNREVIEWED
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_seen_window(self) -> Self:
+        if self.last_seen_at < self.first_seen_at:
+            raise ValueError("last_seen_at must not be before first_seen_at")
+        return self
+
+
+class SecurityMemoryCorrectionRequestV4(SecurityContractModel):
+    verdict: SecurityMemoryAdminVerdictV4
+    note: str = Field(min_length=1, max_length=5000)
+
+    @model_validator(mode="after")
+    def reject_unreviewed_correction(self) -> Self:
+        if self.verdict is SecurityMemoryAdminVerdictV4.UNREVIEWED:
+            raise ValueError("admin correction requires a reviewed verdict")
+        return self
+
+
+class SecurityMemoryAuditRecordV4(SecurityContractModel):
+    audit_id: UUID = Field(default_factory=uuid4)
+    memory_id: UUID
+    previous_verdict: SecurityMemoryAdminVerdictV4
+    verdict: SecurityMemoryAdminVerdictV4
+    reviewer_id: str
+    note: str
+    occurred_at: datetime
+    risk_policy_version: str
+    fingerprint_version: str
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+
+class SecurityCampaignRecordV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    campaign_id: UUID
+    hypothesis: str
+    analysis_ids: list[UUID] = Field(min_length=3)
+    window_started_at: datetime
+    window_ended_at: datetime
+    aggregate_signals: dict[str, int]
+    reviewer_status: SecurityCampaignReviewerStatusV4 = SecurityCampaignReviewerStatusV4.PENDING_REVIEW
+    clustering_version: str = Field(default="security-clustering-v1", pattern=r"^[a-z0-9._-]+$")
+    evidence_refs: list[str] = Field(min_length=1, max_length=100)
+    reviewer_id: str | None = None
+    review_note: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_campaign_review(self) -> Self:
+        if self.window_ended_at < self.window_started_at:
+            raise ValueError("campaign window must end after it starts")
+        if len(set(self.analysis_ids)) != len(self.analysis_ids):
+            raise ValueError("campaign analysis_ids must be unique")
+        reviewed = self.reviewer_status is not SecurityCampaignReviewerStatusV4.PENDING_REVIEW
+        review_values = (self.reviewer_id, self.review_note, self.reviewed_at)
+        if (reviewed and not all(value is not None for value in review_values)) or (
+            not reviewed and any(value is not None for value in review_values)
+        ):
+            raise ValueError("reviewed campaign requires reviewer, note, and timestamp")
+        return self
+
+
+class SecurityCampaignDecisionRequestV4(SecurityContractModel):
+    decision: Literal[
+        SecurityCampaignReviewerStatusV4.CONFIRMED,
+        SecurityCampaignReviewerStatusV4.REJECTED,
+    ]
+    note: str = Field(min_length=1, max_length=5000)
+
+
+class SecurityCampaignAuditRecordV4(SecurityContractModel):
+    audit_id: UUID = Field(default_factory=uuid4)
+    campaign_id: UUID
+    previous_status: SecurityCampaignReviewerStatusV4
+    status: SecurityCampaignReviewerStatusV4
+    reviewer_id: str
+    note: str
+    occurred_at: datetime
+    clustering_version: str
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+
 __all__ = [
     "CONTRACT_VERSION_V4",
     "SECURITY_CONTEXT_VERSION",
@@ -484,4 +602,12 @@ __all__ = [
     "SecurityReportRecordV4",
     "SecurityAppealCreateRequestV4",
     "SecurityAppealRecordV4",
+    "SecurityMemoryAdminVerdictV4",
+    "SecurityMemoryRecordV4",
+    "SecurityMemoryCorrectionRequestV4",
+    "SecurityMemoryAuditRecordV4",
+    "SecurityCampaignReviewerStatusV4",
+    "SecurityCampaignRecordV4",
+    "SecurityCampaignDecisionRequestV4",
+    "SecurityCampaignAuditRecordV4",
 ]

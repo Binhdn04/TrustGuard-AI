@@ -8,6 +8,12 @@ import type {
   SecurityWebSocketTicketResponseV4,
   BrandRecordV4,
   WhitelistRecordV4,
+  SecurityCampaignAuditRecordV4,
+  SecurityCampaignRecordV4,
+  SecurityCampaignReviewerStatusV4,
+  SecurityMemoryAdminVerdictV4,
+  SecurityMemoryAuditRecordV4,
+  SecurityMemoryRecordV4,
 } from "@/types/generated/api-v4";
 
 import { ApiError } from "./http-analysis-api";
@@ -114,6 +120,34 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async listWhitelist(): Promise<WhitelistRecordV4[]> {
     return this.get<WhitelistRecordV4[]>("admin/whitelist");
+  }
+
+  async listSecurityMemory(): Promise<SecurityMemoryRecordV4[]> {
+    return this.get<SecurityMemoryRecordV4[]>("admin/security-memory");
+  }
+
+  async correctSecurityMemory(memoryId: string, request: { verdict: SecurityMemoryAdminVerdictV4; note: string }): Promise<SecurityMemoryRecordV4> {
+    return this.post<SecurityMemoryRecordV4>(`admin/security-memory/${encodeURIComponent(memoryId)}/corrections`, request);
+  }
+
+  async listSecurityMemoryAudit(memoryId: string): Promise<SecurityMemoryAuditRecordV4[]> {
+    return this.get<SecurityMemoryAuditRecordV4[]>(`admin/security-memory/${encodeURIComponent(memoryId)}/audit`);
+  }
+
+  async listSecurityCampaigns(): Promise<SecurityCampaignRecordV4[]> {
+    return this.get<SecurityCampaignRecordV4[]>("admin/security-campaigns");
+  }
+
+  async getSecurityCampaign(campaignId: string): Promise<SecurityCampaignRecordV4> {
+    return this.get<SecurityCampaignRecordV4>(`admin/security-campaigns/${encodeURIComponent(campaignId)}`);
+  }
+
+  async reviewSecurityCampaign(campaignId: string, request: { decision: Exclude<SecurityCampaignReviewerStatusV4, "pending_review">; note: string }): Promise<SecurityCampaignRecordV4> {
+    return this.post<SecurityCampaignRecordV4>(`admin/security-campaigns/${encodeURIComponent(campaignId)}/decision`, request);
+  }
+
+  async listSecurityCampaignAudit(campaignId: string): Promise<SecurityCampaignAuditRecordV4[]> {
+    return this.get<SecurityCampaignAuditRecordV4[]>(`admin/security-campaigns/${encodeURIComponent(campaignId)}/audit`);
   }
 
   private async get<T>(resource: string): Promise<T> {
