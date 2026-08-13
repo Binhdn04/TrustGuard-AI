@@ -16,6 +16,15 @@ from src.agents.campaign import (
     RepositoryCampaignObservationStore,
 )
 from src.agents.graph import build_openai_graph
+from src.agents.security_investigation import SecurityInvestigationService
+from src.agents.tools import (
+    GoogleWebRiskProvider,
+    GuardedRedirectResolver,
+    NormalizedRdapProvider,
+    ProductionUrlReputationCascade,
+    SafeDnsEvidenceResolver,
+    VirusTotalUrlProvider,
+)
 from src.agents.tools.advanced import OpenAIEmbeddingProvider
 from src.config import get_settings
 from src.core.auth import ConfiguredAuthenticator, Principal, UserRole
@@ -56,6 +65,70 @@ _source_registry = VersionedSourceRegistry(default_source_policies())
 @lru_cache
 def get_security_triage_scope_service() -> SecurityTriageScopeService:
     return SecurityTriageScopeService()
+
+
+@lru_cache
+def get_security_investigation_service() -> SecurityInvestigationService:
+    settings = get_settings()
+    postgres = settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
+    blacklist = (
+        PostgresPlatformRepository(
+            settings.database_url,
+            settings.database_encryption_key,
+            content_retention_days=settings.artifact_retention_days,
+        )
+        if postgres
+        else SQLiteBlacklistRepository(settings.security_database_path)
+    )
+    reputation = None
+    if settings.google_web_risk_api_key:
+        primary = GoogleWebRiskProvider(
+            settings.google_web_risk_api_key,
+            timeout=settings.provider_timeout_seconds,
+        )
+        secondary = (
+            VirusTotalUrlProvider(
+                settings.virustotal_api_key,
+                timeout=settings.provider_timeout_seconds,
+            )
+            if settings.virustotal_api_key
+            else None
+        )
+        reputation = ProductionUrlReputationCascade(
+            primary,
+            secondary,
+            allow_secondary=settings.reputation_secondary_enabled,
+            max_network_calls=settings.reputation_max_network_calls,
+        )
+    return SecurityInvestigationService(
+        blacklist=blacklist,
+        dns=SafeDnsEvidenceResolver(),
+        redirect=GuardedRedirectResolver(timeout=min(settings.provider_timeout_seconds, 5.0)),
+        rdap=NormalizedRdapProvider(timeout=min(settings.provider_timeout_seconds, 5.0)),
+        reputation=reputation,
+        execution_ledger=blacklist,
+        max_external_calls=settings.security_investigation_max_external_calls,
+        max_retries=settings.security_investigation_max_retries,
+        deadline_seconds=settings.security_investigation_deadline_seconds,
+    )
+
+
+async def close_security_investigation_service() -> None:
+    if get_security_investigation_service.cache_info().currsize == 0:
+        return
+    service = get_security_investigation_service()
+    get_security_investigation_service.cache_clear()
+    await service.aclose()
+
+
+async def resolve_security_investigation_service(request: Request) -> SecurityInvestigationService:
+    override = request.app.dependency_overrides.get(get_security_investigation_service)
+    if override is None:
+        return get_security_investigation_service()
+    service = override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
 
 
 def _effective_source_policies(configured):

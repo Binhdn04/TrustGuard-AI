@@ -1,7 +1,7 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
 **Cập nhật:** 13/08/2026  
-**Trạng thái:** WP0–WP1 hoàn tất; sẵn sàng triển khai WP2
+**Trạng thái:** WP0–WP2 hoàn tất; sẵn sàng triển khai WP3
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
 
@@ -285,15 +285,17 @@ path không gọi general fact-check.
 
 ## 6. WP2 — Security Planner & Evidence
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
-Tái sử dụng `planning_loop`, step transition, tool ledger, budget, deadline, retry, consent, SSRF,
-blacklist, redirect, RDAP và reputation. Thay policy planner hiện tại; không chỉ đổi prompt.
+V4 dùng planner/executor deterministic riêng, tái sử dụng stable `step_id_for`, local URL rules,
+`ToolExecutionLedger` và các adapter chuẩn hóa hiện có. Legacy `planning_loop` không bị sửa tại chỗ nên
+contract v2/v3 vẫn đóng băng; budget, deadline, retry, consent và SSRF được enforce trong executor v4.
 
 ### Planner policy
 
 - Planner deterministic chọn tool theo `SecurityContext`, consent, target đã normalize và tool budget.
-- LLM chỉ đề xuất priority trong allowlist; executor tự derive target từ state.
+- WP2 không nhận target hoặc plan từ LLM. Nếu thêm LLM priority sau này, đầu ra chỉ được chọn tool trong
+  allowlist; executor vẫn phải tự derive target từ `SecurityContext`.
 - Không tiếp tục behavior hiện tại là tự thêm mọi required tool/claim retriever.
 - No URL: không chạy network URL/domain tools.
 - No consent: chỉ chạy normalization, local rules/SSRF classification, local blacklist và local scam
@@ -305,7 +307,7 @@ Ví dụ:
 
 ```text
 phishing + URL
-→ local rules/blacklist → redirect → reputation + RDAP (+ DNS nếu có)
+→ local rules/blacklist → DNS safety → redirect → reputation + RDAP
 
 recruitment không URL
 → structured social-engineering/payment rules; không gọi URL provider
@@ -325,10 +327,11 @@ không persist raw provider response, OTP, password hoặc token.
 
 ### DNS
 
-DNS hiện chưa phải product tool. WP2 phải chọn một trong hai và ghi rõ trong Progress:
+WP2 đã chọn phương án 1: `SafeDnsEvidenceResolver` dùng `SsrfGuard.validate`, chỉ trả domain và số lượng
+IPv4/IPv6 public; không expose địa chỉ IP đã resolve. DNS failure dùng envelope v4 riêng để không thay đổi
+enum `ToolName` thuộc contract v3 đã đóng băng.
 
-1. thêm DNS evidence adapter dùng safe resolver/revalidation hiện có; hoặc
-2. hoãn DNS và ghi **scope deviation** — không được đánh dấu full scope complete.
+Redirect adapter tiếp tục revalidate DNS tại từng hop ngay trước network call.
 
 ### Test bắt buộc
 
@@ -341,8 +344,9 @@ bị bỏ qua, no-URL không gọi network và DNS behavior nếu được imple
 Mỗi provider call giải thích được từ plan; consent/SSRF được enforce ngay trước network call; lỗi được
 normalize; general fact-check không quay lại route vNext.
 
-**File/symbol cần sửa sau này:** `build_investigation_plan`, `_build_planning_loop_node`,
-`build_rule_check_node`, tool protocols/models và vNext evidence models.
+**File/symbol đã triển khai:** `SecurityInvestigationService`, `build_security_investigation_plan`,
+`SafeDnsEvidenceResolver`, DNS tool protocol/models, v4 investigation/evidence/error models,
+`get_security_investigation_service` và `/api/v4/analyses`.
 
 ---
 
@@ -644,7 +648,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 |---|---|---|---|
 | WP0 | DONE | Backend 203 pass/1 skip; Ruff pass; frontend 30 pass + lint/typecheck pass | Không có; hosted/PostgreSQL/Redis/E2E vẫn là release evidence WP9 |
 | WP1 | DONE | 22 test v4 mới; full backend 225 pass/1 skip; Ruff + frontend regression pass | Không có; planner/persistence/risk tiếp tục ở WP2/WP3 |
-| WP2 | NOT_STARTED | — | Toàn bộ WP2 |
+| WP2 | DONE | 12 test WP2 mới; targeted 42 pass; full backend 237 pass/1 skip; Ruff + frontend 30 test/lint/typecheck pass | Không có; DNS dùng safe resolver và privacy-minimized counts; risk/persistence cấp analysis tiếp tục ở WP3 |
 | WP3 | NOT_STARTED | — | Toàn bộ WP3 |
 | WP4 | NOT_STARTED | — | Toàn bộ WP4 |
 | WP5 | NOT_STARTED | — | Toàn bộ WP5 |

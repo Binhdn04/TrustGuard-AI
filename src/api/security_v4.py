@@ -1,7 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from src.api.dependencies import PrincipalDependency, SecurityTriageScopeServiceDependency
-from src.models import ErrorEnvelope, SecurityScopeResponseV4, SecurityTriageCreateRequestV4
+from src.api.dependencies import (
+    PrincipalDependency,
+    SecurityTriageScopeServiceDependency,
+    resolve_security_investigation_service,
+)
+from src.models import ErrorEnvelope, ScopeDecisionV4, SecurityScopeResponseV4, SecurityTriageCreateRequestV4
 
 router = APIRouter(tags=["security-triage-v4"])
 
@@ -17,9 +21,14 @@ async def scope_security_analysis_v4(
     request: SecurityTriageCreateRequestV4,
     service: SecurityTriageScopeServiceDependency,
     principal: PrincipalDependency,
+    http_request: Request,
 ) -> SecurityScopeResponseV4:
     del principal
-    return service.assess(request)
+    scoped = service.assess(request)
+    if scoped.scope_decision is not ScopeDecisionV4.IN_SCOPE:
+        return scoped
+    investigation = await resolve_security_investigation_service(http_request)
+    return await investigation.investigate(request, scoped)
 
 
 __all__ = ["router"]

@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
+    security_investigation_max_external_calls: int = Field(default=8, ge=1, le=100)
+    security_investigation_max_retries: int = Field(default=1, ge=0, le=3)
+    security_investigation_deadline_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
 
     # Demo auth
     demo_auth_enabled: bool = True

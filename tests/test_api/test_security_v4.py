@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from src.api.dependencies import get_analysis_service
+from src.api.dependencies import get_analysis_service, get_security_investigation_service
 from src.main import app
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
@@ -21,7 +21,11 @@ async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_
     def legacy_service_must_not_be_resolved():
         raise AssertionError("v4 scope route reached the legacy analysis service")
 
+    def investigation_must_not_be_resolved():
+        raise AssertionError("terminal scope route resolved the investigation service")
+
     app.dependency_overrides[get_analysis_service] = legacy_service_must_not_be_resolved
+    app.dependency_overrides[get_security_investigation_service] = investigation_must_not_be_resolved
     try:
         response = await client.post(
             "/api/v4/analyses",
@@ -30,6 +34,7 @@ async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_
         )
     finally:
         app.dependency_overrides.pop(get_analysis_service, None)
+        app.dependency_overrides.pop(get_security_investigation_service, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -41,7 +46,7 @@ async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_
 
 
 @pytest.mark.asyncio
-async def test_v4_in_scope_returns_context_without_starting_investigation(client, caplog) -> None:
+async def test_v4_in_scope_returns_context_and_completes_local_investigation(client, caplog) -> None:
     with caplog.at_level(logging.INFO, logger="trustguard.http"):
         response = await client.post(
             "/api/v4/analyses",
@@ -56,7 +61,11 @@ async def test_v4_in_scope_returns_context_without_starting_investigation(client
     body = response.json()
     assert body["scope_decision"] == "IN_SCOPE"
     assert body["terminal"] is False
-    assert body["next_step"] == "INVESTIGATION"
+    assert body["next_step"] == "RISK_ASSESSMENT"
+    assert body["investigation_status"] == "completed"
+    assert [step["tool"] for step in body["investigation_plan"]] == ["security_context_analysis"]
+    assert body["evidence"][0]["type"] == "security_context"
+    assert body["tool_calls_used"] == 0
     assert body["security_context"]["scenario"] == "recruitment"
     assert body["security_context"]["potential_threat"] == "RECRUITMENT_SCAM"
     assert body["limitations"] == []

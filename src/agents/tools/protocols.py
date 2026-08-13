@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from src.models import BlacklistLookupEntry, ClaimEvidence, DomainIntelligenceResult, UrlScanResult
 
 from .models import (
+    DnsResolutionEnvelope,
     FactCheckSearchResult,
     NormalizedToolResult,
     RedirectResolutionResult,
@@ -28,6 +29,10 @@ class UrlReputationCascade(Protocol):
 
 class RedirectResolver(Protocol):
     async def resolve(self, normalized_url: str) -> NormalizedToolResult[RedirectResolutionResult]: ...
+
+
+class DnsEvidenceProvider(Protocol):
+    async def resolve(self, normalized_url: str) -> DnsResolutionEnvelope: ...
 
 
 class RdapProvider(Protocol):

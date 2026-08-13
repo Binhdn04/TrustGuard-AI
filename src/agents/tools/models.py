@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Generic, Self, TypeVar
+from typing import Any, Generic, Literal, Self, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -165,6 +165,48 @@ class UrlReputationCascadeResult(ToolContractModel):
     verdict: Verdict
     provider_conflict: bool
     policy_version: str
+
+
+class DnsResolutionResult(ToolContractModel):
+    normalized_url: str
+    domain: str
+    address_count: int = Field(ge=1)
+    ipv4_count: int = Field(ge=0)
+    ipv6_count: int = Field(ge=0)
+    observed_at: datetime
+
+    @model_validator(mode="after")
+    def validate_address_counts(self) -> Self:
+        if self.ipv4_count + self.ipv6_count != self.address_count:
+            raise ValueError("DNS address family counts must equal address_count")
+        return self
+
+
+class DnsResolutionError(ToolContractModel):
+    tool: Literal["dns"] = "dns"
+    code: ToolErrorCode
+    message: str
+    retryable: bool
+    provider: str | None = None
+
+
+class DnsResolutionEnvelope(ToolContractModel):
+    status: ToolResultStatus
+    result: DnsResolutionResult | None = None
+    error: DnsResolutionError | None = None
+    cache: CacheMetadata
+    usage: UsageMetadata
+
+    @model_validator(mode="after")
+    def exactly_one_outcome(self) -> Self:
+        if self.status in {ToolResultStatus.SUCCESS, ToolResultStatus.INCONCLUSIVE}:
+            if self.result is None or self.error is not None:
+                raise ValueError("successful or inconclusive DNS outcome requires only a normalized result")
+        elif self.result is not None or self.error is None:
+            raise ValueError("blocked or failed DNS outcome requires only a normalized error")
+        if self.cache.status is CacheStatus.HIT and self.usage.network_calls != 0:
+            raise ValueError("DNS cache hit cannot record a network call")
+        return self
 
 
 class RedirectResolutionStatus(StrEnum):

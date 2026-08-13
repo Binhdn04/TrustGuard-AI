@@ -8,6 +8,7 @@ from src.agents.tools.advanced import (
     reciprocal_rank_fusion,
 )
 from src.agents.tools.cache import CachedValue, VersionedMemoryCache
+from src.agents.tools.dns import SafeDnsEvidenceResolver
 from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import (
@@ -22,6 +23,9 @@ from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
     CorpusCandidate,
+    DnsResolutionEnvelope,
+    DnsResolutionError,
+    DnsResolutionResult,
     EmbeddingBatch,
     EmbeddingVector,
     ExtractedWebEvidence,
@@ -47,6 +51,7 @@ from src.agents.tools.network import GuardedHttpClient, SsrfGuard, SsrfPolicy
 from src.agents.tools.protocols import (
     BlacklistRepository,
     ClaimRetriever,
+    DnsEvidenceProvider,
     DomainIntelligence,
     FactCheckCorpus,
     RdapProvider,
@@ -74,6 +79,10 @@ __all__ = [
     "CacheStatus",
     "ClaimRetriever",
     "DomainIntelligence",
+    "DnsEvidenceProvider",
+    "DnsResolutionEnvelope",
+    "DnsResolutionError",
+    "DnsResolutionResult",
     "FactCheckCorpus",
     "FactCheckCorpusMatch",
     "FactCheckCorpusRecord",
@@ -119,6 +128,7 @@ __all__ = [
     "GuardedHttpClient",
     "SsrfGuard",
     "SsrfPolicy",
+    "SafeDnsEvidenceResolver",
     "ToolCallError",
     "UnsafeUrlError",
     "build_provider_adapters",
