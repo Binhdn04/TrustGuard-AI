@@ -4,8 +4,8 @@ Tài liệu này là roadmap rút gọn. Trạng thái WP, command test và scop
 [SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md](SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md). Trạng thái code tổng
 thể nằm tại [implementation-status.md](implementation-status.md).
 
-**Hiện tại:** Phase 0–3 và phần Security Memory/Campaign của Phase 4 đã hoàn thành qua WP0–WP8.
-Legacy cutover/cleanup và release evidence thuộc WP9.
+**Hiện tại:** Security v4, frontend workspace và local WP9 evaluation/cutover tooling đã hoàn thành;
+hosted release evidence, restore/zero-usage window và destructive cleanup còn lại trong WP9.
 
 ## Phase 0 — Product boundary và scope gate — DONE FOR SECURITY V4
 
@@ -14,7 +14,8 @@ Legacy cutover/cleanup và release evidence thuộc WP9.
 - [x] Test terminal out-of-scope không resolve investigation hoặc legacy analysis service.
 - [x] Security frontend không hiển thị claim stance, medical/news examples hoặc screenshot semantics.
 - [x] Security v4 risk không dùng legacy rule `REFUTES => MALICIOUS`.
-- [ ] Freeze và disable toàn bộ legacy writer/source-discovery product profile — WP9.
+- [x] Có cutover config để freeze legacy write/source-discovery và fail-fast nếu production profile sai — WP9.
+- [ ] Kích hoạt freeze và chứng minh zero usage trên deployment thật — WP9.
 
 Exit hiện đạt cho Security v4; legacy code/schema vẫn tồn tại có chủ đích cho compatibility.
 
@@ -50,10 +51,20 @@ Exit: safe official, domain mismatch only, Unicode/homograph và official-not-fo
 - [x] Admin views cho action audit, brand, whitelist, memory và campaign.
 - [ ] Execution sink thật cho `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Copilot — chỉ triển khai khi
   có downstream system thật; hiện approved attempt phải `FAILED/ACTION_SINK_NOT_CONFIGURED`.
-- [ ] Dedicated domain/threat explorer và audit-log browser tổng hợp — WP9 product hardening.
+- [x] Dedicated domain/threat explorer và unified v4 audit API/browser.
 
 Exit đạt cho individual warning và blacklist action: user warning không chờ admin; side effect không thể
 bypass review/audit. Không tuyên bố wide-action coverage cho action chưa có sink.
+
+### WP9A — API readiness và contract freeze — DONE
+
+- [x] Truthful capabilities/release profile; công bố action execution vẫn dùng v3 trong compatibility window.
+- [x] Owner-scoped analysis/conversation pages và resume contract.
+- [x] Admin report/appeal queue, terminal review decision, RBAC/conflict protection và immutable audit.
+- [x] Paginated/filter/search pages cho trust, memory, campaign; domain/threat explorer và unified v4 audit.
+- [x] PostgreSQL/SQLite persistence, Alembic `0015`, OpenAPI/contract/repository regression tests.
+- [x] Frontend dùng contract v4 cho chat/case workspace, history, Observatory, Review Room, Trust và Audit;
+  contract v3 chỉ còn ở reviewed-action/compatibility surface có nhãn rõ.
 
 ## Phase 4 — Security Memory, campaign và legacy removal — PARTIAL
 
@@ -67,7 +78,8 @@ bypass review/audit. Không tuyên bố wide-action coverage cho action chưa c�
 
 ### Còn lại ở WP9
 
-- [ ] Freeze toàn bộ writer vào `fact_check_*` và source-discovery tables.
+- [x] Có deployment switch chặn legacy API writes và cutover validator tắt source discovery/promotion.
+- [ ] Kích hoạt switch sau khi drain legacy jobs và chứng minh provider/DB không còn writer.
 - [ ] Đo zero legacy reader/writer qua compatibility window.
 - [ ] Backup/export/restore rehearsal cho dữ liệu cần giữ.
 - [ ] Archive/drop legacy tables, claim vectors và pgvector khi không còn consumer.
@@ -76,22 +88,23 @@ bypass review/audit. Không tuyên bố wide-action coverage cho action chưa c�
 Exit chỉ đạt khi production profile không import/configure/call general fact-check modules và rollback
 evidence đã được lưu.
 
-## Phase 5 — Evaluation và release evidence — NOT_STARTED (WP9)
+## Phase 5 — Evaluation và release evidence — IN PROGRESS (WP9)
 
-- [ ] Versioned evaluation set theo threat, safe/mismatch/no-hit/OOS/multi-turn/wide-action.
-- [ ] Báo cáo routing accuracy, provider-call rate, precision/recall/false-positive, grounding,
+- [x] Versioned deterministic evaluation set theo threat, safe/mismatch/no-hit/OOS/multi-turn/wide-action.
+- [x] Báo cáo routing accuracy, provider-call rate, precision/recall/false-positive, grounding,
   latency và cost.
 - [ ] Hosted deployment smoke với OIDC, PostgreSQL worker/readiness, Redis và real security providers.
 - [ ] PostgreSQL migration upgrade/downgrade, backup/restore và retention verification.
 - [ ] Load, SSRF/redirect, auth/RBAC, prompt-injection, lease-loss và idempotency tests.
-- [ ] Runbook provider disable, scoring/schema rollback, incident response và retention.
+- [x] Runbook provider disable, scoring/schema rollback, incident response, retention, restore và compatibility window.
 
 ## Dependency order còn lại
 
 ```text
 WP0–WP8 complete
-  → freeze legacy writers
-  → versioned evaluation + hosted smoke
+  → API readiness + frontend workspace complete
+  → local versioned evaluation + freeze tooling complete
+  → activate freeze + hosted smoke
   → compatibility telemetry reaches zero
   → backup/restore and rollback rehearsal
   → remove legacy routes/providers/schema

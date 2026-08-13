@@ -5,6 +5,7 @@ import time
 from uuid import uuid4
 
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from src.core.product_boundary import product_route_metadata
 
@@ -12,12 +13,33 @@ logger = logging.getLogger("trustguard.http")
 
 
 class StructuredRequestLogMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, *, legacy_api_writes_enabled: bool = True) -> None:
+        super().__init__(app)
+        self._legacy_api_writes_enabled = legacy_api_writes_enabled
+
     async def dispatch(self, request, call_next):
         request_id = request.headers.get("x-request-id", str(uuid4()))[:128]
         started = time.monotonic()
-        response = await call_next(request)
-        response.headers["x-request-id"] = request_id
         product_route = product_route_metadata(request.url.path, request.method)
+        if (
+            product_route is not None
+            and product_route.compatibility_usage == "legacy_write"
+            and not self._legacy_api_writes_enabled
+        ):
+            response = JSONResponse(
+                status_code=409,
+                content={
+                    "error": {
+                        "code": "CONFLICT",
+                        "message": "Legacy analysis writes are frozen; use /api/v4.",
+                        "retryable": False,
+                        "details": {"replacement_contract": "v4"},
+                    }
+                },
+            )
+        else:
+            response = await call_next(request)
+        response.headers["x-request-id"] = request_id
         product_fields = (
             {
                 "api_contract": product_route.api_contract,

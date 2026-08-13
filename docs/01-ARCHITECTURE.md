@@ -12,14 +12,15 @@ Runtime hiện có hai profile tách biệt:
 - `/api/v2` và `/api/v3` là legacy analysis compatibility path. V3 admin review/action/metrics vẫn được
   v4 tái sử dụng ở những chỗ đã có hạ tầng đúng semantics.
 
-Middleware chỉ phân loại route theo path/method để ghi `security_read/security_write` hoặc
-`legacy_read/legacy_write`; không đọc body, query hay token. Việc freeze và xóa legacy writer thuộc WP9.
+Middleware chỉ phân loại route theo path/method để ghi `security_*`, `legacy_*` hoặc `reviewed_action_*`;
+không đọc body, query hay token. Cutover config đã có thể chặn legacy writes; deployment thật chưa kích hoạt
+freeze hoặc hoàn tất zero-usage window.
 
 ## 2. Kiến trúc Security v4 hiện tại
 
 ```mermaid
 flowchart TD
-    UI[Next.js Security Chat] --> API[FastAPI /api/v4]
+    UI[Next.js Investigation Workspace / Review Room] --> API[FastAPI /api/v4]
     API --> Auth[Demo token dev hoặc OIDC/JWKS]
     API --> Scope[Security scope + structured context]
     Scope -->|OUT_OF_SCOPE| Boundary[Terminal boundary; zero investigation calls]
@@ -74,12 +75,13 @@ Các invariant đang enforce:
 
 ## 4. Conversation, persistence và privacy
 
-`SecurityAnalysisService` quản lý owner-scoped analysis, report, appeal và conversation. Conversation
-dùng optimistic `conversation_version`, redacted structured summary và retention interval. Raw private
-message không được persist trong Security v4 analysis/memory.
+`SecurityAnalysisService` quản lý owner-scoped analysis, report, appeal và conversation. Analysis và
+conversation có additive paginated API cho frontend mới; route list cũ vẫn giữ array response trong
+compatibility window. Conversation dùng optimistic `conversation_version`, redacted structured summary
+và retention interval. Raw private message không được persist trong Security v4 analysis/memory.
 
 SQLite là durable local/dev store. PostgreSQL là production source of truth và có Alembic schema đến
-`0014_security_memory_campaigns`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
+`0015_security_api_readiness`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
 hình; không phải source of truth.
 
 Security Memory chỉ giữ canonical domain, query-free URL fingerprint, redirect domain, claimed brand,
@@ -101,9 +103,13 @@ Chỉ `ADD_TO_BLACKLIST` có execution sink thật và ảnh hưởng lookup sau
 `PUBLISH_BROAD_WARNING` và AI Copilot chưa có sink; approved attempt phải kết thúc `FAILED` với reason
 code, không được giả là đã execute.
 
-Admin product hiện có action/audit, brand, whitelist, Security Memory correction, campaign
-review/audit, report/appeal và operations views. Dedicated domain/threat explorer và audit browser tổng
-hợp vẫn là phần hoàn thiện/cutover của WP9.
+Admin API hiện có paginated/search/filter contracts cho brand, whitelist, Security Memory, campaign,
+report/appeal queue, domain/threat intelligence và unified v4 audit. Bounded endpoint
+`GET /api/v4/admin/analyses/{analysis_id}` cho phép `security_admin` đọc structured/privacy-minimized case
+để review feedback mà không trả owner hoặc raw conversation. Frontend đã consume history,
+conversation, explorer, feedback, trust, unified audit và case-detail contracts trong case workspace,
+Observatory, Review Room, Trust lifecycle và Audit. Reviewed-action detail/audit/decision tiếp tục dùng contract
+v3 có nhãn compatibility; metrics/source discovery v3 chỉ xuất hiện trong compatibility surface riêng.
 
 ## 6. Hạ tầng legacy còn được giữ
 

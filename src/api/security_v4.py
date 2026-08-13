@@ -24,31 +24,56 @@ from src.api.dependencies import (
     resolve_security_memory_service,
     resolve_wave2_service,
 )
+from src.config import get_settings
 from src.core.errors import PlatformError
 from src.models import (
     AnalysisStatus,
+    AppealStatus,
     BrandCreateRequestV4,
+    BrandPageV4,
     BrandRecordV4,
     ErrorCode,
     ErrorEnvelope,
+    PotentialThreatV4,
+    ReportStatus,
     ScopeDecisionV4,
+    SecurityAdminAuditPageV4,
     SecurityAnalysisEventPageV4,
+    SecurityAnalysisPageV4,
+    SecurityAppealAdminRecordV4,
     SecurityAppealCreateRequestV4,
+    SecurityAppealDecisionRequestV4,
+    SecurityAppealPageV4,
     SecurityAppealRecordV4,
+    SecurityAuditResourceV4,
     SecurityCampaignAuditRecordV4,
     SecurityCampaignDecisionRequestV4,
+    SecurityCampaignPageV4,
     SecurityCampaignRecordV4,
+    SecurityCampaignReviewerStatusV4,
+    SecurityCapabilitiesResponseV4,
+    SecurityConversationPageV4,
     SecurityConversationV4,
+    SecurityDomainIntelligencePageV4,
+    SecurityMemoryAdminVerdictV4,
     SecurityMemoryAuditRecordV4,
     SecurityMemoryCorrectionRequestV4,
+    SecurityMemoryPageV4,
     SecurityMemoryRecordV4,
+    SecurityReportAdminRecordV4,
     SecurityReportCreateRequestV4,
+    SecurityReportDecisionRequestV4,
+    SecurityReportPageV4,
     SecurityReportRecordV4,
+    SecurityRiskV4,
     SecurityScopeResponseV4,
+    SecurityThreatIntelligencePageV4,
     SecurityTriageCreateRequestV4,
     SecurityWebSocketTicketRequestV4,
     SecurityWebSocketTicketResponseV4,
+    TrustLifecycleV4,
     WhitelistCreateRequestV4,
+    WhitelistPageV4,
     WhitelistRecordV4,
 )
 
@@ -79,6 +104,15 @@ def _decode_cursor(cursor: str | None) -> int:
             message="The event cursor is invalid.",
             retryable=False,
         ) from exc
+
+
+def _page(items: list, limit: int, offset: int) -> tuple[list, int]:
+    return items[offset : offset + limit], len(items)
+
+
+@router.get("/capabilities", response_model=SecurityCapabilitiesResponseV4)
+async def security_capabilities_v4() -> SecurityCapabilitiesResponseV4:
+    return SecurityCapabilitiesResponseV4(release_profile=get_settings().security_release_profile)
 
 
 @router.post("/analyses", response_model=SecurityScopeResponseV4, responses=_COMMON_ERRORS)
@@ -144,6 +178,32 @@ async def list_security_memory_v4(
     return await memory.list_memory(principal)
 
 
+@router.get("/admin/security-memory/page", response_model=SecurityMemoryPageV4, responses=_COMMON_ERRORS)
+async def page_security_memory_v4(
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+    q: str | None = Query(default=None, max_length=253),
+    risk: SecurityRiskV4 | None = None,
+    verdict: SecurityMemoryAdminVerdictV4 | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityMemoryPageV4:
+    records = await memory.list_memory(principal)
+    if q:
+        needle = q.casefold()
+        records = [
+            item for item in records
+            if needle in (item.claimed_brand or "").casefold()
+            or any(needle in domain.casefold() for domain in item.canonical_domains)
+        ]
+    if risk is not None:
+        records = [item for item in records if item.risk is risk]
+    if verdict is not None:
+        records = [item for item in records if item.admin_verdict is verdict]
+    items, total = _page(records, limit, offset)
+    return SecurityMemoryPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
 @router.post(
     "/admin/security-memory/{memory_id}/corrections",
     response_model=SecurityMemoryRecordV4,
@@ -181,6 +241,27 @@ async def list_security_campaigns_v4(
     principal: PrincipalDependency,
 ) -> list[SecurityCampaignRecordV4]:
     return await memory.list_campaigns(principal)
+
+
+@router.get(
+    "/admin/security-campaigns/page", response_model=SecurityCampaignPageV4, responses=_COMMON_ERRORS
+)
+async def page_security_campaigns_v4(
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+    status: SecurityCampaignReviewerStatusV4 | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityCampaignPageV4:
+    records = await memory.list_campaigns(principal)
+    if status is not None:
+        records = [item for item in records if item.reviewer_status is status]
+    if q:
+        needle = q.casefold()
+        records = [item for item in records if needle in item.hypothesis.casefold()]
+    items, total = _page(records, limit, offset)
+    return SecurityCampaignPageV4(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get(
@@ -224,6 +305,81 @@ async def security_campaign_audit_v4(
 
 
 @router.get(
+    "/admin/intelligence/domains",
+    response_model=SecurityDomainIntelligencePageV4,
+    responses=_COMMON_ERRORS,
+)
+async def list_security_domain_intelligence_v4(
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+    q: str | None = Query(default=None, max_length=253),
+    risk: SecurityRiskV4 | None = None,
+    threat_type: PotentialThreatV4 | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityDomainIntelligencePageV4:
+    records = await memory.domain_intelligence(principal)
+    if q:
+        needle = q.casefold()
+        records = [item for item in records if needle in item.domain.casefold()]
+    if risk is not None:
+        records = [item for item in records if item.risk_distribution.get(risk, 0) > 0]
+    if threat_type is not None:
+        records = [item for item in records if item.threat_distribution.get(threat_type, 0) > 0]
+    items, total = _page(records, limit, offset)
+    return SecurityDomainIntelligencePageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get(
+    "/admin/intelligence/threats",
+    response_model=SecurityThreatIntelligencePageV4,
+    responses=_COMMON_ERRORS,
+)
+async def list_security_threat_intelligence_v4(
+    memory: SecurityMemoryServiceDependency,
+    principal: PrincipalDependency,
+    risk: SecurityRiskV4 | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityThreatIntelligencePageV4:
+    records = await memory.threat_intelligence(principal)
+    if risk is not None:
+        records = [item for item in records if item.risk_distribution.get(risk, 0) > 0]
+    items, total = _page(records, limit, offset)
+    return SecurityThreatIntelligencePageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/admin/audit", response_model=SecurityAdminAuditPageV4, responses=_COMMON_ERRORS)
+async def list_security_admin_audit_v4(
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+    resource_type: SecurityAuditResourceV4 | None = None,
+    action: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityAdminAuditPageV4:
+    records = await analyses.list_admin_audit(principal)
+    if resource_type is not None:
+        records = [item for item in records if item.resource_type is resource_type]
+    if action:
+        records = [item for item in records if item.action == action]
+    items, total = _page(records, limit, offset)
+    return SecurityAdminAuditPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/conversations", response_model=SecurityConversationPageV4, responses=_COMMON_ERRORS)
+async def list_security_conversations_v4(
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityConversationPageV4:
+    records = await analyses.list_conversations_for(principal)
+    items, total = _page(records, limit, offset)
+    return SecurityConversationPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get(
     "/conversations/{conversation_id}", response_model=SecurityConversationV4, responses=_COMMON_ERRORS
 )
 async def get_security_conversation_v4(
@@ -248,6 +404,30 @@ async def list_brands_v4(
     admin: SecurityTrustAdminServiceDependency, principal: PrincipalDependency
 ) -> list[BrandRecordV4]:
     return await admin.list_brands(principal)
+
+
+@router.get("/admin/brands/page", response_model=BrandPageV4, responses=_COMMON_ERRORS)
+async def page_brands_v4(
+    admin: SecurityTrustAdminServiceDependency,
+    principal: PrincipalDependency,
+    lifecycle: TrustLifecycleV4 | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> BrandPageV4:
+    records = await admin.list_brands(principal)
+    if lifecycle is not None:
+        records = [item for item in records if item.lifecycle is lifecycle]
+    if q:
+        needle = q.casefold()
+        records = [
+            item for item in records
+            if needle in item.name.casefold()
+            or any(needle in alias.casefold() for alias in item.aliases)
+            or any(needle in domain.casefold() for domain in item.official_domains)
+        ]
+    items, total = _page(records, limit, offset)
+    return BrandPageV4(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.post("/admin/brands/{brand_id}/disable", response_model=BrandRecordV4, responses=_COMMON_ERRORS)
@@ -277,6 +457,25 @@ async def list_whitelist_v4(
     return await admin.list_whitelist(principal)
 
 
+@router.get("/admin/whitelist/page", response_model=WhitelistPageV4, responses=_COMMON_ERRORS)
+async def page_whitelist_v4(
+    admin: SecurityTrustAdminServiceDependency,
+    principal: PrincipalDependency,
+    lifecycle: TrustLifecycleV4 | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> WhitelistPageV4:
+    records = await admin.list_whitelist(principal)
+    if lifecycle is not None:
+        records = [item for item in records if item.lifecycle is lifecycle]
+    if q:
+        needle = q.casefold()
+        records = [item for item in records if needle in item.indicator.casefold()]
+    items, total = _page(records, limit, offset)
+    return WhitelistPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
 @router.post(
     "/admin/whitelist/{whitelist_id}/disable", response_model=WhitelistRecordV4, responses=_COMMON_ERRORS
 )
@@ -286,6 +485,125 @@ async def disable_whitelist_v4(
     principal: PrincipalDependency,
 ) -> WhitelistRecordV4:
     return await admin.disable_whitelist(str(whitelist_id), principal)
+
+
+@router.get("/analyses/page", response_model=SecurityAnalysisPageV4, responses=_COMMON_ERRORS)
+async def page_security_analyses_v4(
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+    scope_decision: ScopeDecisionV4 | None = None,
+    risk: SecurityRiskV4 | None = None,
+    threat_type: PotentialThreatV4 | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityAnalysisPageV4:
+    records = await analyses.list_for(principal)
+    if scope_decision is not None:
+        records = [item for item in records if item.scope_decision is scope_decision]
+    if risk is not None:
+        records = [item for item in records if item.risk is risk]
+    if threat_type is not None:
+        records = [item for item in records if item.threat_type is threat_type]
+    if q:
+        needle = q.casefold()
+        records = [
+            item for item in records
+            if item.security_context is not None
+            and (
+                needle in (item.security_context.claimed_entity or "").casefold()
+                or any(needle in url.casefold() for url in item.security_context.urls)
+            )
+        ]
+    items, total = _page(records, limit, offset)
+    return SecurityAnalysisPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/admin/reports", response_model=SecurityReportPageV4, responses=_COMMON_ERRORS)
+async def list_security_reports_admin_v4(
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+    status: ReportStatus | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityReportPageV4:
+    records = await analyses.list_reports_admin(principal, status=status)
+    if q:
+        needle = q.casefold()
+        records = [
+            item for item in records
+            if needle in item.owner_id.casefold()
+            or needle in item.reason.casefold()
+            or needle in (item.comment or "").casefold()
+            or needle in str(item.analysis_id)
+        ]
+    items, total = _page(records, limit, offset)
+    return SecurityReportPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get(
+    "/admin/analyses/{analysis_id}",
+    response_model=SecurityScopeResponseV4,
+    responses=_COMMON_ERRORS,
+)
+async def get_security_analysis_admin_v4(
+    analysis_id: UUID,
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityScopeResponseV4:
+    return await analyses.get_for_admin(analysis_id, principal)
+
+
+@router.post(
+    "/admin/reports/{report_id}/decision",
+    response_model=SecurityReportAdminRecordV4,
+    responses=_COMMON_ERRORS,
+)
+async def decide_security_report_admin_v4(
+    report_id: UUID,
+    request: SecurityReportDecisionRequestV4,
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityReportAdminRecordV4:
+    return await analyses.decide_report(report_id, request.decision, request.note, principal)
+
+
+@router.get("/admin/appeals", response_model=SecurityAppealPageV4, responses=_COMMON_ERRORS)
+async def list_security_appeals_admin_v4(
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+    status: AppealStatus | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityAppealPageV4:
+    records = await analyses.list_appeals_admin(principal, status=status)
+    if q:
+        needle = q.casefold()
+        records = [
+            item for item in records
+            if needle in item.owner_id.casefold()
+            or needle in item.reason.casefold()
+            or needle in (item.comment or "").casefold()
+            or needle in str(item.analysis_id)
+        ]
+    items, total = _page(records, limit, offset)
+    return SecurityAppealPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/admin/appeals/{appeal_id}/decision",
+    response_model=SecurityAppealAdminRecordV4,
+    responses=_COMMON_ERRORS,
+)
+async def decide_security_appeal_admin_v4(
+    appeal_id: UUID,
+    request: SecurityAppealDecisionRequestV4,
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityAppealAdminRecordV4:
+    return await analyses.decide_appeal(appeal_id, request.outcome, request.note, principal)
 
 
 @router.get("/analyses/{analysis_id}", response_model=SecurityScopeResponseV4, responses=_COMMON_ERRORS)

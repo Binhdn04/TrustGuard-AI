@@ -1,24 +1,57 @@
 import type { ErrorEnvelope } from "@/types/analysis";
 import type {
+  BrandCreateRequestV4,
+  BrandPageV4,
+  BrandRecordV4,
+  SecurityAdminAuditPageV4,
   SecurityAnalysisEventPageV4,
+  SecurityAnalysisPageV4,
+  SecurityAppealAdminRecordV4,
+  SecurityAppealCreateRequestV4,
+  SecurityAppealDecisionRequestV4,
+  SecurityAppealPageV4,
   SecurityAppealRecordV4,
+  SecurityCampaignAuditRecordV4,
+  SecurityCampaignDecisionRequestV4,
+  SecurityCampaignPageV4,
+  SecurityCampaignRecordV4,
+  SecurityCapabilitiesResponseV4,
+  SecurityConversationPageV4,
+  SecurityConversationV4,
+  SecurityDomainIntelligencePageV4,
+  SecurityMemoryAuditRecordV4,
+  SecurityMemoryCorrectionRequestV4,
+  SecurityMemoryPageV4,
+  SecurityMemoryRecordV4,
+  SecurityReportAdminRecordV4,
+  SecurityReportCreateRequestV4,
+  SecurityReportDecisionRequestV4,
+  SecurityReportPageV4,
   SecurityReportRecordV4,
   SecurityScopeResponseV4,
+  SecurityThreatIntelligencePageV4,
   SecurityTriageCreateRequestV4,
   SecurityWebSocketTicketResponseV4,
-  BrandRecordV4,
+  WhitelistCreateRequestV4,
+  WhitelistPageV4,
   WhitelistRecordV4,
-  SecurityCampaignAuditRecordV4,
-  SecurityCampaignRecordV4,
-  SecurityCampaignReviewerStatusV4,
-  SecurityMemoryAdminVerdictV4,
-  SecurityMemoryAuditRecordV4,
-  SecurityMemoryRecordV4,
 } from "@/types/generated/api-v4";
 
 import { ApiError } from "./http-analysis-api";
 import type { AnalysisEventQuery } from "./analysis-api.types";
-import type { SecurityAnalysisApi } from "./security-analysis-api.types";
+import type {
+  SecurityAdminAuditQuery,
+  SecurityAnalysisApi,
+  SecurityAnalysisPageQuery,
+  SecurityAppealPageQuery,
+  SecurityCampaignPageQuery,
+  SecurityDomainIntelligenceQuery,
+  SecurityMemoryPageQuery,
+  SecurityPaginationQuery,
+  SecurityReportPageQuery,
+  SecurityThreatIntelligenceQuery,
+  SecurityTrustPageQuery,
+} from "./security-analysis-api.types";
 
 const DEFAULT_API_URL = "http://localhost:8000";
 type AccessTokenProvider = () => string | null | undefined;
@@ -27,9 +60,25 @@ async function readJson<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as T | ErrorEnvelope;
   if (!response.ok) {
     const error = (payload as ErrorEnvelope).error;
-    throw new ApiError(error?.message ?? "Không thể kết nối tới dịch vụ bảo mật.", error?.code ?? "HTTP_ERROR", error?.retryable ?? response.status >= 500, response.status);
+    throw new ApiError(
+      error?.message ?? "Không thể kết nối tới dịch vụ bảo mật.",
+      error?.code ?? "HTTP_ERROR",
+      error?.retryable ?? response.status >= 500,
+      response.status,
+    );
   }
   return payload as T;
+}
+
+function withQuery(resource: string, query?: object): string {
+  if (!query) return resource;
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if ((typeof value === "string" && value.length > 0) || typeof value === "number") {
+      search.set(key, String(value));
+    }
+  }
+  return search.size ? `${resource}?${search.toString()}` : resource;
 }
 
 export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
@@ -50,55 +99,55 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     };
   }
 
+  async getCapabilities(): Promise<SecurityCapabilitiesResponseV4> {
+    return this.get<SecurityCapabilitiesResponseV4>("capabilities");
+  }
+
   async createAnalysis(request: SecurityTriageCreateRequestV4): Promise<SecurityScopeResponseV4> {
-    const response = await fetch(`${this.baseUrl}/api/v4/analyses`, {
-      method: "POST",
-      credentials: "include",
-      headers: this.headers(true),
-      body: JSON.stringify(request),
-    });
-    return readJson<SecurityScopeResponseV4>(response);
+    return this.post<SecurityScopeResponseV4>("analyses", request);
   }
 
   async getAnalysis(analysisId: string): Promise<SecurityScopeResponseV4> {
-    const response = await fetch(`${this.baseUrl}/api/v4/analyses/${encodeURIComponent(analysisId)}`, {
-      credentials: "include",
-      headers: this.headers(),
-    });
-    return readJson<SecurityScopeResponseV4>(response);
+    return this.get<SecurityScopeResponseV4>(`analyses/${encodeURIComponent(analysisId)}`);
+  }
+
+  async getAdminAnalysis(analysisId: string): Promise<SecurityScopeResponseV4> {
+    return this.get<SecurityScopeResponseV4>(`admin/analyses/${encodeURIComponent(analysisId)}`);
   }
 
   async listAnalyses(): Promise<SecurityScopeResponseV4[]> {
-    const response = await fetch(`${this.baseUrl}/api/v4/analyses`, {
-      credentials: "include",
-      headers: this.headers(),
-    });
-    return readJson<SecurityScopeResponseV4[]>(response);
+    return this.get<SecurityScopeResponseV4[]>("analyses");
   }
 
-  async getAnalysisEvents(analysisId: string, query: AnalysisEventQuery = {}): Promise<SecurityAnalysisEventPageV4> {
-    const search = new URLSearchParams();
-    if (query.cursor) search.set("cursor", query.cursor);
-    if (query.limit !== undefined) search.set("limit", String(query.limit));
-    const suffix = search.size ? `?${search.toString()}` : "";
-    const response = await fetch(`${this.baseUrl}/api/v4/analyses/${encodeURIComponent(analysisId)}/events${suffix}`, {
-      credentials: "include",
-      headers: this.headers(),
-    });
-    return readJson<SecurityAnalysisEventPageV4>(response);
+  async pageAnalyses(query: SecurityAnalysisPageQuery = {}): Promise<SecurityAnalysisPageV4> {
+    return this.get<SecurityAnalysisPageV4>(withQuery("analyses/page", query));
+  }
+
+  async getConversation(conversationId: string): Promise<SecurityConversationV4> {
+    return this.get<SecurityConversationV4>(`conversations/${encodeURIComponent(conversationId)}`);
+  }
+
+  async listConversations(query: SecurityPaginationQuery = {}): Promise<SecurityConversationPageV4> {
+    return this.get<SecurityConversationPageV4>(withQuery("conversations", query));
+  }
+
+  async getAnalysisEvents(
+    analysisId: string,
+    query: AnalysisEventQuery = {},
+  ): Promise<SecurityAnalysisEventPageV4> {
+    return this.get<SecurityAnalysisEventPageV4>(
+      withQuery(`analyses/${encodeURIComponent(analysisId)}/events`, query),
+    );
   }
 
   async createWebSocketTicket(analysisId: string): Promise<SecurityWebSocketTicketResponseV4> {
-    const response = await fetch(`${this.baseUrl}/api/v4/ws-tickets`, {
-      method: "POST",
-      credentials: "include",
-      headers: this.headers(true),
-      body: JSON.stringify({ analysis_id: analysisId }),
-    });
-    return readJson<SecurityWebSocketTicketResponseV4>(response);
+    return this.post<SecurityWebSocketTicketResponseV4>("ws-tickets", { analysis_id: analysisId });
   }
 
-  async reportAnalysis(analysisId: string, request: { reason: string; comment?: string }): Promise<SecurityReportRecordV4> {
+  async reportAnalysis(
+    analysisId: string,
+    request: SecurityReportCreateRequestV4,
+  ): Promise<SecurityReportRecordV4> {
     return this.post<SecurityReportRecordV4>(`analyses/${encodeURIComponent(analysisId)}/reports`, request);
   }
 
@@ -106,7 +155,10 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     return this.get<SecurityReportRecordV4[]>(`analyses/${encodeURIComponent(analysisId)}/reports`);
   }
 
-  async createAppeal(analysisId: string, request: { reason: string; comment?: string | null }): Promise<SecurityAppealRecordV4> {
+  async createAppeal(
+    analysisId: string,
+    request: SecurityAppealCreateRequestV4,
+  ): Promise<SecurityAppealRecordV4> {
     return this.post<SecurityAppealRecordV4>(`analyses/${encodeURIComponent(analysisId)}/appeals`, request);
   }
 
@@ -114,49 +166,159 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     return this.get<SecurityAppealRecordV4[]>(`analyses/${encodeURIComponent(analysisId)}/appeals`);
   }
 
+  async listAdminReports(query: SecurityReportPageQuery = {}): Promise<SecurityReportPageV4> {
+    return this.get<SecurityReportPageV4>(withQuery("admin/reports", query));
+  }
+
+  async decideAdminReport(
+    reportId: string,
+    request: SecurityReportDecisionRequestV4,
+  ): Promise<SecurityReportAdminRecordV4> {
+    return this.post<SecurityReportAdminRecordV4>(
+      `admin/reports/${encodeURIComponent(reportId)}/decision`,
+      request,
+    );
+  }
+
+  async listAdminAppeals(query: SecurityAppealPageQuery = {}): Promise<SecurityAppealPageV4> {
+    return this.get<SecurityAppealPageV4>(withQuery("admin/appeals", query));
+  }
+
+  async decideAdminAppeal(
+    appealId: string,
+    request: SecurityAppealDecisionRequestV4,
+  ): Promise<SecurityAppealAdminRecordV4> {
+    return this.post<SecurityAppealAdminRecordV4>(
+      `admin/appeals/${encodeURIComponent(appealId)}/decision`,
+      request,
+    );
+  }
+
+  async createBrand(request: BrandCreateRequestV4): Promise<BrandRecordV4> {
+    return this.post<BrandRecordV4>("admin/brands", request);
+  }
+
   async listBrands(): Promise<BrandRecordV4[]> {
     return this.get<BrandRecordV4[]>("admin/brands");
+  }
+
+  async pageBrands(query: SecurityTrustPageQuery = {}): Promise<BrandPageV4> {
+    return this.get<BrandPageV4>(withQuery("admin/brands/page", query));
+  }
+
+  async disableBrand(brandId: string): Promise<BrandRecordV4> {
+    return this.post<BrandRecordV4>(`admin/brands/${encodeURIComponent(brandId)}/disable`);
+  }
+
+  async createWhitelist(request: WhitelistCreateRequestV4): Promise<WhitelistRecordV4> {
+    return this.post<WhitelistRecordV4>("admin/whitelist", request);
   }
 
   async listWhitelist(): Promise<WhitelistRecordV4[]> {
     return this.get<WhitelistRecordV4[]>("admin/whitelist");
   }
 
+  async pageWhitelist(query: SecurityTrustPageQuery = {}): Promise<WhitelistPageV4> {
+    return this.get<WhitelistPageV4>(withQuery("admin/whitelist/page", query));
+  }
+
+  async disableWhitelist(whitelistId: string): Promise<WhitelistRecordV4> {
+    return this.post<WhitelistRecordV4>(
+      `admin/whitelist/${encodeURIComponent(whitelistId)}/disable`,
+    );
+  }
+
   async listSecurityMemory(): Promise<SecurityMemoryRecordV4[]> {
     return this.get<SecurityMemoryRecordV4[]>("admin/security-memory");
   }
 
-  async correctSecurityMemory(memoryId: string, request: { verdict: SecurityMemoryAdminVerdictV4; note: string }): Promise<SecurityMemoryRecordV4> {
-    return this.post<SecurityMemoryRecordV4>(`admin/security-memory/${encodeURIComponent(memoryId)}/corrections`, request);
+  async pageSecurityMemory(query: SecurityMemoryPageQuery = {}): Promise<SecurityMemoryPageV4> {
+    return this.get<SecurityMemoryPageV4>(withQuery("admin/security-memory/page", query));
+  }
+
+  async correctSecurityMemory(
+    memoryId: string,
+    request: SecurityMemoryCorrectionRequestV4,
+  ): Promise<SecurityMemoryRecordV4> {
+    return this.post<SecurityMemoryRecordV4>(
+      `admin/security-memory/${encodeURIComponent(memoryId)}/corrections`,
+      request,
+    );
   }
 
   async listSecurityMemoryAudit(memoryId: string): Promise<SecurityMemoryAuditRecordV4[]> {
-    return this.get<SecurityMemoryAuditRecordV4[]>(`admin/security-memory/${encodeURIComponent(memoryId)}/audit`);
+    return this.get<SecurityMemoryAuditRecordV4[]>(
+      `admin/security-memory/${encodeURIComponent(memoryId)}/audit`,
+    );
   }
 
   async listSecurityCampaigns(): Promise<SecurityCampaignRecordV4[]> {
     return this.get<SecurityCampaignRecordV4[]>("admin/security-campaigns");
   }
 
-  async getSecurityCampaign(campaignId: string): Promise<SecurityCampaignRecordV4> {
-    return this.get<SecurityCampaignRecordV4>(`admin/security-campaigns/${encodeURIComponent(campaignId)}`);
+  async pageSecurityCampaigns(
+    query: SecurityCampaignPageQuery = {},
+  ): Promise<SecurityCampaignPageV4> {
+    return this.get<SecurityCampaignPageV4>(withQuery("admin/security-campaigns/page", query));
   }
 
-  async reviewSecurityCampaign(campaignId: string, request: { decision: Exclude<SecurityCampaignReviewerStatusV4, "pending_review">; note: string }): Promise<SecurityCampaignRecordV4> {
-    return this.post<SecurityCampaignRecordV4>(`admin/security-campaigns/${encodeURIComponent(campaignId)}/decision`, request);
+  async getSecurityCampaign(campaignId: string): Promise<SecurityCampaignRecordV4> {
+    return this.get<SecurityCampaignRecordV4>(
+      `admin/security-campaigns/${encodeURIComponent(campaignId)}`,
+    );
+  }
+
+  async reviewSecurityCampaign(
+    campaignId: string,
+    request: SecurityCampaignDecisionRequestV4,
+  ): Promise<SecurityCampaignRecordV4> {
+    return this.post<SecurityCampaignRecordV4>(
+      `admin/security-campaigns/${encodeURIComponent(campaignId)}/decision`,
+      request,
+    );
   }
 
   async listSecurityCampaignAudit(campaignId: string): Promise<SecurityCampaignAuditRecordV4[]> {
-    return this.get<SecurityCampaignAuditRecordV4[]>(`admin/security-campaigns/${encodeURIComponent(campaignId)}/audit`);
+    return this.get<SecurityCampaignAuditRecordV4[]>(
+      `admin/security-campaigns/${encodeURIComponent(campaignId)}/audit`,
+    );
+  }
+
+  async listDomainIntelligence(
+    query: SecurityDomainIntelligenceQuery = {},
+  ): Promise<SecurityDomainIntelligencePageV4> {
+    return this.get<SecurityDomainIntelligencePageV4>(
+      withQuery("admin/intelligence/domains", query),
+    );
+  }
+
+  async listThreatIntelligence(
+    query: SecurityThreatIntelligenceQuery = {},
+  ): Promise<SecurityThreatIntelligencePageV4> {
+    return this.get<SecurityThreatIntelligencePageV4>(
+      withQuery("admin/intelligence/threats", query),
+    );
+  }
+
+  async listAdminAudit(query: SecurityAdminAuditQuery = {}): Promise<SecurityAdminAuditPageV4> {
+    return this.get<SecurityAdminAuditPageV4>(withQuery("admin/audit", query));
   }
 
   private async get<T>(resource: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, { credentials: "include", headers: this.headers() });
+    const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, {
+      credentials: "include",
+      headers: this.headers(),
+    });
     return readJson<T>(response);
   }
 
-  private async post<T>(resource: string, body: unknown): Promise<T> {
-    const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, { method: "POST", credentials: "include", headers: this.headers(true), body: JSON.stringify(body) });
+  private async post<T>(resource: string, body?: unknown): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, {
+      method: "POST",
+      credentials: "include",
+      headers: this.headers(body !== undefined),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
     return readJson<T>(response);
   }
 }

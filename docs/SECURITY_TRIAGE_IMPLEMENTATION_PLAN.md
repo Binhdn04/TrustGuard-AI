@@ -1,7 +1,9 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
-**Cập nhật:** 13/08/2026  
-**Trạng thái:** WP0–WP8 hoàn tất; sẵn sàng triển khai WP9
+**Cập nhật:** 14/08/2026
+
+**Trạng thái:** WP0–WP8, API/frontend WP9 và local evaluation/cutover tooling hoàn tất; hosted release/cutover đang triển khai
+
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
 
@@ -50,44 +52,11 @@ medical/science, sports, deepfake và malware sandbox vẫn ngoài scope theo `s
 
 ---
 
-## 2. Hiện trạng đã đối chiếu với source
+## 2. Nguồn trạng thái hiện tại
 
-Các nhận định dưới đây mô tả code ngày 13/08/2026, không phải capability đề xuất.
-
-| Khu vực | Hiện trạng xác minh | Bằng chứng chính |
-|---|---|---|
-| API/runtime | `/api/v2` và `/api/v3` vẫn là legacy; `/api/v4/analyses` đã có contract scope/context riêng, chưa chạy investigation | `src/main.py`, `src/api/security_v4.py`, `src/models/security_v4.py` |
-| Input | Legacy `classify_input` vẫn phân loại text/URL; v4 đã có deterministic Security Scope Gate | `src/agents/nodes/extraction.py`, `src/agents/security_scope.py` |
-| Workflow | Legacy graph không đổi và vẫn qua fact-check/`risk-v2`; v4 dừng thật ở OOS/NEED_MORE_INFO và chỉ bàn giao IN_SCOPE + `SecurityContextV4` cho WP2 | `src/agents/graph.py`, `src/services/security_triage.py` |
-| Planner | Có deterministic executor, budget, deadline, retry và consent gate; nhưng planner hiện luôn bổ sung URL scanner, domain intelligence và claim retriever khi có target tương ứng | `src/agents/nodes/planning.py`, `src/agents/graph.py` |
-| URL safety | Có normalization, local credential/punycode/lure rules, blacklist, guarded redirect, RDAP và reputation cascade | `src/agents/nodes/rules.py`, `src/agents/nodes/tools.py`, `src/agents/tools/` |
-| DNS | Resolver hiện phục vụ SSRF/network validation; chưa có DNS evidence tool độc lập | `src/agents/tools/network.py` |
-| Fact-check | `FactCheckOrchestrator`, Google Fact Check, Tavily, corpus/embeddings và claim comparator vẫn ở legacy active path; v4 không import/gọi chúng | `src/agents/fact_check.py`, `src/agents/graph.py`, `src/api/security_v4.py` |
-| Risk | Legacy deterministic `risk-v2` vẫn có rule claim-refuted; v4 chưa chạy risk, đúng phạm vi trước WP3 | `src/agents/nodes/risk.py`, `src/models/schemas.py` |
-| Security context | V4 có schema versioned cho entity/scenario/action/amount/urgency/URL/credential/OTP/payment/impersonation/threat; chưa dùng LLM cho case mơ hồ | `src/models/security_v4.py`, `src/agents/security_scope.py` |
-| Persistence/worker | Có SQLite local và PostgreSQL implementation cho lifecycle; PostgreSQL có lease, retry/idempotency, outbox và Redis notification | `src/services/analysis.py`, `src/services/durable_worker.py`, `src/repositories/blacklist.py`, `src/repositories/postgres.py` |
-| Trust data | Có approved blacklist; chưa có first-class whitelist, brand registry/matcher hoặc bounded `OfficialClaimVerifier` | `src/repositories/blacklist.py`, `src/repositories/postgres.py` |
-| Conversation | Chưa có `conversation_id`, conversation model/API hoặc case-memory summary | `src/models/schemas.py`, `migrations/versions/` |
-| Admin/HITL | Có report, review, appeal, admin action và campaign APIs. `propose_admin_action()` có ở repository nhưng không có runtime caller. PostgreSQL chỉ áp dụng side effect thật cho add/disable blacklist; memory v3 chỉ đổi trạng thái review | `src/services/platform_wave2.py`, `src/repositories/postgres.py`, `src/api/platform_v3.py` |
-| Campaign | Cluster theo registrable domain, redirect target và claim vector; claim-vector path vẫn mang semantics fact-check | `src/agents/campaign.py`, `migrations/versions/0007_runtime_integration.py` |
-| Frontend | Main flow là form một lượt “Fact-Check AI”, dùng claim stance; đã có HTTP, WebSocket/polling, history, report và appeal để tái sử dụng | `frontend/src/components/analysis/`, `frontend/src/lib/api/` |
-| Screenshot | Capture/artifact có code và UI nhưng không nằm trong `scope.md` hiện tại | `src/services/screenshot.py`, `frontend/src/components/analysis/screenshot-artifact-panel.tsx` |
-| Migration | Alembic hiện tới `0008_source_discovery`; có `fact_check_*`, source-discovery, pgvector và `campaign_claim_features` legacy | `migrations/versions/` |
-
-“PostgreSQL implementation” không đồng nghĩa đã được xác minh trên hosted production. Lần baseline này
-chưa chạy PostgreSQL/Redis service thật, browser E2E, live-provider smoke, load test hoặc backup/restore.
-
-### Baseline test ngày 13/08/2026
-
-| Kiểm tra | Kết quả |
-|---|---|
-| Backend `pytest -q` | 225 passed, 1 skipped (gồm test WP0–WP1) |
-| Backend `ruff check --no-cache .` | Pass |
-| Frontend `npm test` | 30 passed trong 6 files |
-| Frontend `npm run lint` | Pass |
-| Frontend `tsc --noEmit --incremental false` | Pass |
-
-Các test này bảo vệ contract hiện tại; chúng không chứng minh Security Triage vNext đã đạt scope.
+Trạng thái code, capability partial/deprecated và test gần nhất nằm tại
+[implementation-status.md](implementation-status.md). Tài liệu này chỉ giữ thứ tự WP, quyết định kỹ thuật và
+release gate; không duy trì thêm một bản audit source riêng dễ lỗi thời.
 
 ---
 
@@ -103,7 +72,7 @@ Trước khi code WP1, chốt đúng một cơ chế cutover:
 - legacy v2/v3 được giữ riêng trong compatibility window;
 - settings chỉ dùng để bật/tắt capability thực sự cần vận hành, không tạo ba flag chồng chéo.
 
-Hiện source chỉ có các flag source-discovery/provisional/auto-promotion; chưa có general
+Tại thời điểm WP0, source chỉ có các flag source-discovery/provisional/auto-promotion; chưa có general
 fact-check/security-vNext flag. Tên setting mới phải theo snake_case của `src/config.py` và env alias tự
 động của Pydantic Settings.
 
@@ -712,7 +681,31 @@ PostgreSQL/SQLite repositories, `migrations/versions/0014_security_memory_campai
 
 ## 13. WP9 — Cutover, Evaluation & Cleanup
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS`
+
+### WP9A — API readiness và contract freeze — `DONE`
+
+Hoàn tất additive API surface để đợt thay frontend không phải phụ thuộc vào legacy fact-check contract:
+
+- `GET /api/v4/capabilities` công bố đúng release profile `pre_cutover`, action contract v3 đang tái sử
+  dụng, sink thật và các action/Copilot còn deferred;
+- thêm owner-scoped paginated analysis history và conversation listing, giữ nguyên list response cũ để
+  không phá frontend hiện tại;
+- thêm paginated/filter/search contracts cho brand, whitelist, Security Memory và campaign;
+- thêm admin report/appeal queue và atomic terminal decision với RBAC, conflict protection, reviewer/note;
+- thêm domain/threat intelligence explorer và unified v4 audit cho trust, memory, campaign, report/appeal;
+- PostgreSQL/SQLite persistence và revision `0015_security_api_readiness`; contract/OpenAPI, owner/RBAC,
+  lifecycle, audit và SQLite reopen đều có automated test.
+
+`/api/v3/admin/actions` tiếp tục là reviewed-action execution contract trong compatibility window; WP9A
+không giả lập v4 sink cho `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` hoặc Copilot. Các API cũ không đổi kiểu
+response, không có destructive migration và không sửa frontend.
+
+### Frontend investigation workspace — `DONE`
+
+Frontend dùng typed v4 client cho chat-to-case workspace, history/resume, evidence/timeline, Observatory,
+Review Room, Trust và Audit. Reviewed-action cùng metrics/source discovery v3 được cô lập trong compatibility
+surface. Responsive, accessibility, polling/WebSocket fallback, production build và Chromium E2E đã qua.
 
 ### Evaluation/release gate
 
@@ -771,7 +764,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
 | WP7 | DONE | 6 test WP7 mới; full backend 279 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass | Scope deviation: BLOCK_DOMAIN, PUBLISH_BROAD_WARNING, Copilot chưa có sink; DISABLE_BLACKLIST chưa có v4 producer |
 | WP8 | DONE | 9 test WP8 mới; full backend 288 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass; Alembic 0014 head | Không có; legacy claim-vector compatibility path được giữ đến cleanup WP9 nhưng Security v4 không phụ thuộc embeddings |
-| WP9 | NOT_STARTED | — | Toàn bộ WP9 |
+| WP9 | IN_PROGRESS | API/frontend readiness; `scope_decision` filter; hardened production env; versioned 16-category offline evaluation; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Backend 315 pass/1 skip; frontend 88 pass/18 files; Ruff/lint/typecheck/build pass; Alembic 0015 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load evidence, restore rehearsal, API/provider/job/DB zero-usage window hoặc legacy cleanup; v4 vẫn inline nên profile đúng là `pre_cutover` |
 
 Trạng thái hợp lệ: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
 

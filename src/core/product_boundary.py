@@ -8,7 +8,14 @@ SECURITY_TRIAGE_API_PREFIX = "/api/v4"
 SECURITY_TRIAGE_CONTRACT_VERSION = "v4"
 
 ProductProfile = Literal["legacy_analysis", "security_triage_vnext"]
-CompatibilityUsage = Literal["legacy_read", "legacy_write", "security_read", "security_write"]
+CompatibilityUsage = Literal[
+    "legacy_read",
+    "legacy_write",
+    "security_read",
+    "security_write",
+    "reviewed_action_read",
+    "reviewed_action_write",
+]
 
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -27,6 +34,12 @@ def _matches_prefix(path: str, prefix: str) -> bool:
 def product_route_metadata(path: str, method: str) -> ProductRouteMetadata | None:
     """Classify versioned product traffic without inspecting query strings or bodies."""
     is_read = method.upper() in _READ_METHODS
+    if _matches_prefix(path, "/api/v3/admin/actions"):
+        return ProductRouteMetadata(
+            api_contract="v3",
+            product_profile="security_triage_vnext",
+            compatibility_usage="reviewed_action_read" if is_read else "reviewed_action_write",
+        )
     for prefix in LEGACY_API_PREFIXES:
         if _matches_prefix(path, prefix):
             return ProductRouteMetadata(

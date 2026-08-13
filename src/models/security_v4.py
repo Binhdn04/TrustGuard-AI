@@ -8,7 +8,13 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.core.product_boundary import SECURITY_TRIAGE_CONTRACT_VERSION
-from src.models.schemas import AnalysisStatus, AppealOutcome, AppealStatus, ReportStatus
+from src.models.schemas import (
+    AnalysisStatus,
+    AppealOutcome,
+    AppealStatus,
+    ReportReviewDecision,
+    ReportStatus,
+)
 
 CONTRACT_VERSION_V4 = SECURITY_TRIAGE_CONTRACT_VERSION
 SECURITY_CONTEXT_VERSION = "security-context-v1"
@@ -251,6 +257,22 @@ class WhitelistRecordV4(WhitelistCreateRequestV4):
     created_at: datetime
 
 
+class BrandPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[BrandRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class WhitelistPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[WhitelistRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
 class OfficialSourceFindingV4(SecurityContractModel):
     source_url: str
     finding: Literal["confirmed", "contradicted"]
@@ -413,6 +435,24 @@ class SecurityAnalysisEventPageV4(SecurityContractModel):
     next_cursor: str | None = None
 
 
+class SecurityCapabilitiesResponseV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    product_profile: Literal["security_triage_vnext"] = "security_triage_vnext"
+    release_profile: Literal["pre_cutover", "cutover"] = "pre_cutover"
+    conversation_resume: Literal[True] = True
+    admin_feedback_review: Literal[True] = True
+    intelligence_explorer: Literal[True] = True
+    unified_v4_audit: Literal[True] = True
+    admin_action_contract: Literal["v3"] = "v3"
+    executable_admin_actions: list[str] = Field(default_factory=lambda: ["add_to_blacklist"])
+    deferred_admin_actions: list[str] = Field(
+        default_factory=lambda: ["block_domain", "publish_broad_warning", "ai_security_copilot"]
+    )
+    compatibility_contracts: list[Literal["v2", "v3", "v4"]] = Field(
+        default_factory=lambda: ["v2", "v3", "v4"]
+    )
+
+
 class SecurityWebSocketTicketRequestV4(SecurityContractModel):
     analysis_id: UUID
 
@@ -436,7 +476,37 @@ class SecurityReportRecordV4(SecurityReportCreateRequestV4):
     report_id: UUID = Field(default_factory=uuid4)
     analysis_id: UUID
     status: ReportStatus = ReportStatus.SUBMITTED
+    decision: ReportReviewDecision | None = None
+    reviewer_id: str | None = None
+    review_note: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    reviewed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_review(self) -> Self:
+        review_fields = (self.decision, self.reviewer_id, self.review_note, self.reviewed_at)
+        if self.status is ReportStatus.PROCESSED and any(value is None for value in review_fields):
+            raise ValueError("processed report requires decision, reviewer, note and timestamp")
+        if self.status is not ReportStatus.PROCESSED and any(value is not None for value in review_fields):
+            raise ValueError("unprocessed report cannot contain review fields")
+        return self
+
+
+class SecurityReportDecisionRequestV4(SecurityContractModel):
+    decision: ReportReviewDecision
+    note: str = Field(min_length=1, max_length=5000)
+
+
+class SecurityReportAdminRecordV4(SecurityReportRecordV4):
+    owner_id: str
+
+
+class SecurityReportPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityReportAdminRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
 
 
 class SecurityAppealCreateRequestV4(SecurityContractModel):
@@ -451,8 +521,51 @@ class SecurityAppealRecordV4(SecurityAppealCreateRequestV4):
     status: AppealStatus = AppealStatus.SUBMITTED
     outcome: AppealOutcome | None = None
     resolution_note: str | None = None
+    reviewer_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     resolved_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> Self:
+        resolution_fields = (self.outcome, self.resolution_note, self.reviewer_id, self.resolved_at)
+        if self.status is AppealStatus.RESOLVED and any(value is None for value in resolution_fields):
+            raise ValueError("resolved appeal requires outcome, note, reviewer and timestamp")
+        if self.status is not AppealStatus.RESOLVED and any(value is not None for value in resolution_fields):
+            raise ValueError("unresolved appeal cannot contain resolution fields")
+        return self
+
+
+class SecurityAppealDecisionRequestV4(SecurityContractModel):
+    outcome: AppealOutcome
+    note: str = Field(min_length=1, max_length=5000)
+
+
+class SecurityAppealAdminRecordV4(SecurityAppealRecordV4):
+    owner_id: str
+
+
+class SecurityAppealPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityAppealAdminRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class SecurityAnalysisPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityScopeResponseV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class SecurityConversationPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityConversationV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
 
 
 class SecurityMemoryRecordV4(SecurityContractModel):
@@ -508,6 +621,14 @@ class SecurityMemoryAuditRecordV4(SecurityContractModel):
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
 
 
+class SecurityMemoryPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityMemoryRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
 class SecurityCampaignRecordV4(SecurityContractModel):
     contract_version: Literal["v4"] = CONTRACT_VERSION_V4
     campaign_id: UUID
@@ -559,6 +680,80 @@ class SecurityCampaignAuditRecordV4(SecurityContractModel):
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
 
 
+class SecurityCampaignPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityCampaignRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class SecurityDomainIntelligenceV4(SecurityContractModel):
+    domain: str
+    analysis_count: int = Field(ge=1)
+    report_count: int = Field(ge=0)
+    risk_distribution: dict[SecurityRiskV4, int]
+    threat_distribution: dict[PotentialThreatV4, int]
+    first_seen_at: datetime
+    last_seen_at: datetime
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+
+class SecurityDomainIntelligencePageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityDomainIntelligenceV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class SecurityThreatIntelligenceV4(SecurityContractModel):
+    threat_type: PotentialThreatV4
+    analysis_count: int = Field(ge=1)
+    report_count: int = Field(ge=0)
+    risk_distribution: dict[SecurityRiskV4, int]
+    domains: list[str] = Field(default_factory=list, max_length=100)
+    first_seen_at: datetime
+    last_seen_at: datetime
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+
+class SecurityThreatIntelligencePageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityThreatIntelligenceV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class SecurityAuditResourceV4(StrEnum):
+    BRAND = "brand"
+    WHITELIST = "whitelist"
+    MEMORY = "memory"
+    CAMPAIGN = "campaign"
+    REPORT = "report"
+    APPEAL = "appeal"
+
+
+class SecurityAdminAuditEventV4(SecurityContractModel):
+    audit_id: UUID = Field(default_factory=uuid4)
+    resource_type: SecurityAuditResourceV4
+    resource_id: UUID
+    action: str = Field(min_length=1, max_length=100)
+    actor_id: str
+    note: str | None = Field(default=None, max_length=5000)
+    occurred_at: datetime
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+
+class SecurityAdminAuditPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityAdminAuditEventV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
 __all__ = [
     "CONTRACT_VERSION_V4",
     "SECURITY_CONTEXT_VERSION",
@@ -566,6 +761,7 @@ __all__ = [
     "PotentialThreatV4",
     "BrandCreateRequestV4",
     "BrandRecordV4",
+    "BrandPageV4",
     "InvestigationStepV4",
     "RequestedActionV4",
     "ScopeDecisionV4",
@@ -591,23 +787,42 @@ __all__ = [
     "SecurityRiskV4",
     "SecurityWebSocketTicketRequestV4",
     "SecurityWebSocketTicketResponseV4",
+    "SecurityCapabilitiesResponseV4",
     "TrustLifecycleV4",
     "WhitelistCreateRequestV4",
     "WhitelistRecordV4",
+    "WhitelistPageV4",
     "WhitelistScopeV4",
     "SecurityScopeResponseV4",
     "SecurityTriageCreateRequestV4",
     "SecurityToolErrorV4",
     "SecurityReportCreateRequestV4",
     "SecurityReportRecordV4",
+    "SecurityReportDecisionRequestV4",
+    "SecurityReportAdminRecordV4",
+    "SecurityReportPageV4",
     "SecurityAppealCreateRequestV4",
     "SecurityAppealRecordV4",
+    "SecurityAppealDecisionRequestV4",
+    "SecurityAppealAdminRecordV4",
+    "SecurityAppealPageV4",
+    "SecurityAnalysisPageV4",
+    "SecurityConversationPageV4",
     "SecurityMemoryAdminVerdictV4",
     "SecurityMemoryRecordV4",
     "SecurityMemoryCorrectionRequestV4",
     "SecurityMemoryAuditRecordV4",
+    "SecurityMemoryPageV4",
     "SecurityCampaignReviewerStatusV4",
     "SecurityCampaignRecordV4",
     "SecurityCampaignDecisionRequestV4",
     "SecurityCampaignAuditRecordV4",
+    "SecurityCampaignPageV4",
+    "SecurityDomainIntelligenceV4",
+    "SecurityDomainIntelligencePageV4",
+    "SecurityThreatIntelligenceV4",
+    "SecurityThreatIntelligencePageV4",
+    "SecurityAuditResourceV4",
+    "SecurityAdminAuditEventV4",
+    "SecurityAdminAuditPageV4",
 ]

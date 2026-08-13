@@ -18,6 +18,7 @@
 | `0012_security_feedback` | Security v4 reports và appeals |
 | `0013_security_hitl_actions` | v4 action proposal/execution state và immutable decision audit |
 | `0014_security_memory_campaigns` | explainable security memory, campaign members và correction/review audit |
+| `0015_security_api_readiness` | report-review status/index và immutable v4 feedback audit |
 
 Production repository có implementation cho durable analysis, owner reads, reports/review, appeals,
 admin actions, blacklist, source/corpus, legacy campaigns, Security v4 memory/campaigns, artifacts,
@@ -39,7 +40,10 @@ retention và operations metrics.
 - `security_whitelist`, `security_brands`, `security_trust_audit` giữ provenance/lifecycle/reviewer.
 - `security_memory` giữ domain/fingerprint/brand/threat/risk/first-last seen/report count/admin verdict.
 - `security_campaigns_v4`, members và audit giữ hypothesis/review history không dùng claim vectors.
-- Action, memory và campaign đều có audit table/index riêng; không ghi đè lịch sử reviewer.
+- `security_feedback_audit_v4` giữ append-only report/appeal decision; report/appeal status có index phục vụ
+  admin page/filter.
+- Trust, action, memory, campaign và feedback đều có audit table/index riêng; unified v4 API chỉ tổng hợp,
+  không ghi đè lịch sử reviewer. Reviewed action execution vẫn thuộc contract v3 trong compatibility window.
 
 ## 4. Legacy schema cần freeze rồi remove
 
@@ -53,8 +57,8 @@ retention và operations metrics.
 ## 5. Migration sequence
 
 1. **Additive:** thêm scope decision, conversations, whitelist, brand mappings và security memory.
-2. **Dual-read có giới hạn:** contract mới đọc security schema; legacy path vẫn riêng biệt dưới flag.
-3. **Cutover:** frontend/API/worker chỉ dùng product path mới; ngừng legacy writer/job/provider.
+2. **Compatibility có giới hạn:** contract v4 đọc security schema; legacy path vẫn tách riêng.
+3. **Cutover:** frontend/API dùng v4; drain legacy worker rồi ngừng legacy writer/job/provider.
 4. **Observe:** đo zero reader/writer và hoàn tất retention/export decision.
 5. **Destructive:** drop legacy FK/index/table/extension trong revision riêng.
 6. **Verify:** upgrade từ database trống và database `0008`; backup/restore và downgrade/restore smoke.
@@ -68,6 +72,8 @@ retention và operations metrics.
 - Official verification `NOT_FOUND` được lưu đúng enum, không biến thành contradiction.
 - Evidence không chứa raw provider body, OTP, password, token hoặc raw private conversation.
 - Corrective decision append record mới, không xóa immutable audit history.
+- Report chỉ chuyển terminal một lần sang `processed`; appeal chỉ chuyển terminal một lần sang `resolved`;
+  transition lặp lại trả conflict và không append audit thứ hai.
 
 Không chạy migration destructive chỉ để làm docs khớp scope. Việc xóa schema cần telemetry, backup và
 operator approval riêng.

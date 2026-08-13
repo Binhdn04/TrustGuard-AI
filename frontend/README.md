@@ -1,9 +1,8 @@
-# AI PROTECT Frontend
+# TrustGuard AI Frontend
 
-Next.js frontend cho AI Security Triage Assistant: user gửi message/URL đáng ngờ, theo dõi
-investigation và nhận cảnh báo phishing/scam/impersonation. Runtime mặc định dùng contract `/api/v3`;
-mock adapter chỉ được bật rõ ràng cho phát triển component hoặc fixture offline. Product boundary
-canonical nằm tại [`docs/scope.md`](../docs/scope.md); general fact-check không phải product flow.
+Next.js investigation workspace cho Security Triage. Product path dùng `/api/v4`; reviewed-action execution
+tiếp tục dùng `/api/v3` có nhãn trong compatibility window. General fact-check metrics và source discovery v3
+chỉ xuất hiện tại `/admin/compatibility`.
 
 ## Chạy local
 
@@ -13,53 +12,62 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Cấu hình kết nối backend thật:
+Kết nối backend thật:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_USE_MOCK_API=false
 ```
 
-Trong môi trường local còn dùng demo auth của backend, có thể thêm:
+Nếu backend local bật demo auth:
 
 ```env
 NEXT_PUBLIC_DEMO_USER_TOKEN=dev-user-token
 NEXT_PUBLIC_DEMO_ADMIN_TOKEN=dev-admin-token
 ```
 
-Hosted production không được cấu hình hai demo token trên. Thay vào đó, đặt `NEXT_PUBLIC_OIDC_LOGIN_URL` và lưu access token nhận được từ callback OIDC vào `ai_protect_access_token`; API client luôn ưu tiên token này.
+Hai token trên phải khớp `DEMO_USER_TOKEN`/`DEMO_ADMIN_TOKEN` của backend. Hosted production không dùng demo
+token và dùng Authorization Code + PKCE:
 
-## Runtime hiện tại
+```env
+NEXT_PUBLIC_OIDC_ISSUER=https://your-tenant.auth0.com/
+NEXT_PUBLIC_OIDC_CLIENT_ID=your-public-spa-client-id
+NEXT_PUBLIC_OIDC_AUDIENCE=https://api.trustguard.example
+NEXT_PUBLIC_OIDC_REDIRECT_URI=https://app.trustguard.example/auth/callback
+NEXT_PUBLIC_OIDC_LOGOUT_URL=https://your-tenant.auth0.com/v2/logout?client_id=...&returnTo=...
+```
 
-- Tạo/đọc/list/report analysis qua REST v3.
-- Xin WebSocket ticket và nối event stream; reconnect có cursor/dedupe, tự động fallback sang polling nếu stream chưa sẵn sàng.
-- UI hỗ trợ consent disclosure, provisional warning, live plan, final result, limitations và report.
-- History lấy từ REST, không dùng dữ liệu product hard-coded.
-- Legacy case/blacklist admin vẫn đọc và quyết định qua REST v2 compatibility; appeal, reviewed
-  action, campaign và operations metrics dùng REST v3.
-- User report đi vào review queue v3; admin phải nhận review trước khi quyết định, và UI xử lý 409/double-submit bằng cách tải lại state.
-- History cho phép theo dõi appeal; analysis workspace có screenshot consent/status và signed artifact view.
-- Platform admin có review scam campaign, whitelist/blacklist và audit qua REST v3.
-- URL do người dùng gửi luôn được hiển thị dưới dạng text, không phải liên kết có thể bấm.
+Đăng ký redirect URI `/auth/callback`, logout URL và web origin tương ứng ở Identity Provider. Frontend tạo
+`state`, `nonce`, PKCE verifier/challenge, đổi authorization code lấy token và giữ OIDC session theo browser tab.
+Refresh-token rotation được dùng nếu provider cấp refresh token. Role đọc từ ID-token chỉ điều khiển presentation;
+backend vẫn xác minh chữ ký access token và RBAC cho mọi API call. Các endpoint authorize/token và tên role claim
+có thể override bằng các biến được liệt kê trong `.env.example`.
 
-Frontend này chưa đạt scope mới: workspace/composer/summary/history vẫn dùng “Fact-Check AI”, claim
-stance và general-news/medical examples; chưa có scope boundary state hoặc multi-turn chat. Các
-component `FactCheck*`, `ClaimResultCard`, source-management UI và screenshot UI là legacy hoặc ngoài
-scope. Xem [`docs/implementation-status.md`](../docs/implementation-status.md) trước khi mở rộng UI.
+## Product surface
 
-Backend hiện persist/emit `provisional_warning` và step transition ngay trong planning loop. Để dùng
-security provider thật cần chạy profile PostgreSQL/Redis và cấu hình provider keys phù hợp. Không dùng
-`LIVE_PROVIDERS_REQUIRED=true` như production profile mới cho đến khi Google Fact Check/Tavily đã được
-gỡ khỏi danh sách key bắt buộc.
+- Security Chat là entry point; sau intake chuyển thành workspace Conversation/Investigation/Action.
+- OOS, need-more-info, multi-turn, WebSocket → polling fallback, report và appeal đều dùng contract v4.
+- `/history` dùng server pagination/filter; `/cases/{id}` đọc owner-scoped detail và structured conversation resume.
+- Admin gồm Observatory, Review Room, Trust lifecycle và Unified Audit.
+- `/admin` redirect sang `/admin/review`; `/admin/platform` là alias của compatibility surface.
+- UI chỉ dựng Signal Map, Timeline, Evidence và metrics từ field API có thật.
 
 ## Kiểm tra chất lượng
 
 ```bash
+npm test
 npm run lint
 npm run typecheck
-npm test
+npm run check:cutover
 npm run build
+npm run build -- --webpack
 npm run test:e2e
 ```
 
-Playwright có fixture tại ranh giới HTTP để kiểm tra hai flow: user login → provisional → final → history và critical case → admin approval → blacklist. Khi chạy integration với backend thật, giữ `NEXT_PUBLIC_USE_MOCK_API=false` và không đăng ký fixture route.
+`npm run test:e2e` chạy Chromium trên standalone production server, tự copy `.next/static`/`public`, quản lý
+server theo PID và dừng server sau test. Playwright cover mobile/keyboard user report-appeal-history-resume và
+admin Review/Observatory/Trust/Audit, kèm WCAG structural checks và theme contrast assertion.
+
+Trạng thái và boundary canonical nằm tại
+[`docs/implementation-status.md`](../docs/implementation-status.md) và
+[`docs/SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md`](../docs/SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md).

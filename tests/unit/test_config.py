@@ -4,13 +4,30 @@ from pydantic import ValidationError
 from src.config import Settings
 
 
+def production_settings(**overrides):
+    values = {
+        "app_env": "production",
+        "demo_auth_enabled": False,
+        "database_url": "postgresql://app:password@db.example/trustguard",
+        "redis_url": "rediss://redis.example/0",
+        "database_encryption_key": "database-encryption-secret-000001",
+        "artifact_signing_key": "artifact-signing-secret-value-0002",
+        "oidc_issuer": "https://identity.example/",
+        "oidc_audience": "https://api.example",
+        "cors_origins": "https://app.example",
+        "_env_file": None,
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
 def test_production_rejects_demo_auth() -> None:
     with pytest.raises(ValidationError, match="DEMO_AUTH_ENABLED must be false"):
-        Settings(app_env="production", demo_auth_enabled=True, _env_file=None)
+        production_settings(demo_auth_enabled=True)
 
 
 def test_production_allows_demo_auth_to_be_disabled() -> None:
-    settings = Settings(app_env="production", demo_auth_enabled=False, _env_file=None)
+    settings = production_settings()
 
     assert settings.demo_auth_enabled is False
 
@@ -33,17 +50,78 @@ def test_post_processing_reserve_must_fit_analysis_deadline() -> None:
         Settings(analysis_deadline_seconds=10, post_processing_reserve_seconds=10, _env_file=None)
 
 
-def test_live_provider_profile_no_longer_requires_jina_or_flashrank() -> None:
+def test_live_provider_profile_requires_only_security_v4_providers() -> None:
     settings = Settings(
         live_providers_required=True,
-        openai_api_key="openai",
-        google_fact_check_api_key="fact-check",
         google_web_risk_api_key="web-risk",
         virustotal_api_key="virus-total",
-        tavily_api_key="tavily",
+        official_verifier_api_url="https://verifier.example/check",
+        official_verifier_api_key="official-verifier",
+        openai_api_key="",
+        google_fact_check_api_key="",
+        tavily_api_key="",
         _env_file=None,
     )
 
-    assert settings.tavily_api_key == "tavily"
-    assert not hasattr(settings, "jina_api_key")
-    assert not hasattr(settings, "flashrank_model")
+    assert settings.openai_api_key == ""
+    assert settings.google_fact_check_api_key == ""
+    assert settings.tavily_api_key == ""
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"database_url": "sqlite:///./data/app.db"}, "PostgreSQL"),
+        ({"redis_url": "memory://local"}, "Redis"),
+        ({"oidc_issuer": "http://identity.example"}, "HTTPS"),
+        ({"database_encryption_key": "replace-with-a-secret"}, "DATABASE_ENCRYPTION_KEY"),
+        ({"artifact_signing_key": "development-artifact-signing-key"}, "ARTIFACT_SIGNING_KEY"),
+        ({"cors_origins": "http://localhost:3000"}, "CORS_ORIGINS"),
+    ],
+)
+def test_production_rejects_insecure_runtime_dependencies(override, message) -> None:
+    with pytest.raises(ValidationError, match=message):
+        production_settings(**override)
+
+
+def test_production_requires_independent_encryption_and_signing_keys() -> None:
+    shared = "shared-production-secret-value-0001"
+    with pytest.raises(ValidationError, match="must be different"):
+        production_settings(database_encryption_key=shared, artifact_signing_key=shared)
+
+
+def test_production_cutover_requires_frozen_legacy_and_live_providers() -> None:
+    with pytest.raises(ValidationError, match="LEGACY_API_WRITES_ENABLED"):
+        production_settings(security_release_profile="cutover")
+
+    with pytest.raises(ValidationError, match="source discovery"):
+        production_settings(
+            security_release_profile="cutover",
+            legacy_api_writes_enabled=False,
+        )
+
+    with pytest.raises(ValidationError, match="LIVE_PROVIDERS_REQUIRED"):
+        production_settings(
+            security_release_profile="cutover",
+            legacy_api_writes_enabled=False,
+            source_discovery_enabled=False,
+            source_provisional_enabled=False,
+            source_auto_promotion_enabled=False,
+        )
+
+
+def test_production_cutover_accepts_complete_security_profile() -> None:
+    settings = production_settings(
+        security_release_profile="cutover",
+        legacy_api_writes_enabled=False,
+        source_discovery_enabled=False,
+        source_provisional_enabled=False,
+        source_auto_promotion_enabled=False,
+        live_providers_required=True,
+        google_web_risk_api_key="web-risk",
+        virustotal_api_key="virus-total",
+        official_verifier_api_url="https://verifier.example/check",
+        official_verifier_api_key="official-verifier",
+    )
+
+    assert settings.security_release_profile == "cutover"

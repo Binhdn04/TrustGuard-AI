@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
-import { ArrowRight, Lock, Mail, ShieldAlert, UserCheck } from "lucide-react";
+import { AlertCircle, ArrowRight, ShieldAlert, ShieldCheck, UserCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createOidcAuthorizationRequest, isOidcConfigured } from "@/lib/auth/oidc";
 
 export default function LoginPage() {
   const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
-  const oidcLoginUrl = process.env.NEXT_PUBLIC_OIDC_LOGIN_URL;
+  const [error, setError] = useState<string | null>(null);
+  const oidcConfigured = isOidcConfigured();
   const demoAuthEnabled = Boolean(
     process.env.NEXT_PUBLIC_DEMO_USER_TOKEN && process.env.NEXT_PUBLIC_DEMO_ADMIN_TOKEN,
   );
@@ -26,6 +28,19 @@ export default function LoginPage() {
     }, 800);
   };
 
+  const oidcLogin = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const authorizationUrl = await createOidcAuthorizationRequest(params.get("returnTo") ?? "/");
+      window.location.assign(authorizationUrl);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Không thể bắt đầu đăng nhập OIDC.");
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="space-y-2 text-center lg:text-left">
@@ -33,47 +48,29 @@ export default function LoginPage() {
         <p className="text-muted-foreground">Đăng nhập vào hệ thống AI PROTECT</p>
       </div>
 
-      <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Email</label>
-          <div className="relative">
-            <Mail className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
-            <input 
-              type="email" 
-              placeholder="name@example.com"
-              className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all disabled:opacity-50"
-              disabled={isLoading}
-            />
+      <div className="space-y-4 rounded-2xl border border-border bg-card/70 p-5">
+        <div className="flex items-start gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+            <ShieldCheck className="size-5" />
+          </span>
+          <div>
+            <p className="font-semibold">Đăng nhập qua Identity Provider</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Phiên đăng nhập dùng Authorization Code + PKCE. Quyền truy cập cuối cùng luôn được backend xác minh.
+            </p>
           </div>
         </div>
-        
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-foreground">Mật khẩu</label>
-            <Link href="#" className="text-xs text-primary hover:underline">Quên mật khẩu?</Link>
-          </div>
-          <div className="relative">
-            <Lock className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
-            <input 
-              type="password" 
-              placeholder="••••••••"
-              className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all disabled:opacity-50"
-              disabled={isLoading}
-            />
-          </div>
-        </div>
-
+        {error && <p role="alert" className="flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive"><AlertCircle className="mt-0.5 size-4 shrink-0" />{error}</p>}
         <button
           type="button"
-          disabled={isLoading || !oidcLoginUrl}
-          onClick={() => {
-            if (oidcLoginUrl) window.location.assign(oidcLoginUrl);
-          }}
+          disabled={isLoading || !oidcConfigured}
+          onClick={() => void oidcLogin()}
           className="w-full flex items-center justify-center py-2.5 px-4 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
-          Đăng nhập <ArrowRight className="w-4 h-4 ml-2" />
+          {isLoading ? "Đang chuyển hướng…" : "Tiếp tục đăng nhập"} <ArrowRight className="w-4 h-4 ml-2" />
         </button>
-      </form>
+        {!oidcConfigured && !demoAuthEnabled && <p role="status" className="text-xs text-muted-foreground">OIDC chưa được cấu hình. Liên hệ quản trị viên hệ thống.</p>}
+      </div>
 
       {demoAuthEnabled && <div className="relative">
         <div className="absolute inset-0 flex items-center">

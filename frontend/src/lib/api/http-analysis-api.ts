@@ -20,6 +20,7 @@ import type {
   AdminActionDecisionResponseV3,
   AdminActionAuditRecordV3,
   AdminActionPageV3,
+  AdminActionRecordV3,
   AppealCreateRequestV3,
   AppealDecisionRequestV3,
   AppealDecisionResponseV3,
@@ -267,6 +268,10 @@ export class HttpAnalysisApi implements AnalysisApi {
     query: PageQuery<"pending_review" | "approved" | "rejected" | "executed" | "failed"> = {},
   ): Promise<AdminActionPageV3> {
     return this.getV3<AdminActionPageV3>(`admin/actions${this.pageQuery(query)}`);
+  }
+
+  async getAdminAction(actionId: string): Promise<AdminActionRecordV3> {
+    return this.getV3<AdminActionRecordV3>(`admin/actions/${encodeURIComponent(actionId)}`);
   }
 
   async decideAdminAction(

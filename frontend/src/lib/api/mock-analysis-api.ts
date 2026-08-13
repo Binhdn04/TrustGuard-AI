@@ -22,6 +22,7 @@ import type {
   AdminActionDecisionResponseV3,
   AdminActionAuditRecordV3,
   AdminActionPageV3,
+  AdminActionRecordV3,
   AppealCreateRequestV3,
   AppealDecisionRequestV3,
   AppealDecisionResponseV3,
@@ -542,6 +543,11 @@ export class MockAnalysisApi implements AnalysisApi {
 
   async listAdminActions(): Promise<AdminActionPageV3> {
     return { contract_version: "v3", items: [], total: 0, limit: 50, offset: 0 };
+  }
+
+  async getAdminAction(_actionId: string): Promise<AdminActionRecordV3> {
+    void _actionId;
+    throw new Error("Không tìm thấy reviewed action.");
   }
 
   async decideAdminAction(

@@ -65,8 +65,7 @@ describe("HttpAnalysisApi", () => {
     );
   });
 
-  it("prefers the OIDC access token over local demo credentials", async () => {
-    window.localStorage.setItem("ai_protect_access_token", "oidc-access-token");
+  it("uses the current OIDC credential supplied by the auth session", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify([]), {
         status: 200,
@@ -77,7 +76,7 @@ describe("HttpAnalysisApi", () => {
 
     await new HttpAnalysisApi(
       "http://backend.test",
-      () => window.localStorage.getItem("ai_protect_access_token"),
+      () => "oidc-access-token",
     ).listAnalyses();
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -253,6 +252,21 @@ describe("HttpAnalysisApi", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "http://backend.test/api/v3/admin/campaigns?reviewer_status=pending_review&limit=25",
       expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("loads reviewed-action detail through the v3 admin contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new HttpAnalysisApi("http://backend.test").getAdminAction("action/id");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://backend.test/api/v3/admin/actions/action%2Fid",
+      expect.objectContaining({ credentials: "include", headers: { Accept: "application/json" } }),
     );
   });
 

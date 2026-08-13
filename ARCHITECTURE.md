@@ -9,22 +9,23 @@
 
 ```mermaid
 flowchart LR
-    UI[Next.js] --> API[FastAPI v3/v2]
-    API --> DB[(SQLite hoặc PostgreSQL)]
-    DB --> Worker[Durable worker]
-    Worker --> Graph[LangGraph v2]
-    Graph --> URL[URL rules/reputation/RDAP/redirect]
-    Graph --> Legacy[Deprecated general fact-check]
-    URL --> Risk[Deterministic risk-v2]
-    Legacy --> Risk
-    API --> Admin[Report/appeal/review/campaign/metrics]
-    DB --> Redis[Outbox notification]
-    Redis --> UI
+    UI[Next.js Security UI] --> API[FastAPI /api/v4]
+    API --> Scope[Security scope + context]
+    Scope --> Investigation[Policy/consent investigation]
+    Investigation --> Risk[Deterministic security-risk-v1]
+    Risk --> DB[(SQLite hoặc PostgreSQL)]
+    Risk --> Memory[Security Memory / campaign]
+    Risk --> HITL[Reviewed admin action]
+    API --> Admin[Feedback / trust / explorer / audit]
+    API -. compatibility .-> Legacy[v2/v3 general fact-check]
 ```
 
-Hạ tầng API, auth, persistence, durable processing, URL safety, realtime và admin workflow đã có.
-Product semantics vẫn là scope cũ: không có security scope gate, multi-turn, whitelist/brand matcher
-hay bounded OfficialClaimVerifier; frontend vẫn là “Fact-Check AI”.
+Security v4 đã có scope gate, multi-turn, trust/whitelist, bounded official verification, deterministic
+risk, Security Memory, admin feedback, explorer và audit API. Review Room đọc privacy-minimized admin case
+detail v4 trước feedback decision; reviewed action execution tạm tái sử dụng contract v3 có nhãn riêng trong
+compatibility window. Frontend đã hoàn tất workspace, Trust lifecycle và Unified Audit trên contract v4;
+metrics/source discovery v3 nằm trong compatibility surface có nhãn riêng, còn `/admin` chuyển sang Review Room.
+WP9 tổng thể và legacy cleanup vẫn chờ hosted evaluation, telemetry và backup/restore evidence.
 
 ## Đích
 

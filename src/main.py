@@ -35,8 +35,6 @@ async def lifespan(app: FastAPI):
     configure_structured_logging(settings.log_level)
     if not settings.demo_auth_enabled and (not settings.oidc_issuer or not settings.oidc_audience):
         raise RuntimeError("OIDC_ISSUER and OIDC_AUDIENCE are required when demo auth is disabled")
-    if settings.app_env == "production" and settings.database_encryption_key == "development-only-change-me":
-        raise RuntimeError("DATABASE_ENCRYPTION_KEY must be changed in production")
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
     if settings.run_durable_worker:
         await start_durable_worker()
@@ -63,7 +61,10 @@ app = FastAPI(
 )
 
 settings = get_settings()
-app.add_middleware(StructuredRequestLogMiddleware)
+app.add_middleware(
+    StructuredRequestLogMiddleware,
+    legacy_api_writes_enabled=settings.legacy_api_writes_enabled,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins.split(","),
@@ -134,15 +135,7 @@ async def readiness():
         except Exception:
             checks["redis"] = False
     if settings.live_providers_required:
-        checks["providers"] = all(
-            (
-                settings.openai_api_key,
-                settings.google_fact_check_api_key,
-                settings.google_web_risk_api_key,
-                settings.virustotal_api_key,
-                settings.tavily_api_key,
-            )
-        )
+        checks["providers"] = all(settings.security_live_provider_requirements().values())
     status_code = 200 if all(checks.values()) else 503
     return JSONResponse(
         status_code=status_code, content={"status": "ready" if status_code == 200 else "degraded", "checks": checks}

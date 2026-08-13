@@ -4,49 +4,50 @@ Goal của TrustGuard AI là trợ lý hội thoại đánh giá message/URL đ�
 hoặc giả mạo trước khi user thực hiện hành động rủi ro. [Product Scope](docs/scope.md) là nguồn sự
 thật về goal.
 
-> Runtime hiện tại chưa đạt đầy đủ scope mới. Codebase vẫn vận hành theo luồng URL analysis + general
-> fact-check cũ. Xem [Implementation Status](docs/implementation-status.md) để biết phần đã có, legacy
-> và backlog thực tế.
+> Security Triage v4 và frontend investigation workspace đã được triển khai. WP9 đã có deterministic
+> evaluation, cutover/freeze guard, compatibility checker và release
+> runbook. Hosted OIDC/provider/PostgreSQL/Redis/load, restore rehearsal và zero-usage window vẫn chưa có evidence.
+> Xem [Implementation Status](docs/implementation-status.md) để biết ranh giới chính xác.
 
 ## Trạng thái hiện tại
 
 Đã implement và có thể tái sử dụng:
 
-- FastAPI v2/v3, auth demo/OIDC, owner isolation, Security Admin RBAC và rate limiting.
-- Single-turn text/URL analysis, URL normalization, local phishing rules và approved blacklist.
+- FastAPI Security Triage `/api/v4` bên cạnh v2/v3 compatibility; auth demo/OIDC, owner isolation,
+  Security Admin RBAC và rate limiting.
+- Security scope gate, structured scam/threat context, multi-turn conversation và deterministic v4 risk.
+- Text/URL analysis, URL normalization, local phishing rules, brand/whitelist và approved blacklist.
 - Consent-gated URL reputation, guarded redirect, RDAP và SSRF protection.
-- Deterministic risk scoring, provisional/final events, WebSocket + polling replay.
+- Typed evidence, bounded official verification, WebSocket + polling replay.
 - SQLite local; PostgreSQL durable jobs/outbox, Redis delivery, retention và operations metrics.
-- History, report/review queue, appeal, admin decision, campaign hypothesis và blacklist workflow.
-- Next.js frontend gọi API thật, có history, report/appeal và admin operations.
+- Paginated history/conversation/trust/memory/campaign API; report/appeal admin lifecycle, bounded admin
+  case-detail, domain/threat intelligence, unified v4 audit và reviewed blacklist workflow.
+- Next.js frontend gọi API thật, có case workspace/history, Observatory, Security Review Room, Trust lifecycle,
+  Unified Audit và compatibility surface riêng cho v3 metrics/source discovery.
 
 Chưa đạt scope:
 
-- Chưa có Security Scope Classifier; general fact-check request vẫn có thể chạy provider.
-- Chưa có multi-turn conversation/case memory.
-- Chưa có structured scam understanding đầy đủ hoặc threat taxonomy cho recruitment/payment/OTP.
-- Chưa có brand registry/matcher và first-class whitelist.
-- Chưa có bounded `OfficialClaimVerifier`; code vẫn dùng general fact-check/corpus/Tavily.
-- Risk contract và UI vẫn dùng semantics cũ (`Fact-Check AI`, claim stance, low/medium/high/critical).
-- Wide action mới có review contract/persistence; chưa có proposal/execution end-to-end.
+- `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Security Copilot chưa có downstream sink thật.
+- Legacy v2/v3 general fact-check/source-discovery writers chưa được freeze trên deployment thật hoặc cleanup;
+  code đã có fail-fast cutover profile và legacy-write switch.
+- Đã có versioned offline quality evaluation; chưa có compatibility zero-usage evidence và backup/restore rehearsal.
 - Chưa có evidence hosted production/live-provider/backup-load-security validation.
 
 ## Runtime hiện tại
 
 ```mermaid
 flowchart LR
-    A[Single-turn message / URL] --> B[Input type + URL/claim extraction]
-    B --> C[Local rules + blacklist]
-    C --> D[URL reputation / redirect / RDAP]
-    B --> E[Legacy general fact-check pipeline]
-    D --> F[Deterministic risk-v2]
-    E --> F
-    F --> G[Explanation + action]
-    G --> H[History / report / admin]
+    A[Message / URL / follow-up] --> B[Security scope + structured context]
+    B --> C[Consent/policy-controlled investigation]
+    C --> D[Trust + deterministic security-risk-v1]
+    D --> E[Grounded warning + recommendations]
+    E --> F[Conversation/history/report/appeal]
+    D --> G[Security Memory + campaign]
+    D --> H[Reviewed admin action]
 ```
 
-Luồng `Legacy general fact-check pipeline` là deprecated theo scope mới. Kiến trúc đích và thứ tự
-chuyển đổi nằm tại [Architecture](docs/01-ARCHITECTURE.md) và
+Legacy general fact-check pipeline không nằm trên Security v4 path nhưng vẫn tồn tại cho compatibility.
+Kiến trúc và thứ tự cutover nằm tại [Architecture](docs/01-ARCHITECTURE.md) và
 [Implementation Plan](docs/03-IMPLEMENTATION_PLAN.md).
 
 ## Chạy local
@@ -94,6 +95,9 @@ docker compose ps
 
 Compose gồm frontend, API, worker, PostgreSQL/pgvector và Redis. Development có thể dùng demo auth;
 production phải tắt demo token và cấu hình OIDC, signing/encryption keys, CORS và provider secrets.
+Frontend production dùng OIDC Authorization Code + PKCE tại `/auth/callback`; cấu hình tối thiểu
+`NEXT_PUBLIC_OIDC_ISSUER`, `NEXT_PUBLIC_OIDC_CLIENT_ID`, `NEXT_PUBLIC_OIDC_AUDIENCE` và đăng ký callback/
+logout/web origin ở Identity Provider. Danh sách override đầy đủ nằm trong `frontend/.env.example`.
 
 ```bash
 docker compose down
@@ -112,8 +116,9 @@ npm run typecheck
 npm test
 ```
 
-Kết quả audit 2026-08-13: backend 198 passed/1 skipped; frontend 30 passed; lint/typecheck pass. Đây là
-test của runtime hiện tại, chưa phải acceptance suite đầy đủ cho scope mới.
+Kết quả gần nhất 2026-08-14: backend 315 passed/1 skipped; Ruff pass; frontend 88 test/18 files,
+lint/typecheck/cutover check, Next.js Turbopack + webpack standalone production build và Chromium E2E 2 pass.
+Đây chưa phải hosted release evidence.
 
 ## Tài liệu canonical
 
@@ -122,6 +127,7 @@ test của runtime hiện tại, chưa phải acceptance suite đầy đủ cho 
 - [Architecture](docs/01-ARCHITECTURE.md) — kiến trúc hiện tại và kiến trúc đích.
 - [Contract](docs/02-CONTRACT_AND_FIXTURES.md) — contract đang chạy và migration cần thiết.
 - [Implementation Plan](docs/03-IMPLEMENTATION_PLAN.md) — thứ tự công việc để đạt scope.
+- [WP9 Release Runbook](docs/WP9_RELEASE_RUNBOOK.md) — preflight, hosted smoke, restore, compatibility window và rollback.
 - [Database Status](docs/04-POSTGRESQL_ALEMBIC_PLAN.md) — schema hiện tại và migration legacy.
 
 ## Safety invariants đang áp dụng

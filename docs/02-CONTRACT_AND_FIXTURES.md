@@ -91,14 +91,17 @@ fact-check confidence như product verdict.
 
 | API group | Routes chính | Trạng thái |
 |---|---|---|
-| Analysis | `POST/GET /api/v4/analyses`, `GET /analyses/{id}` | Implemented, owner-scoped |
-| Conversation | `GET /api/v4/conversations/{id}` | Implemented, versioned + retained |
+| Capabilities | `GET /api/v4/capabilities` | Implemented, truthful `pre_cutover` profile |
+| Analysis | `POST/GET /api/v4/analyses`, `GET /analyses/page`, `GET /analyses/{id}` | Implemented, owner-scoped + paginated/filterable |
+| Conversation | `GET /api/v4/conversations`, `GET /conversations/{id}` | Implemented, owner-scoped page + versioned resume |
 | Events/realtime | `GET /analyses/{id}/events`, `POST /ws-tickets`, WebSocket `/stream` | Implemented, cursor replay + single-use ticket |
-| Feedback | `POST/GET /analyses/{id}/reports`, `POST/GET /appeals` | Implemented |
-| Brand registry | create/list/disable `/api/v4/admin/brands` | Implemented, admin-only |
-| Whitelist | create/list/disable `/api/v4/admin/whitelist` | Implemented, admin-only |
-| Security Memory | list/correct/audit `/api/v4/admin/security-memory` | Implemented, admin-only |
-| Security campaign | list/detail/decision/audit `/api/v4/admin/security-campaigns` | Implemented, admin-only |
+| Feedback | user create/list under analyses; admin pages + terminal decision under `/api/v4/admin/reports|appeals`; privacy-minimized case read tại `GET /api/v4/admin/analyses/{analysis_id}` | Implemented, owner/RBAC + immutable audit; admin detail không trả raw conversation/owner |
+| Brand registry | create/list/page/disable `/api/v4/admin/brands` | Implemented, admin-only |
+| Whitelist | create/list/page/disable `/api/v4/admin/whitelist` | Implemented, admin-only |
+| Security Memory | list/page/correct/audit `/api/v4/admin/security-memory` | Implemented, admin-only |
+| Security campaign | list/page/detail/decision/audit `/api/v4/admin/security-campaigns` | Implemented, admin-only |
+| Intelligence | `/api/v4/admin/intelligence/domains|threats` | Implemented, paginated/filterable |
+| Unified v4 audit | `GET /api/v4/admin/audit` | Implemented cho trust/memory/campaign/feedback |
 
 Security v4 tái sử dụng reviewed-action API v3:
 
@@ -109,6 +112,10 @@ Security v4 tái sử dụng reviewed-action API v3:
 
 V3 report-review/appeal/metrics infrastructure vẫn tồn tại. V3 source discovery, general campaigns,
 screenshot và v2 routes là legacy compatibility, không phải Security v4 product contract.
+
+Các route page là additive và trả `{contract_version, items, total, limit, offset}`. Route list cũ vẫn trả
+array để giữ compatibility cho frontend hiện tại. `SecurityReportRecordV4` và `SecurityAppealRecordV4`
+chỉ có reviewer/outcome/decision fields ở terminal state; quyết định lần hai trả `409 CONFLICT`.
 
 ## 5. Security Memory và campaign contracts
 
@@ -142,7 +149,7 @@ mọi decision append campaign audit.
 
 ## 7. Test fixtures và evidence hiện có
 
-Automated tests WP1–WP8 đang cover:
+Automated tests hiện tại cover:
 
 - phishing/credential/OTP, financial, recruitment và promotion/prize context;
 - out-of-scope và need-more-info terminal transitions;
@@ -153,16 +160,21 @@ Automated tests WP1–WP8 đang cover:
 - HITL auth, rejection, idempotency, execution rollback và audit;
 - repeated domain, shared redirect, same brand/different domain, scenario/action pattern, unrelated case,
   time window, memory correction, provenance/version và SQLite reopen.
+- capabilities/OpenAPI freeze, owner-scoped pages, admin feedback RBAC/terminal conflict, unified audit và
+  domain/threat intelligence explorer.
+- frontend OOS/need-more-info/risk presentation, polling fallback, multi-turn/history resume, report/appeal,
+  admin review, Observatory, Trust/Audit, RBAC và compatibility isolation bằng typed v4 fixtures.
 
-`tests/fixtures/analyses.jsonl` và claim/stance fixtures cũ vẫn bảo vệ compatibility path. WP9 phải tạo
-versioned release evaluation dataset đủ threat, safe official, false-positive, OOS, provider failure,
-multi-turn và wide-action cases trước khi xóa fixture legacy.
+`tests/fixtures/analyses.jsonl` và claim/stance fixtures cũ vẫn bảo vệ compatibility path. WP9 đã có
+versioned deterministic dataset/report cho threat, safe official, false-positive, OOS, provider failure,
+multi-turn và wide-action; fixture legacy chỉ được xóa sau zero-usage window.
 
 ## 8. Compatibility và cutover còn lại
 
-1. Frontend product path đã dùng v4; không thêm field nullable vào v2/v3 để mô phỏng v4.
-2. Đo `legacy_read/legacy_write` trong compatibility window và freeze legacy writers.
+1. Frontend product path đã dùng v4; `/admin` redirect sang Review Room và metrics/source discovery v3 chỉ còn
+   trong compatibility surface. Reviewed-action execution v3 vẫn là ngoại lệ có nhãn đã công bố.
+2. Drain job, freeze legacy writers/source discovery, rồi đo `legacy_read/legacy_write` trong compatibility window.
 3. Kiểm chứng backup/export/restore rồi archive hoặc drop `fact_check_*`, source discovery, claim vectors
    và pgvector nếu không còn consumer.
 4. Xóa deprecated provider config, v2 starter route, v3 product writers và frontend compatibility code.
-5. Chỉ tuyên bố release sau hosted PostgreSQL/Redis/OIDC/provider smoke và evaluation gate của WP9.
+5. Chỉ tuyên bố release sau hosted PostgreSQL/Redis/OIDC/provider smoke, restore/load và các gate WP9 còn lại.

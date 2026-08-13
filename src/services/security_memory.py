@@ -14,13 +14,16 @@ from src.core.auth import Principal, require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
     ErrorCode,
+    PotentialThreatV4,
     SecurityCampaignAuditRecordV4,
     SecurityCampaignRecordV4,
     SecurityCampaignReviewerStatusV4,
+    SecurityDomainIntelligenceV4,
     SecurityMemoryAdminVerdictV4,
     SecurityMemoryAuditRecordV4,
     SecurityMemoryRecordV4,
     SecurityScopeResponseV4,
+    SecurityThreatIntelligenceV4,
 )
 
 
@@ -108,6 +111,91 @@ class SecurityMemoryService:
                 key=lambda item: item.last_seen_at,
                 reverse=True,
             )
+
+    async def domain_intelligence(self, principal: Principal) -> list[SecurityDomainIntelligenceV4]:
+        records = await self.list_memory(principal)
+        aggregates: dict[str, dict] = {}
+        for record in records:
+            for domain in record.canonical_domains:
+                item = aggregates.setdefault(
+                    domain,
+                    {
+                        "analysis_ids": set(),
+                        "report_count": 0,
+                        "risks": {},
+                        "threats": {},
+                        "first_seen_at": record.first_seen_at,
+                        "last_seen_at": record.last_seen_at,
+                        "evidence_refs": [],
+                    },
+                )
+                item["analysis_ids"].add(record.analysis_id)
+                item["report_count"] += record.report_count
+                item["risks"][record.risk] = item["risks"].get(record.risk, 0) + 1
+                item["threats"][record.threat_type] = item["threats"].get(record.threat_type, 0) + 1
+                item["first_seen_at"] = min(item["first_seen_at"], record.first_seen_at)
+                item["last_seen_at"] = max(item["last_seen_at"], record.last_seen_at)
+                item["evidence_refs"] = list(
+                    dict.fromkeys([*item["evidence_refs"], *record.evidence_refs])
+                )[:100]
+        return sorted(
+            (
+                SecurityDomainIntelligenceV4(
+                    domain=domain,
+                    analysis_count=len(item["analysis_ids"]),
+                    report_count=item["report_count"],
+                    risk_distribution=item["risks"],
+                    threat_distribution=item["threats"],
+                    first_seen_at=item["first_seen_at"],
+                    last_seen_at=item["last_seen_at"],
+                    evidence_refs=item["evidence_refs"],
+                )
+                for domain, item in aggregates.items()
+            ),
+            key=lambda item: (-item.analysis_count, item.domain),
+        )
+
+    async def threat_intelligence(self, principal: Principal) -> list[SecurityThreatIntelligenceV4]:
+        records = await self.list_memory(principal)
+        aggregates: dict[PotentialThreatV4, dict] = {}
+        for record in records:
+            item = aggregates.setdefault(
+                record.threat_type,
+                {
+                    "analysis_ids": set(),
+                    "report_count": 0,
+                    "risks": {},
+                    "domains": [],
+                    "first_seen_at": record.first_seen_at,
+                    "last_seen_at": record.last_seen_at,
+                    "evidence_refs": [],
+                },
+            )
+            item["analysis_ids"].add(record.analysis_id)
+            item["report_count"] += record.report_count
+            item["risks"][record.risk] = item["risks"].get(record.risk, 0) + 1
+            item["domains"] = list(dict.fromkeys([*item["domains"], *record.canonical_domains]))[:100]
+            item["first_seen_at"] = min(item["first_seen_at"], record.first_seen_at)
+            item["last_seen_at"] = max(item["last_seen_at"], record.last_seen_at)
+            item["evidence_refs"] = list(
+                dict.fromkeys([*item["evidence_refs"], *record.evidence_refs])
+            )[:100]
+        return sorted(
+            (
+                SecurityThreatIntelligenceV4(
+                    threat_type=threat,
+                    analysis_count=len(item["analysis_ids"]),
+                    report_count=item["report_count"],
+                    risk_distribution=item["risks"],
+                    domains=item["domains"],
+                    first_seen_at=item["first_seen_at"],
+                    last_seen_at=item["last_seen_at"],
+                    evidence_refs=item["evidence_refs"],
+                )
+                for threat, item in aggregates.items()
+            ),
+            key=lambda item: (-item.analysis_count, item.threat_type.value),
+        )
 
     async def correct_memory(
         self,

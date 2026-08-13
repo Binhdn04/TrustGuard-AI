@@ -2,12 +2,13 @@ import type { AnalysisApi } from "./analysis-api.types";
 
 import { HttpAnalysisApi } from "./http-analysis-api";
 import { MockAnalysisApi } from "./mock-analysis-api";
+import { getStoredAccessToken } from "@/lib/auth/oidc";
 
 let client: AnalysisApi | undefined;
 
 function getAccessToken(): string | null | undefined {
   if (typeof window === "undefined") return undefined;
-  const accessToken = window.localStorage.getItem("ai_protect_access_token");
+  const accessToken = getStoredAccessToken();
   if (accessToken) return accessToken;
 
   let role = "user";

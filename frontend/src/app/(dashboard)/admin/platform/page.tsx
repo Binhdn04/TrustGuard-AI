@@ -1,5 +1,5 @@
-import { PlatformOperations } from "@/components/admin/platform-operations";
+import { CompatibilityOperations } from "@/components/admin/compatibility/compatibility-operations";
 
 export default function PlatformOperationsPage() {
-  return <PlatformOperations />;
+  return <CompatibilityOperations />;
 }

@@ -41,28 +41,66 @@ function response(overrides: Partial<SecurityScopeResponseV4> = {}): SecuritySco
 
 function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): SecurityAnalysisApi {
   return {
+    getCapabilities: vi.fn(),
     createAnalysis,
     getAnalysis: vi.fn(),
+    getAdminAnalysis: vi.fn(),
     listAnalyses: vi.fn().mockResolvedValue([]),
+    pageAnalyses: vi.fn(),
+    getConversation: vi.fn(),
+    listConversations: vi.fn(),
     getAnalysisEvents: vi.fn().mockResolvedValue({ contract_version: "v4", events: [], next_cursor: null }),
     createWebSocketTicket: vi.fn(),
     reportAnalysis: vi.fn(),
     listReports: vi.fn().mockResolvedValue([]),
     createAppeal: vi.fn(),
     listAnalysisAppeals: vi.fn().mockResolvedValue([]),
+    listAdminReports: vi.fn(),
+    decideAdminReport: vi.fn(),
+    listAdminAppeals: vi.fn(),
+    decideAdminAppeal: vi.fn(),
+    createBrand: vi.fn(),
     listBrands: vi.fn().mockResolvedValue([]),
+    pageBrands: vi.fn(),
+    disableBrand: vi.fn(),
+    createWhitelist: vi.fn(),
     listWhitelist: vi.fn().mockResolvedValue([]),
+    pageWhitelist: vi.fn(),
+    disableWhitelist: vi.fn(),
     listSecurityMemory: vi.fn().mockResolvedValue([]),
+    pageSecurityMemory: vi.fn(),
     correctSecurityMemory: vi.fn(),
     listSecurityMemoryAudit: vi.fn().mockResolvedValue([]),
     listSecurityCampaigns: vi.fn().mockResolvedValue([]),
+    pageSecurityCampaigns: vi.fn(),
     getSecurityCampaign: vi.fn(),
     reviewSecurityCampaign: vi.fn(),
     listSecurityCampaignAudit: vi.fn().mockResolvedValue([]),
+    listDomainIntelligence: vi.fn(),
+    listThreatIntelligence: vi.fn(),
+    listAdminAudit: vi.fn(),
   };
 }
 
 describe("Security Chat workspace", () => {
+  it("moves from intake into the three-region case workspace", async () => {
+    const api = apiWith(vi.fn().mockResolvedValue(response()));
+    render(<AnalysisWorkspace api={api} />);
+
+    expect(screen.getByRole("heading", { name: /Biến tín hiệu đáng ngờ/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Intake & follow-up" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn cần kiểm tra" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByRole("heading", { name: "Intake & follow-up" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Signals & evidence" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Decision & next steps" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Khu vực case" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Action" }));
+    expect(screen.getByRole("tab", { name: "Action" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("continues NEED_MORE_INFO with the owner conversation version and fresh consent", async () => {
     const create = vi.fn()
       .mockResolvedValueOnce(response())
@@ -142,12 +180,13 @@ describe("Security Chat workspace", () => {
     })));
     vi.mocked(api.reportAnalysis).mockResolvedValue({
       contract_version: "v4", report_id: "report-1", analysis_id: "analysis-1",
-      reason: "Cần xem lại", comment: null, status: "submitted", created_at: "2026-08-13T08:00:00Z",
+      reason: "Cần xem lại", comment: null, status: "submitted", decision: null,
+      reviewer_id: null, review_note: null, created_at: "2026-08-13T08:00:00Z", reviewed_at: null,
     });
     vi.mocked(api.createAppeal).mockResolvedValue({
       contract_version: "v4", appeal_id: "appeal-1", analysis_id: "analysis-1",
       reason: "Bằng chứng chưa phù hợp", comment: null, status: "submitted", outcome: null,
-      resolution_note: null, created_at: "2026-08-13T08:00:00Z", resolved_at: null,
+      resolution_note: null, reviewer_id: null, created_at: "2026-08-13T08:00:00Z", resolved_at: null,
     });
     render(<AnalysisWorkspace api={api} />);
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
@@ -159,5 +198,49 @@ describe("Security Chat workspace", () => {
     fireEvent.change(screen.getByLabelText("Lý do khiếu nại"), { target: { value: "Bằng chứng chưa phù hợp" } });
     fireEvent.click(screen.getByRole("button", { name: "Gửi khiếu nại" }));
     await waitFor(() => expect(api.createAppeal).toHaveBeenCalled());
+  });
+
+  it("offers a recoverable retry without duplicating the failed turn", async () => {
+    const create = vi.fn()
+      .mockRejectedValueOnce(new Error("Mất kết nối tạm thời"))
+      .mockResolvedValueOnce(response());
+    render(<AnalysisWorkspace api={apiWith(create)} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra yêu cầu chuyển tiền" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Mất kết nối tạm thời");
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại case này" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Cần thêm thông tin")).toBeInTheDocument();
+    expect(screen.queryByText("Input 2")).not.toBeInTheDocument();
+  });
+
+  it("renders a terminal failed response without inventing a verdict", async () => {
+    const api = apiWith(vi.fn().mockResolvedValue(response({ status: "failed" })));
+    render(<AnalysisWorkspace api={api} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Case provider lỗi" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("trạng thái failed");
+    expect(screen.queryByRole("heading", { name: /Nguy hiểm|Rủi ro cao|Đáng ngờ/i })).not.toBeInTheDocument();
+  });
+
+  it("ignores a stale create response after the case is reset", async () => {
+    let resolveCreate!: (value: SecurityScopeResponseV4) => void;
+    const create = vi.fn().mockImplementation(() => new Promise<SecurityScopeResponseV4>((resolve) => {
+      resolveCreate = resolve;
+    }));
+    render(<AnalysisWorkspace api={apiWith(create)} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Case phản hồi chậm" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Bắt đầu trường hợp mới" }));
+    resolveCreate(response());
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Biến tín hiệu đáng ngờ/i })).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Security investigation workspace" })).not.toBeInTheDocument();
   });
 });

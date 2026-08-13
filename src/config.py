@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +56,8 @@ class Settings(BaseSettings):
     official_verifier_api_url: str = ""
     official_verifier_api_key: str = ""
     security_conversation_retention_days: int = Field(default=30, ge=1, le=365)
+    security_release_profile: Literal["pre_cutover", "cutover"] = "pre_cutover"
+    legacy_api_writes_enabled: bool = True
 
     # Demo auth
     demo_auth_enabled: bool = True
@@ -94,18 +97,59 @@ class Settings(BaseSettings):
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
 
+    def security_live_provider_requirements(self) -> dict[str, str]:
+        required = {
+            "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
+            "OFFICIAL_VERIFIER_API_URL": self.official_verifier_api_url,
+            "OFFICIAL_VERIFIER_API_KEY": self.official_verifier_api_key,
+        }
+        if self.reputation_secondary_enabled:
+            required["VIRUSTOTAL_API_KEY"] = self.virustotal_api_key
+        return required
+
+    @staticmethod
+    def _placeholder_or_short_secret(value: str) -> bool:
+        lowered = value.strip().lower()
+        markers = ("development", "change-me", "replace-with", "placeholder", "example-secret")
+        return len(value.strip()) < 32 or any(marker in lowered for marker in markers)
+
     @model_validator(mode="after")
-    def reject_demo_auth_in_production(self) -> "Settings":
-        if self.app_env == "production" and self.demo_auth_enabled:
-            raise ValueError("DEMO_AUTH_ENABLED must be false in production")
+    def validate_runtime_profile(self) -> "Settings":
+        if self.app_env == "production":
+            if self.demo_auth_enabled:
+                raise ValueError("DEMO_AUTH_ENABLED must be false in production")
+            if not self.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+                raise ValueError("DATABASE_URL must use PostgreSQL in production")
+            if not self.redis_url.startswith(("redis://", "rediss://")):
+                raise ValueError("REDIS_URL must use Redis in production")
+            if not self.oidc_issuer or not self.oidc_audience:
+                raise ValueError("OIDC_ISSUER and OIDC_AUDIENCE are required in production")
+            if urlparse(self.oidc_issuer).scheme != "https":
+                raise ValueError("OIDC_ISSUER must use HTTPS in production")
+            if self._placeholder_or_short_secret(self.database_encryption_key):
+                raise ValueError("DATABASE_ENCRYPTION_KEY must be a non-placeholder secret of at least 32 characters")
+            if self._placeholder_or_short_secret(self.artifact_signing_key):
+                raise ValueError("ARTIFACT_SIGNING_KEY must be a non-placeholder secret of at least 32 characters")
+            if self.database_encryption_key == self.artifact_signing_key:
+                raise ValueError("DATABASE_ENCRYPTION_KEY and ARTIFACT_SIGNING_KEY must be different")
+            origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+            if not origins or any(origin == "*" or urlparse(origin).scheme != "https" for origin in origins):
+                raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins in production")
+            if self.security_release_profile == "cutover":
+                if self.legacy_api_writes_enabled:
+                    raise ValueError("LEGACY_API_WRITES_ENABLED must be false for production cutover")
+                if any(
+                    (
+                        self.source_discovery_enabled,
+                        self.source_provisional_enabled,
+                        self.source_auto_promotion_enabled,
+                    )
+                ):
+                    raise ValueError("Legacy source discovery and promotion must be disabled for production cutover")
+                if not self.live_providers_required:
+                    raise ValueError("LIVE_PROVIDERS_REQUIRED must be true for production cutover")
         if self.live_providers_required:
-            required = {
-                "OPENAI_API_KEY": self.openai_api_key,
-                "GOOGLE_FACT_CHECK_API_KEY": self.google_fact_check_api_key,
-                "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
-                "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
-                "TAVILY_API_KEY": self.tavily_api_key,
-            }
+            required = self.security_live_provider_requirements()
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError("Live provider profile is missing: " + ", ".join(missing))

@@ -1,105 +1,139 @@
 "use client";
 
-import type { ReactNode } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
-import {
-  ClockIcon,
-  LockIcon,
-  SearchIcon,
-  ShieldIcon,
-  ChartIcon,
-  UsersIcon,
-} from "@/components/ui/icons";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { MobileNavigation } from "@/components/layout/mobile-navigation";
 import { UserMenu } from "@/components/layout/user-menu";
+import { WorkspaceNavigation } from "@/components/layout/workspace-navigation";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
+import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { useAuth } from "@/lib/auth-context";
+import type { SecurityCapabilitiesResponseV4 } from "@/types/generated/api-v4";
+import { Hexagon, LoaderCircle, PanelLeftClose } from "lucide-react";
 
-const navigation = [
-  { label: "Security Chat", icon: SearchIcon, href: "/" },
-  { label: "Lịch sử", icon: ClockIcon, href: "/history" },
-  { label: "Admin review", icon: UsersIcon, href: "/admin", adminOnly: true },
-  { label: "Vận hành", icon: ChartIcon, href: "/admin/platform", adminOnly: true },
+const routeCopy: Array<{ match: (pathname: string) => boolean; eyebrow: string; title: string }> = [
+  { match: (pathname) => pathname === "/", eyebrow: "SECURITY INTAKE", title: "New investigation" },
+  { match: (pathname) => pathname.startsWith("/history"), eyebrow: "CASE ARCHIVE", title: "Cases" },
+  { match: (pathname) => pathname.startsWith("/admin/observatory"), eyebrow: "THREAT INTELLIGENCE", title: "Observatory" },
+  { match: (pathname) => pathname.startsWith("/admin/review"), eyebrow: "HUMAN REVIEW", title: "Security Review Room" },
+  { match: (pathname) => pathname.startsWith("/admin/trust"), eyebrow: "SECURITY V4 TRUST", title: "Trust Control Center" },
+  { match: (pathname) => pathname.startsWith("/admin/audit"), eyebrow: "SECURITY V4 AUDIT", title: "Unified Audit" },
+  { match: (pathname) => pathname.startsWith("/admin/compatibility"), eyebrow: "V3 COMPATIBILITY", title: "Compatibility Operations" },
+  { match: (pathname) => pathname === "/admin", eyebrow: "HUMAN REVIEW", title: "Review room" },
+  { match: (pathname) => pathname.startsWith("/admin/platform"), eyebrow: "V3 COMPATIBILITY", title: "Compatibility Operations" },
 ];
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  children,
+  api = getSecurityAnalysisApi(),
+}: {
+  children: ReactNode;
+  api?: SecurityAnalysisApi;
+}) {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
+  const userId = user?.id;
+  const [capabilities, setCapabilities] = useState<SecurityCapabilitiesResponseV4 | null>(null);
+
+  useEffect(() => {
+    if (isLoading || !userId) return;
+    let active = true;
+    void api.getCapabilities()
+      .then((result) => {
+        if (active) setCapabilities(result);
+      })
+      .catch(() => {
+        if (active) setCapabilities(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, isLoading, userId]);
+
+  const currentRoute = useMemo(
+    () => routeCopy.find((item) => item.match(pathname)) ?? {
+      eyebrow: "AI PROTECT",
+      title: "Security workspace",
+    },
+    [pathname],
+  );
+
+  if (isLoading || !user) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background px-6 text-center" aria-live="polite">
+        <div>
+          <LoaderCircle className="mx-auto size-6 animate-spin text-primary" aria-hidden="true" />
+          <p className="mt-3 text-sm font-medium">Đang xác minh phiên đăng nhập…</p>
+          <p className="mt-1 text-xs text-muted-foreground">Workspace chỉ tải dữ liệu sau khi auth bootstrap hoàn tất.</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-300">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col border-r border-border bg-card px-4 py-6 text-card-foreground lg:flex transition-colors duration-300">
+    <div className="min-h-screen bg-background text-foreground">
+      <a
+        href="#workspace-content"
+        className="fixed left-4 top-3 z-50 -translate-y-20 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background focus:translate-y-0"
+      >
+        Bỏ qua điều hướng
+      </a>
+
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-border/80 bg-card/92 px-5 py-6 backdrop-blur-xl lg:block">
         <div className="flex items-center gap-3 px-2">
-          <span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-            <ShieldIcon className="size-6" />
+          <span className="relative grid size-11 place-items-center text-primary" aria-hidden="true">
+            <Hexagon className="absolute size-11 stroke-[1.25]" />
+            <span className="size-2 rounded-full bg-primary shadow-[0_0_0_6px_color-mix(in_srgb,var(--primary)_16%,transparent)]" />
           </span>
           <div>
-            <p className="text-lg font-bold tracking-tight">AI PROTECT</p>
-            <p className="text-xs text-muted-foreground">Security triage</p>
+            <p className="text-[11px] font-bold tracking-[0.24em] text-muted-foreground">AI PROTECT</p>
+            <p className="text-base font-semibold tracking-tight">Investigation desk</p>
           </div>
         </div>
 
-        <nav aria-label="Điều hướng chính" className="mt-10 space-y-2">
-          {navigation.map(({ label, icon: Icon, href, adminOnly }) => {
-            if (adminOnly && user?.role !== "security_admin") return null;
-            const active = pathname === href;
+        <WorkspaceNavigation
+          pathname={pathname}
+          role={user?.role ?? "user"}
+          capabilities={capabilities}
+          className="mt-10"
+        />
 
-            return (
-              <Link
-                key={label}
-                href={href}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                }`}
-              >
-                <Icon className="size-5" />
-                {label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="mt-auto rounded-2xl border border-border bg-background/50 p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-primary">
-            <LockIcon className="size-4" />
-            Quyền riêng tư
+        <div className="absolute inset-x-5 bottom-6 border-t border-border/70 pt-5">
+          <div className="flex items-start gap-3 rounded-xl bg-muted/60 p-3">
+            <PanelLeftClose className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <p className="text-xs leading-5 text-muted-foreground">
+              Case chỉ hiển thị dữ liệu phân tích và bằng chứng do API trả về.
+            </p>
           </div>
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">
-            Chỉ nội dung bạn chủ động gửi mới được đưa vào phiên phân tích.
-          </p>
         </div>
       </aside>
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur-xl transition-colors duration-300">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4 sm:px-8">
-            <div className="flex items-center gap-3 lg:hidden">
-              <span className="grid size-9 place-items-center rounded-xl bg-primary/10 text-primary">
-                <ShieldIcon className="size-5" />
-              </span>
-              <span className="font-bold">AI PROTECT</span>
+      <div className="min-w-0 lg:pl-72">
+        <header className="sticky top-0 z-20 border-b border-border/75 bg-background/88 backdrop-blur-xl">
+          <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-7 lg:h-[72px] lg:px-9">
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-bold tracking-[0.2em] text-primary">{currentRoute.eyebrow}</p>
+              <p className="truncate text-sm font-semibold sm:text-base">{currentRoute.title}</p>
             </div>
-            <div className="hidden lg:block">
-              <p className="text-sm font-semibold">Trung tâm phân tích</p>
-              <p className="text-xs text-muted-foreground">Kiểm tra tin nhắn và URL đáng ngờ</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="hidden items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 sm:flex dark:bg-emerald-500/20 dark:text-emerald-400">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
-                Hệ thống sẵn sàng
-              </span>
+            <div className="flex items-center gap-2">
               <ThemeToggle />
               <UserMenu />
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-12">
+
+        <main id="workspace-content" tabIndex={-1} className="mx-auto w-full max-w-[1600px] px-4 py-6 pb-28 sm:px-7 lg:px-9 lg:py-8 lg:pb-10">
           {children}
         </main>
       </div>
+
+      <MobileNavigation
+        pathname={pathname}
+        role={user?.role ?? "user"}
+        capabilities={capabilities}
+      />
     </div>
   );
 }
