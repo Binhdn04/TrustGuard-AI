@@ -1,6 +1,9 @@
 # AI PROTECT Frontend
 
-Next.js frontend cho luồng fact-check chính và kiểm tra URL bổ trợ. Runtime mặc định dùng contract `/api/v3`; mock adapter chỉ được bật rõ ràng cho phát triển component hoặc fixture offline.
+Next.js frontend cho AI Security Triage Assistant: user gửi message/URL đáng ngờ, theo dõi
+investigation và nhận cảnh báo phishing/scam/impersonation. Runtime mặc định dùng contract `/api/v3`;
+mock adapter chỉ được bật rõ ràng cho phát triển component hoặc fixture offline. Product boundary
+canonical nằm tại [`docs/scope.md`](../docs/scope.md); general fact-check không phải product flow.
 
 ## Chạy local
 
@@ -26,7 +29,7 @@ NEXT_PUBLIC_DEMO_ADMIN_TOKEN=dev-admin-token
 
 Hosted production không được cấu hình hai demo token trên. Thay vào đó, đặt `NEXT_PUBLIC_OIDC_LOGIN_URL` và lưu access token nhận được từ callback OIDC vào `ai_protect_access_token`; API client luôn ưu tiên token này.
 
-## Runtime tại baseline hiện tại
+## Runtime hiện tại
 
 - Tạo/đọc/list/report analysis qua REST v3.
 - Xin WebSocket ticket và nối event stream; reconnect có cursor/dedupe, tự động fallback sang polling nếu stream chưa sẵn sàng.
@@ -36,13 +39,18 @@ Hosted production không được cấu hình hai demo token trên. Thay vào đ
   action, campaign và operations metrics dùng REST v3.
 - User report đi vào review queue v3; admin phải nhận review trước khi quyết định, và UI xử lý 409/double-submit bằng cách tải lại state.
 - History cho phép theo dõi appeal; analysis workspace có screenshot consent/status và signed artifact view.
-- Platform admin có review campaign và quản lý reviewed Source Registry Tier B qua REST v3.
+- Platform admin có review scam campaign, whitelist/blacklist và audit qua REST v3.
 - URL do người dùng gửi luôn được hiển thị dưới dạng text, không phải liên kết có thể bấm.
 
-Backend hiện persist/emit `provisional_warning` và step transition ngay trong planning loop. Advanced
-fact-check và campaign production path đã được wire vào worker; để dùng dữ liệu thật cần chạy profile
-PostgreSQL/Redis và cấu hình provider keys với `LIVE_PROVIDERS_REQUIRED=true`. Hosted OIDC/browser E2E
-và live-provider smoke vẫn thuộc release gate.
+Frontend này chưa đạt scope mới: workspace/composer/summary/history vẫn dùng “Fact-Check AI”, claim
+stance và general-news/medical examples; chưa có scope boundary state hoặc multi-turn chat. Các
+component `FactCheck*`, `ClaimResultCard`, source-management UI và screenshot UI là legacy hoặc ngoài
+scope. Xem [`docs/implementation-status.md`](../docs/implementation-status.md) trước khi mở rộng UI.
+
+Backend hiện persist/emit `provisional_warning` và step transition ngay trong planning loop. Để dùng
+security provider thật cần chạy profile PostgreSQL/Redis và cấu hình provider keys phù hợp. Không dùng
+`LIVE_PROVIDERS_REQUIRED=true` như production profile mới cho đến khi Google Fact Check/Tavily đã được
+gỡ khỏi danh sách key bắt buộc.
 
 ## Kiểm tra chất lượng
 

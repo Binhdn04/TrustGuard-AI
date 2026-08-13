@@ -1,46 +1,47 @@
-# Evaluation Report
+# Evaluation Status
 
-> Báo cáo đánh giá chất lượng sản phẩm theo tiêu chí BTC.
+**Ngày kiểm tra:** 2026-08-13
 
----
+## Automated checks
 
-## 1. Metrics
+| Check | Result |
+|---|---|
+| Backend tests | 198 passed, 1 skipped |
+| Frontend unit tests | 30 passed trong 6 test files |
+| Frontend ESLint | Pass |
+| Frontend TypeScript | Pass |
 
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| Response accuracy | >80% | — | ⏳ |
-| Response latency | <3s | — | ⏳ |
-| User satisfaction | >4/5 | — | ⏳ |
-| Test coverage | >60% | — | ⏳ |
+Commands:
 
-## 2. Test Results
-
-### Unit Tests
-```
-pytest tests/ -v
-# Paste output here
-```
-
-### Integration Tests
-```
-# Mô tả test scenarios và kết quả
+```bash
+PYENV_VERSION=myenv pytest -q
+cd frontend
+npm test
+npm run lint
+npm run typecheck
 ```
 
-## 3. User Feedback
+## Interpretation
 
-| User | Feedback | Rating |
-|------|----------|--------|
-| [User 1] | [feedback] | [1-5] |
-| [User 2] | [feedback] | [1-5] |
+Các kết quả trên xác nhận runtime/contract cũ đang ổn định. Chúng không chứng minh sản phẩm đã đạt
+[scope mới](../../docs/scope.md). Test suite hiện vẫn tập trung vào URL safety và general fact-check;
+chưa có acceptance coverage đầy đủ cho:
 
-## 4. Demo Results
+- security scope routing và zero provider calls cho request ngoài scope;
+- multi-turn investigation và conversation ownership;
+- recruitment/payment/OTP/fake-promotion threat taxonomy;
+- whitelist precedence và brand/official-domain matching;
+- bounded OfficialClaimVerifier và `NOT_FOUND != FALSE`;
+- risk taxonomy mới và false-positive thresholds;
+- wide-action proposal → review → execution end-to-end.
 
-- Ngày demo: [YYYY-MM-DD]
-- Người tham gia: [số người]
-- Feedback chung: [tóm tắt]
-- Issues phát hiện: [danh sách]
+## Chưa được verify trong lần audit này
 
-## 5. Action Items
+- Browser E2E.
+- PostgreSQL/Redis integration với service thật.
+- Live security-provider smoke.
+- Hosted OIDC deployment.
+- Load, backup/restore và production security test.
+- Precision/recall/false-positive hoặc user satisfaction trên evaluation set scope mới.
 
-- [ ] [Cần cải thiện 1]
-- [ ] [Cần cải thiện 2]
+Không dùng file này làm release evidence cho đến khi các gap trên có kết quả đo và artifact tái lập.

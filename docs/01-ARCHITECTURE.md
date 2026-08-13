@@ -1,411 +1,129 @@
-# Architecture — P-068
+# Architecture — Current Runtime and Target
 
-**Snapshot:** 2026-08-11 (baseline hiện tại, phát triển từ `7715ea0`)
+[scope.md](scope.md) định nghĩa goal; [implementation-status.md](implementation-status.md) định nghĩa
+trạng thái code tại lần audit gần nhất.
 
-**Phạm vi:** Kiến trúc runtime hiện tại sau khi đóng integration gate Wave 2.
-
-> Dependency direction chủ đạo: `api → services → agents.graph → tools protocols/adapters →
-> external providers`, với `models` là contract dùng chung.
-
-## 1. System overview hiện tại
+## 1. Kiến trúc đang chạy
 
 ```mermaid
 flowchart TB
-    Browser["Next.js browser app"]
-    HTTP["HttpAnalysisApi /api/v3"]
-    Mock["MockAnalysisApi (opt-in)"]
-    API["FastAPI /api/v3 + v2 compatibility"]
-    Auth["OIDC/JWT production; demo token development"]
-    Service["AnalysisService"]
-    Worker["Durable worker + transactional outbox"]
-    Processor["LangGraphAnalysisProcessor"]
-    Graph["LangGraph v2 workflow"]
-    PostgreSQL[("PostgreSQL source of truth")]
-    Redis[("Redis notification/fan-out")]
-    SQLite[("SQLite development/test fallback")]
-    LLM["OpenAI, nếu có key"]
-    GSB["Google Web Risk primary + VirusTotal secondary"]
-    Fact["Google Fact Check, nếu có key"]
-    RDAP["Guarded redirects + lazy RDAP"]
-
-    Browser --> HTTP
-    Browser -. explicit mock flag .-> Mock
-    HTTP --> API
-    API --> Auth
-    API --> Service
-    Service --> PostgreSQL
-    Service -. development .-> SQLite
-    PostgreSQL --> Worker --> Processor --> Graph
-    Worker --> Redis
-    Graph --> PostgreSQL
-    Graph -. configured .-> LLM
-    Graph -. configured .-> GSB
-    Graph -. configured .-> Fact
-    Graph -. consent + policy .-> RDAP
+    UI[Next.js frontend] --> API[FastAPI /api/v3 + /api/v2]
+    API --> Auth[Demo token hoặc OIDC/JWKS]
+    API --> Service[AnalysisService]
+    Service --> SQLite[(SQLite local)]
+    Service --> PG[(PostgreSQL production)]
+    PG --> Worker[Durable worker]
+    Worker --> Graph[LangGraph v2 workflow]
+    Graph --> Rules[URL rules + blacklist]
+    Graph --> URL[Reputation + redirect + RDAP]
+    Graph --> Facts[Deprecated general fact-check]
+    Graph --> Risk[Deterministic risk-v2]
+    PG --> Outbox[Transactional outbox]
+    Outbox --> Redis[Redis notification]
+    Redis --> WS[Ticketed WebSocket]
+    API --> Admin[Report / appeal / action / campaign / metrics]
 ```
 
-Dashboard, history và admin pages mặc định gọi API thật. `MockAnalysisApi` chỉ chạy khi
-`NEXT_PUBLIC_USE_MOCK_API=true`, phục vụ component development và fixture offline.
+`AnalysisService` tạo job và persist lifecycle. Với PostgreSQL, worker claim job bằng lease và
+idempotency; events được persist trước khi outbox đánh thức WebSocket. Với SQLite, analysis chạy bằng
+background task trong process.
 
-## 2. Request lifecycle
+## 2. Workflow đang chạy
 
-1. `POST /api/v3/analyses` xác thực principal, validate request và trả `202` sau khi persist analysis,
-   event đầu tiên, durable job và outbox trong PostgreSQL.
-2. Outbox publisher dùng Redis để thông báo; Redis không giữ authoritative state.
-3. Durable worker claim job bằng lease/idempotency, gọi `LangGraphAnalysisProcessor`, rồi persist
-   step/evidence và terminal result. Job hết lease có thể được claim lại sau restart.
-4. Browser xin WebSocket ticket ngắn hạn, replay event theo cursor và tự chuyển sang polling fallback
-   nếu stream không khả dụng. Disconnect không hủy analysis.
-5. Development/test có thể dùng SQLite và in-process processor để chạy offline; đây không phải profile
-   production.
-
-## 3. Agent workflow
-
-```mermaid
-flowchart LR
-    A[Classify] --> B[Extract]
-    B --> C[LLM semantic]
-    C --> D[Normalize + local rules + blacklist]
-    D --> E[LLM tool proposal]
-    E --> F[Build policy plan]
-    F --> G[Bounded planning loop]
-    G --> H[Deterministic risk]
-    H --> I[LLM assessment review]
-    I --> J[Deterministic explanation]
-    J --> K[Route action/case]
-    K --> L[LLM grounded response]
+```text
+classify_input
+→ extract_indicators
+→ normalize_and_check_rules
+→ provisional_warning
+→ LLM analyze_message
+→ plan_tools
+→ URL/domain/claim tools
+→ general fact-check orchestrator
+→ campaign detection
+→ deterministic risk-v2
+→ LLM review/explanation
+→ route action
 ```
 
-Topology trong `build_graph` là tuyến tính; conditional behavior nằm bên trong planning loop.
-Planner không điều khiển trực tiếp network work. `build_investigation_plan` luôn bổ sung local
-rules, blacklist và các tool cần thiết mà model bỏ sót; executable target được derive lại từ state.
+`classify_input` chỉ phân loại text/URL, không phải security scope gate. `extract_indicators` dùng URL
+regex và claim marker, trong đó có cả medical/general-fact markers. Planner luôn thêm URL, domain và
+claim retriever steps khi có target. Vì vậy workflow này chưa đáp ứng product boundary mới.
 
-Planning loop:
+## 3. Thành phần reusable
 
-- dùng stable `step_id = sha256(tool + target)` rút gọn;
-- chỉ chạy step có dependency đã `completed`;
-- re-check consent ngay trước khi tạo coroutine cho URL scanner/RDAP;
-- fan-out các step độc lập bằng `asyncio.gather` trong số tool budget còn lại;
-- retry tuần tự với mặc định một retry ở workflow state;
-- dùng execution ledger `(analysis_id, step_id, target, provider)` để dedupe khi SQLite repository
-  được inject;
-- dừng khi không còn step sẵn sàng, hết budget hoặc deadline (nếu caller truyền `deadline_at`).
+- API/auth/ownership/rate-limit/logging boundaries.
+- Analysis lifecycle, persistence, durable jobs, outbox và realtime replay.
+- URL normalization, local credential-path/punycode/lure rules.
+- Blacklist, URL reputation cascade, RDAP và guarded redirect.
+- Tool budgets, deadline, retry và normalized provider errors.
+- Deterministic scoring seam và grounded fallback seam.
+- Report queue, appeal, campaign review, operations metrics và retention.
 
-`LangGraphAnalysisProcessor` inject `ProgressSink` và `ProvisionalWarningSink` theo từng analysis.
-Transition `pending/running/completed/skipped/failed` được persist và publish ngay khi planning loop
-chạy; terminal projection chỉ bổ sung event còn thiếu, không phát lại transition đã ghi.
-
-## 4. LLM boundary
-
-LLM chỉ được tạo khi `OPENAI_API_KEY` có giá trị. Nếu không có key, bốn node LLM trở thành no-op và
-workflow tiếp tục deterministic.
-
-Các structured output nội bộ:
-
-- `MessageAnalysis`: context, dominant emotion, sender intent, scam indicators, claims;
-- `ToolPlan`: tối đa ba item trong `url_scanner|domain_intelligence|claim_retriever`;
-- `AssessmentReview`: coverage, evidence indexes và missing information;
-- `GroundedResponse`: summary, reasons gắn evidence index và limitations.
-
-Wave 2 đã thêm representation tối đa năm claim có language/temporal metadata và `ClaimAssessment`
-cho comparison stance/citation. Đây là private workflow state, không thêm field vào public
-`AnalysisResponse`. Production factory compose PostgreSQL hybrid corpus, Tavily Search/Extract và
-schema-bound comparator; adapter thiếu key vẫn fail closed/inconclusive, còn
-`LIVE_PROVIDERS_REQUIRED=true` biến thiếu key thành lỗi startup/readiness.
-
-Invalid output/call failure được ghi vào private `llm_errors` và limitation. Public response không
-chứa prompt, model trace hoặc chain-of-thought. Config runtime hiện lấy từ `Settings`; default thực
-tế là model `gpt-4o-mini`, temperature `0.7`, timeout 30 giây, `max_retries=2`.
-
-## 5. Tool và network boundary
-
-| Capability | Implementation | Runtime mặc định |
-|---|---|---|
-| Local URL rules | `nodes/rules.py` | Có |
-| Approved blacklist | `SQLiteBlacklistRepository` / `PostgresPlatformRepository` | Có ở dev/test và production; mutation qua reviewed decision |
-| URL reputation | `ProductionUrlReputationCascade` (Web Risk + optional VirusTotal) | Chỉ khi có Web Risk key; fake adapters trong test |
-| Indexed ClaimReview | `GoogleClaimSearch` — Google Fact Check Tools `claims.search` | Chỉ khi có API key; retrieval, không phải verifier |
-| External embedding | `OpenAIEmbeddingProvider` — `text-embedding-3-small` | Inject khi có OpenAI key; không có local-model fallback |
-| Existing corpus | PostgreSQL FTS + pgvector/RRF implementation | Inject trong production worker |
-| Web discovery | `TavilySearch` | Chỉ sau sufficiency miss; domain filter từ Source Registry |
-| Web extraction/rerank | `TavilyExtract` | Tối đa 5 canonical URL đã qua policy; 3 relevance-ranked chunks mỗi nguồn |
-| Domain intelligence | Lazy `RdapDomainIntelligence` | Inject sẵn; chỉ tạo request sau consent/policy |
-| Redirect resolver | `GuardedRedirectResolver` | Inject sẵn; revalidate từng hop |
-| Offline tools | Fake URL/claim/domain/blacklist adapters | Test only |
-
-`RdapDomainIntelligence` dùng PSL đóng gói để lấy registrable domain, tải IANA DNS bootstrap qua
-HTTPS, cache positive 24 giờ và not-found một giờ, bỏ qua entity/vCard và chỉ normalize field
-allowlist. Timeout/429/provider error không được cache như kết quả hợp lệ.
-
-`SsrfGuard` chỉ cho URL tuyệt đối HTTP(S), không credential, port 80/443 và yêu cầu mọi DNS answer
-là global. `GuardedHttpClient` pin địa chỉ đã validate, revalidate từng redirect, giới hạn năm hop
-và response body 1 MiB.
-
-Graph v2 vẫn giữ `GoogleSafeBrowsingScanner` compatibility khi cấu hình key cũ. Product path v3 dùng
-Web Risk primary, chỉ gọi VirusTotal khi policy/budget cho phép và kết quả primary cần escalation.
-
-## 6. Persistence
-
-Production dùng `PostgresPlatformRepository` làm source of truth cho analysis/job/event/evidence/report;
-SQLite giữ vai trò development/test fallback và compatibility importer cho dữ liệu dev cũ.
-
-PostgreSQL hiện đã persist user-report review queue và audit decision của queue. Riêng v2 admin case
-decision/approved blacklist (`apply_review_decision`, blacklist lookup/list) vẫn chỉ hoàn chỉnh ở SQLite;
-không được coi flow critical → blacklist là production-ready trên PostgreSQL.
-
-Các nhóm bảng chính:
-
-- `analyses`, `analysis_events`, `analysis_steps`, `analysis_evidence`, `analysis_errors`;
-- `tool_executions`, `outbox_events`, `analysis_migration_errors`;
-- `analysis_reports`, `admin_decisions`, `blacklist`, `schema_migrations`;
-- `review_queue_items` — mỗi user report tạo một item liên kết với `report_id` và `analysis_id`, lưu evidence snapshot, status (`submitted` → `reviewing` → `processed`) và audit decision/reviewer/note/time.
-
-Completed result thay thế step/evidence/error artifacts trong transaction. Admin review dùng
-`apply_review_decision` để cập nhật audit, blacklist, analysis state, event và outbox nguyên tử.
-Blacklist lookup join với approved `add_to_blacklist` decision; boolean vô danh không được dùng.
-Decision service hiện lấy `hostname` trực tiếp từ normalized URL trước khi ghi blacklist, nên
-subdomain chưa luôn được quy về eTLD+1 như RDAP target.
-
-`DATABASE_URL` quyết định profile repository. PostgreSQL kích hoạt durable worker/outbox; Alembic phải
-được chạy riêng bằng `uv run alembic upgrade head` trước khi mở API;
-SQLite path lấy từ `SECURITY_DATABASE_PATH` (mặc định `./data/security.db`) cho local/offline tests.
-Redis dùng cho outbox notification, shared WebSocket ticket, event fan-out và rate limit ở production.
-
-## 7. API và security boundaries
-
-- FastAPI expose `/api/v3` cho product flow và giữ `/api/v2` read-compatible trong migration; `/health` nằm ngoài prefix.
-- Ownership được check trước get/event/report. Security Admin chỉ đọc analysis của user khác nếu
-  case đã ở trạng thái reviewable.
-- Admin list/decision endpoints gọi `require_security_admin`.
-- CORS lấy từ `CORS_ORIGINS`; secret chỉ ở server.
-- Validation và `PlatformError` dùng error envelope v2.
-- Production dùng OIDC/JWT với issuer/audience cấu hình; demo authenticator chỉ được phép trong development.
-
-Legacy `/api/v2/chat` và `/api/v2/status` vẫn tồn tại, dùng graph mẫu riêng và không thuộc analysis
-contract. Không nên dùng hai endpoint này cho product flow.
-
-## 8. Frontend hiện tại
-
-Frontend là Next.js 16/React 19. Repository có:
-
-- type v2/v3 đồng bộ với backend;
-- `HttpAnalysisApi` cho create/get/list/report, admin list, review-queue list/start/decision;
-- `MockAnalysisApi` opt-in, form consent, result/evidence/recommendation/report components và fixture tests;
-- dashboard `AnalysisWorkspace` gọi API thật qua v3, dùng WebSocket ticket/reconnect/cursor/dedupe và polling fallback;
-- history page lấy dữ liệu từ `GET /api/v3/analyses`;
-- admin page có ba tab: Fact-check Review, URL Security và **User Reports** (hiển đầy đủ lý do, ghi chú và nội dung gốc từ review-queue API v3);
-- API client nhận OIDC access token qua auth layer; demo role/token chỉ là local fallback.
-
-`HttpAnalysisApi` là mặc định. Chỉ khi `NEXT_PUBLIC_USE_MOCK_API=true` frontend mới dùng adapter in-memory.
-UI hiển thị provisional banner và live transition từ event đã persist; reconnect dùng cursor/dedupe và
-polling nhận cùng event sequence. Platform admin còn có campaign review và Source Registry Tier B.
-
-## 9. Final production topology
-
-```mermaid
-flowchart TB
-    Web["React chat + inline warning"] -->|HTTPS/WSS| API[FastAPI /api/v3]
-    Admin["Security Admin dashboard"] --> API
-    API -->|transactional enqueue| DB[(PostgreSQL + pgvector)]
-    API --> Redis[(Redis)]
-    Worker[Durable LangGraph worker] --> DB
-    Worker --> Redis
-    Worker --> Local[Rules + blacklist + reputation cache]
-    Worker --> Reputation[GSB / Web Risk / VirusTotal]
-    Worker --> Domain[RDAP-first WHOIS + redirect resolver]
-    Worker --> Facts[Google Claim Search + PostgreSQL hybrid]
-    Facts -. insufficient .-> WebEvidence[Tavily Search + Extract]
-    Worker --> Embed[text-embedding-3-small API]
-    Worker --> LLM[GPT-4o-mini extraction/comparison]
-    Worker -. advanced + consent .-> Screenshot[Sandbox screenshot renderer]
-```
-
-Đây là topology production hiện tại. Redis chỉ làm broker, cache và event fan-out; PostgreSQL là
-source of truth. API và durable worker chạy thành process riêng. Migration `0007` persist campaign
-observation/vector và bootstrap reviewed Vietnamese sources; advanced fact-check/campaign path trong
-sơ đồ đã được compose trong worker.
-`pgvector` phục vụ fact-check corpus, không phải dependency của deterministic URL scoring.
-
-Frontend dùng `/api/v3`; `/api/v2` được giữ read-compatible trong migration. Legacy `/chat`/`status`
-không thuộc product flow.
-
-### 9.1 Agent flow đích và cảnh báo hai pha
-
-```mermaid
-flowchart LR
-    A[Extract URL/claim] --> B[Local rules]
-    B --> C[Approved blacklist]
-    C --> D[Reputation cache]
-    D --> E[Provisional warning]
-    D --> F{Policy plan}
-    F --> G[URL scan + redirects]
-    F --> H[RDAP/WHOIS]
-    F --> I[Fact-check retrieval]
-    G --> J[Deterministic score]
-    H --> J
-    I --> J
-    J --> K[Grounded final warning]
-    J --> L{Wide action?}
-    L -->|Yes| M[Admin review]
-```
-
-Provisional warning chỉ phản ánh evidence local/cache và phải có nhãn `đang xác minh`; final warning
-thay thế nó sau khi workflow hoàn tất. Mục tiêu p95 là 1 giây cho provisional và 10 giây cho final
-khi provider bình thường. WebSocket truyền cùng schema event với polling fallback; disconnect không
-hủy analysis và reconnect phải đọc lại event đã persist.
-
-Wave 0 tách bốn injectable boundary tại `src/agents/seams.py`: `ProgressSink`, `RiskEngine`,
-`ExplanationEngine` và `CampaignDetector`. Default risk/explanation chỉ bọc deterministic v2
-functions. Development graph có thể dùng no-op detector; production dependency inject repository-backed
-detector và live sinks. Claim vector từ fact-check embedding được tái sử dụng cho clustering, cùng
-domain/redirect signals; hypothesis chỉ hiện trong admin và không có code path tự phát broad warning.
-
-### 9.2 Provider, budget và cost routing
-
-- `UrlScanner` là protocol chung cho Google Safe Browsing/Web Risk hoặc VirusTotal. Provider no-hit
-  luôn normalize thành `inconclusive`; cache key gồm provider/version/normalized target.
-- RDAP là nguồn WHOIS mặc định và chỉ giữ public allowlisted fields. Redirect resolver revalidate
-  DNS/URL từng hop. Không dùng WHOIS TCP hoặc lưu registrant entity.
-- Rule, approved blacklist và cache chạy trước. External adapters độc lập fan-out sau consent;
-  `gpt-4o-mini` chỉ chạy khi cần ngữ cảnh/grounded explanation.
-- Mỗi analysis có deadline, tool-call/token/cost budget, retry cap và circuit/rate-limit handling.
-  Usage metadata lưu theo provider mà không lưu raw private input.
-- Screenshot renderer là advanced fallback: sandbox không cookie, credential, login hay persistent
-  storage; chặn script/download khi policy yêu cầu và áp dụng SSRF, hop, size, time budget.
-
-### 9.3 Fact-check: retrieve first, search web only when needed
-
-`gpt-4o-mini` dùng Structured Outputs để extract tối đa năm claim và so sánh evidence;
-`text-embedding-3-small` tạo một embeddings batch cho semantic retrieval. Nhánh web không tải model local:
-reranker CPU chỉ sắp hạng candidate, không xác minh claim và không ghi risk score. Tham chiếu:
-[GPT-4o mini](https://developers.openai.com/api/docs/models/gpt-4o-mini),
-[text-embedding-3-small](https://developers.openai.com/api/docs/models/text-embedding-3-small).
+## 4. Kiến trúc đích theo scope
 
 ```mermaid
 flowchart TD
-    A[User message] --> B[FastAPI]
-    B --> C[LangGraph]
-    C --> D[GPT-4o-mini claim extraction]
-    D -->|max 5 + temporal range| E[Redact + normalize + one embedding batch]
-    E -->|bounded fan-out: 3| F[Per-claim retrieval]
-    F --> G[Google Fact Check claims.search]
-    F --> H[PostgreSQL FTS top 20]
-    F --> I[pgvector top 20]
-    H --> J[RRF k=60 + dedupe]
-    I --> J
-    G --> K[Source + temporal policy]
-    J --> K
-    K --> L{Evidence sufficient?}
-    L -->|Yes| R[Candidate set]
-    R --> T
-    L -->|No| M[Tavily Search max 10]
-    M --> N[Source Registry + canonical URL dedupe]
-    N -->|max 5 URLs| O[Tavily Extract]
-    O -->|query rerank, 3 chunks/source| T[GPT-4o-mini evidence comparison]
-    T --> U[supports / refutes / mixed / inconclusive + citations]
-    U --> V[Persist cache + provenance]
-    V --> W[Deterministic Risk Engine]
+    A[Message / URL / follow-up] --> B[Validate + redact]
+    B --> C[Security Scope Classifier]
+    C -->|OUT_OF_SCOPE| D[Explain boundary; no tool calls]
+    C -->|NEED_MORE_INFO| E[Ask focused follow-up]
+    C -->|IN_SCOPE| F[Structured scam understanding]
+    F --> G[Security investigation planner]
+    G --> H[Rules + whitelist + blacklist]
+    G --> I[URL reputation + RDAP/DNS + redirect]
+    G --> J[Brand/organization matcher]
+    G -. security-relevant claim only .-> K[OfficialClaimVerifier]
+    H --> L[Versioned evidence set]
+    I --> L
+    J --> L
+    K --> L
+    L --> M[Security Risk Engine]
+    M --> N[Grounded warning + recommendation]
+    M --> O[Admin proposal when needed]
 ```
 
-#### Google retrieval semantics và corpus hybrid
+## 5. Delta bắt buộc
 
-Google Fact Check Tools `claims.search` chỉ tìm các claim đã được fact-check và trả claim cùng
-`ClaimReview` liên quan; đây là retrieval/index layer, không phải Google tự xác minh hay cung cấp một
-“Google verdict”. Publisher/reviewer gốc quyết định provenance và source tier. Xem
-[Google Fact Check Tools API](https://developers.google.com/fact-check/tools/api/reference/rest/v1alpha1/claims/search).
+### Before tools
 
-Mỗi `ExtractedClaim` gồm `claim_id`, text chuẩn hóa, language, `is_temporal`, `claim_date_start` và
-`claim_date_end`; từ “hiện nay/hôm nay” neo vào `analysis.created_at`. Toàn bộ claim được embed một
-lần, rồi tối đa ba claim chạy song song. Với mỗi claim, Google Claim Search và Existing Corpus chạy
-song song. Corpus lấy top 20 từ FTS cấu hình `simple` và top 20 từ pgvector cosine, lọc đúng
-model/version/dimensions, source active và temporal eligibility, dedupe theo record/version rồi hợp
-nhất bằng reciprocal-rank fusion `k=60`. Embedding timeout/429 chỉ bỏ nhánh vector; Google và FTS vẫn
-chạy, không load embedding model local.
+- Thêm scope decision vào state/contract và dừng graph sớm cho out-of-scope.
+- Thêm `conversation_id` và case-memory summary có owner/retention.
+- Thay claim-centric `MessageAnalysis` bằng organization/scenario/requested-action/payment/OTP schema.
 
-#### Source Trust Policy và temporal eligibility
+### Investigation
 
-Source Registry là policy versioned, audited, có origin/pattern, tier, source type, active,
-allowed operations, effective interval và reviewer. `*.gov.vn` mặc định Tier A theo suffix match
-đúng ranh giới hostname; explicit deny/disable luôn thắng. Policy:
+- Thêm first-class whitelist và brand registry/matcher.
+- Tách DNS evidence khỏi resolver nội bộ nếu DNS là output product.
+- Thay general FactCheckOrchestrator bằng bounded OfficialClaimVerifier.
+- Chuyển campaign similarity từ general-claim embeddings sang security fingerprint phù hợp.
 
-| Tier | Nguồn | Quyền dùng |
-|---|---|---|
-| A | `*.gov.vn` | Có thể hỗ trợ kết luận nếu temporal-compatible |
-| B | Approved newspapers, trusted fact-checkers | Có thể hỗ trợ kết luận |
-| C | Other reputable sources | Chỉ corroboration, không bao giờ đủ một mình |
-| Untrusted | Unknown blogs, forums, social media | Discovery only; loại trước comparator |
+### Risk/output
 
-Evidence đủ khi có **một Tier A temporal-compatible**, **một trusted ClaimReview Tier B**, hoặc
-**hai Tier B độc lập**. Independence tính theo publisher/organization, không theo URL. Tier C không
-thể làm gate thành công.
+- Loại rule “claim refuted ⇒ malicious”.
+- Map sang taxonomy scope: `SAFE`, `LOW_RISK`, `SUSPICIOUS`, `HIGH_RISK`, `MALICIOUS`,
+  `INSUFFICIENT_EVIDENCE`.
+- Enforce whitelist precedence và strong-evidence threshold cho malicious.
 
-Temporal claim bắt buộc xét `claim_date_start/end`, `published_at`, `effective_from/to` và
-`retrieved_at`. Effective interval phủ claim date là tín hiệu mạnh nhất. Nếu nguồn không công bố
-effective interval, `updated_at`/`published_at` được dùng làm proxy với penalty và limitation; nếu
-không có bất kỳ ngày nào thì loại khỏi temporal comparison. Semantic relevance không được override
-temporal incompatibility.
+### Product/admin
 
-#### Conditional web retrieval và intent-based extraction
+- Thay fact-check form/results/history bằng multi-turn security chat.
+- Thêm whitelist/domain/threat/audit admin views.
+- Hoàn tất proposal → review → execute cho wide actions.
 
-Chỉ evidence-sufficiency miss mới gọi Tavily, giúp giảm cost/latency/token và phụ thuộc external API.
-Request dùng `max_results=10`, không lấy generated answer/raw content, truyền `include_domains` từ
-Source Registry; temporal query dùng news/date range tương ứng. Sau policy check và canonical URL
-dedupe, tối đa năm URL được gửi trong một Tavily Extract batch. Extract nhận exact claim qua `query`,
-`chunks_per_source=3`, `extract_depth=basic` và trả các đoạn tối đa 500 ký tự đã rerank theo relevance
-trong từng nguồn. Search score tiếp tục quyết định thứ tự nguồn; Source Registry quyết định eligibility.
-Xem [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) và
-[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract).
+## 6. Trust boundaries hiện có
 
-Comparator chỉ nhận top 5 evidence đủ policy, trả `supports | refutes | mixed | inconclusive`, opaque
-citation refs, contradiction refs và limitations; citation ngoài input/sai schema/timeout thành
-`inconclusive`. Evidence web mới được canonicalize, dedupe theo URL + cleaned-content hash + source
-version rồi cache ngay. Chỉ Tier A/B đã validate/review mới được promote vào trusted corpus; Tier C
-không auto-promote. Runtime stance không bao giờ tự trở thành trusted record. Các boundary nội bộ là
-`GoogleClaimSearch`, `HybridCorpusRetriever`, `EvidenceSufficiencyGate`, `TavilySearch`,
-`TavilyExtract`, `SourceRegistry` và `EvidenceComparator`.
+- External URL/domain work bị hard-gate bằng consent trong executor và tool node.
+- SSRF guard chặn non-public target; redirect/screenshot revalidate destination.
+- Request log chỉ ghi route, status, latency và request ID, không ghi body/query/token.
+- OIDC access token được validate bằng issuer/audience/JWKS; production cấm demo auth.
+- PostgreSQL giữ source of truth; Redis chỉ giữ queue/notification/ticket/rate-limit state.
+- User read filter theo owner; admin route yêu cầu role.
 
-### 9.4 Campaign và feedback
+Các boundary này cần được giữ khi thay workflow nghiệp vụ.
 
-Campaign detection gom cụm theo registrable domain, redirect target, claim embedding và time window,
-chỉ tạo hypothesis cho admin. Không lưu/suy diễn social graph hay danh tính sender. User report và
-appeal đi vào review/evaluation set; mọi thay đổi rule/threshold/model được version, đánh giá offline
-và phê duyệt, không online-learn trực tiếp.
+## 7. Deprecated boundaries
 
-### 9.5 Privacy và approval boundaries
-
-- Client/user chủ động chọn nội dung; backend không đọc history nền hoặc phá E2E encryption.
-- URL/domain lookup và screenshot cần consent. LLM/fact-check chỉ nhận claim/đoạn trích tối thiểu đã
-  redact; logs không chứa raw message, OTP, secret hay raw provider body.
-- Individual warning có thể tự động. `add_to_blacklist`, `block_domain` và
-  `publish_broad_warning` cần Security Admin review, evidence snapshot, note và audit transaction.
-- Appeal có thể đảo quyết định/disable blacklist qua một quyết định mới; không xóa audit cũ.
-
-### 9.6 Capability status
-
-| Capability | Hiện tại | Đích |
-|---|---|---|
-| UI/API | Browser v3 gồm analysis/history/report/appeal/screenshot và admin review/action/campaign/metrics; v2 compatibility | Hosted auth callback, E2E và release hardening |
-| Progress | WebSocket + polling replay; live step/provisional persistence trong planning loop | Hosted observability/SLO |
-| Persistence | PostgreSQL production + schema fact-check/campaign/artifact/source qua `0007`; SQLite dev/test | Chứng minh migration/retention/restore trên hosted runtime |
-| Jobs | Durable worker/outbox, lease/retry/idempotency | Mở rộng chaos/recovery tests |
-| URL reputation | Web Risk primary, VirusTotal policy-gated secondary; fake default test | Provider operations hardening |
-| Domain/redirect | Lazy RDAP sau consent + guarded redirect resolver | Mở rộng provider coverage |
-| Fact-check | FTS/pgvector + Google chạy trước; conditional Tavily Search → Extract rerank → comparator đã compose | Live-provider smoke, corpus ingestion operations và quality eval |
-| Screenshot | Consent field, capture coordinator, guarded Playwright renderer, signed artifact API/UI và retention schema đã có | Production isolation/egress tests và operational evidence |
-| Feedback | Report/review, appeal/action, campaign detector/persistence/review, metrics và source admin đã có | Complete hosted E2E audit gates |
-| Deploy | Compose tách API/worker/frontend, PostgreSQL/Redis/Alembic và readiness đã có | Hosted rollout với secrets và rollback evidence |
-
-## 10. Repository map
-
-```text
-src/
-├── agents/          # state, graph, nodes, tool protocols/adapters
-├── api/             # v2 routes, frozen v3 contract routes và dependency wiring
-├── services/        # application service + graph processor
-├── repositories/    # SQLite fallback, PostgreSQL production core và fact-check corpus
-├── models/          # strict, separately versioned Pydantic v2/v3 contracts
-├── core/            # auth và platform errors
-└── main.py          # FastAPI app
-frontend/src/        # Next.js UI, API clients, shared TS contract
-tests/               # agent, API, unit, contract và fixture tests
-```
+- `/api/v2/chat` starter graph và `/api/v2` contract sau compatibility window.
+- Google Fact Check, Tavily, fact-check corpus/source discovery và claim comparator.
+- Screenshot flow trừ khi scope được mở rộng rõ ràng.
+- Frontend claim stance và Source Registry administration.
