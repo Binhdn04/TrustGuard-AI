@@ -157,13 +157,18 @@ def test_provisional_warning_accepts_only_unexpired_decisive_cache_entry() -> No
 @pytest.mark.asyncio
 async def test_deadline_cancels_inflight_provider_and_falls_back() -> None:
     scanner = SlowScanner()
-    graph = build_graph(url_scanner=scanner, blacklist=FakeBlacklistRepository())
+    started_at = datetime.now(UTC)
+    graph = build_graph(
+        url_scanner=scanner,
+        blacklist=FakeBlacklistRepository(),
+        progress_clock=lambda: started_at,
+    )
 
     result = await graph.ainvoke(
         {
             "message": "Kiểm tra https://unknown.example/",
             "consent_to_scan_urls": True,
-            "deadline_at": datetime.now(UTC) + timedelta(milliseconds=20),
+            "deadline_at": started_at + timedelta(milliseconds=20),
         }
     )
 
@@ -177,13 +182,18 @@ async def test_deadline_cancels_inflight_provider_and_falls_back() -> None:
 @pytest.mark.asyncio
 async def test_concurrent_tools_share_deadline_without_discarding_fast_result() -> None:
     scanner = MixedSpeedScanner()
-    graph = build_graph(url_scanner=scanner, blacklist=FakeBlacklistRepository())
+    started_at = datetime.now(UTC)
+    graph = build_graph(
+        url_scanner=scanner,
+        blacklist=FakeBlacklistRepository(),
+        progress_clock=lambda: started_at,
+    )
 
     result = await graph.ainvoke(
         {
             "message": "Kiểm tra https://fast.example/ và https://slow.example/",
             "consent_to_scan_urls": True,
-            "deadline_at": datetime.now(UTC) + timedelta(milliseconds=30),
+            "deadline_at": started_at + timedelta(milliseconds=30),
         }
     )
 

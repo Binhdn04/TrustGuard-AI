@@ -1046,9 +1046,7 @@ class PostgresPlatformRepository:
         pool = await self._get_pool()
         now = datetime.now(UTC)
         async with pool.acquire() as connection, connection.transaction():
-            row = await connection.fetchrow(
-                "SELECT * FROM source_discoveries WHERE domain=$1 FOR UPDATE", domain
-            )
+            row = await connection.fetchrow("SELECT * FROM source_discoveries WHERE domain=$1 FOR UPDATE", domain)
             urls = list(dict.fromkeys([*(_json_value(row["representative_urls"]) if row else []), url]))[-5:]
             claims = list(_json_value(row["claim_hashes"]) if row else [])
             if claim_hash and claim_hash not in claims:
@@ -1089,7 +1087,12 @@ class PostgresPlatformRepository:
                 """INSERT INTO source_discovery_observations(
                        id,domain,event,claim_hash,agrees_with_curated,observed_at
                    ) VALUES($1,$2,$3,$4,$5,$6)""",
-                uuid4(), domain, event, claim_hash, agrees_with_curated, now,
+                uuid4(),
+                domain,
+                event,
+                claim_hash,
+                agrees_with_curated,
+                now,
             )
             current = await connection.fetchrow("SELECT * FROM source_discoveries WHERE domain=$1", domain)
             comparisons = current["curated_comparison_count"]
@@ -1119,9 +1122,7 @@ class PostgresPlatformRepository:
                     f"auto-tier-b-{now.date().isoformat()}",
                     now,
                 )
-                await connection.execute(
-                    "UPDATE source_discoveries SET status='promoted' WHERE domain=$1", domain
-                )
+                await connection.execute("UPDATE source_discoveries SET status='promoted' WHERE domain=$1", domain)
             rolling = await connection.fetchrow(
                 """SELECT count(*) FILTER (WHERE event='comparison') AS comparisons,
                           count(*) FILTER (WHERE event='comparison' AND agrees_with_curated=false) AS conflicts
@@ -1131,9 +1132,7 @@ class PostgresPlatformRepository:
                 now - timedelta(days=30),
             )
             rolling_comparisons = int(rolling["comparisons"] or 0)
-            rolling_conflict_rate = (
-                int(rolling["conflicts"] or 0) / rolling_comparisons if rolling_comparisons else 0.0
-            )
+            rolling_conflict_rate = int(rolling["conflicts"] or 0) / rolling_comparisons if rolling_comparisons else 0.0
             if current["status"] == "promoted" and rolling_comparisons >= 10 and rolling_conflict_rate > 0.1:
                 await connection.execute(
                     """UPDATE fact_check_sources SET active=false,effective_to=$2
@@ -1141,9 +1140,7 @@ class PostgresPlatformRepository:
                     f"*.{domain}",
                     now,
                 )
-                await connection.execute(
-                    "UPDATE source_discoveries SET status='demoted' WHERE domain=$1", domain
-                )
+                await connection.execute("UPDATE source_discoveries SET status='demoted' WHERE domain=$1", domain)
 
     async def list_source_discoveries(self) -> list[SourceDiscoveryRecord]:
         pool = await self._get_pool()
@@ -1153,23 +1150,31 @@ class PostgresPlatformRepository:
         for row in rows:
             comparisons = row["curated_comparison_count"]
             eligible = (
-                datetime.now(UTC) - row["first_seen_at"] >= timedelta(days=30)
-                and row["extract_success_count"] >= 20
-                and len(_json_value(row["claim_hashes"])) >= 10
-                and comparisons >= 10
-                and row["curated_agreement_count"] / comparisons >= 0.9
-                and row["curated_conflict_count"] / comparisons <= 0.05
-            ) if comparisons else False
+                (
+                    datetime.now(UTC) - row["first_seen_at"] >= timedelta(days=30)
+                    and row["extract_success_count"] >= 20
+                    and len(_json_value(row["claim_hashes"])) >= 10
+                    and comparisons >= 10
+                    and row["curated_agreement_count"] / comparisons >= 0.9
+                    and row["curated_conflict_count"] / comparisons <= 0.05
+                )
+                if comparisons
+                else False
+            )
             output.append(
                 SourceDiscoveryRecord(
-                    domain=row["domain"], publisher=row["publisher"], first_seen_at=row["first_seen_at"],
-                    last_seen_at=row["last_seen_at"], search_count=row["search_count"],
+                    domain=row["domain"],
+                    publisher=row["publisher"],
+                    first_seen_at=row["first_seen_at"],
+                    last_seen_at=row["last_seen_at"],
+                    search_count=row["search_count"],
                     extract_success_count=row["extract_success_count"],
                     independent_claim_count=len(_json_value(row["claim_hashes"])),
                     curated_comparison_count=comparisons,
                     curated_agreement_count=row["curated_agreement_count"],
                     curated_conflict_count=row["curated_conflict_count"],
-                    representative_urls=list(_json_value(row["representative_urls"])), status=row["status"],
+                    representative_urls=list(_json_value(row["representative_urls"])),
+                    status=row["status"],
                     eligible_for_auto_promotion=eligible,
                 )
             )
@@ -1181,15 +1186,18 @@ class PostgresPlatformRepository:
         pool = await self._get_pool()
         now = datetime.now(UTC)
         async with pool.acquire() as connection, connection.transaction():
-            result = await connection.execute(
-                "UPDATE source_discoveries SET status=$2 WHERE domain=$1", domain, status
-            )
+            result = await connection.execute("UPDATE source_discoveries SET status=$2 WHERE domain=$1", domain, status)
             if result == "UPDATE 0":
                 return
             await connection.execute(
                 """INSERT INTO source_discovery_decisions(id,domain,decision,note,reviewer_id,decided_at)
                    VALUES($1,$2,$3,$4,$5,$6)""",
-                uuid4(), domain, decision, note, reviewer_id, now,
+                uuid4(),
+                domain,
+                decision,
+                note,
+                reviewer_id,
+                now,
             )
             if status in {"demoted", "denied"}:
                 await connection.execute(

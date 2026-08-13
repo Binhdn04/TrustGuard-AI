@@ -206,9 +206,7 @@ class OpenAIEvidenceComparator:
             # orchestrator can then retrieve another source instead of exposing
             # a limitation based on the model's implicit clock.
             limitations = [
-                item
-                for item in comparison.limitations
-                if item.code not in {"FUTURE_EVENT", "TEMPORAL_FUTURE_EVENT"}
+                item for item in comparison.limitations if item.code not in {"FUTURE_EVENT", "TEMPORAL_FUTURE_EVENT"}
             ]
             comparison = comparison.model_copy(
                 update={
