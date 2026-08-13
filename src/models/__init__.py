@@ -99,6 +99,18 @@ from src.models.schemas import (
     WebSocketTicketResponseV3,
     risk_level_for_score,
 )
+from src.models.security_v4 import (
+    CONTRACT_VERSION_V4,
+    SECURITY_CONTEXT_VERSION,
+    PotentialThreatV4,
+    RequestedActionV4,
+    ScopeDecisionV4,
+    SecurityConsentV4,
+    SecurityContextV4,
+    SecurityScenarioV4,
+    SecurityScopeResponseV4,
+    SecurityTriageCreateRequestV4,
+)
 
 __all__ = [
     "CONTRACT_VERSION",
@@ -200,4 +212,14 @@ __all__ = [
     "WebSocketTicketRequestV3",
     "WebSocketTicketResponseV3",
     "risk_level_for_score",
+    "CONTRACT_VERSION_V4",
+    "SECURITY_CONTEXT_VERSION",
+    "PotentialThreatV4",
+    "RequestedActionV4",
+    "ScopeDecisionV4",
+    "SecurityConsentV4",
+    "SecurityContextV4",
+    "SecurityScenarioV4",
+    "SecurityScopeResponseV4",
+    "SecurityTriageCreateRequestV4",
 ]

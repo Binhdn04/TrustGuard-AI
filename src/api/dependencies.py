@@ -41,6 +41,7 @@ from src.services.realtime import (
     WebSocketTicketManager,
 )
 from src.services.screenshot import ScreenshotCaptureCoordinator
+from src.services.security_triage import SecurityTriageScopeService
 
 _worker: DurableAnalysisWorker | None = None
 _worker_task = None
@@ -50,6 +51,11 @@ _retention: RetentionWorker | None = None
 _retention_task = None
 _memory_wave2_repository = MemoryWave2Repository()
 _source_registry = VersionedSourceRegistry(default_source_policies())
+
+
+@lru_cache
+def get_security_triage_scope_service() -> SecurityTriageScopeService:
+    return SecurityTriageScopeService()
 
 
 def _effective_source_policies(configured):
@@ -310,3 +316,7 @@ AnalysisServiceDependency = Annotated[AnalysisService, Depends(resolve_analysis_
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
 TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(get_ticket_manager)]
 Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]
+SecurityTriageScopeServiceDependency = Annotated[
+    SecurityTriageScopeService,
+    Depends(get_security_triage_scope_service),
+]

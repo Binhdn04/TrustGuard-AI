@@ -18,9 +18,11 @@ from src.api.dependencies import (
 from src.api.middleware import StructuredRequestLogMiddleware
 from src.api.platform_v3 import router as platform_v3_router
 from src.api.routes import router
+from src.api.security_v4 import router as security_v4_router
 from src.config import get_settings
 from src.core.errors import PlatformError
 from src.core.logging import configure_structured_logging
+from src.core.product_boundary import SECURITY_TRIAGE_API_PREFIX
 from src.models import ErrorCode
 
 
@@ -66,6 +68,7 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api/v2")
 app.include_router(platform_v3_router, prefix="/api/v3")
+app.include_router(security_v4_router, prefix=SECURITY_TRIAGE_API_PREFIX)
 
 
 @app.exception_handler(PlatformError)

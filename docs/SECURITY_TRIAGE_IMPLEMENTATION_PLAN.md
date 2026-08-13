@@ -1,7 +1,7 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
 **Cập nhật:** 13/08/2026  
-**Trạng thái:** WP0 hoàn tất; sẵn sàng triển khai WP1  
+**Trạng thái:** WP0–WP1 hoàn tất; sẵn sàng triển khai WP2
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
 
@@ -56,15 +56,15 @@ Các nhận định dưới đây mô tả code ngày 13/08/2026, không phải 
 
 | Khu vực | Hiện trạng xác minh | Bằng chứng chính |
 |---|---|---|
-| API/runtime | FastAPI có `/api/v2` và `/api/v3`; v3 vẫn kế thừa contract phân tích cũ | `src/main.py`, `src/api/routes.py`, `src/api/platform_v3.py`, `src/models/schemas.py` |
-| Input | `classify_input` chỉ phân loại text/URL/text+URL, không phải security scope | `src/agents/nodes/extraction.py` |
-| Workflow | Luồng hiện tại luôn đi qua extraction, rules, LLM, planner, fact-check, campaign và `risk-v2`; chưa có terminal OOS/NEED_MORE_INFO | `src/agents/graph.py` |
+| API/runtime | `/api/v2` và `/api/v3` vẫn là legacy; `/api/v4/analyses` đã có contract scope/context riêng, chưa chạy investigation | `src/main.py`, `src/api/security_v4.py`, `src/models/security_v4.py` |
+| Input | Legacy `classify_input` vẫn phân loại text/URL; v4 đã có deterministic Security Scope Gate | `src/agents/nodes/extraction.py`, `src/agents/security_scope.py` |
+| Workflow | Legacy graph không đổi và vẫn qua fact-check/`risk-v2`; v4 dừng thật ở OOS/NEED_MORE_INFO và chỉ bàn giao IN_SCOPE + `SecurityContextV4` cho WP2 | `src/agents/graph.py`, `src/services/security_triage.py` |
 | Planner | Có deterministic executor, budget, deadline, retry và consent gate; nhưng planner hiện luôn bổ sung URL scanner, domain intelligence và claim retriever khi có target tương ứng | `src/agents/nodes/planning.py`, `src/agents/graph.py` |
 | URL safety | Có normalization, local credential/punycode/lure rules, blacklist, guarded redirect, RDAP và reputation cascade | `src/agents/nodes/rules.py`, `src/agents/nodes/tools.py`, `src/agents/tools/` |
 | DNS | Resolver hiện phục vụ SSRF/network validation; chưa có DNS evidence tool độc lập | `src/agents/tools/network.py` |
-| Fact-check | `FactCheckOrchestrator`, Google Fact Check, Tavily, corpus/embeddings và claim comparator vẫn ở active path | `src/agents/fact_check.py`, `src/agents/graph.py`, `src/agents/tools/fact_check.py` |
-| Risk | Deterministic `risk-v2`, nhưng `ClaimStance.REFUTES` hiện cộng 70 và có thể tạo verdict malicious; taxonomy vẫn là `RiskLevel` + `Verdict` cũ | `src/agents/nodes/risk.py`, `src/models/schemas.py` |
-| LLM context | Có emotion, sender intent, scam indicator và tool proposal; chưa có `SecurityContext` theo scope | `src/agents/nodes/llm.py`, `src/agents/state.py` |
+| Fact-check | `FactCheckOrchestrator`, Google Fact Check, Tavily, corpus/embeddings và claim comparator vẫn ở legacy active path; v4 không import/gọi chúng | `src/agents/fact_check.py`, `src/agents/graph.py`, `src/api/security_v4.py` |
+| Risk | Legacy deterministic `risk-v2` vẫn có rule claim-refuted; v4 chưa chạy risk, đúng phạm vi trước WP3 | `src/agents/nodes/risk.py`, `src/models/schemas.py` |
+| Security context | V4 có schema versioned cho entity/scenario/action/amount/urgency/URL/credential/OTP/payment/impersonation/threat; chưa dùng LLM cho case mơ hồ | `src/models/security_v4.py`, `src/agents/security_scope.py` |
 | Persistence/worker | Có SQLite local và PostgreSQL implementation cho lifecycle; PostgreSQL có lease, retry/idempotency, outbox và Redis notification | `src/services/analysis.py`, `src/services/durable_worker.py`, `src/repositories/blacklist.py`, `src/repositories/postgres.py` |
 | Trust data | Có approved blacklist; chưa có first-class whitelist, brand registry/matcher hoặc bounded `OfficialClaimVerifier` | `src/repositories/blacklist.py`, `src/repositories/postgres.py` |
 | Conversation | Chưa có `conversation_id`, conversation model/API hoặc case-memory summary | `src/models/schemas.py`, `migrations/versions/` |
@@ -81,7 +81,7 @@ chưa chạy PostgreSQL/Redis service thật, browser E2E, live-provider smoke, 
 
 | Kiểm tra | Kết quả |
 |---|---|
-| Backend `pytest -q` | 203 passed, 1 skipped (gồm 5 test WP0 mới) |
+| Backend `pytest -q` | 225 passed, 1 skipped (gồm test WP0–WP1) |
 | Backend `ruff check --no-cache .` | Pass |
 | Frontend `npm test` | 30 passed trong 6 files |
 | Frontend `npm run lint` | Pass |
@@ -181,7 +181,7 @@ sửa trực tiếp contract cũ.
 
 ## 5. WP1 — Scope Gate, Security Context & Contract
 
-**Status:** `NOT_STARTED`
+**Status:** `DONE`
 
 ### Contract tối thiểu
 
@@ -249,11 +249,37 @@ Chưa xóa code/route legacy trong WP1; chỉ bảo đảm route vNext không g�
 
 ### Hoàn thành khi
 
-Route vNext có contract versioned; OOS/NEED_MORE_INFO terminal; in-scope tạo `SecurityContext`; security
+Route v4 có contract versioned; OOS/NEED_MORE_INFO terminal; in-scope tạo `SecurityContextV4`; security
 path không gọi general fact-check.
 
-**File/symbol cần sửa sau này:** `src/agents/state.py`, `src/agents/nodes/extraction.py`,
-`src/agents/graph.py`, `src/agents/nodes/llm.py`, `src/models/schemas.py`, API vNext mới.
+### Đã triển khai
+
+- Thêm `POST /api/v4/analyses` với auth/rate-limit boundary hiện có.
+- Thêm contract v4 độc lập: consent, `ScopeDecisionV4`, `SecurityContextV4` và response transition được
+  Pydantic validate; request v4 từ chối field legacy/screenshot.
+- Thêm deterministic scope gate cho security signals, URL-only, impersonation và các nhóm OOS
+  sports/politics/medical-science/news.
+- Thêm taxonomy tối thiểu cho scenario, requested action và potential threat; scenario không bị đồng
+  nhất với threat.
+- OOS và NEED_MORE_INFO trả `terminal=true`, `next_step=END`; IN_SCOPE trả
+  `next_step=INVESTIGATION` nhưng chưa gọi planner/provider/risk.
+- Extraction failure trả partial context + limitation thay vì làm request fail.
+- Legacy `/api/v2`, `/api/v3`, graph, persistence và frontend không đổi.
+
+### Tests và giới hạn có chủ ý
+
+- 22 test mới cho schema/OpenAPI, auth, terminal routing, zero legacy-service resolution, telemetry v4,
+  recruitment/payment/OTP/promotion, impersonation, URL-only, OOS fixtures và fallback extraction.
+- Scope classifier hiện deterministic/local; chưa có LLM fallback cho case mơ hồ. Đây không phải scope
+  deviation vì WP1 đã bao phủ fixture bắt buộc; có thể bổ sung classifier call sau nếu evaluation yêu cầu.
+- Consent được nhận trong contract nhưng chưa dùng, vì WP1 không có external lookup. WP2/WP4 phải
+  enforce từng consent ngay trước provider call.
+- V4 chưa persist analysis/lifecycle và chưa có GET/events; đó là đầu ra của WP3, không được route tạm
+  sang legacy `AnalysisService`.
+
+**File/symbol đã thay đổi:** `src/models/security_v4.py`, `src/agents/security_scope.py`,
+`src/services/security_triage.py`, `src/api/security_v4.py`, `src/api/dependencies.py`, `src/main.py`,
+`src/agents/nodes/extraction.py` và các test v4 tương ứng.
 
 ---
 
@@ -617,7 +643,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP | Status | Evidence/Tests | Còn lại hoặc deviation |
 |---|---|---|---|
 | WP0 | DONE | Backend 203 pass/1 skip; Ruff pass; frontend 30 pass + lint/typecheck pass | Không có; hosted/PostgreSQL/Redis/E2E vẫn là release evidence WP9 |
-| WP1 | NOT_STARTED | — | Toàn bộ WP1 |
+| WP1 | DONE | 22 test v4 mới; full backend 225 pass/1 skip; Ruff + frontend regression pass | Không có; planner/persistence/risk tiếp tục ở WP2/WP3 |
 | WP2 | NOT_STARTED | — | Toàn bộ WP2 |
 | WP3 | NOT_STARTED | — | Toàn bộ WP3 |
 | WP4 | NOT_STARTED | — | Toàn bộ WP4 |

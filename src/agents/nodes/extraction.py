@@ -31,7 +31,7 @@ _CLAIM_MARKERS = (
 )
 
 
-def _extract_urls(message: str) -> list[str]:
+def extract_urls(message: str) -> list[str]:
     urls: list[str] = []
     for match in _URL_RE.finditer(message):
         candidate = match.group(0).rstrip(_TRAILING_PUNCTUATION)
@@ -42,7 +42,7 @@ def _extract_urls(message: str) -> list[str]:
 
 def classify_input(state: AgentState) -> dict:
     message = state.get("message", "").strip()
-    urls = _extract_urls(message)
+    urls = extract_urls(message)
     only_url = False
     if len(urls) == 1:
         comparable = message.rstrip(_TRAILING_PUNCTUATION)
@@ -53,10 +53,10 @@ def classify_input(state: AgentState) -> dict:
 
 def extract_indicators(state: AgentState) -> dict:
     message = state.get("message", "").strip()
-    urls = _extract_urls(message)
+    urls = extract_urls(message)
     # Remove every URL occurrence in one pass. Iterating over the de-duplicated
     # display list needlessly rescans the message and couples cleanup to the
-    # exact candidate returned by ``_extract_urls``.
+    # exact candidate returned by ``extract_urls``.
     text_without_urls = _URL_RE.sub(" ", message)
     text_without_urls = " ".join(text_without_urls.split()).strip(" -:;,.")
 
@@ -77,3 +77,6 @@ def host_for_url(url: str) -> str | None:
         return urlsplit(url).hostname
     except ValueError:
         return None
+
+
+__all__ = ["classify_input", "extract_indicators", "extract_urls", "host_for_url"]
