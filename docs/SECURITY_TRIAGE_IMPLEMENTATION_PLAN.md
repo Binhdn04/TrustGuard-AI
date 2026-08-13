@@ -1,0 +1,645 @@
+# Kế hoạch triển khai AI Security Triage Assistant
+
+**Cập nhật:** 13/08/2026  
+**Trạng thái:** WP0 hoàn tất; sẵn sàng triển khai WP1  
+**Nguồn yêu cầu:** [scope.md](scope.md)  
+**Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
+
+Tài liệu này là kế hoạch thực thi, không lặp lại toàn bộ nội dung audit hoặc product scope. Khi tài liệu
+và runtime khác nhau, phải kiểm tra code/test hiện tại rồi cập nhật lại kế hoạch trước khi implement.
+
+---
+
+## 1. Mục tiêu và ranh giới
+
+Chuyển luồng chính từ general fact-check sang Security Triage cho tin nhắn hoặc URL có dấu hiệu:
+
+- phishing và đánh cắp credential/OTP;
+- giả mạo thương hiệu/tổ chức;
+- lừa chuyển tiền, tuyển dụng, khuyến mãi hoặc trúng thưởng;
+- social engineering yêu cầu thông tin cá nhân hoặc hành động nguy hiểm.
+
+Luồng đích:
+
+```text
+message / URL / follow-up
+→ security scope decision
+→ structured security context
+→ policy-controlled investigation
+→ evidence
+→ deterministic security risk
+→ warning / recommendation
+→ admin review khi cần
+```
+
+Không biến sản phẩm thành công cụ xác minh mọi phát biểu trên Internet. General news, politics,
+medical/science, sports, deepfake và malware sandbox vẫn ngoài scope theo `scope.md`.
+
+### Nguyên tắc bắt buộc
+
+- LLM có thể extract context, đề xuất ưu tiên tool và viết giải thích; LLM không quyết định final
+  score/risk, whitelist/blacklist approval hoặc wide action.
+- `provider no-hit != SAFE`; `provider timeout != SAFE`.
+- `official NOT_FOUND != FALSE`.
+- Domain mismatch hoặc domain mới, nếu đứng riêng, không đủ để kết luận `MALICIOUS`.
+- External URL/domain lookup cần consent; official-source lookup có consent/purpose riêng.
+- Không dùng URL/target do LLM tự sinh để gọi network tool.
+- Giữ SSRF guard, redirect revalidation, ownership, RBAC, safe logging, durable job, idempotency,
+  outbox và realtime lifecycle.
+- Không drop legacy schema trước khi ngừng reader/writer, đo usage, backup/export và verify restore.
+
+---
+
+## 2. Hiện trạng đã đối chiếu với source
+
+Các nhận định dưới đây mô tả code ngày 13/08/2026, không phải capability đề xuất.
+
+| Khu vực | Hiện trạng xác minh | Bằng chứng chính |
+|---|---|---|
+| API/runtime | FastAPI có `/api/v2` và `/api/v3`; v3 vẫn kế thừa contract phân tích cũ | `src/main.py`, `src/api/routes.py`, `src/api/platform_v3.py`, `src/models/schemas.py` |
+| Input | `classify_input` chỉ phân loại text/URL/text+URL, không phải security scope | `src/agents/nodes/extraction.py` |
+| Workflow | Luồng hiện tại luôn đi qua extraction, rules, LLM, planner, fact-check, campaign và `risk-v2`; chưa có terminal OOS/NEED_MORE_INFO | `src/agents/graph.py` |
+| Planner | Có deterministic executor, budget, deadline, retry và consent gate; nhưng planner hiện luôn bổ sung URL scanner, domain intelligence và claim retriever khi có target tương ứng | `src/agents/nodes/planning.py`, `src/agents/graph.py` |
+| URL safety | Có normalization, local credential/punycode/lure rules, blacklist, guarded redirect, RDAP và reputation cascade | `src/agents/nodes/rules.py`, `src/agents/nodes/tools.py`, `src/agents/tools/` |
+| DNS | Resolver hiện phục vụ SSRF/network validation; chưa có DNS evidence tool độc lập | `src/agents/tools/network.py` |
+| Fact-check | `FactCheckOrchestrator`, Google Fact Check, Tavily, corpus/embeddings và claim comparator vẫn ở active path | `src/agents/fact_check.py`, `src/agents/graph.py`, `src/agents/tools/fact_check.py` |
+| Risk | Deterministic `risk-v2`, nhưng `ClaimStance.REFUTES` hiện cộng 70 và có thể tạo verdict malicious; taxonomy vẫn là `RiskLevel` + `Verdict` cũ | `src/agents/nodes/risk.py`, `src/models/schemas.py` |
+| LLM context | Có emotion, sender intent, scam indicator và tool proposal; chưa có `SecurityContext` theo scope | `src/agents/nodes/llm.py`, `src/agents/state.py` |
+| Persistence/worker | Có SQLite local và PostgreSQL implementation cho lifecycle; PostgreSQL có lease, retry/idempotency, outbox và Redis notification | `src/services/analysis.py`, `src/services/durable_worker.py`, `src/repositories/blacklist.py`, `src/repositories/postgres.py` |
+| Trust data | Có approved blacklist; chưa có first-class whitelist, brand registry/matcher hoặc bounded `OfficialClaimVerifier` | `src/repositories/blacklist.py`, `src/repositories/postgres.py` |
+| Conversation | Chưa có `conversation_id`, conversation model/API hoặc case-memory summary | `src/models/schemas.py`, `migrations/versions/` |
+| Admin/HITL | Có report, review, appeal, admin action và campaign APIs. `propose_admin_action()` có ở repository nhưng không có runtime caller. PostgreSQL chỉ áp dụng side effect thật cho add/disable blacklist; memory v3 chỉ đổi trạng thái review | `src/services/platform_wave2.py`, `src/repositories/postgres.py`, `src/api/platform_v3.py` |
+| Campaign | Cluster theo registrable domain, redirect target và claim vector; claim-vector path vẫn mang semantics fact-check | `src/agents/campaign.py`, `migrations/versions/0007_runtime_integration.py` |
+| Frontend | Main flow là form một lượt “Fact-Check AI”, dùng claim stance; đã có HTTP, WebSocket/polling, history, report và appeal để tái sử dụng | `frontend/src/components/analysis/`, `frontend/src/lib/api/` |
+| Screenshot | Capture/artifact có code và UI nhưng không nằm trong `scope.md` hiện tại | `src/services/screenshot.py`, `frontend/src/components/analysis/screenshot-artifact-panel.tsx` |
+| Migration | Alembic hiện tới `0008_source_discovery`; có `fact_check_*`, source-discovery, pgvector và `campaign_claim_features` legacy | `migrations/versions/` |
+
+“PostgreSQL implementation” không đồng nghĩa đã được xác minh trên hosted production. Lần baseline này
+chưa chạy PostgreSQL/Redis service thật, browser E2E, live-provider smoke, load test hoặc backup/restore.
+
+### Baseline test ngày 13/08/2026
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Backend `pytest -q` | 203 passed, 1 skipped (gồm 5 test WP0 mới) |
+| Backend `ruff check --no-cache .` | Pass |
+| Frontend `npm test` | 30 passed trong 6 files |
+| Frontend `npm run lint` | Pass |
+| Frontend `tsc --noEmit --incremental false` | Pass |
+
+Các test này bảo vệ contract hiện tại; chúng không chứng minh Security Triage vNext đã đạt scope.
+
+---
+
+## 3. Chiến lược triển khai
+
+### Boundary vNext
+
+Tạo contract/route vNext riêng theo convention của repository; không nhồi field nullable vào v2/v3 cũ.
+Trước khi code WP1, chốt đúng một cơ chế cutover:
+
+- route/version mới cho Security Triage;
+- frontend mới chỉ gọi contract này;
+- legacy v2/v3 được giữ riêng trong compatibility window;
+- settings chỉ dùng để bật/tắt capability thực sự cần vận hành, không tạo ba flag chồng chéo.
+
+Hiện source chỉ có các flag source-discovery/provisional/auto-promotion; chưa có general
+fact-check/security-vNext flag. Tên setting mới phải theo snake_case của `src/config.py` và env alias tự
+động của Pydantic Settings.
+
+### Thứ tự và dependency
+
+| WP | Kết quả | Phụ thuộc để bắt đầu | Phụ thuộc để hoàn tất |
+|---|---|---|---|
+| WP0 | Baseline + boundary vNext | — | — |
+| WP1 | Scope gate + SecurityContext + contract | WP0 | WP0 |
+| WP2 | Security planner + evidence | WP1 | WP1 |
+| WP3 | Deterministic risk + single-turn API | WP2 | WP2 |
+| WP4 | Brand/whitelist/official verification | WP1 | WP2, WP3 |
+| WP5 | Multi-turn conversation/case memory | WP1 | WP3 |
+| WP6 | Security Chat frontend | Có draft contract WP1 | WP3, WP5 |
+| WP7 | HITL/admin action | WP3 | WP4 |
+| WP8 | Security memory/campaign | WP3 | WP4, WP7 |
+| WP9 | Cutover/evaluation/cleanup | Có thể chuẩn bị fixture sớm | WP0–WP8 hoàn tất hoặc scope deviation được duyệt rõ ràng |
+
+WP4, WP5, phần khung WP6 và WP7 không cần chờ nhau hoàn toàn. Không dùng bảng trên để ép mọi công
+việc thành một chuỗi tuần tự.
+
+### Definition of Done chung
+
+Một WP chỉ `DONE` khi:
+
+- contract/migration liên quan đã có test;
+- safety invariants và owner/RBAC được test tại boundary;
+- provider failure/no-hit có limitation đúng;
+- không làm legacy path đổi ngoài chủ ý;
+- phần “Progress” cuối file ghi test thực tế và deviation còn lại.
+
+---
+
+## 4. WP0 — Baseline & Migration Safety
+
+**Status:** `DONE`
+
+### Đã hoàn thành
+
+- Audit source, API, migrations và frontend hiện tại.
+- Chạy backend test/lint, frontend unit/lint/typecheck; kết quả ở mục 2.
+- Xác nhận `/api/v2` và `/api/v3` đều đang tồn tại; v3 chưa phải security contract.
+- Chốt boundary vNext tại `/api/v4`; endpoint đầu tiên của WP1 là `/api/v4/analyses`, model mới dùng
+  `contract_version="v4"` và hậu tố `V4`, không kế thừa model v2/v3.
+- Thêm `src/core/product_boundary.py` làm source of truth cho prefix/contract và phân loại usage.
+- Bổ sung structured request-log fields an toàn: `api_contract`, `product_profile`,
+  `compatibility_usage`; không log query/body/token.
+- Thêm unit/integration test cho boundary và request telemetry.
+
+### Cutover, telemetry và rollback đã chốt
+
+- Trong compatibility window, server mount `/api/v4` additive bên cạnh `/api/v2` và `/api/v3`.
+- WP1–WP5 không đổi route/model v2/v3 tại chỗ. WP6 tạo API adapter v4 riêng; cutover là chọn adapter
+  v4 ở frontend/deployment, không route security request qua legacy graph.
+- Chưa thêm feature flag backend ở WP0: khi route v4 chưa tồn tại, một flag vNext chỉ tạo trạng thái
+  cấu hình giả. Nếu rollout sau này cần gradual enablement, flag phải gate router/adapter v4 thật.
+- Rollback trước destructive cleanup: chuyển frontend/deployment về adapter v3 và ngừng nhận v4 write;
+  dữ liệu/migration additive được giữ nguyên. Không rollback bằng drop table hoặc downgrade phá dữ liệu.
+- Legacy API read/write được đo từ `compatibility_usage=legacy_read|legacy_write` trong structured logs.
+- Provider usage/cost tiếp tục đo từ `tool_usage` theo `provider`, `operation`, `observed_at`; dashboard
+  hoặc release query phải tách Google Fact Check, Tavily, embeddings/corpus khỏi security providers.
+- Legacy schema writer phải được freeze trước; reader/writer evidence lấy từ application telemetry và
+  database statement/audit telemetry nếu môi trường có. Nếu không có bằng chứng đo được thì không được
+  suy ra zero usage và không chạy destructive migration.
+
+### Hoàn thành khi
+
+Boundary vNext, compatibility window, telemetry và rollback đã có quyết định/test đủ rõ để WP1 không
+sửa trực tiếp contract cũ.
+
+**File/symbol đã thay đổi:** `src/core/product_boundary.py`, `src/api/middleware.py`,
+`src/core/logging.py`, `tests/unit/test_product_boundary.py`.
+
+---
+
+## 5. WP1 — Scope Gate, Security Context & Contract
+
+**Status:** `NOT_STARTED`
+
+### Contract tối thiểu
+
+```text
+ScopeDecision
+  IN_SCOPE
+  NEED_MORE_INFO
+  OUT_OF_SCOPE_GENERAL_FACT_CHECK
+
+SecurityContext
+  claimed_entity
+  scenario
+  requested_action
+  amount
+  urgency
+  urls
+  credential_request
+  otp_request
+  payment_request
+  impersonation_signals
+  potential_threat
+  schema_version
+```
+
+Giữ `scenario` (recruitment, promotion, refund, account verification, payment...) tách khỏi
+`potential_threat` (PHISHING, BRAND_IMPERSONATION, FINANCIAL_SCAM...). Không mở taxonomy rộng hơn
+fixture/evaluation cần thiết.
+
+### Flow
+
+```text
+validate/redact
+→ scope gate
+   ├─ OUT_OF_SCOPE → boundary response → END
+   ├─ NEED_MORE_INFO → focused question → END
+   └─ IN_SCOPE → SecurityContext → WP2
+```
+
+OOS và NEED_MORE_INFO phải terminal trước investigation planner. Với OOS rõ ràng, dùng local signals
+nếu có thể. Nếu case mơ hồ cần LLM scope classifier, telemetry/test phải tách scope-classifier call khỏi
+investigation provider call; invariant là **zero investigation calls**, không phải luôn zero LLM calls.
+
+Khi context extraction lỗi, giữ URL/local indicators, tạo partial context + limitation và chỉ trả
+NEED_MORE_INFO nếu thiếu dữ liệu thật sự cản trở triage.
+
+### Không đi vào security path
+
+- `FactCheckOrchestrator`, Google Fact Check, Tavily general fact-check, corpus và claim comparator;
+- source-discovery flow;
+- screenshot capture mặc định, trừ khi scope được mở rộng riêng.
+
+Chưa xóa code/route legacy trong WP1; chỉ bảo đảm route vNext không gọi chúng.
+
+### Test bắt buộc
+
+| Input | Kỳ vọng chính |
+|---|---|
+| “Tây Ban Nha vô địch World Cup đúng không?” | OOS; zero investigation call |
+| general news/politics/medical/sports | OOS; zero investigation call |
+| “Tôi nhận được tin nhắn lạ” | NEED_MORE_INFO; một câu hỏi tập trung |
+| “HR yêu cầu đóng 500k phí hồ sơ” | recruitment + payment + RECRUITMENT_SCAM |
+| “Ngân hàng yêu cầu gửi OTP...” | `otp_request=true` |
+| “Chuyển tiền ngay để mở khóa...” | payment + urgency + FINANCIAL_SCAM |
+| “Trúng voucher, đăng nhập link này...” | promotion + credential/login signal |
+
+### Hoàn thành khi
+
+Route vNext có contract versioned; OOS/NEED_MORE_INFO terminal; in-scope tạo `SecurityContext`; security
+path không gọi general fact-check.
+
+**File/symbol cần sửa sau này:** `src/agents/state.py`, `src/agents/nodes/extraction.py`,
+`src/agents/graph.py`, `src/agents/nodes/llm.py`, `src/models/schemas.py`, API vNext mới.
+
+---
+
+## 6. WP2 — Security Planner & Evidence
+
+**Status:** `NOT_STARTED`
+
+Tái sử dụng `planning_loop`, step transition, tool ledger, budget, deadline, retry, consent, SSRF,
+blacklist, redirect, RDAP và reputation. Thay policy planner hiện tại; không chỉ đổi prompt.
+
+### Planner policy
+
+- Planner deterministic chọn tool theo `SecurityContext`, consent, target đã normalize và tool budget.
+- LLM chỉ đề xuất priority trong allowlist; executor tự derive target từ state.
+- Không tiếp tục behavior hiện tại là tự thêm mọi required tool/claim retriever.
+- No URL: không chạy network URL/domain tools.
+- No consent: chỉ chạy normalization, local rules/SSRF classification, local blacklist và local scam
+  analysis.
+- Consent URL không tự động cấp consent cho official-source lookup.
+- Blacklist hit hoặc blocked target phải short-circuit network work phù hợp.
+
+Ví dụ:
+
+```text
+phishing + URL
+→ local rules/blacklist → redirect → reputation + RDAP (+ DNS nếu có)
+
+recruitment không URL
+→ structured social-engineering/payment rules; không gọi URL provider
+```
+
+### Evidence contract
+
+```text
+InvestigationPlan
+Evidence[]       # type, source/provenance, target/ref, finding, observed_at, confidence nếu có
+Errors[]
+Limitations[]
+```
+
+Có thể adapter từ `Evidence` hiện tại, nhưng vNext không expose claim stance như product verdict và
+không persist raw provider response, OTP, password hoặc token.
+
+### DNS
+
+DNS hiện chưa phải product tool. WP2 phải chọn một trong hai và ghi rõ trong Progress:
+
+1. thêm DNS evidence adapter dùng safe resolver/revalidation hiện có; hoặc
+2. hoãn DNS và ghi **scope deviation** — không được đánh dấu full scope complete.
+
+### Test bắt buộc
+
+Consent true/false, private/local/metadata target, Unicode/punycode, blacklist hit, credential path,
+reputation no-hit/timeout, redirect revalidation, deadline, retry, budget exhaustion, LLM-supplied target
+bị bỏ qua, no-URL không gọi network và DNS behavior nếu được implement.
+
+### Hoàn thành khi
+
+Mỗi provider call giải thích được từ plan; consent/SSRF được enforce ngay trước network call; lỗi được
+normalize; general fact-check không quay lại route vNext.
+
+**File/symbol cần sửa sau này:** `build_investigation_plan`, `_build_planning_loop_node`,
+`build_rule_check_node`, tool protocols/models và vNext evidence models.
+
+---
+
+## 7. WP3 — Security Risk Engine & Single-turn API
+
+**Status:** `NOT_STARTED`
+
+### Risk contract
+
+```text
+SAFE
+LOW_RISK
+SUSPICIOUS
+HIGH_RISK
+MALICIOUS
+INSUFFICIENT_EVIDENCE
+```
+
+Policy phải versioned, ví dụ `security-risk-v1`. Risk class, score và recommended actions phải
+deterministic. LLM chỉ được viết grounded explanation từ evidence refs.
+
+Xóa khỏi vNext rule `ClaimStance.REFUTES → +70 → MALICIOUS`. Strong evidence cho malicious có thể là
+confirmed threat-intelligence hit, approved blacklist/admin verdict hoặc nhiều security indicator độc
+lập có độ tin cậy cao. Threshold cụ thể phải được fixture/evaluation khóa lại.
+
+### Response tối thiểu
+
+```json
+{
+  "scope": "IN_SCOPE",
+  "risk": "HIGH_RISK",
+  "score": 82,
+  "confidence": 0.84,
+  "threat_type": "PHISHING",
+  "policy_version": "security-risk-v1",
+  "evidence": [],
+  "recommended_actions": [],
+  "limitations": []
+}
+```
+
+Giữ `AnalysisService`, queued/running/completed/failed, persistence, events, WebSocket và polling; thêm
+contract/persistence vNext theo migration additive. Không đổi v2/v3 thành security contract tại chỗ.
+
+### Test bắt buộc
+
+Phishing credential, recruitment fee, OTP impersonation, financial scam, promotion scam, blacklist
+hit, provider timeout/no-hit, domain mismatch only, new-domain only, insufficient evidence,
+determinism cùng policy version và persistence/event round-trip.
+
+### Hoàn thành khi
+
+Single-turn chạy end-to-end từ API → scope → context → plan/tools → evidence → risk → explanation →
+persistence/realtime, và không còn fact-check semantics trong output vNext.
+
+**File/symbol cần sửa sau này:** `src/agents/nodes/risk.py`, `src/agents/nodes/explanation.py`,
+`src/agents/seams.py`, `src/services/analysis.py`, `src/services/processor.py`, vNext API/models và
+migration additive.
+
+---
+
+## 8. WP4 — Brand, Whitelist & Official Verification
+
+**Status:** `NOT_STARTED`
+
+### Brand registry/matcher
+
+Schema đề xuất (tên cuối cùng theo convention migration): brand entity, aliases, official
+domain/contact, provenance, effective interval, lifecycle/reviewer. Không hard-code registry trong
+prompt.
+
+Matcher nhận claimed entity + observed domain/contact và trả official match, lookalike/typosquat/
+homograph signals cùng provenance. `official_match=false` chỉ là evidence, không tự thành malicious.
+
+### Whitelist
+
+First-class table/repository/API với canonical indicator, scope, provenance, version, effective
+interval, lifecycle và audit. Whitelist chạy trước negative scoring nhưng không phải global
+`safe=true`: official domain không được suppress confirmed compromise signal độc lập.
+
+### OfficialClaimVerifier
+
+Capability riêng, không đổi tên/prompt của `FactCheckOrchestrator`:
+
+```yaml
+max_claims_per_case: 1
+max_search_queries: 2
+max_sources: 5
+allowed_purposes:
+  - verify_official_campaign
+  - verify_brand_announcement
+  - verify_recruitment_program
+  - verify_official_domain
+  - verify_official_contact
+```
+
+Output: `OFFICIAL_CONFIRMED`, `OFFICIAL_CONTRADICTED`, `NOT_FOUND`,
+`INSUFFICIENT_EVIDENCE`. Chỉ truy xuất official/allowed sources, có consent riêng và luôn giữ
+`NOT_FOUND != FALSE`.
+
+### Test bắt buộc
+
+Official domain/contact, alias, lookalike, homograph, mismatch-only, whitelist precedence, whitelist
+không che malicious evidence, effective interval, unauthorized mutation, official confirmed/
+contradicted/not-found và forbidden general fact request.
+
+### Hoàn thành khi
+
+Brand/whitelist evidence có provenance; official verifier bị bound theo purpose/budget; risk engine
+consume trust evidence đúng false-positive policy.
+
+**File/symbol cần sửa sau này:** migrations mới, repository protocols + SQLite/PostgreSQL
+implementations, admin/vNext API, planner và risk policy.
+
+---
+
+## 9. WP5 — Multi-turn Conversation & Case Memory
+
+**Status:** `NOT_STARTED`
+
+Conversation tối thiểu cần owner, status, active investigation/analysis link, redacted structured
+summary, context version, timestamps và retention. Có thể dùng `conversations` + FK/link trên analysis
+hoặc turn table riêng; chốt theo access pattern trước migration, không mặc định chỉ một row là đủ.
+
+Request vNext nhận optional `conversation_id`. Mỗi turn:
+
+- kiểm tra owner trước khi đọc context;
+- merge có version/conflict policy;
+- reuse entity/scenario/action/known URLs/evidence refs cần thiết;
+- không lưu raw OTP/password/token; không dùng làm private-chat archive;
+- không âm thầm kế thừa consent của turn trước cho external lookup;
+- không trộn unrelated case.
+
+Test: create/continue, same owner, other owner denied, concurrent update/version conflict, unrelated
+case, redaction, retention và follow-up từ NEED_MORE_INFO.
+
+### Hoàn thành khi
+
+`conversation_id` hoạt động end-to-end, context được redacted/versioned/retained và không có cross-user
+hoặc cross-case leakage.
+
+**File/symbol cần sửa sau này:** vNext request/API, `AnalysisService`, repository protocols,
+SQLite/PostgreSQL schema và retention worker.
+
+---
+
+## 10. WP6 — Security Chat Frontend
+
+**Status:** `NOT_STARTED`
+
+Tái sử dụng HTTP client, ticketed WebSocket, cursor replay/polling fallback, progress, history, report,
+appeal và auth. Thay semantics/component fact-check bằng composer/chat turns, risk summary, threat
+evidence, recommended actions, technical details và follow-up.
+
+UI phải render riêng:
+
+```text
+OUT_OF_SCOPE_GENERAL_FACT_CHECK
+NEED_MORE_INFO
+RUNNING
+PROVISIONAL_WARNING
+COMPLETED
+FAILED
+```
+
+Ẩn source registry/general fact-check entry point và screenshot khỏi Security Triage product profile;
+chưa xóa component legacy trước cutover. Copy không hướng user sang news/medical/general claims.
+
+Test unit + E2E: multi-turn, owner session, OOS, NEED_MORE_INFO, no consent, realtime reconnect/cursor,
+polling fallback, report/appeal và responsive/accessibility states.
+
+### Hoàn thành khi
+
+Main user flow dùng contract security vNext, chat nhiều lượt và không còn claim-stance semantics; các
+boundary realtime/auth/report/appeal không regression.
+
+**File/symbol cần sửa sau này:** `analysis-workspace.tsx`, `fact-check-composer.tsx`,
+`fact-check-summary.tsx`, `claim-result-card.tsx`, mapper/types/API client và các page history/home.
+
+---
+
+## 11. WP7 — HITL & Security Admin Actions
+
+**Status:** `NOT_STARTED`
+
+Không viết lại hạ tầng review đã có. Nối runtime producer vào v3/vNext admin action flow và hoàn thiện
+ít nhất `ADD_TO_BLACKLIST` trước:
+
+```text
+high-risk analysis
+→ proposal có target + evidence snapshot
+→ admin review approve/reject
+→ idempotent execution
+→ executed/failed state + immutable audit
+→ kết quả blacklist ảnh hưởng analysis sau
+```
+
+Hiện PostgreSQL apply blacklist ngay khi decision được approved nhưng response vẫn trả `APPROVED`, dù
+enum đã có `EXECUTED/FAILED`. WP7 phải chốt rõ transaction/state machine; không ghi “execute hoàn chỉnh”
+chỉ vì side effect SQL tồn tại. Memory/dev v3 cần behavior tương đương hoặc được ghi rõ là test double
+không hỗ trợ execution.
+
+Không cho action chạy nếu thiếu approved decision, reviewer/note, evidence snapshot hoặc canonical
+target. Test unauthorized access, reject, duplicate decision/execution, transaction rollback và audit.
+
+Sau action tối thiểu, bổ sung whitelist/domain/threat/audit views. `BLOCK_DOMAIN`,
+`PUBLISH_BROAD_WARNING` và AI Security Copilot chỉ được đánh dấu done khi có sink/behavior thật; nếu
+hoãn phải ghi scope deviation.
+
+**File/symbol cần sửa sau này:** `propose_admin_action`, `decide_admin_action`, `AdminActionStatus`,
+PostgreSQL/memory repositories, vNext risk/action producer và admin UI.
+
+---
+
+## 12. WP8 — Security Memory & Campaign
+
+**Status:** `NOT_STARTED`
+
+Security memory lưu structured intelligence có provenance: canonical domain/URL fingerprint, brand,
+threat type, risk/policy version, first/last seen, report count, admin verdict và evidence refs. Không
+lưu raw private conversation.
+
+Thay claim embeddings bằng security fingerprint giải thích được, ví dụ:
+
+- registrable domain và redirect target;
+- claimed brand;
+- scenario/requested action;
+- contact/payment pattern;
+- credential/OTP pattern;
+- URL lexical features và time window.
+
+Campaign vẫn chỉ là hypothesis cần reviewer; LLM có thể tóm tắt nhưng không tự xác nhận malicious hoặc
+publish warning.
+
+Test repeated domain, shared redirect, same brand/different domain, similar recruitment/payment
+pattern, unrelated cases không cluster, time window, admin correction và provenance/version.
+
+### Hoàn thành khi
+
+Security path không phụ thuộc claim embeddings để cluster; cluster giải thích được bằng security
+signals; admin verdict/correction phản ánh trong memory mà không xóa audit history.
+
+**File/symbol cần sửa sau này:** `src/agents/campaign.py`, campaign contracts/store, PostgreSQL/SQLite
+schema và admin campaign views.
+
+---
+
+## 13. WP9 — Cutover, Evaluation & Cleanup
+
+**Status:** `NOT_STARTED`
+
+### Evaluation/release gate
+
+Versioned dataset tối thiểu: phishing, credential/OTP, financial, recruitment, promotion/prize, brand
+impersonation, safe official, mismatch-only, new-domain-only, provider timeout/no-hit, OOS,
+NEED_MORE_INFO, multi-turn, no-consent và wide action.
+
+Đo scope/tool-routing accuracy, unnecessary-provider-call rate, precision/recall, false-positive/
+false-negative, malicious precision, high-risk recall, latency/cost và grounded explanation quality.
+
+Security/reliability gate: SSRF, redirect revalidation, Unicode/homograph, prompt injection, ownership,
+RBAC, rate limit, provider failure, lease loss, idempotency, PostgreSQL/Redis readiness, backup/restore
+và hosted provider smoke nếu có môi trường.
+
+Không được tuyên bố “đạt full scope” nếu DNS, multi-turn, whitelist, HITL execution, Security Memory
+hoặc AI Security Copilot bị hoãn; phải ghi rõ scope deviation/release profile.
+
+### Cutover và cleanup
+
+1. Chuyển frontend/worker sang security route mặc định.
+2. Freeze legacy API writers, fact-check/source-discovery jobs và provider calls.
+3. Đo legacy API/provider/DB read/write usage trong compatibility window.
+4. Backup/export dữ liệu cần retention và verify restore.
+5. Xóa application code/route legacy không còn consumer.
+6. Chạy destructive Alembic revision riêng; verify upgrade từ DB trống và DB `0008`.
+
+Candidate cleanup sau khi đủ gate:
+
+```text
+FactCheckOrchestrator, Google Fact Check, Tavily general fact-check, claim comparator
+/api/v2/chat và các analysis write route/contract legacy ở cả /api/v2, /api/v3
+fact_check_sources, fact_check_records, fact_check_embeddings
+fact_check_results, fact_check_result_embeddings
+fact_check_evidence_snapshots, fact_check_chunks
+source_discoveries, source_discovery_observations, source_discovery_decisions
+campaign_claim_features
+```
+
+Chỉ drop pgvector khi không còn consumer. Không dùng `git` hoặc destructive migration như một phần
+tự động của việc “đánh dấu WP done”; operator thực hiện theo runbook/approval riêng.
+
+---
+
+## 14. Progress
+
+Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp một block “Chưa có” trong từng WP.
+
+| WP | Status | Evidence/Tests | Còn lại hoặc deviation |
+|---|---|---|---|
+| WP0 | DONE | Backend 203 pass/1 skip; Ruff pass; frontend 30 pass + lint/typecheck pass | Không có; hosted/PostgreSQL/Redis/E2E vẫn là release evidence WP9 |
+| WP1 | NOT_STARTED | — | Toàn bộ WP1 |
+| WP2 | NOT_STARTED | — | Toàn bộ WP2 |
+| WP3 | NOT_STARTED | — | Toàn bộ WP3 |
+| WP4 | NOT_STARTED | — | Toàn bộ WP4 |
+| WP5 | NOT_STARTED | — | Toàn bộ WP5 |
+| WP6 | NOT_STARTED | — | Toàn bộ WP6 |
+| WP7 | NOT_STARTED | — | Toàn bộ WP7 |
+| WP8 | NOT_STARTED | — | Toàn bộ WP8 |
+| WP9 | NOT_STARTED | — | Toàn bộ WP9 |
+
+Trạng thái hợp lệ: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
+
+Khi cập nhật:
+
+- ghi command/test và kết quả thực tế, không ghi “pass” nếu chỉ suy ra từ code;
+- ghi file/symbol đã thay đổi ở WP tương ứng nếu khác danh sách gợi ý;
+- ghi scope/plan deviation và lý do;
+- không ghi lịch sử commit/PR/merge;
+- không coi tên model/table ví dụ trong tài liệu là symbol đã tồn tại trước khi search repository.
+
+### Ưu tiên khi thời gian hạn chế
+
+Milestone dùng được tối thiểu: WP0 → WP1 → WP2 → WP3 → phần cốt lõi WP4 → UI cơ bản WP6 →
+`ADD_TO_BLACKLIST` của WP7. WP5, DNS, Copilot hoặc advanced campaign nếu hoãn vẫn phải được ghi là
+scope deviation; một bản single-turn ổn định có thể là release profile giới hạn, nhưng không phải hoàn
+thành toàn bộ `scope.md`.
