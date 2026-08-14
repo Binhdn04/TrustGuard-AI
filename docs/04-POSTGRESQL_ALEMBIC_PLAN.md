@@ -19,6 +19,8 @@
 | `0013_security_hitl_actions` | v4 action proposal/execution state và immutable decision audit |
 | `0014_security_memory_campaigns` | explainable security memory, campaign members và correction/review audit |
 | `0015_security_api_readiness` | report-review status/index và immutable v4 feedback audit |
+| `0016_security_v4_durable_jobs` | isolated Security v4 job, encrypted payload, transactional outbox và per-owner idempotency |
+| `0017_security_admin_copilot` | grounded admin suggestion, usage metadata, evidence snapshot hash, reviewer timestamps và audit |
 
 Production repository có implementation cho durable analysis, owner reads, reports/review, appeals,
 admin actions, blacklist, source/corpus, legacy campaigns, Security v4 memory/campaigns, artifacts,

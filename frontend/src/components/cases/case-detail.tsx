@@ -146,6 +146,13 @@ export function CaseDetail({
         },
       });
       if (activeGeneration !== generation.current) return false;
+      if (!("scope_decision" in next)) {
+        setEvents([]);
+        router.replace(`/cases/${encodeURIComponent(next.analysis_id)}`);
+        setConversation(await api.getConversation(next.conversation_id));
+        monitor(next.analysis_id, activeGeneration);
+        return true;
+      }
       setResult(next);
       setEvents([]);
       router.replace(`/cases/${encodeURIComponent(next.analysis_id)}`);

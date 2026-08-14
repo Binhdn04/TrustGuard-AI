@@ -52,6 +52,7 @@ from src.models import (
     RiskDistributionMetricV3,
     RiskLevel,
     SecurityAdminAuditEventV4,
+    SecurityAdminCopilotResponseV4,
     SecurityAnalysisEventV4,
     SecurityAppealAdminRecordV4,
     SecurityAppealRecordV4,
@@ -66,6 +67,7 @@ from src.models import (
     SecurityReportAdminRecordV4,
     SecurityReportRecordV4,
     SecurityScopeResponseV4,
+    SecurityTriageCreateRequestV4,
     ToolError,
     TrustLifecycleV4,
     UsageMetricV3,
@@ -390,6 +392,310 @@ class PostgresPlatformRepository:
                 response.completed_at,
             )
 
+    async def enqueue_security_analysis(
+        self,
+        *,
+        owner_id: str,
+        request: SecurityTriageCreateRequestV4,
+        response: SecurityScopeResponseV4,
+        conversation: SecurityConversationV4,
+        expected_version: int | None,
+        idempotency_key: str,
+        payload_hash: str,
+        events: list[SecurityAnalysisEventV4],
+    ) -> SecurityScopeResponseV4:
+        """Atomically reserve a conversation turn and enqueue encrypted v4 work."""
+        pool = await self._get_pool()
+        now = response.created_at
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",
+                owner_id,
+                idempotency_key,
+            )
+            existing = await connection.fetchrow(
+                """SELECT i.payload_hash,a.response FROM security_analysis_idempotency_v4 i
+                   JOIN security_analyses a ON a.id=i.analysis_id
+                   WHERE i.owner_id=$1 AND i.idempotency_key=$2""",
+                owner_id,
+                idempotency_key,
+            )
+            if existing is not None:
+                if existing["payload_hash"] != payload_hash:
+                    raise PlatformError(
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Idempotency-Key was already used with a different Security v4 turn.",
+                        retryable=False,
+                    )
+                return SecurityScopeResponseV4.model_validate(_json_value(existing["response"]))
+
+            await connection.execute(
+                """INSERT INTO security_analyses(
+                       id,owner_id,status,response,policy_version,created_at,updated_at,completed_at,conversation_id
+                   ) VALUES($1,$2,'queued',$3::jsonb,NULL,$4,$4,NULL,$5)""",
+                response.analysis_id,
+                owner_id,
+                response.model_dump_json(),
+                now,
+                response.conversation_id,
+            )
+            if expected_version is None:
+                reserved = await connection.execute(
+                    """INSERT INTO security_conversations(
+                           id,owner_id,status,active_analysis_id,context_version,summary,
+                           created_at,updated_at,expires_at
+                       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
+                       ON CONFLICT(id) DO NOTHING""",
+                    conversation.conversation_id,
+                    owner_id,
+                    conversation.status.value,
+                    conversation.active_analysis_id,
+                    conversation.context_version,
+                    conversation.model_dump_json(),
+                    conversation.created_at,
+                    conversation.updated_at,
+                    conversation.expires_at,
+                )
+                updated = reserved.endswith("1")
+            else:
+                reserved = await connection.fetchrow(
+                    """UPDATE security_conversations SET status=$3,active_analysis_id=$4,
+                           context_version=$5,summary=$6::jsonb,updated_at=$7,expires_at=$8
+                       WHERE id=$1 AND owner_id=$2 AND context_version=$9 RETURNING id""",
+                    conversation.conversation_id,
+                    owner_id,
+                    conversation.status.value,
+                    conversation.active_analysis_id,
+                    conversation.context_version,
+                    conversation.model_dump_json(),
+                    conversation.updated_at,
+                    conversation.expires_at,
+                    expected_version,
+                )
+                updated = reserved is not None
+            if not updated:
+                raise PlatformError(
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security conversation was updated by another turn.",
+                    retryable=True,
+                )
+            await connection.execute(
+                """INSERT INTO security_conversation_turns(
+                       conversation_id,context_version,analysis_id,created_at
+                   ) VALUES($1,$2,$3,$4)""",
+                conversation.conversation_id,
+                conversation.context_version,
+                conversation.active_analysis_id,
+                conversation.updated_at,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_payloads_v4(
+                       analysis_id,payload_ciphertext,context_snapshot,created_at,expires_at
+                   ) VALUES($1,pgp_sym_encrypt($2,$3),$4::jsonb,$5,$6)""",
+                response.analysis_id,
+                request.model_dump_json(),
+                self._encryption_key,
+                response.model_dump_json(),
+                now,
+                now + timedelta(hours=24),
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_jobs_v4(
+                       id,analysis_id,status,max_attempts,available_at,created_at,updated_at
+                   ) VALUES($1,$2,'queued',3,$3,$3,$3)""",
+                uuid4(),
+                response.analysis_id,
+                now,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_idempotency_v4(
+                       owner_id,idempotency_key,payload_hash,analysis_id,created_at
+                   ) VALUES($1,$2,$3,$4,$5)""",
+                owner_id,
+                idempotency_key,
+                payload_hash,
+                response.analysis_id,
+                now,
+            )
+            for event in events:
+                await connection.execute(
+                    """INSERT INTO security_analysis_events(
+                           event_id,analysis_id,sequence,event_type,payload,occurred_at
+                       ) VALUES($1,$2,$3,$4,$5::jsonb,$6)""",
+                    event.event_id,
+                    event.analysis_id,
+                    event.sequence,
+                    event.kind.value,
+                    event.model_dump_json(),
+                    event.occurred_at,
+                )
+                await connection.execute(
+                    """INSERT INTO security_analysis_outbox_v4(
+                           id,analysis_id,event_type,payload,idempotency_key,created_at
+                       ) VALUES($1,$2,$3,$4::jsonb,$5,$6)""",
+                    uuid4(),
+                    response.analysis_id,
+                    f"security_analysis.{event.kind.value}",
+                    event.model_dump_json(),
+                    f"security-v4-event:{response.analysis_id}:{event.sequence}",
+                    event.occurred_at,
+                )
+        return response
+
+    async def load_security_idempotent(
+        self,
+        owner_id: str,
+        idempotency_key: str,
+        payload_hash: str,
+    ) -> SecurityScopeResponseV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """SELECT i.payload_hash,a.response FROM security_analysis_idempotency_v4 i
+                   JOIN security_analyses a ON a.id=i.analysis_id
+                   WHERE i.owner_id=$1 AND i.idempotency_key=$2""",
+                owner_id,
+                idempotency_key,
+            )
+        if row is None:
+            return None
+        if row["payload_hash"] != payload_hash:
+            raise PlatformError(
+                status_code=409,
+                code=ErrorCode.CONFLICT,
+                message="Idempotency-Key was already used with a different Security v4 turn.",
+                retryable=False,
+            )
+        return SecurityScopeResponseV4.model_validate(_json_value(row["response"]))
+
+    async def load_security_job_payload(
+        self,
+        job: DurableJob,
+        worker_id: str,
+    ) -> tuple[str, SecurityTriageCreateRequestV4, SecurityScopeResponseV4] | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """SELECT a.owner_id,p.context_snapshot,
+                          pgp_sym_decrypt(p.payload_ciphertext,$3) AS request_json
+                   FROM security_analysis_jobs_v4 j
+                   JOIN security_analysis_payloads_v4 p ON p.analysis_id=j.analysis_id
+                   JOIN security_analyses a ON a.id=j.analysis_id
+                   WHERE j.id=$1 AND j.worker_id=$2 AND j.status='running'
+                     AND j.lease_expires_at > now()""",
+                job.id,
+                worker_id,
+                self._encryption_key,
+            )
+        if row is None:
+            return None
+        return (
+            row["owner_id"],
+            SecurityTriageCreateRequestV4.model_validate_json(row["request_json"]),
+            SecurityScopeResponseV4.model_validate(_json_value(row["context_snapshot"])),
+        )
+
+    async def append_security_analysis_event(self, event: SecurityAnalysisEventV4) -> SecurityAnalysisEventV4:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.fetchrow("SELECT id FROM security_analyses WHERE id=$1 FOR UPDATE", event.analysis_id)
+            sequence = await connection.fetchval(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM security_analysis_events WHERE analysis_id=$1",
+                event.analysis_id,
+            )
+            event = event.model_copy(update={"sequence": sequence})
+            await connection.execute(
+                """INSERT INTO security_analysis_events(
+                       event_id,analysis_id,sequence,event_type,payload,occurred_at
+                   ) VALUES($1,$2,$3,$4,$5::jsonb,$6)""",
+                event.event_id,
+                event.analysis_id,
+                sequence,
+                event.kind.value,
+                event.model_dump_json(),
+                event.occurred_at,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_outbox_v4(
+                       id,analysis_id,event_type,payload,idempotency_key,created_at
+                   ) VALUES($1,$2,$3,$4::jsonb,$5,$6)
+                   ON CONFLICT(idempotency_key) DO NOTHING""",
+                uuid4(),
+                event.analysis_id,
+                f"security_analysis.{event.kind.value}",
+                event.model_dump_json(),
+                f"security-v4-event:{event.analysis_id}:{sequence}",
+                event.occurred_at,
+            )
+        return event
+
+    async def complete_security_analysis_job(
+        self,
+        job: DurableJob,
+        worker_id: str,
+        response: SecurityScopeResponseV4,
+        final_event: SecurityAnalysisEventV4,
+    ) -> SecurityAnalysisEventV4:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            owned = await connection.fetchrow(
+                """SELECT id FROM security_analysis_jobs_v4
+                   WHERE id=$1 AND worker_id=$2 AND status='running'
+                     AND lease_expires_at > now() FOR UPDATE""",
+                job.id,
+                worker_id,
+            )
+            if owned is None:
+                raise LostJobLeaseError("security v4 job lease was lost before terminal commit")
+            await connection.fetchrow("SELECT id FROM security_analyses WHERE id=$1 FOR UPDATE", response.analysis_id)
+            sequence = await connection.fetchval(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM security_analysis_events WHERE analysis_id=$1",
+                response.analysis_id,
+            )
+            final_event = final_event.model_copy(update={"sequence": sequence})
+            await connection.execute(
+                """UPDATE security_analyses SET status=$2,response=$3::jsonb,policy_version=$4,
+                          updated_at=$5,completed_at=$5 WHERE id=$1""",
+                response.analysis_id,
+                response.status.value,
+                response.model_dump_json(),
+                response.policy_version,
+                response.completed_at,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_events(
+                       event_id,analysis_id,sequence,event_type,payload,occurred_at
+                   ) VALUES($1,$2,$3,$4,$5::jsonb,$6)""",
+                final_event.event_id,
+                final_event.analysis_id,
+                sequence,
+                final_event.kind.value,
+                final_event.model_dump_json(),
+                final_event.occurred_at,
+            )
+            await connection.execute("DELETE FROM security_analysis_payloads_v4 WHERE analysis_id=$1", response.analysis_id)
+            await connection.execute(
+                """UPDATE security_analysis_jobs_v4 SET status='completed',worker_id=NULL,
+                          lease_expires_at=NULL,updated_at=$3 WHERE id=$1 AND worker_id=$2""",
+                job.id,
+                worker_id,
+                response.completed_at,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_outbox_v4(
+                       id,analysis_id,event_type,payload,idempotency_key,created_at
+                   ) VALUES($1,$2,'security_analysis.final',$3::jsonb,$4,$5)
+                   ON CONFLICT(idempotency_key) DO NOTHING""",
+                uuid4(),
+                response.analysis_id,
+                final_event.model_dump_json(),
+                f"security-v4-event:{response.analysis_id}:{sequence}",
+                response.completed_at,
+            )
+        return final_event
+
     async def save_security_conversation(
         self,
         owner_id: str,
@@ -550,6 +856,53 @@ class PostgresPlatformRepository:
         async with pool.acquire() as connection:
             rows = await connection.fetch("SELECT record FROM security_memory ORDER BY last_seen_at DESC")
         return [SecurityMemoryRecordV4.model_validate(_json_value(row["record"])) for row in rows]
+
+    async def load_reviewed_security_memory(
+        self,
+        owner_id: str,
+        current_analysis_id: UUID,
+    ) -> tuple[list[tuple[SecurityMemoryRecordV4, datetime]], list[SecurityCampaignRecordV4]]:
+        """Return owner-isolated reviewed intelligence without the current analysis."""
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            memory_rows = await connection.fetch(
+                """SELECT m.record,
+                          (SELECT max(a.occurred_at) FROM security_memory_audit a
+                           WHERE a.memory_id=m.id) AS reviewed_at
+                   FROM security_memory m
+                   JOIN security_analyses s ON s.id=m.analysis_id
+                   WHERE s.owner_id=$1 AND m.analysis_id<>$2
+                     AND m.admin_verdict IN ('malicious','safe','false_positive')
+                     AND EXISTS(SELECT 1 FROM security_memory_audit a WHERE a.memory_id=m.id)
+                   ORDER BY reviewed_at DESC LIMIT 100""",
+                owner_id,
+                current_analysis_id,
+            )
+            campaign_rows = await connection.fetch(
+                """SELECT c.record FROM security_campaigns_v4 c
+                   WHERE c.reviewer_status='confirmed'
+                     AND NOT EXISTS(
+                       SELECT 1 FROM security_campaign_members_v4 self_member
+                       WHERE self_member.campaign_id=c.id AND self_member.analysis_id=$2
+                     )
+                     AND EXISTS(SELECT 1 FROM security_campaign_members_v4 member WHERE member.campaign_id=c.id)
+                     AND NOT EXISTS(
+                       SELECT 1 FROM security_campaign_members_v4 member
+                       JOIN security_analyses analysis ON analysis.id=member.analysis_id
+                       WHERE member.campaign_id=c.id AND analysis.owner_id<>$1
+                     )
+                   ORDER BY c.reviewed_at DESC LIMIT 100""",
+                owner_id,
+                current_analysis_id,
+            )
+        memories = [
+            (SecurityMemoryRecordV4.model_validate(_json_value(row["record"])), row["reviewed_at"])
+            for row in memory_rows
+        ]
+        campaigns = [
+            SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) for row in campaign_rows
+        ]
+        return memories, campaigns
 
     async def correct_security_memory(
         self,
@@ -1239,6 +1592,183 @@ class PostgresPlatformRepository:
             row["idempotency_key"],
         )
 
+    async def latest_security_admin_copilot(
+        self, analysis_id: UUID, evidence_snapshot_hash: str
+    ) -> SecurityAdminCopilotResponseV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """SELECT suggestion FROM security_admin_copilot_suggestions_v4
+                   WHERE analysis_id=$1 AND evidence_snapshot_hash=$2
+                   ORDER BY completed_at DESC LIMIT 1""",
+                analysis_id,
+                evidence_snapshot_hash,
+            )
+        return SecurityAdminCopilotResponseV4.model_validate(row["suggestion"]) if row else None
+
+    async def save_security_admin_copilot(
+        self,
+        suggestion: SecurityAdminCopilotResponseV4,
+        evidence_snapshot_hash: str,
+        reviewer_id: str,
+        requested_at: datetime,
+        completed_at: datetime,
+    ) -> None:
+        audit = SecurityAdminAuditEventV4(
+            resource_type=SecurityAuditResourceV4.COPILOT,
+            resource_id=suggestion.suggestion_id,
+            action="copilot_suggestion_generated",
+            actor_id=reviewer_id,
+            note=f"{suggestion.generation_mode.value}:{suggestion.suggestion_version}",
+            occurred_at=completed_at,
+            evidence_refs=suggestion.evidence_refs,
+        )
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """INSERT INTO security_admin_copilot_suggestions_v4(
+                       id,analysis_id,reviewer_id,suggestion,usage_metadata,evidence_snapshot_hash,
+                       requested_at,completed_at
+                   ) VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8)""",
+                suggestion.suggestion_id,
+                suggestion.analysis_id,
+                reviewer_id,
+                suggestion.model_dump_json(),
+                suggestion.usage.model_dump_json(),
+                evidence_snapshot_hash,
+                requested_at,
+                completed_at,
+            )
+            await self._insert_security_feedback_audit(connection, audit)
+
+    async def claim_security_job(self, worker_id: str, lease_seconds: int = 60) -> DurableJob | None:
+        pool = await self._get_pool()
+        now = datetime.now(UTC)
+        lease = now + timedelta(seconds=lease_seconds)
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                """SELECT id,analysis_id,attempt,max_attempts
+                   FROM security_analysis_jobs_v4
+                   WHERE ((status='queued' AND available_at <= $1)
+                          OR (status='running' AND lease_expires_at <= $1))
+                     AND attempt < max_attempts
+                   ORDER BY available_at,created_at
+                   FOR UPDATE SKIP LOCKED LIMIT 1""",
+                now,
+            )
+            if row is None:
+                return None
+            attempt = row["attempt"] + 1
+            await connection.execute(
+                """UPDATE security_analysis_jobs_v4 SET status='running',attempt=$2,worker_id=$3,
+                          claimed_at=$4,lease_expires_at=$5,updated_at=$4 WHERE id=$1""",
+                row["id"],
+                attempt,
+                worker_id,
+                now,
+                lease,
+            )
+        return DurableJob(row["id"], row["analysis_id"], "security_v4", attempt, row["max_attempts"], lease)
+
+    async def renew_security_job(self, job_id: UUID, worker_id: str, lease_seconds: int) -> bool:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            result = await connection.execute(
+                """UPDATE security_analysis_jobs_v4
+                   SET lease_expires_at=now()+($3 * interval '1 second'),updated_at=now()
+                   WHERE id=$1 AND worker_id=$2 AND status='running'""",
+                job_id,
+                worker_id,
+                lease_seconds,
+            )
+        return result == "UPDATE 1"
+
+    async def retry_security_job(self, job: DurableJob, failure_code: str, worker_id: str) -> bool:
+        pool = await self._get_pool()
+        exhausted = job.attempt >= job.max_attempts
+        delay = min(2**job.attempt, 60)
+        now = datetime.now(UTC)
+        async with pool.acquire() as connection, connection.transaction():
+            owned = await connection.fetchrow(
+                """SELECT analysis_id FROM security_analysis_jobs_v4
+                   WHERE id=$1 AND worker_id=$2 AND status='running'
+                     AND lease_expires_at > now() FOR UPDATE""",
+                job.id,
+                worker_id,
+            )
+            if owned is None:
+                return False
+            if not exhausted:
+                await connection.execute(
+                    """UPDATE security_analysis_jobs_v4 SET status='queued',failure_code=$2,
+                              available_at=$3+($4 * interval '1 second'),lease_expires_at=NULL,
+                              worker_id=NULL,updated_at=$3 WHERE id=$1""",
+                    job.id,
+                    failure_code[:64],
+                    now,
+                    delay,
+                )
+                return True
+            row = await connection.fetchrow(
+                "SELECT response FROM security_analyses WHERE id=$1 FOR UPDATE",
+                job.analysis_id,
+            )
+            if row is None:
+                return False
+            response = SecurityScopeResponseV4.model_validate(_json_value(row["response"])).model_copy(
+                update={"status": "failed", "completed_at": now}
+            )
+            sequence = await connection.fetchval(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM security_analysis_events WHERE analysis_id=$1",
+                job.analysis_id,
+            )
+            event = SecurityAnalysisEventV4(
+                analysis_id=job.analysis_id,
+                sequence=sequence,
+                status="failed",
+                step="failed",
+                kind="final",
+                message="Security analysis failed after the retry budget was exhausted.",
+                occurred_at=now,
+            )
+            await connection.execute(
+                """UPDATE security_analyses SET status='failed',response=$2::jsonb,
+                          updated_at=$3,completed_at=$3 WHERE id=$1""",
+                job.analysis_id,
+                response.model_dump_json(),
+                now,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_events(
+                       event_id,analysis_id,sequence,event_type,payload,occurred_at
+                   ) VALUES($1,$2,$3,'final',$4::jsonb,$5)""",
+                event.event_id,
+                job.analysis_id,
+                sequence,
+                event.model_dump_json(),
+                now,
+            )
+            await connection.execute("DELETE FROM security_analysis_payloads_v4 WHERE analysis_id=$1", job.analysis_id)
+            await connection.execute(
+                """UPDATE security_analysis_jobs_v4 SET status='failed',failure_code=$2,
+                          lease_expires_at=NULL,worker_id=NULL,updated_at=$3 WHERE id=$1""",
+                job.id,
+                failure_code[:64],
+                now,
+            )
+            await connection.execute(
+                """INSERT INTO security_analysis_outbox_v4(
+                       id,analysis_id,event_type,payload,idempotency_key,created_at
+                   ) VALUES($1,$2,'security_analysis.final',$3::jsonb,$4,$5)
+                   ON CONFLICT(idempotency_key) DO NOTHING""",
+                uuid4(),
+                job.analysis_id,
+                event.model_dump_json(),
+                f"security-v4-event:{job.analysis_id}:{sequence}",
+                now,
+            )
+        return True
+
     async def finish_job(self, job_id: UUID, worker_id: str) -> None:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
@@ -1307,6 +1837,45 @@ class PostgresPlatformRepository:
             )
             for row in rows
         ]
+
+    async def claim_security_outbox(self, worker_id: str, limit: int = 100) -> list[OutboxMessage]:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            rows = await connection.fetch(
+                """SELECT id,analysis_id,event_type,payload,idempotency_key
+                   FROM security_analysis_outbox_v4
+                   WHERE published_at IS NULL AND (lease_expires_at IS NULL OR lease_expires_at<=now())
+                   ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $1""",
+                limit,
+            )
+            ids = [row["id"] for row in rows]
+            if ids:
+                await connection.execute(
+                    """UPDATE security_analysis_outbox_v4 SET worker_id=$2,
+                              lease_expires_at=now()+interval '30 seconds'
+                       WHERE id=ANY($1::uuid[])""",
+                    ids,
+                    worker_id,
+                )
+        return [
+            OutboxMessage(
+                row["id"],
+                row["analysis_id"],
+                row["event_type"],
+                _json_value(row["payload"]),
+                row["idempotency_key"],
+            )
+            for row in rows
+        ]
+
+    async def mark_security_outbox_published(self, message_id: UUID) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """UPDATE security_analysis_outbox_v4
+                   SET published_at=now(),lease_expires_at=NULL,worker_id=NULL WHERE id=$1""",
+                message_id,
+            )
 
     async def mark_outbox_published(self, message_id: UUID) -> None:
         pool = await self._get_pool()
@@ -2806,6 +3375,77 @@ class PostgresPlatformRepository:
                 now,
             )
         return int(result.removeprefix("UPDATE "))
+
+    async def expire_security_job_payloads(self, now: datetime) -> int:
+        """Purge abandoned encrypted v4 input no later than its 24-hour TTL."""
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            rows = await connection.fetch(
+                """DELETE FROM security_analysis_payloads_v4
+                   WHERE expires_at <= $1 RETURNING analysis_id""",
+                now,
+            )
+            if rows:
+                analysis_ids = [row["analysis_id"] for row in rows]
+                await connection.execute(
+                    """UPDATE security_analysis_jobs_v4 SET status='failed',failure_code='PAYLOAD_EXPIRED',
+                              lease_expires_at=NULL,worker_id=NULL,updated_at=$2
+                       WHERE analysis_id=ANY($1::uuid[]) AND status IN ('queued','running')""",
+                    analysis_ids,
+                    now,
+                )
+                for analysis_id in analysis_ids:
+                    stored = await connection.fetchrow(
+                        "SELECT response FROM security_analyses WHERE id=$1 FOR UPDATE",
+                        analysis_id,
+                    )
+                    if stored is None:
+                        continue
+                    response = SecurityScopeResponseV4.model_validate(_json_value(stored["response"])).model_copy(
+                        update={"status": "failed", "completed_at": now}
+                    )
+                    sequence = await connection.fetchval(
+                        "SELECT COALESCE(MAX(sequence),0)+1 FROM security_analysis_events WHERE analysis_id=$1",
+                        analysis_id,
+                    )
+                    event = SecurityAnalysisEventV4(
+                        analysis_id=analysis_id,
+                        sequence=sequence,
+                        status="failed",
+                        step="payload_expired",
+                        kind="final",
+                        message="Encrypted Security v4 payload expired before processing completed.",
+                        occurred_at=now,
+                    )
+                    await connection.execute(
+                        """UPDATE security_analyses SET status='failed',response=$2::jsonb,
+                                  updated_at=$3,completed_at=$3 WHERE id=$1""",
+                        analysis_id,
+                        response.model_dump_json(),
+                        now,
+                    )
+                    await connection.execute(
+                        """INSERT INTO security_analysis_events(
+                               event_id,analysis_id,sequence,event_type,payload,occurred_at
+                           ) VALUES($1,$2,$3,'final',$4::jsonb,$5)""",
+                        event.event_id,
+                        analysis_id,
+                        sequence,
+                        event.model_dump_json(),
+                        now,
+                    )
+                    await connection.execute(
+                        """INSERT INTO security_analysis_outbox_v4(
+                               id,analysis_id,event_type,payload,idempotency_key,created_at
+                           ) VALUES($1,$2,'security_analysis.final',$3::jsonb,$4,$5)
+                           ON CONFLICT(idempotency_key) DO NOTHING""",
+                        uuid4(),
+                        analysis_id,
+                        event.model_dump_json(),
+                        f"security-v4-event:{analysis_id}:{sequence}",
+                        now,
+                    )
+        return len(rows)
 
     async def operations_metrics(self, started_at: datetime, ended_at: datetime) -> OperationsMetricsResponseV3:
         pool = await self._get_pool()

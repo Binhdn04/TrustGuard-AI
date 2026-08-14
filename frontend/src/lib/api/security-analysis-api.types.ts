@@ -4,7 +4,10 @@ import type {
   BrandRecordV4,
   PotentialThreatV4,
   SecurityAdminAuditPageV4,
+  SecurityAdminCopilotRequestV4,
+  SecurityAdminCopilotResponseV4,
   SecurityAnalysisEventPageV4,
+  SecurityAnalysisAcceptedResponseV4,
   SecurityAnalysisPageV4,
   SecurityAppealAdminRecordV4,
   SecurityAppealCreateRequestV4,
@@ -102,9 +105,13 @@ export interface SecurityAppealPageQuery extends SecurityPaginationQuery {
 
 export interface SecurityAnalysisApi {
   getCapabilities(): Promise<SecurityCapabilitiesResponseV4>;
-  createAnalysis(request: SecurityTriageCreateRequestV4): Promise<SecurityScopeResponseV4>;
+  createAnalysis(
+    request: SecurityTriageCreateRequestV4,
+    options?: { idempotencyKey?: string },
+  ): Promise<SecurityScopeResponseV4 | SecurityAnalysisAcceptedResponseV4>;
   getAnalysis(analysisId: string): Promise<SecurityScopeResponseV4>;
   getAdminAnalysis(analysisId: string): Promise<SecurityScopeResponseV4>;
+  draftAdminCopilot?(analysisId: string, request: SecurityAdminCopilotRequestV4): Promise<SecurityAdminCopilotResponseV4>;
   listAnalyses(): Promise<SecurityScopeResponseV4[]>;
   pageAnalyses(query?: SecurityAnalysisPageQuery): Promise<SecurityAnalysisPageV4>;
   getConversation(conversationId: string): Promise<SecurityConversationV4>;

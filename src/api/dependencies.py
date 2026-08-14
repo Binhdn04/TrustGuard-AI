@@ -6,7 +6,12 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
-    from src.services.durable_worker import DurableAnalysisWorker, OutboxPublisher, RetentionWorker
+    from src.services.durable_worker import (
+        DurableAnalysisWorker,
+        OutboxPublisher,
+        RetentionWorker,
+        SecurityV4DurableWorker,
+    )
 
 from fastapi import Depends, Header, Request
 
@@ -27,6 +32,7 @@ from src.agents.tools import (
     VirusTotalUrlProvider,
 )
 from src.agents.tools.advanced import OpenAIEmbeddingProvider
+from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.config import get_settings
 from src.core.auth import ConfiguredAuthenticator, Principal, UserRole
 from src.core.errors import PlatformError
@@ -52,8 +58,10 @@ from src.services.realtime import (
     WebSocketTicketManager,
 )
 from src.services.screenshot import ScreenshotCaptureCoordinator
+from src.services.security_admin_copilot import SecurityAdminCopilotService
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
+from src.services.security_pipeline import SecurityTriagePipeline
 from src.services.security_response import GroundedSecurityResponseService
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_trust import SecurityTrustAdminService
@@ -65,6 +73,8 @@ _outbox: OutboxPublisher | None = None
 _outbox_task = None
 _retention: RetentionWorker | None = None
 _retention_task = None
+_security_worker: SecurityV4DurableWorker | None = None
+_security_worker_task = None
 _memory_wave2_repository = MemoryWave2Repository()
 _source_registry = VersionedSourceRegistry(default_source_policies())
 
@@ -110,21 +120,41 @@ def new_security_assistant_runtime() -> SecurityAssistantRuntime:
     )
 
 
-async def get_security_understanding_service() -> SecuritySemanticUnderstandingService:
+async def get_security_turn_runtime() -> SecurityAssistantRuntime:
+    """One shared AI budget/deadline for the complete v4 turn.
+
+    FastAPI caches dependency results for the lifetime of a request, so every
+    AI stage receives this exact instance while different turns remain
+    isolated.
+    """
+    return new_security_assistant_runtime()
+
+
+SecurityAssistantRuntimeDependency = Annotated[
+    SecurityAssistantRuntime,
+    Depends(get_security_turn_runtime),
+]
+
+
+async def get_security_understanding_service(
+    runtime: SecurityAssistantRuntimeDependency,
+) -> SecuritySemanticUnderstandingService:
     settings = get_settings()
     return SecuritySemanticUnderstandingService(
         enabled=settings.security_ai_understanding_enabled,
         model=get_security_assistant_model(),
-        runtime=new_security_assistant_runtime(),
+        runtime=runtime,
     )
 
 
-async def get_grounded_security_response_service() -> GroundedSecurityResponseService:
+async def get_grounded_security_response_service(
+    runtime: SecurityAssistantRuntimeDependency,
+) -> GroundedSecurityResponseService:
     settings = get_settings()
     return GroundedSecurityResponseService(
         ai_enabled=settings.security_ai_explanation_enabled,
         model=get_security_assistant_model(),
-        runtime=new_security_assistant_runtime(),
+        runtime=runtime,
     )
 
 
@@ -190,6 +220,20 @@ def get_security_trust_admin_service() -> SecurityTrustAdminService:
 @lru_cache
 def get_security_memory_service() -> SecurityMemoryService:
     return SecurityMemoryService(get_security_trust_repository())
+
+
+async def get_security_admin_copilot_service(
+    runtime: SecurityAssistantRuntimeDependency,
+) -> SecurityAdminCopilotService:
+    settings = get_settings()
+    return SecurityAdminCopilotService(
+        get_security_analysis_service(),
+        get_security_memory_service(),
+        get_security_trust_repository(),
+        get_security_assistant_model(),
+        runtime,
+        enabled=settings.security_admin_copilot_enabled,
+    )
 
 
 async def resolve_security_trust_service(request: Request) -> SecurityTrustService:
@@ -396,7 +440,7 @@ async def close_analysis_service() -> None:
 
 
 async def start_durable_worker() -> None:
-    global _outbox, _outbox_task, _retention, _retention_task, _worker, _worker_task
+    global _outbox, _outbox_task, _retention, _retention_task, _security_worker, _security_worker_task, _worker, _worker_task
     service = get_analysis_service()
     if not isinstance(service.repository, PostgresPlatformRepository):
         return
@@ -406,6 +450,8 @@ async def start_durable_worker() -> None:
             OutboxPublisher,
             ReembeddingJobHandler,
             RetentionWorker,
+            SecurityV4DurableWorker,
+            SecurityV4JobHandler,
         )
     except ImportError:
         if get_settings().app_env == "production":
@@ -434,6 +480,47 @@ async def start_durable_worker() -> None:
         before_analysis=refresh_source_registry,
     )
     _worker_task = asyncio.create_task(_worker.run(), name="durable-analysis-worker")
+    if settings.security_async_execution_enabled:
+        security_analyses = get_security_analysis_service()
+        if not isinstance(security_analyses.repository, PostgresPlatformRepository):
+            raise RuntimeError("Async Security v4 requires PostgreSQL")
+
+        def security_pipeline_factory(runtime: SecurityAssistantRuntime) -> SecurityTriagePipeline:
+            memory_lookup = (
+                SecurityMemoryLookupTool(get_security_memory_service(), enabled=True)
+                if settings.security_memory_retrieval_enabled
+                else None
+            )
+            return SecurityTriagePipeline(
+                understanding=SecuritySemanticUnderstandingService(
+                    enabled=settings.security_ai_understanding_enabled,
+                    model=get_security_assistant_model(),
+                    runtime=runtime,
+                ),
+                investigation=get_security_investigation_service(),
+                trust=get_security_trust_service(),
+                responses=GroundedSecurityResponseService(
+                    ai_enabled=settings.security_ai_explanation_enabled,
+                    model=get_security_assistant_model(),
+                    runtime=runtime,
+                ),
+                memory_lookup=memory_lookup,
+            )
+
+        security_handler = SecurityV4JobHandler(
+            security_analyses.repository,
+            security_analyses,
+            pipeline_factory=security_pipeline_factory,
+            runtime_factory=new_security_assistant_runtime,
+            memory=get_security_memory_service(),
+            propose_actions=get_wave2_service().propose_security_admin_actions,
+        )
+        _security_worker = SecurityV4DurableWorker(
+            security_analyses.repository,
+            security_handler,
+            lease_seconds=settings.job_lease_seconds,
+        )
+        _security_worker_task = asyncio.create_task(_security_worker.run(), name="security-v4-durable-worker")
     _retention = RetentionWorker(service.repository)
     _retention_task = asyncio.create_task(_retention.run(), name="retention-worker")
     try:
@@ -448,13 +535,17 @@ async def start_durable_worker() -> None:
 
 
 async def stop_durable_worker() -> None:
-    global _outbox, _outbox_task, _retention, _retention_task, _worker, _worker_task
+    global _outbox, _outbox_task, _retention, _retention_task, _security_worker, _security_worker_task, _worker, _worker_task
     if _worker is not None:
         _worker.stop()
     if _worker_task is not None:
         await _worker_task
     if _worker is not None:
         await _worker.close()
+    if _security_worker is not None:
+        _security_worker.stop()
+    if _security_worker_task is not None:
+        await _security_worker_task
     if _outbox is not None:
         _outbox.stop()
     if _outbox_task is not None:
@@ -471,6 +562,8 @@ async def stop_durable_worker() -> None:
     _outbox_task = None
     _retention = None
     _retention_task = None
+    _security_worker = None
+    _security_worker_task = None
 
 
 @lru_cache
@@ -597,6 +690,9 @@ SecurityTriageScopeServiceDependency = Annotated[
 ]
 SecurityMemoryServiceDependency = Annotated[SecurityMemoryService, Depends(resolve_security_memory_service)]
 SecurityAnalysisServiceDependency = Annotated[SecurityAnalysisService, Depends(resolve_security_analysis_service)]
+SecurityAdminCopilotServiceDependency = Annotated[
+    SecurityAdminCopilotService, Depends(get_security_admin_copilot_service)
+]
 SecurityUnderstandingServiceDependency = Annotated[
     SecuritySemanticUnderstandingService,
     Depends(get_security_understanding_service),

@@ -32,7 +32,7 @@ flowchart TD
     Local --> Evidence[Versioned evidence]
     External --> Evidence
     Trust --> Evidence
-    Evidence --> Risk[Deterministic security-risk-v1]
+    Evidence --> Risk[Versioned deterministic security-risk-v1/v2]
     Risk --> Result[Grounded warning + recommendations]
     Result --> Store[(SQLite local / PostgreSQL production)]
     Store --> Events[Owner-scoped events + ticketed WebSocket replay]
@@ -81,7 +81,7 @@ compatibility window. Conversation dùng optimistic `conversation_version`, reda
 và retention interval. Raw private message không được persist trong Security v4 analysis/memory.
 
 SQLite là durable local/dev store. PostgreSQL là production source of truth và có Alembic schema đến
-`0015_security_api_readiness`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
+`0017_security_admin_copilot`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
 hình; không phải source of truth.
 
 Security Memory chỉ giữ canonical domain, query-free URL fingerprint, redirect domain, claimed brand,
@@ -99,14 +99,15 @@ pending_review → rejected
 pending_review → approved attempt → executed | failed
 ```
 
-Chỉ `ADD_TO_BLACKLIST` có execution sink thật và ảnh hưởng lookup sau đó. `BLOCK_DOMAIN`,
-`PUBLISH_BROAD_WARNING` và AI Copilot chưa có sink; approved attempt phải kết thúc `FAILED` với reason
-code, không được giả là đã execute.
+Chỉ `ADD_TO_BLACKLIST` có execution sink thật và ảnh hưởng lookup sau đó. `BLOCK_DOMAIN` và
+`PUBLISH_BROAD_WARNING` chưa có sink; approved attempt phải kết thúc `FAILED` với reason code, không được
+giả là đã execute. Admin Copilot chỉ tạo grounded suggestion (`executed=false`) và không đi vào executor.
 
 Admin API hiện có paginated/search/filter contracts cho brand, whitelist, Security Memory, campaign,
 report/appeal queue, domain/threat intelligence và unified v4 audit. Bounded endpoint
 `GET /api/v4/admin/analyses/{analysis_id}` cho phép `security_admin` đọc structured/privacy-minimized case
-để review feedback mà không trả owner hoặc raw conversation. Frontend đã consume history,
+để review feedback mà không trả owner hoặc raw conversation. Endpoint POST Copilot cùng boundary lưu
+snapshot hash/usage/audit nhưng không lưu prompt/raw completion và không đổi case/action state. Frontend đã consume history,
 conversation, explorer, feedback, trust, unified audit và case-detail contracts trong case workspace,
 Observatory, Review Room, Trust lifecycle và Audit. Reviewed-action detail/audit/decision tiếp tục dùng contract
 v3 có nhãn compatibility; metrics/source discovery v3 chỉ xuất hiện trong compatibility surface riêng.

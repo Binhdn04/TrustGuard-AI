@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 import type {
   SecurityAppealStatusV4,
+  SecurityAdminCopilotResponseV4,
   SecurityReportStatusV4,
   SecurityScopeResponseV4,
 } from "@/types/generated/api-v4";
@@ -42,6 +43,8 @@ export function ReviewRoom({
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<FeedbackReviewItem | null>(null);
   const [analysis, setAnalysis] = useState<SecurityScopeResponseV4 | null>(null);
+  const [copilot, setCopilot] = useState<SecurityAdminCopilotResponseV4 | null>(null);
+  const [copilotState, setCopilotState] = useState({ loading: false, error: null as string | null });
   const [queueState, setQueueState] = useState({ loading: false, error: null as string | null });
   const [caseState, setCaseState] = useState({ loading: false, error: null as string | null });
   const [decisionState, setDecisionState] = useState({ busy: false, blocked: false, error: null as string | null });
@@ -71,6 +74,8 @@ export function ReviewRoom({
     const current = ++generation.current.detail;
     setSelected(item);
     setAnalysis(null);
+    setCopilot(null);
+    setCopilotState({ loading: false, error: null });
     setCaseState({ loading: true, error: null });
     setDecisionState({ busy: false, blocked: false, error: null });
     try {
@@ -78,6 +83,23 @@ export function ReviewRoom({
       if (generation.current.detail === current) { setAnalysis(result); setCaseState({ loading: false, error: null }); }
     } catch (caught) {
       if (generation.current.detail === current) setCaseState({ loading: false, error: caught instanceof Error ? caught.message : "Không thể tải structured case." });
+    }
+  };
+
+  const loadCopilot = async (refresh: boolean) => {
+    if (!analysis || copilotState.loading) return;
+    if (!securityApi.draftAdminCopilot) {
+      setCopilotState({ loading: false, error: "Admin Copilot is unavailable in this client." });
+      return;
+    }
+    const analysisId = analysis.analysis_id;
+    setCopilotState({ loading: true, error: null });
+    try {
+      const suggestion = await securityApi.draftAdminCopilot(analysisId, { refresh });
+      if (analysis.analysis_id === analysisId) setCopilot(suggestion);
+      setCopilotState({ loading: false, error: null });
+    } catch (caught) {
+      setCopilotState({ loading: false, error: caught instanceof Error ? caught.message : "Unable to load Admin Copilot suggestion." });
     }
   };
 
@@ -103,7 +125,7 @@ export function ReviewRoom({
 
   const switchKind = (next: FeedbackKind) => {
     generation.current.detail += 1;
-    setKind(next); setStatus("all"); setPage(1); setSelected(null); setAnalysis(null); setCaseState({ loading: false, error: null }); setDecisionState({ busy: false, blocked: false, error: null });
+    setKind(next); setStatus("all"); setPage(1); setSelected(null); setAnalysis(null); setCopilot(null); setCopilotState({ loading: false, error: null }); setCaseState({ loading: false, error: null }); setDecisionState({ busy: false, blocked: false, error: null });
   };
 
   if (authLoading) return <p role="status" className="py-16 text-center text-sm text-muted-foreground">Đang xác minh quyền truy cập…</p>;
@@ -120,7 +142,7 @@ export function ReviewRoom({
       {surface === "feedback" ? (
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(18rem,0.62fr)_minmax(32rem,1.55fr)_minmax(17rem,0.58fr)]">
           <ReviewQueue kind={kind} items={items} selectedKey={selected ? feedbackKey(selected) : null} query={query} status={status} loading={queueState.loading} error={queueState.error} page={page} total={total} pageSize={PAGE_SIZE} onKindChange={switchKind} onQueryChange={(value) => { setQuery(value); setPage(1); }} onStatusChange={(value) => { setStatus(value); setPage(1); }} onSelect={(item) => void selectFeedback(item)} onPageChange={setPage} onRetry={() => void loadQueue()} />
-          <CaseReviewPanel feedback={selected} analysis={analysis} loading={caseState.loading} error={caseState.error} />
+          <CaseReviewPanel feedback={selected} analysis={analysis} loading={caseState.loading} error={caseState.error} copilot={copilot} copilotLoading={copilotState.loading} copilotError={copilotState.error} onCopilot={(refresh) => void loadCopilot(refresh)} />
           <DecisionPanel key={selected ? feedbackKey(selected) : "empty"} feedback={selected} caseReady={analysis !== null && !caseState.loading && !caseState.error && !decisionState.blocked} busy={decisionState.busy} error={decisionState.error} onSubmit={submitFeedbackDecision} />
         </div>
       ) : <ActionExecutionPanel api={actionApi} />}

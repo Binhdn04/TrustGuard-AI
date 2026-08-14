@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from src.models import (
     SECURITY_RISK_POLICY_VERSION,
+    SECURITY_RISK_POLICY_VERSION_V2,
     ExposureStateV4,
     PotentialThreatV4,
     RequestedActionV4,
@@ -49,6 +51,17 @@ def _risk_for_score(score: int) -> SecurityRiskV4:
     if score >= 20:
         return SecurityRiskV4.LOW_RISK
     return SecurityRiskV4.INSUFFICIENT_EVIDENCE
+
+
+def _target_matches(reviewed_target: str | None, weak_target: str | None) -> bool:
+    if reviewed_target is None:
+        return True
+    if weak_target is None:
+        return False
+    hostname = urlsplit(weak_target if "://" in weak_target else f"//{weak_target}").hostname
+    candidate = (hostname or weak_target).casefold().rstrip(".")
+    reviewed = reviewed_target.casefold().rstrip(".")
+    return candidate == reviewed or candidate.endswith(f".{reviewed}")
 
 
 def _actions(scope: SecurityScopeResponseV4, risk: SecurityRiskV4) -> list[SecurityRecommendedActionV4]:
@@ -112,7 +125,11 @@ def _explanation(risk: SecurityRiskV4, evidence: list[SecurityEvidenceV4]) -> st
     return prefix + (" Căn cứ: " + " ".join(descriptions) if descriptions else "")
 
 
-def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
+def assess_security_risk(
+    scope: SecurityScopeResponseV4,
+    *,
+    memory_enabled: bool = False,
+) -> SecurityScopeResponseV4:
     """Apply the versioned v4 policy without claim-stance or prose inputs."""
     context = scope.security_context
     if context is None:
@@ -141,10 +158,23 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
 
     strong_refs: list[str] = []
     safe_refs: list[str] = []
-    weak_external = 0
+    reviewed_risk_refs: list[str] = []
+    reviewed_suppressions: list[SecurityEvidenceV4] = []
+    weak_contributions: list[_Contribution] = []
     has_whitelist = any(item.signal.casefold() == "approved_whitelist" for item in scope.evidence)
     for item in scope.evidence:
         signal_parts = set(item.signal.casefold().split("+"))
+        if memory_enabled and item.type.value == "reviewed_security_memory":
+            exact_match = bool(signal_parts & {"domain", "redirect"})
+            if "reviewed_memory_malicious" in signal_parts:
+                contributions.append(_Contribution(50 if exact_match else 30, item.evidence_ref))
+                reviewed_risk_refs.append(item.evidence_ref)
+            elif "reviewed_campaign_confirmed" in signal_parts:
+                contributions.append(_Contribution(35 if exact_match else 20, item.evidence_ref))
+                reviewed_risk_refs.append(item.evidence_ref)
+            elif signal_parts & {"reviewed_memory_safe", "reviewed_memory_false_positive"}:
+                reviewed_suppressions.append(item)
+            continue
         if item.type.value == "blacklist" and "approved_blacklist_hit" in signal_parts:
             strong_refs.append(item.evidence_ref)
         if item.type.value == "url_reputation" and signal_parts & _MALICIOUS_REPUTATION_SIGNALS:
@@ -157,8 +187,22 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
         if "official_contradicted" in signal_parts:
             points = max(points, 20)
         if points:
-            weak_external += points
-            contributions.append(_Contribution(points, item.evidence_ref))
+            weak_contributions.append(_Contribution(points, item.evidence_ref))
+
+    if reviewed_suppressions:
+        weak_types = {"local_url_rule", "rdap", "brand_match"}
+        evidence_by_ref = {item.evidence_ref: item for item in scope.evidence}
+        weak_contributions = [
+            item
+            for item in weak_contributions
+            if evidence_by_ref[item.evidence_ref].type.value not in weak_types
+            or not any(
+                _target_matches(reviewed.target, evidence_by_ref[item.evidence_ref].target)
+                for reviewed in reviewed_suppressions
+            )
+        ]
+    weak_external = sum(item.points for item in weak_contributions)
+    contributions.extend(weak_contributions)
 
     score = min(100, sum(item.points for item in contributions))
     if strong_refs:
@@ -173,7 +217,13 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
         risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS
 
     refs = list(
-        dict.fromkeys([item.evidence_ref for item in contributions if item.evidence_ref] + strong_refs + safe_refs)
+        dict.fromkeys(
+            [item.evidence_ref for item in contributions if item.evidence_ref]
+            + strong_refs
+            + safe_refs
+            + reviewed_risk_refs
+            + ([item.evidence_ref for item in reviewed_suppressions] if memory_enabled else [])
+        )
     )
     grounded = [item for item in scope.evidence if item.evidence_ref in refs]
     if not grounded and scope.evidence:
@@ -184,6 +234,8 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
         confidence += 0.3
     if strong_refs or safe_refs:
         confidence += 0.25
+    elif reviewed_risk_refs:
+        confidence += 0.15
     elif len({item.type for item in grounded}) > 1:
         confidence += 0.15
     if scope.errors or scope.limitations:
@@ -199,7 +251,7 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
         score=score,
         confidence=round(min(confidence, 0.95), 2),
         threat_type=context.potential_threat,
-        policy_version=SECURITY_RISK_POLICY_VERSION,
+        policy_version=(SECURITY_RISK_POLICY_VERSION_V2 if memory_enabled else SECURITY_RISK_POLICY_VERSION),
         recommended_actions=_actions(scope, risk),
         explanation=_explanation(risk, grounded),
         explanation_evidence_refs=refs,

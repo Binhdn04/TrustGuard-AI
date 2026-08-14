@@ -32,6 +32,8 @@
 
   ### WP0 — Contract và AI runtime foundation
 
+  **Status:** `DONE` — repository implementation và automated gate tests; production rollout vẫn theo WP8.
+
   Mục tiêu: tạo extension point ổn định để các package sau không cùng sửa model/config/dependency wiring.
 
   - Tạo interface provider-agnostic SecurityAssistantModel với bốn operation typed:
@@ -70,6 +72,8 @@
   ———
 
   ### WP1 — Hybrid semantic understanding
+
+  **Status:** `DONE` — hybrid merge, grounding/source-span validation và rules-only regression đã có test.
 
   Mục tiêu: AI hiểu nội dung vượt khỏi regex nhưng không làm yếu safety invariant.
 
@@ -117,6 +121,8 @@
 
   ### WP2 — Adaptive conversation và incident response
 
+  **Status:** `DONE` — adaptive slot, monotonic exposure, immediate recovery và redacted memory đã có test.
+
   Mục tiêu: biến multi-turn storage thành hội thoại điều tra thực sự.
 
   - Thay câu hỏi follow-up cố định bằng missing-slot selector.
@@ -151,6 +157,8 @@
 
   ### WP3 — Policy-constrained adaptive planner
 
+  **Status:** `DONE` — AI chỉ ưu tiên candidate allowlist; consent/dependency/SSRF/budget vẫn do executor kiểm soát.
+
   Mục tiêu: investigation theo scenario thay vì chỉ theo URL.
 
   - Deterministic planner tạo toàn bộ candidate step và canonical target trước.
@@ -177,6 +185,8 @@
   ———
 
   ### WP4 — Grounded assistant response và frontend experience
+
+  **Status:** `DONE` — grounding verifier, template fallback và simple/analyst frontend đã có test.
 
   Mục tiêu: kết quả đọc như trợ lý bảo mật, không như raw tool report.
 
@@ -217,6 +227,8 @@
 
   ### WP5 — Durable Security v4 và realtime thật
 
+  **Status:** `DONE` — repository implementation; async capability mặc định tắt cho tới hosted rollout gate WP8.
+
   Mục tiêu: provisional → progress → final hoạt động thật, không chỉ replay sau khi request hoàn tất.
 
   Để giữ compatibility:
@@ -255,9 +267,21 @@
   - Encrypted payload được purge ở success, failure và retention recovery.
   - Inline compatibility suite vẫn pass.
 
+  Bằng chứng implementation:
+
+  - `SecurityTriageCreateRequestV4.execution_mode` giữ mặc định `inline`; async trả `202` và yêu cầu `Idempotency-Key`.
+  - Migration `0016_security_v4_durable_jobs` tạo bảng job, encrypted payload, outbox và idempotency riêng.
+  - Shared AI runtime áp dụng một budget/deadline xuyên suốt understanding → planning → synthesis.
+  - PostgreSQL lease worker phát progress/final event, purge payload ở terminal/retry exhaustion/retention và dùng outbox để notify.
+  - WebSocket theo dõi event mới tới terminal; cursor polling tiếp tục là nguồn authoritative khi Redis/WebSocket lỗi.
+  - Frontend chỉ gửi async khi `/api/v4/capabilities` công bố `security_async_execution=true` và giữ cùng key khi retry.
+  - Gate tests: `tests/unit/test_security_ai_wp5.py`, `tests/test_api/test_security_ai_wp5.py` và frontend Security workspace/event-stream tests.
+
   ———
 
   ### WP6 — Reviewed Security Memory retrieval
+
+  **Status:** `DONE` — repository implementation và automated gate tests; feature flag mặc định tắt tới hosted rollout gate WP8.
 
   Mục tiêu: dùng tri thức đã review để tạo khác biệt sản phẩm mà không khuếch đại false positive.
 
@@ -286,9 +310,27 @@
   - False-positive memory thực sự ngăn weak domain-age/lookalike signal bị nâng quá mức.
   - Risk v1 regression giữ nguyên khi memory flag tắt.
 
+  Bằng chứng implementation:
+
+  - Tool local `security_memory_lookup` chỉ nhận named signals đã chuẩn hóa, không nhận raw message; evidence mới dùng type
+    `reviewed_security_memory`.
+  - SQLite/PostgreSQL lookup join qua owner của analysis, loại analysis hiện tại, loại memory `unreviewed`/`suspicious`
+    và campaign chưa `confirmed`; campaign khác owner không được retrieve.
+  - Evidence public chỉ có pattern category, verdict, review time và provenance memory/campaign; không có owner, raw content
+    hoặc member analysis IDs.
+  - `security-risk-v2` cộng điểm có giới hạn cho malicious/confirmed match. Safe/false-positive chỉ bỏ contribution yếu từ
+    local URL/RDAP/brand; approved blacklist và malicious reputation vẫn buộc `MALICIOUS`.
+  - Flag tắt không thêm plan/evidence và tiếp tục dùng `security-risk-v1`; lookup lỗi tạo limitation rồi hoàn tất analysis.
+  - Versioned 5-case rollout evaluation ở `tests/eval/security_memory_v2_v1.jsonl`; report có dataset hash tại
+    `docs/evidence/security-memory-v2-v1-report.json`.
+  - Gate tests: `tests/unit/test_security_ai_wp6.py`, `tests/test_api/test_security_ai_wp6.py` và OpenAPI contract test.
+
   ———
 
   ### WP7 — Admin AI Copilot
+
+  **Status:** `DONE` — grounded suggestion-only API/UI, migration `0017`, RBAC/rate-limit/audit gates và
+  prompt-injection/non-mutation tests đã có; production rollout vẫn theo WP8.
 
   Mục tiêu: hỗ trợ Security Admin review, không triển khai sink block-domain/broad-warning.
 
@@ -313,6 +355,19 @@
   - Admin phải tự chọn decision, nhập note và đi qua HITL endpoint hiện tại.
   - UI hiển thị rõ AI suggestion — not executed và cho phép refresh có rate limit.
   - BLOCK_DOMAIN và PUBLISH_BROAD_WARNING tiếp tục báo sink chưa cấu hình.
+
+  Hiện thực trong repository:
+
+  - `SecurityAdminCopilotService` chỉ nhận structured/redacted case evidence và confirmed campaign có liên quan;
+    prompt coi toàn bộ case data là untrusted và output phải qua allowlist + evidence-ref grounding.
+  - `POST /api/v4/admin/analyses/{analysis_id}/copilot` chỉ cho Security Admin, có refresh rate limit riêng,
+    deterministic fallback và response luôn `executed=false`.
+  - Migration `0017_security_admin_copilot` lưu typed suggestion, usage metadata, SHA-256 evidence snapshot,
+    reviewer/requested/completed timestamps và audit; không lưu prompt/raw completion.
+  - Review Room hiển thị panel `AI suggestion — not executed`; suggestion không điền decision/reviewer note và
+    không gọi v3 action executor.
+  - Gate tests: `tests/unit/test_security_ai_wp7.py`, `tests/test_api/test_security_ai_wp7.py` và
+    `frontend/src/test/admin-review-room.test.tsx`.
 
   Gate hoàn thành:
 

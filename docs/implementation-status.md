@@ -1,10 +1,12 @@
 # Implementation Status Against Product Scope
 
-**Ngày đối chiếu:** 2026-08-14
+**Ngày đối chiếu:** 2026-08-15
 
 **Nguồn goal:** [scope.md](scope.md)
 
 **Nguồn WP/release gate:** [SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md](SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md)
+
+**Nguồn AI upgrade gate:** [AI_copilot.md](AI_copilot.md)
 
 `Implemented` nghĩa là có code và automated test trong repository. Nó không đồng nghĩa đã được xác minh
 trên hosted production, PostgreSQL/Redis thật hoặc live provider.
@@ -15,6 +17,9 @@ Security Triage v4 và frontend investigation workspace đã triển khai end-to
 context, consent-gated investigation, deterministic risk, brand/whitelist/official verification,
 multi-turn Security Chat, owner persistence, report/appeal, HITL blacklist action, Security Memory và
 explainable campaign hypotheses, paginated API, admin feedback lifecycle, intelligence explorer và unified audit.
+AI Copilot roadmap WP0–WP7 cũng đã implemented trong repository: shared provider runtime/budget,
+hybrid understanding, adaptive incident conversation, constrained planning, grounded response, durable Security v4 async
+và owner-isolated reviewed Security Memory retrieval, cộng với grounded Security Admin Copilot suggestion-only.
 
 Codebase vẫn giữ legacy `/api/v2`/`/api/v3`, general fact-check providers/corpus/source discovery,
 claim-vector campaign và một số frontend compatibility code. Các phần này không nằm trên Security v4
@@ -33,7 +38,7 @@ zero-usage window và cleanup vẫn còn lại.
 | Investigation planner | Allowlisted local/external tools, consent, budget, retry, deadline và dependency status | `security_investigation.py` |
 | URL/network safety | Canonical URL/domain, local rules, blacklist, DNS, redirect, RDAP, reputation và SSRF protection | security investigation/tool tests |
 | Evidence/provenance | Typed evidence, normalized tool error, provider usage refs và grounded explanation refs | v4 models, investigation/risk tests |
-| Risk classification | `SAFE/LOW_RISK/SUSPICIOUS/HIGH_RISK/MALICIOUS/INSUFFICIENT_EVIDENCE`, policy `security-risk-v1` | `security_risk.py` |
+| Risk classification | `SAFE/LOW_RISK/SUSPICIOUS/HIGH_RISK/MALICIOUS/INSUFFICIENT_EVIDENCE`; baseline `security-risk-v1`, reviewed-memory flag dùng `security-risk-v2` | `security_risk.py` |
 | False-positive policy | Whitelist precedence; mismatch/age/no-hit/timeout riêng lẻ không đủ malicious | trust/risk regression tests |
 | Brand registry | Alias, official domains/contacts, provenance, effective interval, lifecycle và reviewer | `security_trust.py`, migration `0010` |
 | Whitelist | Domain/URL/contact scope, provenance/version/lifecycle, SQLite/PostgreSQL và admin API | trust services/repositories |
@@ -48,7 +53,11 @@ zero-usage window và cleanup vẫn còn lại.
 | Campaign v4 | Named security signals, 24h window, min-three hypothesis, reviewer decision/correction audit; no embeddings | `campaign.py`, WP8 tests |
 | Intelligence API | Paginated/filterable domain/threat aggregation và unified trust/memory/campaign/feedback audit | API/repository tests |
 | Admin UI | Threat Observatory; Review Room với structured case evidence, report/appeal decision và reviewed-action v3 detail/audit; Trust lifecycle; Unified Audit; compatibility v3 surface | admin frontend components + API tests |
-| Local/production persistence | SQLite local and PostgreSQL/Alembic implementations through revision `0015` | repositories + migrations |
+| Local/production persistence | SQLite local and PostgreSQL/Alembic implementations through revision `0017` | repositories + migrations |
+| AI assistant WP1–WP4 | Hybrid understanding, adaptive follow-up/incident recovery, policy-constrained planner và grounded response/frontend | `security_ai`, `security_understanding.py`, `security_pipeline.py`, AI WP tests |
+| Durable Security v4 WP5 | Inline mặc định; PostgreSQL async 202/idempotency/encrypted payload/lease/outbox/realtime, SQLite giữ inline | migration `0016`, durable worker, WP5 tests |
+| Reviewed Security Memory WP6 | Owner-scoped/non-self lookup chỉ dùng reviewed verdict/confirmed campaign; privacy-minimized evidence, poisoning controls và risk v2 | `security_memory_lookup`, repository joins, WP6 tests |
+| Admin AI Copilot WP7 | Admin-only grounded suggestion, related reviewed campaign, typed disposition/existing action, dedicated rate limit, audit/snapshot hash và `executed=false` UI | migration `0017`, `security_admin_copilot.py`, WP7/API/frontend tests |
 
 ## 3. Hạ tầng dùng chung vẫn có thể tái sử dụng
 
@@ -57,7 +66,7 @@ zero-usage window và cleanup vẫn còn lại.
 | Auth/RBAC | Demo token cho dev; frontend OIDC Authorization Code + PKCE/callback/per-tab session/refresh/logout; backend xác minh issuer/audience/JWKS và admin role |
 | Ownership/privacy | Owner-scoped reads; logs không body/query/token; v4 persistence không raw private message |
 | Rate limiting | Redis hoặc deterministic memory fallback |
-| PostgreSQL durable jobs/outbox | Implemented cho legacy analysis worker; v4 hiện vẫn xử lý inline |
+| PostgreSQL durable jobs/outbox | Legacy worker và isolated Security v4 worker đều implemented; Redis chỉ notify, PostgreSQL giữ source of truth |
 | Operations metrics | V3 latency, provider usage, quota/error và feedback aggregates |
 | Report review/appeal infrastructure | Persisted queue/decision/audit/optimistic conflict paths có thể tái sử dụng |
 | Retention/artifacts | Retention worker và guarded signed screenshot artifacts tồn tại; screenshot ngoài Security scope |
@@ -67,10 +76,11 @@ zero-usage window và cleanup vẫn còn lại.
 
 | Capability | Đã có | Còn thiếu / scope deviation |
 |---|---|---|
-| Wide admin actions | `ADD_TO_BLACKLIST` có producer + real sink; reject/failure/audit hoàn chỉnh | `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Copilot chưa có downstream sink; không được coi là executed |
+| Wide admin actions | `ADD_TO_BLACKLIST` có producer + real sink; Admin Copilot WP7 đã có suggestion-only API/UI | `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` chưa có downstream sink; Copilot không execute và không được coi là sink |
 | `DISABLE_BLACKLIST` | Legacy PostgreSQL executor tồn tại | Không có v4 runtime producer, không tính là WP7 deliverable |
 | Admin exploration | Domain/threat Observatory, Review Room, Trust lifecycle và Unified Audit dùng contract thật; `/admin` redirect sang Review Room; v3 metrics/source discovery được cô lập trong compatibility surface | Không còn repository frontend gap; hosted release evidence vẫn thuộc WP9 |
-| Security v4 execution model | Inline lifecycle và persisted replay hoạt động | Chưa chuyển sang durable PostgreSQL worker/lease path; cần hosted reliability decision/evidence |
+| Security v4 execution model | Inline compatibility và durable PostgreSQL worker/lease/outbox path đều có; async chỉ được công bố khi config thật sự ready | Chưa có hosted lease-loss/load/Redis outage evidence trên deployment thật |
+| Reviewed-memory rollout | Local tool, owner isolation, reviewed-only filtering, risk v2 và v1 fallback đã có; flag mặc định tắt | Chưa chạy hosted PostgreSQL fixture/poisoning/scoring evaluation trước khi bật flag |
 | Official/live providers | Adapter, bounded policy và deterministic fakes có | Chưa có live-provider smoke trong môi trường được cấp credential |
 | Evaluation | Versioned 16-category deterministic dataset/report đo routing, calls, risk, precision/recall, grounding, latency/cost | Offline fixture evidence không thay thế hosted provider/multi-turn transport/load evidence |
 | Production readiness | Frontend OIDC PKCE, backend JWT/RBAC, hardened production validation, Security v4 live-smoke CLI và release/rollback runbook | Chưa verify với IdP/hosted PostgreSQL/Redis/provider thật, backup/restore và load |
@@ -114,16 +124,16 @@ responsive/accessibility và production E2E. Frontend không còn task riêng; p
 
 ## 7. Test evidence hiện tại
 
-- Backend: **194 passed** trong suite Security v4 và reviewed-action compatibility đang hoạt động.
+- Backend: **217 passed** trong suite Security v4, AI WP0–WP7 và reviewed-action compatibility đang hoạt động.
 - Ruff: **pass**.
-- Alembic: **`0015_security_api_readiness` là head**.
-- Frontend unit: **57 passed trong 12 files**, gồm OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
+- Alembic: **`0017_security_admin_copilot` là head**.
+- Frontend unit: **59 passed trong 12 files**, gồm Admin Copilot suggestion isolation, async capability/idempotency, OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
 - Frontend lint và TypeScript: **pass**.
 - Chromium E2E: **2 passed**, gồm mobile/keyboard user report-appeal-resume và admin Review/Observatory/Trust/Audit;
   axe structural WCAG gate và computed theme contrast đạt yêu cầu.
 - Next.js default Turbopack và webpack standalone production build: **pass**; `/admin` redirect sang Review Room.
 
-Offline Security v4 evaluation 16 nhóm đã pass và có version/hash report. Chưa có bằng chứng hosted
+Offline Security v4 evaluation 16 nhóm và reviewed-memory risk-v2 evaluation 5 gate đã pass, có version/hash report. Chưa có bằng chứng hosted
 PostgreSQL/Redis/OIDC/live-provider, backup/restore/load hoặc compatibility window. Vì vậy trạng thái đúng là
 “Security v4, frontend và phần local WP9 đã implemented trong repository; WP9
 release/evaluation/cutover tổng thể chưa hoàn tất”, không phải “full production scope complete”.

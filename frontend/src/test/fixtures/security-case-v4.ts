@@ -120,6 +120,7 @@ export function securityLifecycleEvents(): SecurityAnalysisEventV4[] {
       sequence: 2,
       status: "completed",
       step: "completed",
+      kind: "final", step_id: null, message: null, evidence_refs: [], risk_hint: "HIGH_RISK",
       occurred_at: "2026-08-13T08:00:03Z",
     },
     {
@@ -128,6 +129,7 @@ export function securityLifecycleEvents(): SecurityAnalysisEventV4[] {
       sequence: 1,
       status: "running",
       step: "unrelated",
+      kind: "progress", step_id: null, message: null, evidence_refs: [], risk_hint: null,
       occurred_at: "2026-08-13T08:00:00Z",
     },
     {
@@ -136,6 +138,7 @@ export function securityLifecycleEvents(): SecurityAnalysisEventV4[] {
       sequence: 1,
       status: "running",
       step: "investigation",
+      kind: "progress", step_id: "investigation", message: null, evidence_refs: [], risk_hint: null,
       occurred_at: "2026-08-13T08:00:01Z",
     },
   ];

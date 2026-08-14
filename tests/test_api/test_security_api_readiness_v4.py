@@ -87,6 +87,8 @@ async def test_capabilities_publish_only_actually_enabled_ai_features(client, mo
         security_async_execution_enabled=True,
         security_memory_retrieval_enabled=True,
         security_admin_copilot_enabled=True,
+        database_url="postgresql://test:test@localhost/test",
+        run_durable_worker=True,
         _env_file=None,
     )
     monkeypatch.setattr(

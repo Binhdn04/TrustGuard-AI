@@ -366,6 +366,8 @@ class SecurityInvestigationService:
         self,
         request: SecurityTriageCreateRequestV4,
         scope: SecurityScopeResponseV4,
+        *,
+        runtime: SecurityAssistantRuntime | None = None,
     ) -> SecurityScopeResponseV4:
         context = scope.security_context
         if context is None:
@@ -379,8 +381,8 @@ class SecurityInvestigationService:
         errors: list[SecurityToolErrorV4] = []
         limitations = list(scope.limitations)
         if self._planning_enabled and self._assistant_model is not None:
-            runtime = self._runtime_factory()
-            result = await runtime.invoke(
+            turn_runtime = runtime or self._runtime_factory()
+            result = await turn_runtime.invoke(
                 AssistantOperation.PRIORITIZE_PLAN,
                 lambda: self._assistant_model.prioritize_plan(
                     _planner_context(context),

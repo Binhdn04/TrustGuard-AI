@@ -108,6 +108,31 @@ describe("FE7 Security Review Room", () => {
     expect(screen.queryByRole("button", { name: "Submit reviewed decision" })).not.toBeInTheDocument();
   });
 
+  it("shows a non-executing grounded copilot suggestion without filling the HITL note", async () => {
+    const draftAdminCopilot = vi.fn().mockResolvedValue({
+      contract_version: "v4", suggestion_id: "40000000-0000-4000-8000-000000000004",
+      analysis_id: report.analysis_id, evidence_summary: "Credential evidence supports manual review.",
+      conflicts: [], missing_information: [], related_reviewed_campaigns: [],
+      proposed_disposition: "confirm_malicious", proposed_admin_action: "block_domain",
+      action_executable: false, executed: false,
+      grounded_rationale: [{ text: "Credential request is recorded.", evidence_refs: ["evidence:0123456789abcdef"] }],
+      evidence_refs: ["evidence:0123456789abcdef"], provider: "fake", model: "admin-v1",
+      suggestion_version: "security-admin-copilot-v1", generation_mode: "ai",
+      usage: { input_tokens: 10, output_tokens: 5, cost_usd: 0, status: "ok" },
+      generated_at: "2026-08-15T09:00:00Z",
+    });
+    render(<ReviewRoom securityApi={securityClient({ draftAdminCopilot })} actionApi={actionClient()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(report.reason) }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate" }));
+
+    expect(await screen.findByText("Credential evidence supports manual review.")).toBeInTheDocument();
+    expect(screen.getByLabelText("AI suggestion — not executed")).toHaveTextContent("executed=false");
+    expect(screen.getByLabelText("Reviewer note")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Submit reviewed decision" })).toBeDisabled();
+    expect(draftAdminCopilot).toHaveBeenCalledWith(report.analysis_id, { refresh: false });
+  });
+
   it("presents a 409 as a terminal concurrency conflict and reloads the queue", async () => {
     const listAdminReports = vi.fn().mockResolvedValue({ contract_version: "v4", items: [report], total: 1, limit: 10, offset: 0 });
     const decideAdminReport = vi.fn().mockRejectedValue(new ApiError("Already processed", "CONFLICT", false, 409));

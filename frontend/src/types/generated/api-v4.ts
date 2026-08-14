@@ -76,7 +76,8 @@ export type SecurityInvestigationToolV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist_lookup"
-  | "official_claim_verifier";
+  | "official_claim_verifier"
+  | "security_memory_lookup";
 
 export type SecurityEvidenceTypeV4 =
   | "security_context"
@@ -88,7 +89,8 @@ export type SecurityEvidenceTypeV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist"
-  | "official_verification";
+  | "official_verification"
+  | "reviewed_security_memory";
 
 export type TrustLifecycleV4 = "active" | "disabled";
 export type WhitelistScopeV4 = "domain" | "url" | "contact";
@@ -107,7 +109,35 @@ export type SecurityReportStatusV4 = "submitted" | "reviewing" | "processed";
 export type SecurityReportReviewDecisionV4 = "approved" | "rejected" | "dismissed";
 export type SecurityAppealStatusV4 = "submitted" | "under_review" | "resolved";
 export type SecurityAppealOutcomeV4 = "uphold" | "overturn" | "inconclusive";
-export type SecurityAuditResourceV4 = "brand" | "whitelist" | "memory" | "campaign" | "report" | "appeal";
+export type SecurityAuditResourceV4 = "brand" | "whitelist" | "memory" | "campaign" | "report" | "appeal" | "copilot";
+export type SecurityAdminCopilotDispositionV4 = "confirm_malicious" | "confirm_safe" | "mark_false_positive" | "needs_more_information" | "no_change";
+export type SecurityAdminCopilotActionV4 = "add_to_blacklist" | "block_domain" | "publish_broad_warning" | "none";
+
+export interface SecurityAdminCopilotRequestV4 { refresh: boolean; }
+export interface SecurityAdminCopilotRationaleV4 { text: string; evidence_refs: string[]; }
+export interface SecurityAdminCopilotCampaignV4 { campaign_id: string; hypothesis: string; reviewed_at: string; evidence_refs: string[]; }
+export interface SecurityAdminCopilotUsageV4 { input_tokens: number; output_tokens: number; cost_usd: number; status: "ok" | "fallback"; }
+export interface SecurityAdminCopilotResponseV4 {
+  contract_version: "v4";
+  suggestion_id: string;
+  analysis_id: string;
+  evidence_summary: string;
+  conflicts: string[];
+  missing_information: string[];
+  related_reviewed_campaigns: SecurityAdminCopilotCampaignV4[];
+  proposed_disposition: SecurityAdminCopilotDispositionV4;
+  proposed_admin_action: SecurityAdminCopilotActionV4;
+  action_executable: boolean;
+  executed: false;
+  grounded_rationale: SecurityAdminCopilotRationaleV4[];
+  evidence_refs: string[];
+  provider: string | null;
+  model: string | null;
+  suggestion_version: "security-admin-copilot-v1";
+  generation_mode: AssistantGenerationModeV4;
+  usage: SecurityAdminCopilotUsageV4;
+  generated_at: string;
+}
 
 export interface SecurityPageV4<T> {
   contract_version: "v4";
@@ -134,6 +164,12 @@ export interface SecurityCapabilitiesResponseV4 {
   executable_admin_actions: string[];
   deferred_admin_actions: string[];
   compatibility_contracts: Array<"v2" | "v3" | "v4">;
+  security_ai_understanding?: true;
+  security_ai_planning?: true;
+  security_ai_explanation?: true;
+  security_async_execution?: true;
+  security_memory_retrieval?: true;
+  security_admin_copilot?: true;
 }
 
 export interface BrandCreateRequestV4 {
@@ -206,6 +242,7 @@ export interface OfficialVerificationResultV4 {
 export interface SecurityTriageCreateRequestV4 {
   message: string;
   consent?: Partial<SecurityConsentV4>;
+  execution_mode?: "inline" | "async";
   conversation_id?: string;
   conversation_version?: number;
 }
@@ -354,6 +391,11 @@ export interface SecurityAnalysisEventV4 {
   sequence: number;
   status: SecurityAnalysisStatusV4;
   step: string;
+  kind: "status" | "provisional" | "progress" | "final";
+  step_id: string | null;
+  message: string | null;
+  evidence_refs: string[];
+  risk_hint: SecurityRiskV4 | null;
   occurred_at: string;
 }
 
@@ -366,6 +408,8 @@ export interface SecurityAnalysisEventPageV4 {
 export interface SecurityAnalysisAcceptedResponseV4 {
   contract_version: "v4";
   analysis_id: string;
+  conversation_id: string;
+  conversation_version: number;
   status: "queued";
   created_at: string;
 }

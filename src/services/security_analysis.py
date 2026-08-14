@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit, urlunsplit
@@ -20,6 +21,8 @@ from src.models import (
     ReportStatus,
     ScopeDecisionV4,
     SecurityAdminAuditEventV4,
+    SecurityAnalysisAcceptedResponseV4,
+    SecurityAnalysisEventKindV4,
     SecurityAnalysisEventV4,
     SecurityAppealAdminRecordV4,
     SecurityAppealCreateRequestV4,
@@ -31,6 +34,7 @@ from src.models import (
     SecurityReportAdminRecordV4,
     SecurityReportCreateRequestV4,
     SecurityReportRecordV4,
+    SecurityRiskV4,
     SecurityScenarioV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
@@ -165,11 +169,17 @@ class SecurityAnalysisService:
         self._admin_audit: list[SecurityAdminAuditEventV4] = []
         self._lock = asyncio.Lock()
 
+    @property
+    def repository(self):
+        return self._repository
+
     async def begin_turn(
         self,
         request: SecurityTriageCreateRequestV4,
         response: SecurityScopeResponseV4,
         principal: Principal,
+        *,
+        persist: bool = True,
     ) -> SecurityScopeResponseV4:
         now = datetime.now(UTC)
         existing: SecurityConversationV4 | None = None
@@ -258,7 +268,7 @@ class SecurityAnalysisService:
             expires_at=now + timedelta(days=self._conversation_retention_days),
         )
         save = getattr(self._repository, "save_security_conversation", None)
-        if save is not None:
+        if persist and save is not None:
             await save(
                 principal.user_id,
                 record,
@@ -267,6 +277,132 @@ class SecurityAnalysisService:
         async with self._lock:
             self._conversations[conversation_id] = (principal.user_id, record)
         return response
+
+    async def pending_conversation_for(
+        self,
+        response: SecurityScopeResponseV4,
+        principal: Principal,
+    ) -> SecurityConversationV4:
+        """Return the prepared immutable turn snapshot before durable enqueue."""
+        async with self._lock:
+            stored = self._conversations.get(response.conversation_id)
+        if stored is None or stored[0] != principal.user_id:
+            raise RuntimeError("prepared security conversation is unavailable")
+        record = stored[1]
+        if record.active_analysis_id != response.analysis_id or record.context_version != response.conversation_version:
+            raise RuntimeError("prepared security conversation does not match analysis turn")
+        return record.model_copy(deep=True)
+
+    async def enqueue_turn(
+        self,
+        request: SecurityTriageCreateRequestV4,
+        response: SecurityScopeResponseV4,
+        principal: Principal,
+        idempotency_key: str,
+    ) -> SecurityAnalysisAcceptedResponseV4:
+        enqueue = getattr(self._repository, "enqueue_security_analysis", None)
+        if enqueue is None:
+            raise PlatformError(
+                status_code=409,
+                code=ErrorCode.CONFLICT,
+                message="Async Security v4 execution requires PostgreSQL.",
+                retryable=False,
+            )
+        request_json = request.model_dump_json()
+        payload_hash = hashlib.sha256(request_json.encode()).hexdigest()
+        idempotent = getattr(self._repository, "load_security_idempotent", None)
+        if idempotent is not None:
+            existing = await idempotent(principal.user_id, idempotency_key, payload_hash)
+            if existing is not None:
+                return SecurityAnalysisAcceptedResponseV4(
+                    analysis_id=existing.analysis_id,
+                    conversation_id=existing.conversation_id,
+                    conversation_version=existing.conversation_version,
+                    status=AnalysisStatus.QUEUED
+                    if existing.status in {AnalysisStatus.QUEUED, AnalysisStatus.RUNNING}
+                    else AnalysisStatus.QUEUED,
+                    created_at=existing.created_at,
+                )
+
+        prepared = await self.begin_turn(request, response, principal, persist=False)
+        queued = prepared.model_copy(update={"status": AnalysisStatus.QUEUED})
+        conversation = await self.pending_conversation_for(queued, principal)
+        hint = self._provisional_risk_hint(queued)
+        events = [
+            SecurityAnalysisEventV4(
+                analysis_id=queued.analysis_id,
+                sequence=1,
+                status=AnalysisStatus.QUEUED,
+                step="queued",
+                kind=SecurityAnalysisEventKindV4.STATUS,
+                message="Security v4 analysis was queued.",
+                occurred_at=queued.created_at,
+            )
+        ]
+        if queued.scope_decision is ScopeDecisionV4.IN_SCOPE:
+            events.append(
+                SecurityAnalysisEventV4(
+                    analysis_id=queued.analysis_id,
+                    sequence=2,
+                    status=AnalysisStatus.QUEUED,
+                    step="provisional_warning",
+                    kind=SecurityAnalysisEventKindV4.PROVISIONAL,
+                    message="Đã phát hiện tín hiệu bảo mật cục bộ; không thực hiện hành động rủi ro trong khi chờ kết quả.",
+                    risk_hint=hint,
+                    occurred_at=queued.created_at,
+                )
+            )
+        try:
+            stored = await enqueue(
+                owner_id=principal.user_id,
+                request=request,
+                response=queued,
+                conversation=conversation,
+                expected_version=request.conversation_version,
+                idempotency_key=idempotency_key,
+                payload_hash=payload_hash,
+                events=events,
+            )
+        except Exception:
+            await self._refresh_conversation_cache(queued.conversation_id, principal.user_id)
+            raise
+        if stored.analysis_id == queued.analysis_id:
+            await self.cache_enqueued(principal.user_id, queued, events)
+        else:
+            await self._refresh_conversation_cache(stored.conversation_id, principal.user_id)
+        return SecurityAnalysisAcceptedResponseV4(
+            analysis_id=stored.analysis_id,
+            conversation_id=stored.conversation_id,
+            conversation_version=stored.conversation_version,
+            created_at=stored.created_at,
+        )
+
+    async def _refresh_conversation_cache(self, conversation_id: UUID, owner_id: str) -> None:
+        load = getattr(self._repository, "load_security_conversation", None)
+        loaded = await load(str(conversation_id)) if load is not None else None
+        async with self._lock:
+            if loaded is None:
+                self._conversations.pop(conversation_id, None)
+            elif loaded[0] == owner_id:
+                self._conversations[conversation_id] = loaded
+
+    @staticmethod
+    def _provisional_risk_hint(response: SecurityScopeResponseV4) -> SecurityRiskV4:
+        context = response.security_context
+        if context is not None and (
+            context.credential_request or context.otp_request or context.payment_request
+        ):
+            return SecurityRiskV4.HIGH_RISK
+        return SecurityRiskV4.SUSPICIOUS
+
+    async def cache_enqueued(
+        self,
+        owner_id: str,
+        response: SecurityScopeResponseV4,
+        events: list[SecurityAnalysisEventV4],
+    ) -> None:
+        async with self._lock:
+            self._records[response.analysis_id] = (owner_id, response, events)
 
     async def get_conversation_for(self, conversation_id: UUID, principal: Principal) -> SecurityConversationV4:
         return (await self._load_conversation(conversation_id, principal)).model_copy(deep=True)
@@ -308,6 +444,14 @@ class SecurityAnalysisService:
     async def persist_failed(self, response: SecurityScopeResponseV4, principal: Principal) -> None:
         await self._persist_terminal(response, principal, AnalysisStatus.FAILED)
 
+    async def finalize_durable(self, response: SecurityScopeResponseV4, principal: Principal) -> None:
+        """Refresh process-local state after PostgreSQL committed a durable result."""
+        loaded = await self._repository.load_security_analysis(str(response.analysis_id))
+        if loaded is not None:
+            async with self._lock:
+                self._records[response.analysis_id] = loaded
+        await self._finalize_conversation(response, principal)
+
     async def _persist_terminal(
         self, response: SecurityScopeResponseV4, principal: Principal, terminal_status: AnalysisStatus
     ) -> None:
@@ -319,6 +463,8 @@ class SecurityAnalysisService:
                 sequence=1,
                 status=AnalysisStatus.QUEUED,
                 step="queued",
+                kind=SecurityAnalysisEventKindV4.STATUS,
+                message="Security v4 analysis was queued.",
                 occurred_at=response.created_at,
             ),
             SecurityAnalysisEventV4(
@@ -326,6 +472,8 @@ class SecurityAnalysisService:
                 sequence=2,
                 status=AnalysisStatus.RUNNING,
                 step="investigation" if response.security_context is not None else "scope_gate",
+                kind=SecurityAnalysisEventKindV4.PROGRESS,
+                message="Security v4 analysis was processed inline.",
                 occurred_at=response.created_at,
             ),
             SecurityAnalysisEventV4(
@@ -333,6 +481,10 @@ class SecurityAnalysisService:
                 sequence=3,
                 status=terminal_status,
                 step=terminal_status.value,
+                kind=SecurityAnalysisEventKindV4.FINAL,
+                message=f"Security v4 analysis {terminal_status.value}.",
+                evidence_refs=list(response.explanation_evidence_refs),
+                risk_hint=response.risk,
                 occurred_at=completed_at,
             ),
         ]
@@ -657,11 +809,11 @@ class SecurityAnalysisService:
     ) -> tuple[str, SecurityScopeResponseV4, list[SecurityAnalysisEventV4]] | None:
         async with self._lock:
             record = self._records.get(analysis_id)
-        if record is not None:
+        if record is not None and record[1].status in {AnalysisStatus.COMPLETED, AnalysisStatus.FAILED}:
             return record
         load = getattr(self._repository, "load_security_analysis", None)
         if load is None:
-            return None
+            return record
         loaded = await load(str(analysis_id))
         if loaded is not None:
             async with self._lock:

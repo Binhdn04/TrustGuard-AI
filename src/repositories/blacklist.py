@@ -32,6 +32,7 @@ from src.models import (
     ReviewDecision,
     ReviewQueueItem,
     SecurityAdminAuditEventV4,
+    SecurityAdminCopilotResponseV4,
     SecurityAnalysisEventV4,
     SecurityAppealAdminRecordV4,
     SecurityAppealRecordV4,
@@ -223,6 +224,15 @@ class SQLiteBlacklistRepository:
             );
             CREATE INDEX IF NOT EXISTS ix_security_feedback_audit_time
                 ON security_feedback_audit_v4(occurred_at DESC);
+            CREATE TABLE IF NOT EXISTS security_admin_copilot_suggestions_v4 (
+                suggestion_id TEXT PRIMARY KEY, analysis_id TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL, suggestion_json TEXT NOT NULL,
+                usage_metadata_json TEXT NOT NULL, evidence_snapshot_hash TEXT NOT NULL,
+                requested_at TEXT NOT NULL, completed_at TEXT NOT NULL,
+                FOREIGN KEY (analysis_id) REFERENCES security_analyses(analysis_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_security_admin_copilot_analysis_time
+                ON security_admin_copilot_suggestions_v4(analysis_id, completed_at DESC);
             CREATE INDEX IF NOT EXISTS ix_security_memory_seen
                 ON security_memory(last_seen_at DESC);
             CREATE TABLE IF NOT EXISTS security_memory_audit (
@@ -745,6 +755,52 @@ class SQLiteBlacklistRepository:
             ).fetchall()
         return [SecurityMemoryRecordV4.model_validate_json(row[0]) for row in rows]
 
+    async def load_reviewed_security_memory(
+        self,
+        owner_id: str,
+        current_analysis_id: UUID,
+    ) -> tuple[list[tuple[SecurityMemoryRecordV4, datetime]], list[SecurityCampaignRecordV4]]:
+        """SQLite equivalent of the owner-isolated reviewed-memory lookup."""
+        async with self._lock:
+            memory_rows = self._connection.execute(
+                """SELECT m.record_json,
+                          (SELECT max(a.occurred_at) FROM security_memory_audit a
+                           WHERE a.memory_id=m.memory_id) AS reviewed_at
+                   FROM security_memory m
+                   JOIN security_analyses s ON s.analysis_id=m.analysis_id
+                   WHERE s.owner_id=? AND m.analysis_id<>?
+                     AND m.admin_verdict IN ('malicious','safe','false_positive')
+                     AND EXISTS(SELECT 1 FROM security_memory_audit a WHERE a.memory_id=m.memory_id)
+                   ORDER BY reviewed_at DESC LIMIT 100""",
+                (owner_id, str(current_analysis_id)),
+            ).fetchall()
+            campaign_rows = self._connection.execute(
+                """SELECT c.record_json FROM security_campaigns c
+                   WHERE c.reviewer_status='confirmed'
+                     AND NOT EXISTS(
+                       SELECT 1 FROM security_campaign_members self_member
+                       WHERE self_member.campaign_id=c.campaign_id AND self_member.analysis_id=?
+                     )
+                     AND EXISTS(
+                       SELECT 1 FROM security_campaign_members member
+                       WHERE member.campaign_id=c.campaign_id
+                     )
+                     AND NOT EXISTS(
+                       SELECT 1 FROM security_campaign_members member
+                       JOIN security_analyses analysis ON analysis.analysis_id=member.analysis_id
+                       WHERE member.campaign_id=c.campaign_id AND analysis.owner_id<>?
+                     )
+                   ORDER BY json_extract(c.record_json,'$.reviewed_at') DESC LIMIT 100""",
+                (str(current_analysis_id), owner_id),
+            ).fetchall()
+        memories = [
+            (SecurityMemoryRecordV4.model_validate_json(row[0]), datetime.fromisoformat(row[1]))
+            for row in memory_rows
+            if row[1] is not None
+        ]
+        campaigns = [SecurityCampaignRecordV4.model_validate_json(row[0]) for row in campaign_rows]
+        return memories, campaigns
+
     async def correct_security_memory(
         self,
         memory_id: UUID,
@@ -1134,6 +1190,54 @@ class SQLiteBlacklistRepository:
                 audit.occurred_at.isoformat(),
             ),
         )
+
+    async def latest_security_admin_copilot(
+        self, analysis_id: UUID, evidence_snapshot_hash: str
+    ) -> SecurityAdminCopilotResponseV4 | None:
+        async with self._lock:
+            row = self._connection.execute(
+                """SELECT suggestion_json FROM security_admin_copilot_suggestions_v4
+                   WHERE analysis_id=? AND evidence_snapshot_hash=?
+                   ORDER BY completed_at DESC LIMIT 1""",
+                (str(analysis_id), evidence_snapshot_hash),
+            ).fetchone()
+        return SecurityAdminCopilotResponseV4.model_validate_json(row[0]) if row else None
+
+    async def save_security_admin_copilot(
+        self,
+        suggestion: SecurityAdminCopilotResponseV4,
+        evidence_snapshot_hash: str,
+        reviewer_id: str,
+        requested_at: datetime,
+        completed_at: datetime,
+    ) -> None:
+        audit = SecurityAdminAuditEventV4(
+            resource_type=SecurityAuditResourceV4.COPILOT,
+            resource_id=suggestion.suggestion_id,
+            action="copilot_suggestion_generated",
+            actor_id=reviewer_id,
+            note=f"{suggestion.generation_mode.value}:{suggestion.suggestion_version}",
+            occurred_at=completed_at,
+            evidence_refs=suggestion.evidence_refs,
+        )
+        async with self._lock:
+            try:
+                self._connection.execute(
+                    """INSERT INTO security_admin_copilot_suggestions_v4(
+                           suggestion_id,analysis_id,reviewer_id,suggestion_json,usage_metadata_json,
+                           evidence_snapshot_hash,requested_at,completed_at
+                       ) VALUES(?,?,?,?,?,?,?,?)""",
+                    (
+                        str(suggestion.suggestion_id), str(suggestion.analysis_id), reviewer_id,
+                        suggestion.model_dump_json(), suggestion.usage.model_dump_json(),
+                        evidence_snapshot_hash, requested_at.isoformat(), completed_at.isoformat(),
+                    ),
+                )
+                self._insert_security_feedback_audit(audit)
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
 
     async def list_security_admin_audit(self) -> list[SecurityAdminAuditEventV4]:
         async with self._lock:

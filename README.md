@@ -23,11 +23,12 @@ thật về goal.
 - Paginated history/conversation/trust/memory/campaign API; report/appeal admin lifecycle, bounded admin
   case-detail, domain/threat intelligence, unified v4 audit và reviewed blacklist workflow.
 - Next.js frontend gọi API thật, có case workspace/history, Observatory, Security Review Room, Trust lifecycle,
-  Unified Audit và compatibility surface riêng cho v3 metrics/source discovery.
+  grounded suggestion-only Admin Copilot, Unified Audit và compatibility surface riêng cho v3 metrics/source discovery.
 
 Chưa đạt scope:
 
-- `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Security Copilot chưa có downstream sink thật.
+- `BLOCK_DOMAIN` và `PUBLISH_BROAD_WARNING` chưa có downstream sink thật; Admin Copilot chỉ đưa gợi ý,
+  không thực thi hai action này.
 - Legacy v2/v3 general fact-check/source-discovery writers chưa được freeze trên deployment thật hoặc cleanup;
   code đã có fail-fast cutover profile và legacy-write switch.
 - Đã có versioned offline quality evaluation; chưa có compatibility zero-usage evidence và backup/restore rehearsal.
@@ -39,11 +40,12 @@ Chưa đạt scope:
 flowchart LR
     A[Message / URL / follow-up] --> B[Security scope + structured context]
     B --> C[Consent/policy-controlled investigation]
-    C --> D[Trust + deterministic security-risk-v1]
+    C --> D[Trust + versioned deterministic risk v1/v2]
     D --> E[Grounded warning + recommendations]
     E --> F[Conversation/history/report/appeal]
     D --> G[Security Memory + campaign]
     D --> H[Reviewed admin action]
+    D --> I[Admin Copilot suggestion only]
 ```
 
 Legacy general fact-check pipeline không nằm trên Security v4 path nhưng vẫn tồn tại cho compatibility.
@@ -116,7 +118,7 @@ npm run typecheck
 npm test
 ```
 
-Kết quả gần nhất 2026-08-14: backend 194 passed; Ruff pass; frontend 57 test/12 files,
+Kết quả gần nhất 2026-08-15: backend 217 passed; Ruff pass; frontend 59 test/12 files,
 lint/typecheck/cutover check, Next.js Turbopack + webpack standalone production build và Chromium E2E 2 pass.
 Đây chưa phải hosted release evidence.
 

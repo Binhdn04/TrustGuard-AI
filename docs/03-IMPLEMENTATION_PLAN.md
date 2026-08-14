@@ -44,13 +44,15 @@ Exit: safe official, domain mismatch only, Unicode/homograph và official-not-fo
 ## Phase 3 — Risk, Security Chat và HITL — DONE WITH EXPLICIT SINK LIMITS
 
 - [x] `security-risk-v1` với strong-evidence threshold và grounded evidence refs.
+- [x] Feature-gated `security-risk-v2` cho reviewed Security Memory; safe/false-positive chỉ giảm weak heuristic.
 - [x] Multi-turn Security Chat; out-of-scope và need-more-info có presentation riêng.
 - [x] History/result/admin copy dùng threat/risk/evidence/recommendation semantics.
 - [x] High-risk v4 producer tạo idempotent reviewed `ADD_TO_BLACKLIST` proposal.
 - [x] Approve/reject/executed/failed state machine, rollback semantics và immutable action audit.
 - [x] Admin views cho action audit, brand, whitelist, memory và campaign.
-- [ ] Execution sink thật cho `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` và AI Copilot — chỉ triển khai khi
-  có downstream system thật; hiện approved attempt phải `FAILED/ACTION_SINK_NOT_CONFIGURED`.
+- [ ] Execution sink thật cho `BLOCK_DOMAIN`, `PUBLISH_BROAD_WARNING` — chỉ triển khai khi có downstream
+  system thật; hiện approved attempt phải `FAILED/ACTION_SINK_NOT_CONFIGURED`.
+- [x] Admin Copilot WP7 suggestion-only, grounded/audited/rate-limited và không gọi execution sink.
 - [x] Dedicated domain/threat explorer và unified v4 audit API/browser.
 
 Exit đạt cho individual warning và blacklist action: user warning không chờ admin; side effect không thể
@@ -62,7 +64,7 @@ bypass review/audit. Không tuyên bố wide-action coverage cho action chưa c�
 - [x] Owner-scoped analysis/conversation pages và resume contract.
 - [x] Admin report/appeal queue, terminal review decision, RBAC/conflict protection và immutable audit.
 - [x] Paginated/filter/search pages cho trust, memory, campaign; domain/threat explorer và unified v4 audit.
-- [x] PostgreSQL/SQLite persistence, Alembic `0015`, OpenAPI/contract/repository regression tests.
+- [x] PostgreSQL/SQLite persistence, Alembic `0017`, OpenAPI/contract/repository regression tests.
 - [x] Frontend dùng contract v4 cho chat/case workspace, history, Observatory, Review Room, Trust và Audit;
   contract v3 chỉ còn ở reviewed-action/compatibility surface có nhãn rõ.
 

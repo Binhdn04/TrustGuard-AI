@@ -48,10 +48,22 @@ def _conflict(message: str) -> PlatformError:
 @dataclass(slots=True)
 class _MemoryStore:
     records: dict[UUID, SecurityMemoryRecordV4] = field(default_factory=dict)
+    owners: dict[UUID, str] = field(default_factory=dict)
     campaigns: dict[UUID, SecurityCampaignRecordV4] = field(default_factory=dict)
     memory_audit: dict[UUID, list[SecurityMemoryAuditRecordV4]] = field(default_factory=dict)
     campaign_audit: dict[UUID, list[SecurityCampaignAuditRecordV4]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedMemoryCandidate:
+    record: SecurityMemoryRecordV4
+    reviewed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedCampaignCandidate:
+    record: SecurityCampaignRecordV4
 
 
 class SecurityMemoryService:
@@ -69,7 +81,11 @@ class SecurityMemoryService:
         self._clock = clock
         self._memory = _MemoryStore()
 
-    async def record(self, response: SecurityScopeResponseV4) -> SecurityMemoryRecordV4 | None:
+    async def record(
+        self,
+        response: SecurityScopeResponseV4,
+        owner_id: str | None = None,
+    ) -> SecurityMemoryRecordV4 | None:
         if response.security_context is None or response.risk is None or response.threat_type is None:
             return None
         record = build_security_memory_record(response, config=self._config)
@@ -83,6 +99,8 @@ class SecurityMemoryService:
                     self._memory.records[record.memory_id] = record
                 else:
                     record = existing
+                if owner_id is not None:
+                    self._memory.owners[record.analysis_id] = owner_id
 
         since = record.last_seen_at - self._config.window
         recent_loader = getattr(self._repository, "recent_security_memory", None)
@@ -99,6 +117,47 @@ class SecurityMemoryService:
                 async with self._memory.lock:
                     self._memory.campaigns.setdefault(campaign.campaign_id, campaign)
         return record.model_copy(deep=True)
+
+    async def reviewed_candidates(
+        self,
+        owner_id: str,
+        current_analysis_id: UUID,
+    ) -> tuple[list[ReviewedMemoryCandidate], list[ReviewedCampaignCandidate]]:
+        """Load only reviewer-approved, owner-isolated, non-self intelligence."""
+        load = getattr(self._repository, "load_reviewed_security_memory", None)
+        if load is not None:
+            memories, campaigns = await load(owner_id, current_analysis_id)
+            return (
+                [ReviewedMemoryCandidate(record=item, reviewed_at=reviewed_at) for item, reviewed_at in memories],
+                [ReviewedCampaignCandidate(record=item) for item in campaigns],
+            )
+
+        allowed = {
+            SecurityMemoryAdminVerdictV4.MALICIOUS,
+            SecurityMemoryAdminVerdictV4.SAFE,
+            SecurityMemoryAdminVerdictV4.FALSE_POSITIVE,
+        }
+        async with self._memory.lock:
+            memories: list[ReviewedMemoryCandidate] = []
+            for record in self._memory.records.values():
+                if (
+                    record.analysis_id == current_analysis_id
+                    or self._memory.owners.get(record.analysis_id) != owner_id
+                    or record.admin_verdict not in allowed
+                ):
+                    continue
+                audit = self._memory.memory_audit.get(record.memory_id, [])
+                if not audit:
+                    continue
+                memories.append(ReviewedMemoryCandidate(record.model_copy(deep=True), audit[-1].occurred_at))
+            campaigns = [
+                ReviewedCampaignCandidate(record.model_copy(deep=True))
+                for record in self._memory.campaigns.values()
+                if record.reviewer_status is SecurityCampaignReviewerStatusV4.CONFIRMED
+                and current_analysis_id not in record.analysis_ids
+                and all(self._memory.owners.get(item) == owner_id for item in record.analysis_ids)
+            ]
+        return memories, campaigns
 
     async def list_memory(self, principal: Principal) -> list[SecurityMemoryRecordV4]:
         require_security_admin(principal)
@@ -317,4 +376,4 @@ class SecurityMemoryService:
             return [item.model_copy(deep=True) for item in self._memory.campaign_audit.get(campaign_id, [])]
 
 
-__all__ = ["SecurityMemoryService"]
+__all__ = ["ReviewedCampaignCandidate", "ReviewedMemoryCandidate", "SecurityMemoryService"]

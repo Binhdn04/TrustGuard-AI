@@ -19,6 +19,7 @@ from src.models.schemas import (
 CONTRACT_VERSION_V4 = SECURITY_TRIAGE_CONTRACT_VERSION
 SECURITY_CONTEXT_VERSION = "security-context-v1"
 SECURITY_RISK_POLICY_VERSION = "security-risk-v1"
+SECURITY_RISK_POLICY_VERSION_V2 = "security-risk-v2"
 SECURITY_UNDERSTANDING_VERSION = "security-understanding-v1"
 SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
 
@@ -174,6 +175,7 @@ class SecurityInvestigationToolV4(StrEnum):
     BRAND_MATCH = "brand_match"
     WHITELIST_LOOKUP = "whitelist_lookup"
     OFFICIAL_CLAIM_VERIFIER = "official_claim_verifier"
+    SECURITY_MEMORY_LOOKUP = "security_memory_lookup"
 
 
 class SecurityInvestigationStepStatusV4(StrEnum):
@@ -200,6 +202,7 @@ class SecurityEvidenceTypeV4(StrEnum):
     BRAND_MATCH = "brand_match"
     WHITELIST = "whitelist"
     OFFICIAL_VERIFICATION = "official_verification"
+    REVIEWED_SECURITY_MEMORY = "reviewed_security_memory"
 
 
 class TrustLifecycleV4(StrEnum):
@@ -276,6 +279,11 @@ class SecurityToolErrorV4(SecurityContractModel):
 class SecurityConsentV4(SecurityContractModel):
     external_url_lookup: bool = False
     official_source_lookup: bool = False
+
+
+class SecurityExecutionModeV4(StrEnum):
+    INLINE = "inline"
+    ASYNC = "async"
 
 
 class BrandCreateRequestV4(SecurityContractModel):
@@ -358,6 +366,7 @@ class OfficialVerificationResultV4(SecurityContractModel):
 class SecurityTriageCreateRequestV4(SecurityContractModel):
     message: str = Field(min_length=1, max_length=5000)
     consent: SecurityConsentV4 = Field(default_factory=SecurityConsentV4)
+    execution_mode: SecurityExecutionModeV4 = SecurityExecutionModeV4.INLINE
     conversation_id: UUID | None = None
     conversation_version: int | None = Field(default=None, ge=1)
 
@@ -473,7 +482,7 @@ class SecurityScopeResponseV4(SecurityContractModel):
     score: int | None = Field(default=None, ge=0, le=100)
     confidence: float | None = Field(default=None, ge=0, le=1)
     threat_type: PotentialThreatV4 | None = None
-    policy_version: Literal["security-risk-v1"] | None = None
+    policy_version: Literal["security-risk-v1", "security-risk-v2"] | None = None
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -561,8 +570,17 @@ class SecurityScopeResponseV4(SecurityContractModel):
 class SecurityAnalysisAcceptedResponseV4(SecurityContractModel):
     contract_version: Literal["v4"] = CONTRACT_VERSION_V4
     analysis_id: UUID
+    conversation_id: UUID
+    conversation_version: int = Field(ge=1)
     status: Literal[AnalysisStatus.QUEUED] = AnalysisStatus.QUEUED
     created_at: datetime
+
+
+class SecurityAnalysisEventKindV4(StrEnum):
+    STATUS = "status"
+    PROVISIONAL = "provisional"
+    PROGRESS = "progress"
+    FINAL = "final"
 
 
 class SecurityAnalysisEventV4(SecurityContractModel):
@@ -571,6 +589,11 @@ class SecurityAnalysisEventV4(SecurityContractModel):
     sequence: int = Field(ge=1)
     status: AnalysisStatus
     step: str
+    kind: SecurityAnalysisEventKindV4 = SecurityAnalysisEventKindV4.STATUS
+    step_id: str | None = Field(default=None, max_length=200)
+    message: str | None = Field(default=None, max_length=1000)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    risk_hint: SecurityRiskV4 | None = None
     occurred_at: datetime
 
 
@@ -837,6 +860,66 @@ class SecurityCampaignPageV4(SecurityContractModel):
     offset: int = Field(ge=0)
 
 
+class SecurityAdminCopilotDispositionV4(StrEnum):
+    CONFIRM_MALICIOUS = "confirm_malicious"
+    CONFIRM_SAFE = "confirm_safe"
+    MARK_FALSE_POSITIVE = "mark_false_positive"
+    NEEDS_MORE_INFORMATION = "needs_more_information"
+    NO_CHANGE = "no_change"
+
+
+class SecurityAdminCopilotActionV4(StrEnum):
+    ADD_TO_BLACKLIST = "add_to_blacklist"
+    BLOCK_DOMAIN = "block_domain"
+    PUBLISH_BROAD_WARNING = "publish_broad_warning"
+    NONE = "none"
+
+
+class SecurityAdminCopilotRequestV4(SecurityContractModel):
+    refresh: bool = False
+
+
+class SecurityAdminCopilotRationaleV4(SecurityContractModel):
+    text: str = Field(min_length=1, max_length=1000)
+    evidence_refs: list[str] = Field(min_length=1, max_length=20)
+
+
+class SecurityAdminCopilotCampaignV4(SecurityContractModel):
+    campaign_id: UUID
+    hypothesis: str = Field(min_length=1, max_length=2000)
+    reviewed_at: datetime
+    evidence_refs: list[str] = Field(min_length=1, max_length=100)
+
+
+class SecurityAdminCopilotUsageV4(SecurityContractModel):
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0, ge=0)
+    status: Literal["ok", "fallback"]
+
+
+class SecurityAdminCopilotResponseV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    suggestion_id: UUID = Field(default_factory=uuid4)
+    analysis_id: UUID
+    evidence_summary: str = Field(min_length=1, max_length=2000)
+    conflicts: list[str] = Field(default_factory=list, max_length=20)
+    missing_information: list[str] = Field(default_factory=list, max_length=20)
+    related_reviewed_campaigns: list[SecurityAdminCopilotCampaignV4] = Field(default_factory=list, max_length=20)
+    proposed_disposition: SecurityAdminCopilotDispositionV4
+    proposed_admin_action: SecurityAdminCopilotActionV4 = SecurityAdminCopilotActionV4.NONE
+    action_executable: bool = False
+    executed: Literal[False] = False
+    grounded_rationale: list[SecurityAdminCopilotRationaleV4] = Field(default_factory=list, max_length=5)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    provider: str | None = None
+    model: str | None = None
+    suggestion_version: Literal["security-admin-copilot-v1"] = "security-admin-copilot-v1"
+    generation_mode: AssistantGenerationModeV4
+    usage: SecurityAdminCopilotUsageV4
+    generated_at: datetime
+
+
 class SecurityDomainIntelligenceV4(SecurityContractModel):
     domain: str
     analysis_count: int = Field(ge=1)
@@ -882,6 +965,7 @@ class SecurityAuditResourceV4(StrEnum):
     CAMPAIGN = "campaign"
     REPORT = "report"
     APPEAL = "appeal"
+    COPILOT = "copilot"
 
 
 class SecurityAdminAuditEventV4(SecurityContractModel):
@@ -908,6 +992,7 @@ __all__ = [
     "SECURITY_ASSISTANT_RESPONSE_VERSION",
     "SECURITY_CONTEXT_VERSION",
     "SECURITY_RISK_POLICY_VERSION",
+    "SECURITY_RISK_POLICY_VERSION_V2",
     "AssistantGenerationModeV4",
     "AssistantImmediateStepV4",
     "AssistantReasonV4",
@@ -929,10 +1014,12 @@ __all__ = [
     "SecurityConversationV4",
     "SecurityContextV4",
     "SecurityAnalysisAcceptedResponseV4",
+    "SecurityAnalysisEventKindV4",
     "SecurityAnalysisEventPageV4",
     "SecurityAnalysisEventV4",
     "SecurityEvidenceTypeV4",
     "SecurityEvidenceV4",
+    "SecurityExecutionModeV4",
     "SecurityInvestigationStatusV4",
     "SecurityInvestigationStepStatusV4",
     "SecurityInvestigationToolV4",
@@ -972,6 +1059,13 @@ __all__ = [
     "SecurityCampaignDecisionRequestV4",
     "SecurityCampaignAuditRecordV4",
     "SecurityCampaignPageV4",
+    "SecurityAdminCopilotDispositionV4",
+    "SecurityAdminCopilotActionV4",
+    "SecurityAdminCopilotRequestV4",
+    "SecurityAdminCopilotRationaleV4",
+    "SecurityAdminCopilotCampaignV4",
+    "SecurityAdminCopilotUsageV4",
+    "SecurityAdminCopilotResponseV4",
     "SecurityDomainIntelligenceV4",
     "SecurityDomainIntelligencePageV4",
     "SecurityThreatIntelligenceV4",

@@ -24,6 +24,8 @@ export interface SecurityCaseSubmission {
 
 export interface SecurityCaseTurn extends SecurityCaseSubmission {
   id: string;
+  analysisId?: string;
+  idempotencyKey: string;
   result: SecurityScopeResponseV4 | null;
 }
 
@@ -72,7 +74,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
 
   const applyResult = useCallback((turnId: string, result: SecurityScopeResponseV4) => {
     setTurns((current) => current.map((turn) => (
-      turn.id === turnId ? { ...turn, result } : turn
+      turn.id === turnId ? { ...turn, analysisId: undefined, result } : turn
     )));
     setConversation({ id: result.conversation_id, version: result.conversation_version });
     setState(stateFor(result));
@@ -84,6 +86,9 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
       onEvents: (events) => {
         if (!mounted.current || activeGeneration !== generation.current) return;
         setLifecycleEvents((current) => [...current, ...events].sort((left, right) => left.sequence - right.sequence));
+        if (events.some((event) => event.kind === "provisional")) {
+          setState("PROVISIONAL_WARNING");
+        }
         const terminal = events.some((event) => event.status === "completed" || event.status === "failed");
         if (!terminal || resolvingTerminal) return;
         resolvingTerminal = true;
@@ -122,18 +127,34 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     setLifecycleEvents([]);
 
     try {
+      let capabilities = null;
+      try {
+        capabilities = await api.getCapabilities();
+      } catch {
+        // Capability discovery failure preserves the compatible inline path.
+      }
+      const useAsync = capabilities?.security_async_execution === true;
       const result = await api.createAnalysis({
         message: submission.message,
         consent: {
           external_url_lookup: submission.externalLookup,
           official_source_lookup: submission.officialLookup,
         },
+        execution_mode: useAsync ? "async" : "inline",
         ...(conversation
           ? { conversation_id: conversation.id, conversation_version: conversation.version }
           : {}),
-      });
+      }, useAsync ? { idempotencyKey: turnId } : undefined);
       if (!mounted.current || activeGeneration !== generation.current) return;
-      applyResult(turnId, result);
+      if ("scope_decision" in result) {
+        applyResult(turnId, result);
+      } else {
+        setTurns((current) => current.map((turn) => (
+          turn.id === turnId ? { ...turn, analysisId: result.analysis_id } : turn
+        )));
+        setConversation({ id: result.conversation_id, version: result.conversation_version });
+        setState("RUNNING");
+      }
       if (result.status === "running" || result.status === "queued") {
         monitor(turnId, result.analysis_id, activeGeneration);
       }
@@ -151,20 +172,20 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
   ) => {
     const submission = { message, externalLookup, officialLookup };
     const turnId = crypto.randomUUID();
-    setTurns((current) => [...current, { id: turnId, result: null, ...submission }]);
+    setTurns((current) => [...current, { id: turnId, idempotencyKey: turnId, result: null, ...submission }]);
     void execute(turnId, submission);
   }, [execute]);
 
   const retry = useCallback(() => {
     const latestTurn = turns.at(-1);
     if (!latestTurn) return;
-    if (latestTurn.result?.status === "queued" || latestTurn.result?.status === "running") {
+    if (latestTurn.analysisId || latestTurn.result?.status === "queued" || latestTurn.result?.status === "running") {
       generation.current += 1;
       const activeGeneration = generation.current;
       stopRuntime();
       setError(null);
-      setState(stateFor(latestTurn.result));
-      monitor(latestTurn.id, latestTurn.result.analysis_id, activeGeneration);
+      setState(latestTurn.result ? stateFor(latestTurn.result) : "RUNNING");
+      monitor(latestTurn.id, latestTurn.analysisId ?? latestTurn.result!.analysis_id, activeGeneration);
       return;
     }
     void execute(latestTurn.id, latestTurn);

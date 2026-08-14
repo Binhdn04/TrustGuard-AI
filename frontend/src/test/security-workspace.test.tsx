@@ -83,6 +83,40 @@ function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): Securit
 }
 
 describe("Security Chat workspace", () => {
+  it("submits an idempotent async turn only when the backend capability is enabled", async () => {
+    const create = vi.fn().mockResolvedValue({
+      contract_version: "v4",
+      analysis_id: "10000000-0000-4000-8000-000000000099",
+      conversation_id: "10000000-0000-4000-8000-000000000001",
+      conversation_version: 1,
+      status: "queued",
+      created_at: "2026-08-13T08:00:00Z",
+    });
+    const api = apiWith(create);
+    vi.mocked(api.getCapabilities).mockResolvedValue({
+      contract_version: "v4",
+      product_profile: "security_triage_vnext",
+      release_profile: "pre_cutover",
+      conversation_resume: true,
+      admin_feedback_review: true,
+      intelligence_explorer: true,
+      unified_v4_audit: true,
+      admin_action_contract: "v3",
+      executable_admin_actions: ["add_to_blacklist"],
+      deferred_admin_actions: [],
+      compatibility_contracts: ["v2", "v3", "v4"],
+      security_async_execution: true,
+    });
+    render(<AnalysisWorkspace api={api} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({ execution_mode: "async" }));
+    expect(create.mock.calls[0][1]).toEqual({ idempotencyKey: expect.any(String) });
+  });
+
   it("moves from intake into the three-region case workspace", async () => {
     const api = apiWith(vi.fn().mockResolvedValue(response()));
     render(<AnalysisWorkspace api={api} />);

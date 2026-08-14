@@ -11,7 +11,8 @@ describe("security event stream", () => {
     vi.useFakeTimers();
     const event: SecurityAnalysisEventV4 = {
       event_id: "event-1", analysis_id: "analysis-1", sequence: 1, status: "running",
-      step: "investigation", occurred_at: "2026-08-13T08:00:00Z",
+      step: "investigation", kind: "progress", step_id: "investigation", message: null,
+      evidence_refs: [], risk_hint: null, occurred_at: "2026-08-13T08:00:00Z",
     };
     const getAnalysisEvents = vi.fn()
       .mockResolvedValueOnce({ contract_version: "v4", events: [event], next_cursor: "MQ" })

@@ -1,9 +1,9 @@
-import { AlertTriangle, ClipboardCheck, Loader2, ShieldQuestion } from "lucide-react";
+import { AlertTriangle, Bot, ClipboardCheck, Loader2, RefreshCw, ShieldQuestion } from "lucide-react";
 
 import { ActionRiskPanel } from "@/components/analysis/action-risk-panel";
 import { EvidenceDeck } from "@/components/analysis/evidence-deck";
 import { mapSecurityCaseViewModel } from "@/lib/mappers/security-case-view-model";
-import type { SecurityScopeResponseV4 } from "@/types/generated/api-v4";
+import type { SecurityAdminCopilotResponseV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
 import type { FeedbackReviewItem } from "./review-queue";
 
@@ -12,11 +12,19 @@ export function CaseReviewPanel({
   analysis,
   loading,
   error,
+  copilot,
+  copilotLoading,
+  copilotError,
+  onCopilot,
 }: {
   feedback: FeedbackReviewItem | null;
   analysis: SecurityScopeResponseV4 | null;
   loading: boolean;
   error: string | null;
+  copilot: SecurityAdminCopilotResponseV4 | null;
+  copilotLoading: boolean;
+  copilotError: string | null;
+  onCopilot: (refresh: boolean) => void;
 }) {
   if (!feedback) {
     return <section className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center"><div><ShieldQuestion className="mx-auto size-9 text-muted-foreground" /><h2 className="mt-3 font-semibold">Chọn một feedback record</h2><p className="mt-1 max-w-sm text-sm text-muted-foreground">Case detail chỉ được tải qua admin analysis API sau khi reviewer chọn record.</p></div></section>;
@@ -44,6 +52,24 @@ export function CaseReviewPanel({
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(18rem,0.7fr)_minmax(22rem,1.3fr)]">
         <div className="space-y-5">
+          <section aria-label="AI suggestion — not executed" className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div><p className="micro-label text-violet-700 dark:text-violet-300">AI suggestion — not executed</p><h3 className="mt-1 flex items-center gap-2 text-sm font-semibold"><Bot className="size-4" />Admin Copilot</h3></div>
+              <button type="button" disabled={copilotLoading} onClick={() => onCopilot(copilot !== null)} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+                {copilotLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}{copilot ? "Refresh" : "Generate"}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Suggestion only. Choose the decision and write the reviewer note manually in the HITL panel.</p>
+            {copilotError && <p role="alert" className="mt-3 text-xs text-rose-700 dark:text-rose-300">{copilotError}</p>}
+            {copilot && <div className="mt-4 space-y-3 text-xs">
+              <p className="leading-5">{copilot.evidence_summary}</p>
+              <dl className="grid gap-2 sm:grid-cols-2"><div><dt className="text-muted-foreground">Proposed disposition</dt><dd className="mt-1 font-mono font-semibold">{copilot.proposed_disposition}</dd></div><div><dt className="text-muted-foreground">Proposed existing action</dt><dd className="mt-1 font-mono font-semibold">{copilot.proposed_admin_action}</dd></div></dl>
+              {copilot.grounded_rationale.map((item, index) => <div key={`${item.text}:${index}`} className="rounded-lg border border-border bg-background/60 p-2"><p>{item.text}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{item.evidence_refs.join(" · ")}</p></div>)}
+              {(copilot.conflicts.length > 0 || copilot.missing_information.length > 0) && <p className="text-muted-foreground">Conflicts: {copilot.conflicts.join("; ") || "none"} · Missing: {copilot.missing_information.join("; ") || "none"}</p>}
+              {copilot.related_reviewed_campaigns.length > 0 && <p className="text-muted-foreground">Related reviewed campaigns: {copilot.related_reviewed_campaigns.map((item) => item.hypothesis).join("; ")}</p>}
+              <p className="font-mono text-[10px] text-muted-foreground">{copilot.model ?? "rules fallback"} · {copilot.suggestion_version} · executed=false</p>
+            </div>}
+          </section>
           <ActionRiskPanel viewModel={viewModel} mode="analyst" />
           <section className="rounded-2xl border border-border bg-card p-4">
             <p className="micro-label">Security context</p>

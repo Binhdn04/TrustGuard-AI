@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     security_async_execution_enabled: bool = False
     security_memory_retrieval_enabled: bool = False
     security_admin_copilot_enabled: bool = False
+    security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
     security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
     security_ai_turn_deadline_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
@@ -128,11 +129,16 @@ class Settings(BaseSettings):
 
     def enabled_security_capabilities(self) -> dict[str, bool]:
         provider_ready = self.security_ai_provider_configuration_valid()
+        durable_ready = (
+            self.security_async_execution_enabled
+            and self.run_durable_worker
+            and self.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
+        )
         return {
             "security_ai_understanding": self.security_ai_understanding_enabled and provider_ready,
             "security_ai_planning": self.security_ai_planning_enabled and provider_ready,
             "security_ai_explanation": self.security_ai_explanation_enabled and provider_ready,
-            "security_async_execution": self.security_async_execution_enabled,
+            "security_async_execution": durable_ready,
             "security_memory_retrieval": self.security_memory_retrieval_enabled,
             "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
         }
@@ -212,6 +218,8 @@ class Settings(BaseSettings):
                 "Valid OPENAI_API_KEY and Security AI model configuration are required "
                 "when a production Security AI flag is enabled"
             )
+        if self.app_env == "production" and self.security_async_execution_enabled and not self.run_durable_worker:
+            raise ValueError("RUN_DURABLE_WORKER must be true when async Security v4 is enabled")
         if self.post_processing_reserve_seconds >= self.analysis_deadline_seconds:
             raise ValueError("POST_PROCESSING_RESERVE_SECONDS must be smaller than ANALYSIS_DEADLINE_SECONDS")
         return self

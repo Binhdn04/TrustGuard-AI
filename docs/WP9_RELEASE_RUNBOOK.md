@@ -21,10 +21,12 @@ Chạy từ repository root với đúng image/revision dự kiến release:
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe scripts\evaluate_security_v4.py
+.\.venv\Scripts\python.exe scripts\evaluate_security_memory_v2.py
 .\.venv\Scripts\alembic.exe heads
 ```
 
-Evaluation phải exit `0`, `passed=true`, có `dataset_sha256`, và report được lưu ở `docs/evidence/security-v4-v1-report.json`. Đây là deterministic offline evidence, không thay thế smoke hosted.
+Hai evaluation phải exit `0`, `passed=true`, có `dataset_sha256`; report được lưu ở `docs/evidence/security-v4-v1-report.json`
+và `docs/evidence/security-memory-v2-v1-report.json`. Đây là deterministic offline evidence, không thay thế smoke hosted.
 
 ## 3. PostgreSQL backup và restore rehearsal
 
@@ -59,7 +61,8 @@ Thực hiện riêng:
 - login/callback/refresh/logout bằng tenant OIDC thật cho user và admin;
 - PostgreSQL restart, Redis restart, WebSocket ticket/stream và retention worker;
 - RBAC/ownership/rate-limit/SSRF/redirect-revalidation/provider-timeout/idempotency regression;
-- load test theo SLO đã duyệt. V4 hiện xử lý investigation inline, vì vậy không được tuyên bố durable v4 worker semantics; nếu SLO không đạt, giữ `pre_cutover`.
+- load test theo SLO đã duyệt cho cả inline compatibility và durable Security v4 worker. Durable path đã có trong revision `0016` nhưng chỉ được tuyên bố production-ready sau hosted lease-loss/idempotency/Redis-outage evidence; nếu SLO không đạt, tắt `SECURITY_ASYNC_EXECUTION_ENABLED` và giữ `pre_cutover`.
+- bật `SECURITY_MEMORY_RETRIEVAL_ENABLED` trên fixture đã review để xác minh owner isolation, non-self match, pending/unreviewed exclusion, privacy-minimized evidence và `security-risk-v2`; nếu scoring/poisoning gate không đạt, tắt flag này để mọi turn mới quay lại `security-risk-v1`.
 
 ## 5. Compatibility window và freeze
 

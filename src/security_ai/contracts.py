@@ -93,11 +93,24 @@ class AssistantSynthesis(StrictModel):
 
 
 class AdminReviewDraft(StrictModel):
-    evidence_summary: str
-    conflicts: list[str] = Field(default_factory=list)
-    missing_information: list[str] = Field(default_factory=list)
-    proposed_disposition: str | None = None
-    evidence_refs: list[str] = Field(default_factory=list)
+    evidence_summary: str = Field(min_length=1, max_length=2000)
+    conflicts: list[str] = Field(default_factory=list, max_length=20)
+    missing_information: list[str] = Field(default_factory=list, max_length=20)
+    proposed_disposition: Literal[
+        "confirm_malicious",
+        "confirm_safe",
+        "mark_false_positive",
+        "needs_more_information",
+        "no_change",
+    ]
+    proposed_admin_action: Literal[
+        "add_to_blacklist",
+        "block_domain",
+        "publish_broad_warning",
+        "none",
+    ] = "none"
+    grounded_rationale: list[SynthesisReason] = Field(default_factory=list, max_length=5)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
 
 
 OutputT = TypeVar("OutputT", bound=StrictModel)

@@ -3,16 +3,21 @@ from __future__ import annotations
 import base64
 import binascii
 from datetime import UTC, datetime
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, WebSocket
+from fastapi import APIRouter, Header, Query, Request, WebSocket
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
 from src.agents.security_risk import assess_security_risk
+from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.api.dependencies import (
     PrincipalDependency,
+    SecurityAdminCopilotServiceDependency,
     SecurityAnalysisServiceDependency,
+    SecurityAssistantRuntimeDependency,
     SecurityMemoryServiceDependency,
     SecurityResponseServiceDependency,
     SecurityTriageScopeServiceDependency,
@@ -20,6 +25,8 @@ from src.api.dependencies import (
     SecurityTrustServiceDependency,
     SecurityUnderstandingServiceDependency,
     TicketManagerDependency,
+    get_event_notifier,
+    get_rate_limiter,
     get_security_analysis_service,
     get_ticket_manager,
     resolve_security_investigation_service,
@@ -27,6 +34,7 @@ from src.api.dependencies import (
     resolve_wave2_service,
 )
 from src.config import get_settings
+from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
     AnalysisStatus,
@@ -40,6 +48,9 @@ from src.models import (
     ReportStatus,
     ScopeDecisionV4,
     SecurityAdminAuditPageV4,
+    SecurityAdminCopilotRequestV4,
+    SecurityAdminCopilotResponseV4,
+    SecurityAnalysisAcceptedResponseV4,
     SecurityAnalysisEventPageV4,
     SecurityAnalysisPageV4,
     SecurityAppealAdminRecordV4,
@@ -57,6 +68,7 @@ from src.models import (
     SecurityConversationPageV4,
     SecurityConversationV4,
     SecurityDomainIntelligencePageV4,
+    SecurityExecutionModeV4,
     SecurityMemoryAdminVerdictV4,
     SecurityMemoryAuditRecordV4,
     SecurityMemoryCorrectionRequestV4,
@@ -128,7 +140,11 @@ async def security_capabilities_v4() -> SecurityCapabilitiesResponseV4:
     )
 
 
-@router.post("/analyses", response_model=SecurityScopeResponseV4, responses=_COMMON_ERRORS)
+@router.post(
+    "/analyses",
+    response_model=SecurityScopeResponseV4,
+    responses={202: {"model": SecurityAnalysisAcceptedResponseV4}, **_COMMON_ERRORS},
+)
 async def create_security_analysis_v4(
     request: SecurityTriageCreateRequestV4,
     service: SecurityTriageScopeServiceDependency,
@@ -136,21 +152,63 @@ async def create_security_analysis_v4(
     trust: SecurityTrustServiceDependency,
     understanding: SecurityUnderstandingServiceDependency,
     responses: SecurityResponseServiceDependency,
+    ai_runtime: SecurityAssistantRuntimeDependency,
     principal: PrincipalDependency,
     http_request: Request,
-) -> SecurityScopeResponseV4:
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)] = None,
+) -> SecurityScopeResponseV4 | JSONResponse:
     scoped = service.assess(request)
+    if request.execution_mode is SecurityExecutionModeV4.ASYNC:
+        settings = get_settings()
+        if not settings.security_async_execution_enabled:
+            raise PlatformError(
+                status_code=409,
+                code=ErrorCode.CONFLICT,
+                message="Async Security v4 execution is not enabled.",
+                retryable=False,
+            )
+        if idempotency_key is None or not idempotency_key.strip():
+            raise PlatformError(
+                status_code=422,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Idempotency-Key is required for async Security v4 turns.",
+                retryable=False,
+            )
+        accepted = await analyses.enqueue_turn(request, scoped, principal, idempotency_key.strip())
+        return JSONResponse(status_code=202, content=jsonable_encoder(accepted))
+
     scoped = await analyses.begin_turn(request, scoped, principal)
-    scoped = await understanding.enrich(request, scoped)
+    settings = get_settings()
+    memory = None
     try:
+        scoped = await understanding.enrich(request, scoped)
         if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE:
             exposure = scoped.assistant_context.exposure_state if scoped.assistant_context else None
             if exposure is not None and is_incident_exposure(exposure):
-                scoped = assess_security_risk(scoped)
+                if settings.security_memory_retrieval_enabled:
+                    memory = await resolve_security_memory_service(http_request)
+                    scoped = await SecurityMemoryLookupTool(memory, enabled=True).enrich(
+                        scoped,
+                        owner_id=principal.user_id,
+                    )
+                scoped = assess_security_risk(
+                    scoped,
+                    memory_enabled=settings.security_memory_retrieval_enabled,
+                )
             else:
                 investigation = await resolve_security_investigation_service(http_request)
-                scoped = await investigation.investigate(request, scoped)
-                scoped = assess_security_risk(await trust.enrich(request, scoped))
+                scoped = await investigation.investigate(request, scoped, runtime=ai_runtime)
+                scoped = await trust.enrich(request, scoped)
+                if settings.security_memory_retrieval_enabled:
+                    memory = await resolve_security_memory_service(http_request)
+                    scoped = await SecurityMemoryLookupTool(memory, enabled=True).enrich(
+                        scoped,
+                        owner_id=principal.user_id,
+                    )
+                scoped = assess_security_risk(
+                    scoped,
+                    memory_enabled=settings.security_memory_retrieval_enabled,
+                )
             scoped = await responses.enrich(scoped)
         else:
             scoped = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
@@ -167,8 +225,8 @@ async def create_security_analysis_v4(
     await analyses.persist_completed(scoped, principal)
     if scoped.risk is not None:
         try:
-            memory = await resolve_security_memory_service(http_request)
-            await memory.record(scoped)
+            memory = memory or await resolve_security_memory_service(http_request)
+            await memory.record(scoped, principal.user_id)
         except Exception:
             limitations = list(dict.fromkeys([*scoped.limitations, "Không thể cập nhật Security Memory."]))
             scoped = scoped.model_copy(update={"limitations": limitations})
@@ -565,6 +623,32 @@ async def get_security_analysis_admin_v4(
 
 
 @router.post(
+    "/admin/analyses/{analysis_id}/copilot",
+    response_model=SecurityAdminCopilotResponseV4,
+    responses=_COMMON_ERRORS,
+)
+async def draft_security_admin_copilot_v4(
+    analysis_id: UUID,
+    request: SecurityAdminCopilotRequestV4,
+    copilot: SecurityAdminCopilotServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityAdminCopilotResponseV4:
+    require_security_admin(principal)
+    settings = get_settings()
+    if not await get_rate_limiter().allow(
+        f"security-admin-copilot:{principal.user_id}:{analysis_id}",
+        settings.security_admin_copilot_rate_limit_per_minute,
+    ):
+        raise PlatformError(
+            status_code=429,
+            code=ErrorCode.RATE_LIMITED,
+            message="Security Admin Copilot refresh rate limit exceeded.",
+            retryable=True,
+        )
+    return await copilot.suggest(analysis_id, principal, refresh=request.refresh)
+
+
+@router.post(
     "/admin/reports/{report_id}/decision",
     response_model=SecurityReportAdminRecordV4,
     responses=_COMMON_ERRORS,
@@ -750,13 +834,25 @@ async def security_analysis_stream_v4(
         await websocket.close(code=4403, reason="Security analysis access denied.")
         return
     await websocket.accept()
+    notifier_factory = websocket.app.dependency_overrides.get(get_event_notifier, get_event_notifier)
+    notifier = notifier_factory()
+    if hasattr(notifier, "__await__"):
+        notifier = await notifier
+    listener = await notifier.listen(analysis_id)
     try:
-        for event in await analyses.events_for(analysis_id, principal):
-            if event.sequence > after:
+        while True:
+            fresh = [event for event in await analyses.events_for(analysis_id, principal) if event.sequence > after]
+            for event in fresh:
                 await websocket.send_json(jsonable_encoder(event))
-        await websocket.close(code=1000, reason="Security analysis reached a terminal state.")
+                after = event.sequence
+            if fresh and fresh[-1].status in {AnalysisStatus.COMPLETED, AnalysisStatus.FAILED}:
+                await websocket.close(code=1000, reason="Security analysis reached a terminal state.")
+                return
+            await listener.wait(15.0)
     except (WebSocketDisconnect, RuntimeError):
         return
+    finally:
+        await listener.close()
 
 
 __all__ = ["router"]

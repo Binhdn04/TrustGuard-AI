@@ -4,7 +4,10 @@ import type {
   BrandPageV4,
   BrandRecordV4,
   SecurityAdminAuditPageV4,
+  SecurityAdminCopilotRequestV4,
+  SecurityAdminCopilotResponseV4,
   SecurityAnalysisEventPageV4,
+  SecurityAnalysisAcceptedResponseV4,
   SecurityAnalysisPageV4,
   SecurityAppealAdminRecordV4,
   SecurityAppealCreateRequestV4,
@@ -103,8 +106,15 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     return this.get<SecurityCapabilitiesResponseV4>("capabilities");
   }
 
-  async createAnalysis(request: SecurityTriageCreateRequestV4): Promise<SecurityScopeResponseV4> {
-    return this.post<SecurityScopeResponseV4>("analyses", request);
+  async createAnalysis(
+    request: SecurityTriageCreateRequestV4,
+    options: { idempotencyKey?: string } = {},
+  ): Promise<SecurityScopeResponseV4 | SecurityAnalysisAcceptedResponseV4> {
+    return this.post<SecurityScopeResponseV4 | SecurityAnalysisAcceptedResponseV4>(
+      "analyses",
+      request,
+      options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {},
+    );
   }
 
   async getAnalysis(analysisId: string): Promise<SecurityScopeResponseV4> {
@@ -113,6 +123,16 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async getAdminAnalysis(analysisId: string): Promise<SecurityScopeResponseV4> {
     return this.get<SecurityScopeResponseV4>(`admin/analyses/${encodeURIComponent(analysisId)}`);
+  }
+
+  async draftAdminCopilot(
+    analysisId: string,
+    request: SecurityAdminCopilotRequestV4,
+  ): Promise<SecurityAdminCopilotResponseV4> {
+    return this.post<SecurityAdminCopilotResponseV4>(
+      `admin/analyses/${encodeURIComponent(analysisId)}/copilot`,
+      request,
+    );
   }
 
   async listAnalyses(): Promise<SecurityScopeResponseV4[]> {
@@ -312,11 +332,11 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     return readJson<T>(response);
   }
 
-  private async post<T>(resource: string, body?: unknown): Promise<T> {
+  private async post<T>(resource: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, {
       method: "POST",
       credentials: "include",
-      headers: this.headers(body !== undefined),
+      headers: { ...this.headers(body !== undefined), ...extraHeaders },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     return readJson<T>(response);
