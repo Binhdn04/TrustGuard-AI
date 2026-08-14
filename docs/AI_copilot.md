@@ -67,7 +67,7 @@
 
   - Fake adapter pass schema, timeout, malformed output, budget và fallback tests.
   - Khi toàn bộ AI flag tắt, response v4 byte-compatible với behavior hiện tại.
-  - Production không bật AI nếu provider configuration không hợp lệ.
+  - Production không bật AI nếu provider configuration không hợp lệ
 
   ———
 
