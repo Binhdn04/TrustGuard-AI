@@ -165,9 +165,9 @@ Automated tests hiện tại cover:
 - frontend OOS/need-more-info/risk presentation, polling fallback, multi-turn/history resume, report/appeal,
   admin review, Observatory, Trust/Audit, RBAC và compatibility isolation bằng typed v4 fixtures.
 
-`tests/fixtures/analyses.jsonl` và claim/stance fixtures cũ vẫn bảo vệ compatibility path. WP9 đã có
-versioned deterministic dataset/report cho threat, safe official, false-positive, OOS, provider failure,
-multi-turn và wide-action; fixture legacy chỉ được xóa sau zero-usage window.
+Các fixture analysis, claim/stance, source-discovery và screenshot cũ đã được xóa cùng test contract của
+deprecated product path. WP9 giữ versioned deterministic dataset/report cho threat, safe official,
+false-positive, OOS, provider failure, multi-turn và wide-action, cùng contract reviewed-action v3 còn hoạt động.
 
 ## 8. Compatibility và cutover còn lại
 

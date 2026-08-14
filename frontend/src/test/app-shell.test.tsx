@@ -48,7 +48,6 @@ describe("application shell", () => {
     expect(screen.getByRole("link", { name: /Review/i })).toHaveAttribute("href", "/admin/review");
     expect(screen.getByRole("link", { name: /Trust/i })).toHaveAttribute("href", "/admin/trust");
     expect(screen.getByRole("link", { name: /Audit/i })).toHaveAttribute("href", "/admin/audit");
-    expect(screen.getByRole("link", { name: /Compatibility/i })).toHaveAttribute("href", "/admin/compatibility");
   });
 
   it("provides a labeled mobile navigation", () => {

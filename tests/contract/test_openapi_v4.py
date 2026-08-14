@@ -19,11 +19,3 @@ def test_openapi_exposes_v4_as_a_separate_security_contract() -> None:
     assert components["SecurityTriageCreateRequestV4"]["additionalProperties"] is False
     assert "consent_to_scan_urls" not in components["SecurityTriageCreateRequestV4"]["properties"]
     assert "claims" not in components["SecurityScopeResponseV4"]["properties"]
-
-
-def test_v2_v3_contracts_remain_mounted_beside_v4() -> None:
-    paths = app.openapi()["paths"]
-
-    assert "/api/v2/analyses" in paths
-    assert "/api/v3/analyses" in paths
-    assert "/api/v4/analyses" in paths

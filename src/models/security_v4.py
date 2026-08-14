@@ -20,6 +20,7 @@ CONTRACT_VERSION_V4 = SECURITY_TRIAGE_CONTRACT_VERSION
 SECURITY_CONTEXT_VERSION = "security-context-v1"
 SECURITY_RISK_POLICY_VERSION = "security-risk-v1"
 SECURITY_UNDERSTANDING_VERSION = "security-understanding-v1"
+SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
 
 
 class SecurityContractModel(BaseModel):
@@ -103,6 +104,14 @@ class ExposureStateV4(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class MissingInformationSlotV4(StrEnum):
+    ACTION_TAKEN = "action_taken"
+    REQUESTED_SENSITIVE_ACTION = "requested_sensitive_action"
+    URL_OR_CONTACT = "url_or_contact"
+    CLAIMED_ORGANIZATION = "claimed_organization"
+    AMOUNT_DEADLINE_CHANNEL = "amount_deadline_channel"
+
+
 class SecurityRecommendedActionV4(StrEnum):
     DO_NOT_OPEN_LINK = "DO_NOT_OPEN_LINK"
     DO_NOT_SHARE_CREDENTIALS = "DO_NOT_SHARE_CREDENTIALS"
@@ -113,6 +122,45 @@ class SecurityRecommendedActionV4(StrEnum):
     CONTACT_BANK_IF_ALREADY_PAID = "CONTACT_BANK_IF_ALREADY_PAID"
     REPORT_AND_BLOCK_SENDER = "REPORT_AND_BLOCK_SENDER"
     PROCEED_WITH_CAUTION = "PROCEED_WITH_CAUTION"
+    CLOSE_PAGE_AND_DO_NOT_RETURN = "CLOSE_PAGE_AND_DO_NOT_RETURN"
+    CHANGE_PASSWORD_FROM_TRUSTED_DEVICE = "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE"
+    REVOKE_ACTIVE_SESSIONS = "REVOKE_ACTIVE_SESSIONS"
+    CONTACT_BANK_OR_PAYMENT_PROVIDER = "CONTACT_BANK_OR_PAYMENT_PROVIDER"
+    PRESERVE_MESSAGE_FOR_REPORTING = "PRESERVE_MESSAGE_FOR_REPORTING"
+
+
+class AssistantGenerationModeV4(StrEnum):
+    AI = "ai"
+    TEMPLATE_FALLBACK = "template_fallback"
+
+
+class AssistantReasonV4(SecurityContractModel):
+    text: str = Field(min_length=1, max_length=1000)
+    evidence_refs: list[str] = Field(min_length=1, max_length=20)
+
+
+class AssistantImmediateStepV4(SecurityContractModel):
+    action: SecurityRecommendedActionV4
+    policy_ref: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9:_-]+$")
+
+
+class AssistantResponseV4(SecurityContractModel):
+    summary: str = Field(min_length=1, max_length=2000)
+    top_reasons: list[AssistantReasonV4] = Field(default_factory=list, max_length=5)
+    uncertainties: list[str] = Field(default_factory=list, max_length=20)
+    immediate_steps: list[AssistantImmediateStepV4] = Field(min_length=1, max_length=20)
+    follow_up_offer: str | None = Field(default=None, max_length=500)
+    response_version: Literal["security-assistant-response-v1"] = SECURITY_ASSISTANT_RESPONSE_VERSION
+    generation_mode: AssistantGenerationModeV4
+
+    @model_validator(mode="after")
+    def validate_unique_grounding(self) -> Self:
+        if any(len(reason.evidence_refs) != len(set(reason.evidence_refs)) for reason in self.top_reasons):
+            raise ValueError("assistant reason evidence refs must be unique within each reason")
+        actions = [step.action for step in self.immediate_steps]
+        if len(actions) != len(set(actions)):
+            raise ValueError("assistant immediate actions must be unique")
+        return self
 
 
 class SecurityInvestigationToolV4(StrEnum):
@@ -374,6 +422,11 @@ class SecurityConversationSummaryV4(SecurityContractModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    unresolved_slots: list[MissingInformationSlotV4] = Field(
+        default_factory=list,
+        max_length=5,
+        exclude_if=lambda value: not value,
+    )
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
 
 
@@ -405,6 +458,10 @@ class SecurityScopeResponseV4(SecurityContractModel):
         exclude_if=lambda value: value is None,
     )
     follow_up_question: str | None = None
+    follow_up_slot: MissingInformationSlotV4 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     boundary_message: str | None = None
     limitations: list[str] = Field(default_factory=list, max_length=100)
     investigation_status: SecurityInvestigationStatusV4 = SecurityInvestigationStatusV4.NOT_STARTED
@@ -420,6 +477,10 @@ class SecurityScopeResponseV4(SecurityContractModel):
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    assistant_response: AssistantResponseV4 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -428,7 +489,11 @@ class SecurityScopeResponseV4(SecurityContractModel):
         if self.scope_decision is ScopeDecisionV4.IN_SCOPE:
             if self.next_step not in {"END", "INVESTIGATION", "RISK_ASSESSMENT"} or self.security_context is None:
                 raise ValueError("in-scope response requires security context")
-            if self.follow_up_question is not None or self.boundary_message is not None:
+            if (
+                self.follow_up_question is not None
+                or self.follow_up_slot is not None
+                or self.boundary_message is not None
+            ):
                 raise ValueError("in-scope response cannot contain a terminal message")
             if (self.next_step == "END") != self.terminal:
                 raise ValueError("in-scope END transition must be terminal")
@@ -452,7 +517,11 @@ class SecurityScopeResponseV4(SecurityContractModel):
         else:
             if not self.terminal or self.next_step != "END" or self.boundary_message is None:
                 raise ValueError("out-of-scope response requires a terminal boundary message")
-            if self.follow_up_question is not None or self.security_context is not None:
+            if (
+                self.follow_up_question is not None
+                or self.follow_up_slot is not None
+                or self.security_context is not None
+            ):
                 raise ValueError("out-of-scope response cannot contain security context or follow-up")
         if self.scope_decision is not ScopeDecisionV4.IN_SCOPE and (
             self.investigation_status is not SecurityInvestigationStatusV4.NOT_STARTED
@@ -472,6 +541,18 @@ class SecurityScopeResponseV4(SecurityContractModel):
                 raise ValueError("risk details require a risk class")
         elif any(value is None for value in risk_fields) or not self.recommended_actions:
             raise ValueError("risk result is incomplete")
+        if self.assistant_response is not None:
+            if self.risk is None or self.policy_version is None:
+                raise ValueError("assistant response requires a deterministic risk result")
+            available_refs = {item.evidence_ref for item in self.evidence}
+            cited_refs = {ref for reason in self.assistant_response.top_reasons for ref in reason.evidence_refs}
+            if not cited_refs <= available_refs:
+                raise ValueError("assistant response cites evidence that is not present")
+            assistant_actions = {item.action for item in self.assistant_response.immediate_steps}
+            if not assistant_actions <= set(self.recommended_actions):
+                raise ValueError("assistant response contains a non-policy action")
+            if any(item.policy_ref != self.policy_version for item in self.assistant_response.immediate_steps):
+                raise ValueError("assistant response contains an invalid action policy ref")
         if self.status is AnalysisStatus.COMPLETED and self.completed_at is None:
             self.completed_at = self.created_at
         return self
@@ -824,8 +905,13 @@ class SecurityAdminAuditPageV4(SecurityContractModel):
 
 __all__ = [
     "CONTRACT_VERSION_V4",
+    "SECURITY_ASSISTANT_RESPONSE_VERSION",
     "SECURITY_CONTEXT_VERSION",
     "SECURITY_RISK_POLICY_VERSION",
+    "AssistantGenerationModeV4",
+    "AssistantImmediateStepV4",
+    "AssistantReasonV4",
+    "AssistantResponseV4",
     "PotentialThreatV4",
     "BrandCreateRequestV4",
     "BrandRecordV4",

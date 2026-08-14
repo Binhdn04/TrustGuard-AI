@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from src.agents.tools import (
     CacheMetadata,
     NormalizedToolResult,
-    ToolName,
     ToolResultStatus,
     UrlReputationFinding,
     UsageMetadata,
@@ -14,22 +13,11 @@ from src.agents.tools import (
 from tests.fixture_loader import (
     load_rdap_v3_responses,
     load_redirect_resolver_responses,
-    load_screenshot_responses,
     load_tool_policy_responses,
     load_url_reputation_v3_responses,
 )
 
 NOW = datetime(2026, 8, 7, 13, 0, tzinfo=UTC)
-
-
-def test_tool_protocol_names_are_frozen() -> None:
-    assert {item.value for item in ToolName} == {
-        "url_reputation",
-        "redirect_resolver",
-        "rdap",
-        "fact_check_corpus",
-        "screenshot_renderer",
-    }
 
 
 def test_no_hit_cannot_be_normalized_as_safe() -> None:
@@ -120,15 +108,3 @@ def test_redirect_and_rdap_fixtures_cover_security_cache_and_429() -> None:
     assert rdap["rdap_recent_domain_001"].cache.status.value == "hit"
     assert rdap["rdap_recent_domain_001"].usage.network_calls == 0
     assert rdap["rdap_429_001"].error is not None
-
-
-def test_screenshot_security_fixture_matrix_is_complete() -> None:
-    fixtures = load_screenshot_responses()
-    assert set(fixtures) == {
-        "screenshot_credential_url_001",
-        "screenshot_private_ip_001",
-        "screenshot_redirect_escape_001",
-        "screenshot_download_001",
-        "screenshot_timeout_001",
-    }
-    assert all(item.status in {ToolResultStatus.BLOCKED, ToolResultStatus.FAILED} for item in fixtures.values())

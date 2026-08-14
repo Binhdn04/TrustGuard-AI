@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from src.agents.security_scope import derive_potential_threat, partial_security_context
 from src.models import (
     AssistantContextV4,
@@ -19,6 +21,12 @@ from src.security_ai.contracts import (
     Understanding,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.security_conversation_policy import (
+    apply_adaptive_conversation_policy,
+    detect_local_exposure,
+    highest_exposure,
+    select_missing_slot,
+)
 
 _MIN_GROUNDED_CONFIDENCE = 0.80
 _FOLLOW_UP_QUESTION = (
@@ -80,9 +88,14 @@ def _has_security_information(context: SecurityContextV4) -> bool:
     )
 
 
-def _rules_only_context(mode: AssistantProcessingModeV4) -> AssistantContextV4:
+def _rules_only_context(
+    mode: AssistantProcessingModeV4,
+    existing: AssistantContextV4 | None = None,
+) -> AssistantContextV4:
     return AssistantContextV4(
         processing_mode=mode,
+        exposure_state=existing.exposure_state if existing else ExposureStateV4.UNKNOWN,
+        missing_information=existing.missing_information if existing else [],
         model_version="rules-only-v1" if mode is AssistantProcessingModeV4.RULES_ONLY else "unavailable",
     )
 
@@ -125,10 +138,14 @@ def merge_semantic_understanding(
     requested_action = (
         output.requested_action if accept("requested_action", output.requested_action is not None) else None
     )
-    exposure_state = (
+    extracted_exposure = (
         output.exposure_state
         if accept("exposure_state", output.exposure_state is not ExposureStateV4.UNKNOWN)
         else ExposureStateV4.UNKNOWN
+    )
+    exposure_state = highest_exposure(
+        scope.assistant_context.exposure_state if scope.assistant_context else ExposureStateV4.UNKNOWN,
+        extracted_exposure,
     )
     signals = {signal for signal in output.security_signals if accept(signal.value, True)}
 
@@ -250,36 +267,69 @@ class SecuritySemanticUnderstandingService:
         if not self._enabled:
             return scope
         if set(scope.scope_reasons) & _EXPLICIT_GENERAL_FACT_REASONS:
-            return scope.model_copy(
-                update={"assistant_context": _rules_only_context(AssistantProcessingModeV4.RULES_ONLY)}
+            rules_only = scope.model_copy(
+                update={
+                    "assistant_context": _rules_only_context(
+                        AssistantProcessingModeV4.RULES_ONLY,
+                        scope.assistant_context,
+                    )
+                }
             )
+            return apply_adaptive_conversation_policy(request.message, rules_only)
         if self._model is None:
-            return self._fallback(scope)
-        conversation_summary = (
-            scope.security_context.model_dump_json(exclude_none=True) if scope.security_context is not None else None
+            return self._fallback(request.message, scope)
+        preview_exposure = highest_exposure(
+            scope.assistant_context.exposure_state if scope.assistant_context else ExposureStateV4.UNKNOWN,
+            detect_local_exposure(request.message),
         )
+        selected_slot = select_missing_slot(scope.security_context, preview_exposure)
+        conversation_summary = None
+        if scope.security_context is not None or preview_exposure is not ExposureStateV4.UNKNOWN:
+            conversation_summary = json.dumps(
+                {
+                    "security_context": (
+                        scope.security_context.model_dump(mode="json", exclude_none=True)
+                        if scope.security_context is not None
+                        else None
+                    ),
+                    "exposure_state": preview_exposure.value,
+                    "policy_selected_follow_up_slot": selected_slot.value if selected_slot else None,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         result = await self._runtime.invoke(
             AssistantOperation.UNDERSTAND,
             lambda: self._model.understand(request.message, conversation_summary),
             Understanding,
         )
         if result.output is None or result.model is None:
-            return self._fallback(scope)
-        return merge_semantic_understanding(
+            return self._fallback(request.message, scope)
+        merged = merge_semantic_understanding(
             request.message,
             scope,
             result.output,
             model_version=result.model,
         )
+        return apply_adaptive_conversation_policy(
+            request.message,
+            merged,
+            drafted_slot=result.output.follow_up_slot,
+            drafted_question=result.output.follow_up_question,
+        )
 
     @staticmethod
-    def _fallback(scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
-        return scope.model_copy(
+    def _fallback(message: str, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
+        fallback = scope.model_copy(
             update={
-                "assistant_context": _rules_only_context(AssistantProcessingModeV4.FALLBACK),
+                "assistant_context": _rules_only_context(
+                    AssistantProcessingModeV4.FALLBACK,
+                    scope.assistant_context,
+                ),
                 "limitations": _unique([*scope.limitations, _FALLBACK_LIMITATION]),
             }
         )
+        return apply_adaptive_conversation_policy(message, fallback)
 
 
 __all__ = [

@@ -1,4 +1,5 @@
 import type {
+  AssistantReasonV4,
   SecurityAnalysisEventV4,
   SecurityEvidenceV4,
   SecurityRecommendedActionV4,
@@ -49,7 +50,15 @@ export interface SecurityCaseViewModel {
     threatType: string | null;
     explanation: string | null;
   };
-  actions: Array<{ code: SecurityRecommendedActionV4; label: string }>;
+  actions: Array<{ code: SecurityRecommendedActionV4; label: string; policyRef: string | null }>;
+  assistant: {
+    summary: string;
+    topReasons: AssistantReasonV4[];
+    uncertainties: string[];
+    followUpOffer: string | null;
+    responseVersion: string;
+    generationMode: "ai" | "template_fallback";
+  } | null;
   signalNodes: CaseSignalNode[];
   signalEdges: CaseSignalEdge[];
   evidence: CaseEvidenceCard[];
@@ -70,6 +79,11 @@ export const SECURITY_ACTION_LABELS: Record<SecurityRecommendedActionV4, string>
   CONTACT_BANK_IF_ALREADY_PAID: "Liên hệ ngân hàng nếu đã chuyển tiền",
   REPORT_AND_BLOCK_SENDER: "Báo cáo và chặn người gửi",
   PROCEED_WITH_CAUTION: "Tiếp tục thận trọng",
+  CLOSE_PAGE_AND_DO_NOT_RETURN: "Đóng trang và không quay lại",
+  CHANGE_PASSWORD_FROM_TRUSTED_DEVICE: "Đổi mật khẩu trên thiết bị tin cậy",
+  REVOKE_ACTIVE_SESSIONS: "Thu hồi các phiên đăng nhập đang hoạt động",
+  CONTACT_BANK_OR_PAYMENT_PROVIDER: "Liên hệ ngay ngân hàng hoặc đơn vị thanh toán",
+  PRESERVE_MESSAGE_FOR_REPORTING: "Lưu lại tin nhắn để báo cáo",
 };
 
 const RISK_PRESENTATION: Record<SecurityRiskV4, { label: string; tone: SecurityCaseViewModel["risk"]["tone"] }> = {
@@ -247,6 +261,20 @@ export function mapSecurityCaseViewModel(
     ? RISK_PRESENTATION[result.risk]
     : { label: "Chưa có verdict", tone: "neutral" as const };
 
+  const assistant = result.assistant_response ?? null;
+  const assistantActions = assistant?.immediate_steps ?? [];
+  const actions = assistantActions.length > 0
+    ? assistantActions.map((step) => ({
+        code: step.action,
+        label: SECURITY_ACTION_LABELS[step.action],
+        policyRef: step.policy_ref,
+      }))
+    : result.recommended_actions.map((code) => ({
+        code,
+        label: SECURITY_ACTION_LABELS[code],
+        policyRef: result.policy_version,
+      }));
+
   return {
     risk: {
       value: result.risk,
@@ -257,7 +285,15 @@ export function mapSecurityCaseViewModel(
       threatType: result.threat_type,
       explanation: result.explanation,
     },
-    actions: result.recommended_actions.map((code) => ({ code, label: SECURITY_ACTION_LABELS[code] })),
+    actions,
+    assistant: assistant ? {
+      summary: assistant.summary,
+      topReasons: assistant.top_reasons,
+      uncertainties: assistant.uncertainties,
+      followUpOffer: assistant.follow_up_offer,
+      responseVersion: assistant.response_version,
+      generationMode: assistant.generation_mode,
+    } : null,
     signalNodes: nodes,
     signalEdges: edges,
     evidence: result.evidence.map((evidence) => ({ evidence, usedInDecision: usedEvidence.has(evidence.evidence_ref) })),

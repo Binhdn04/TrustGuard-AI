@@ -27,7 +27,10 @@ export type RequestedActionV4 =
   | "transfer_money"
   | "pay_fee"
   | "provide_personal_information"
-  | "open_link";
+  | "open_link"
+  | "install_app"
+  | "share_screen"
+  | "scan_qr";
 
 export type SecurityScenarioV4 =
   | "recruitment"
@@ -46,7 +49,17 @@ export type SecurityRecommendedActionV4 =
   | "CHANGE_PASSWORD_IF_ALREADY_SHARED"
   | "CONTACT_BANK_IF_ALREADY_PAID"
   | "REPORT_AND_BLOCK_SENDER"
-  | "PROCEED_WITH_CAUTION";
+  | "PROCEED_WITH_CAUTION"
+  | "CLOSE_PAGE_AND_DO_NOT_RETURN"
+  | "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE"
+  | "REVOKE_ACTIVE_SESSIONS"
+  | "CONTACT_BANK_OR_PAYMENT_PROVIDER"
+  | "PRESERVE_MESSAGE_FOR_REPORTING";
+
+export type AssistantGenerationModeV4 = "ai" | "template_fallback";
+export type AssistantProcessingModeV4 = "hybrid" | "rules_only" | "fallback";
+export type ExposureStateV4 = "PRE_ACTION" | "LINK_OPENED" | "CREDENTIAL_SHARED" | "OTP_SHARED" | "PAYMENT_SENT" | "UNKNOWN";
+export type MissingInformationSlotV4 = "action_taken" | "requested_sensitive_action" | "url_or_contact" | "claimed_organization" | "amount_deadline_channel";
 
 export type SecurityAnalysisStatusV4 = "queued" | "running" | "completed" | "failed";
 export type SecurityConversationStatusV4 = "active" | "expired";
@@ -213,8 +226,28 @@ export interface SecurityContextV4 {
   potential_threat: PotentialThreatV4;
 }
 
+export interface AssistantSourceSpanV4 {
+  field_name: string;
+  start: number;
+  end: number;
+}
+
+export interface AssistantContextV4 {
+  processing_mode: AssistantProcessingModeV4;
+  sender_intent?: string | null;
+  social_engineering_techniques: string[];
+  exposure_state: ExposureStateV4;
+  missing_information: string[];
+  field_confidences: Record<string, number>;
+  source_spans: AssistantSourceSpanV4[];
+  understanding_version: "security-understanding-v1";
+  model_version: string;
+}
+
 export interface SecurityConversationSummaryV4 {
   security_context: SecurityContextV4 | null;
+  assistant_context?: AssistantContextV4 | null;
+  unresolved_slots?: MissingInformationSlotV4[];
   evidence_refs: string[];
 }
 
@@ -261,6 +294,26 @@ export interface SecurityToolErrorV4 {
   provider: string | null;
 }
 
+export interface AssistantReasonV4 {
+  text: string;
+  evidence_refs: string[];
+}
+
+export interface AssistantImmediateStepV4 {
+  action: SecurityRecommendedActionV4;
+  policy_ref: string;
+}
+
+export interface AssistantResponseV4 {
+  summary: string;
+  top_reasons: AssistantReasonV4[];
+  uncertainties: string[];
+  immediate_steps: AssistantImmediateStepV4[];
+  follow_up_offer: string | null;
+  response_version: "security-assistant-response-v1";
+  generation_mode: AssistantGenerationModeV4;
+}
+
 export interface SecurityScopeResponseV4 {
   contract_version: "v4";
   analysis_id: string;
@@ -272,7 +325,9 @@ export interface SecurityScopeResponseV4 {
   next_step: "END" | "INVESTIGATION" | "RISK_ASSESSMENT";
   scope_reasons: string[];
   security_context: SecurityContextV4 | null;
+  assistant_context?: AssistantContextV4 | null;
   follow_up_question: string | null;
+  follow_up_slot?: MissingInformationSlotV4 | null;
   boundary_message: string | null;
   limitations: string[];
   investigation_status: SecurityInvestigationStatusV4;
@@ -288,6 +343,7 @@ export interface SecurityScopeResponseV4 {
   recommended_actions: SecurityRecommendedActionV4[];
   explanation: string | null;
   explanation_evidence_refs: string[];
+  assistant_response?: AssistantResponseV4 | null;
   created_at: string;
   completed_at: string | null;
 }

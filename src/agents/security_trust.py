@@ -301,31 +301,138 @@ class SecurityTrustService:
         if scope.security_context is None:
             return scope
         now = self._clock()
-        brands = await self._repository.list_active_brands(now)
-        whitelist = await self._repository.list_active_whitelist(now)
-        brand, evidence = self._matcher.match(request, scope, brands, now)
-        evidence.extend(self._whitelist_evidence(request, scope, whitelist, now))
         limitations = list(scope.limitations)
         errors = list(scope.errors)
         plan = list(scope.investigation_plan)
-        plan.extend(self._local_plan(scope, brand))
-        official_step = InvestigationStepV4(
-            step_id=step_id_for(SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER.value, "official-sources"),
-            tool=SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
-            target="official-sources",
-            reason_code="official_verification_requested",
-            status=SecurityInvestigationStepStatusV4.SKIPPED,
-            status_reason="consent_required",
+        trust_indexes = [
+            index
+            for index, step in enumerate(plan)
+            if step.tool
+            in {
+                SecurityInvestigationToolV4.BRAND_MATCH,
+                SecurityInvestigationToolV4.WHITELIST_LOOKUP,
+                SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
+            }
+        ]
+        # A completed planner with no trust candidates intentionally selected a
+        # context-only route (for example payment/OTP without a URL).
+        if not trust_indexes and scope.investigation_status is not SecurityInvestigationStatusV4.NOT_STARTED:
+            return scope
+
+        if not trust_indexes:  # compatibility for callers that invoke trust directly
+            brand_placeholder = self._local_plan(scope, None)[0].model_copy(
+                update={"status": SecurityInvestigationStepStatusV4.PENDING, "status_reason": None}
+            )
+            plan.append(brand_placeholder)
+            for step in self._local_plan(scope, None)[1:]:
+                plan.append(step.model_copy(update={"status": SecurityInvestigationStepStatusV4.PENDING}))
+            plan.append(
+                InvestigationStepV4(
+                    step_id=step_id_for(
+                        SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER.value,
+                        "official-sources",
+                    ),
+                    tool=SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
+                    target="official-sources",
+                    reason_code="official_verification_requested",
+                    status=(
+                        SecurityInvestigationStepStatusV4.PENDING
+                        if request.consent.official_source_lookup
+                        else SecurityInvestigationStepStatusV4.SKIPPED
+                    ),
+                    status_reason=None if request.consent.official_source_lookup else "consent_required",
+                )
+            )
+
+        brand_indexes = [
+            index
+            for index, step in enumerate(plan)
+            if step.tool is SecurityInvestigationToolV4.BRAND_MATCH
+            and step.status is SecurityInvestigationStepStatusV4.PENDING
+        ]
+        whitelist_indexes = [
+            index
+            for index, step in enumerate(plan)
+            if step.tool is SecurityInvestigationToolV4.WHITELIST_LOOKUP
+            and step.status is SecurityInvestigationStepStatusV4.PENDING
+        ]
+        official_index = next(
+            (
+                index
+                for index, step in enumerate(plan)
+                if step.tool is SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER
+            ),
+            None,
         )
+        brands = await self._repository.list_active_brands(now) if brand_indexes else []
+        brand, evidence = self._matcher.match(request, scope, brands, now) if brand_indexes else (None, [])
+        for index in brand_indexes:
+            plan[index] = plan[index].model_copy(
+                update={
+                    "status": SecurityInvestigationStepStatusV4.COMPLETED,
+                    "status_reason": "match_completed" if brand else "no_brand_match",
+                }
+            )
+        if whitelist_indexes:
+            whitelist = await self._repository.list_active_whitelist(now)
+            evidence.extend(self._whitelist_evidence(request, scope, whitelist, now))
+            for index in whitelist_indexes:
+                plan[index] = plan[index].model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.COMPLETED,
+                        "status_reason": "lookup_completed",
+                    }
+                )
+
+        official_step = plan[official_index] if official_index is not None else None
+        if (
+            official_step is not None
+            and official_step.status is SecurityInvestigationStepStatusV4.SKIPPED
+            and official_step.status_reason == "consent_required"
+            and request.consent.official_source_lookup
+        ):
+            official_step = official_step.model_copy(
+                update={"status": SecurityInvestigationStepStatusV4.PENDING, "status_reason": None}
+            )
         official_calls = 0
         trust_partial = False
-        if request.consent.official_source_lookup:
-            if brand is None:
+        if official_step is not None and official_step.status is SecurityInvestigationStepStatusV4.PENDING:
+            # Consent is revalidated immediately before the provider call; a
+            # planner ranking can never grant it.
+            if not request.consent.official_source_lookup:
+                official_step = official_step.model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "consent_required",
+                    }
+                )
+            elif any(
+                next((candidate.status for candidate in plan if candidate.step_id == dependency), None)
+                is not SecurityInvestigationStepStatusV4.COMPLETED
+                for dependency in official_step.depends_on
+            ):
+                official_step = official_step.model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "dependency_unsatisfied",
+                    }
+                )
+            elif brand is None:
                 limitations.append("Không có brand registry phù hợp để giới hạn official-source lookup.")
-                official_step = official_step.model_copy(update={"status_reason": "brand_registry_required"})
+                official_step = official_step.model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "brand_registry_required",
+                    }
+                )
             elif scope.tool_calls_used >= self._max_external_calls:
                 limitations.append("Official-source lookup bị bỏ qua vì đã hết external-call budget.")
-                official_step = official_step.model_copy(update={"status_reason": "budget_exhausted"})
+                official_step = official_step.model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "budget_exhausted",
+                    }
+                )
             else:
                 provider_failed = False
                 try:
@@ -379,7 +486,8 @@ class SecurityTrustService:
                     limitations.append("Official source không tìm thấy thông tin; NOT_FOUND không phải là phủ định.")
                 elif result.verdict is OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE:
                     limitations.append("Official-source evidence chưa đủ để kết luận.")
-        plan.append(official_step)
+        if official_index is not None and official_step is not None:
+            plan[official_index] = official_step
         payload = scope.model_dump()
         payload["evidence"] = list({item.evidence_ref: item for item in [*scope.evidence, *evidence]}.values())
         payload["limitations"] = list(dict.fromkeys(limitations))

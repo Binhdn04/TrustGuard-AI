@@ -116,7 +116,7 @@ npm run typecheck
 npm test
 ```
 
-Kết quả gần nhất 2026-08-14: backend 315 passed/1 skipped; Ruff pass; frontend 88 test/18 files,
+Kết quả gần nhất 2026-08-14: backend 194 passed; Ruff pass; frontend 57 test/12 files,
 lint/typecheck/cutover check, Next.js Turbopack + webpack standalone production build và Chromium E2E 2 pass.
 Đây chưa phải hosted release evidence.
 

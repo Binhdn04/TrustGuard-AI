@@ -22,10 +22,19 @@ class DeterministicFakeSecurityAssistant(SecurityAssistantModel):
         return self._response(Understanding(sender_intent="unknown"))
 
     async def prioritize_plan(self, context: dict[str, Any], candidate_steps: list[dict[str, Any]]):
-        return self._response(PlanPriority(ordered_step_ids=[str(step["id"]) for step in candidate_steps]))
+        return self._response(PlanPriority(ordered_step_ids=[str(step["step_id"]) for step in candidate_steps]))
 
     async def synthesize(self, result: dict[str, Any]):
-        return self._response(AssistantSynthesis(summary=str(result.get("summary", "Analysis completed."))))
+        evidence = list(result.get("evidence", []))
+        reasons = [
+            {"text": str(item["description"]), "evidence_refs": [str(item["evidence_ref"])]} for item in evidence[:3]
+        ]
+        return self._response(
+            AssistantSynthesis(
+                summary=str(result.get("explanation", "Analysis completed.")),
+                top_reasons=reasons,
+            )
+        )
 
     async def draft_admin_review(self, case_detail: dict[str, Any]):
         return self._response(AdminReviewDraft(evidence_summary="Review the cited deterministic evidence."))

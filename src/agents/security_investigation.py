@@ -28,10 +28,13 @@ from src.models import (
     SecurityInvestigationStatusV4,
     SecurityInvestigationStepStatusV4,
     SecurityInvestigationToolV4,
+    SecurityScenarioV4,
     SecurityScopeResponseV4,
     SecurityToolErrorV4,
     SecurityTriageCreateRequestV4,
 )
+from src.security_ai.contracts import AssistantOperation, PlanPriority, SecurityAssistantModel
+from src.security_ai.runtime import SecurityAssistantRuntime
 
 ToolEnvelope = NormalizedToolResult[Any] | DnsResolutionEnvelope
 ExternalCall = Callable[[], Awaitable[ToolEnvelope]]
@@ -41,6 +44,17 @@ _LOCAL_SIGNAL_BY_TITLE = {
     "Tên miền quốc tế hóa cần thận trọng": "punycode_domain",
     "Đường dẫn yêu cầu thông tin tài khoản": "credential_path",
     "Tên miền có mẫu mạo danh khuyến mãi": "promotion_lure_domain",
+}
+
+_MANDATORY_PLANNER_TOOLS = {
+    SecurityInvestigationToolV4.SECURITY_CONTEXT_ANALYSIS,
+    SecurityInvestigationToolV4.LOCAL_URL_RULES,
+    SecurityInvestigationToolV4.BLACKLIST_LOOKUP,
+}
+_TRUST_TOOLS = {
+    SecurityInvestigationToolV4.BRAND_MATCH,
+    SecurityInvestigationToolV4.WHITELIST_LOOKUP,
+    SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
 }
 
 
@@ -102,10 +116,11 @@ def _step(
     )
 
 
-def build_security_investigation_plan(
+def build_policy_constrained_investigation_plan(
     context: SecurityContextV4,
     *,
     external_url_lookup: bool,
+    official_source_lookup: bool = False,
 ) -> list[InvestigationStepV4]:
     """Create a safe plan exclusively from normalized SecurityContext targets."""
     plan: list[InvestigationStepV4] = []
@@ -181,7 +196,136 @@ def build_security_investigation_plan(
                     status_reason=external_reason,
                 )
             )
+    needs_trust_routing = bool(context.urls or context.claimed_entity) or context.scenario in {
+        SecurityScenarioV4.RECRUITMENT,
+        SecurityScenarioV4.PROMOTION_PRIZE,
+        SecurityScenarioV4.ACCOUNT_VERIFICATION,
+    }
+    # Payment/OTP-only turns are assessed from structured context. They never
+    # receive a fabricated URL/domain target merely to make a provider usable.
+    if not context.urls and context.scenario in {SecurityScenarioV4.PAYMENT, SecurityScenarioV4.REFUND}:
+        needs_trust_routing = False
+    if needs_trust_routing:
+        brand = _step(
+            SecurityInvestigationToolV4.BRAND_MATCH,
+            "message",
+            "claimed_entity_or_alias_check",
+            depends_on=[context_step.step_id],
+        )
+        plan.append(brand)
+        for host in sorted({(urlsplit(url).hostname or "").casefold() for url in context.urls} - {""}):
+            plan.append(
+                _step(
+                    SecurityInvestigationToolV4.WHITELIST_LOOKUP,
+                    host,
+                    "trust_indicator_lookup",
+                    depends_on=[brand.step_id],
+                )
+            )
+        plan.append(
+            _step(
+                SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
+                "message",
+                "official_verification_requested",
+                depends_on=[brand.step_id],
+                status=(
+                    SecurityInvestigationStepStatusV4.PENDING
+                    if official_source_lookup
+                    else SecurityInvestigationStepStatusV4.SKIPPED
+                ),
+                status_reason=None if official_source_lookup else "consent_required",
+            )
+        )
     return plan
+
+
+def build_security_investigation_plan(
+    context: SecurityContextV4,
+    *,
+    external_url_lookup: bool,
+) -> list[InvestigationStepV4]:
+    """Compatibility view of the original URL investigation plan.
+
+    The v4 executor uses :func:`build_policy_constrained_investigation_plan`;
+    callers of this established helper keep its pre-WP3 URL-tool contract.
+    """
+    return [
+        step
+        for step in build_policy_constrained_investigation_plan(
+            context,
+            external_url_lookup=external_url_lookup,
+        )
+        if step.tool not in _TRUST_TOOLS
+    ]
+
+
+def _planner_context(context: SecurityContextV4) -> dict[str, Any]:
+    """Return policy fields only; prose and user-supplied entity text stay out of planning."""
+    return {
+        "scenario": context.scenario.value,
+        "potential_threat": context.potential_threat.value,
+        "requested_action": context.requested_action.value if context.requested_action else None,
+        "has_urls": bool(context.urls),
+        "has_claimed_entity": bool(context.claimed_entity),
+        "credential_request": context.credential_request,
+        "otp_request": context.otp_request,
+        "payment_request": context.payment_request,
+        "personal_information_request": context.personal_information_request,
+        "urgency": context.urgency,
+    }
+
+
+def _candidate_payload(plan: list[InvestigationStepV4]) -> list[dict[str, Any]]:
+    return [
+        {
+            "step_id": step.step_id,
+            "tool": step.tool.value,
+            "target": step.target,
+            "reason_code": step.reason_code,
+            "depends_on": step.depends_on,
+            "mandatory": step.tool in _MANDATORY_PLANNER_TOOLS,
+        }
+        for step in plan
+    ]
+
+
+def apply_plan_priority(
+    plan: list[InvestigationStepV4],
+    priority: PlanPriority,
+) -> list[InvestigationStepV4] | None:
+    """Apply an AI ranking only when every reference remains inside policy."""
+    by_id = {step.step_id: step for step in plan}
+    supplied = set(priority.ordered_step_ids) | set(priority.skipped_step_ids) | set(priority.requested_step_ids)
+    if not supplied <= by_id.keys():
+        return None
+    if any(by_id[step_id].tool in _MANDATORY_PLANNER_TOOLS for step_id in priority.skipped_step_ids):
+        return None
+
+    skipped = set(priority.skipped_step_ids)
+    active_ids = [*priority.ordered_step_ids, *priority.requested_step_ids]
+    for step in plan:
+        if step.step_id not in skipped and step.step_id not in active_ids:
+            active_ids.append(step.step_id)
+    if len(active_ids) != len(set(active_ids)):
+        return None
+
+    position = {step_id: index for index, step_id in enumerate(active_ids)}
+    for step_id in active_ids:
+        for dependency in by_id[step_id].depends_on:
+            if dependency in skipped or dependency not in position or position[dependency] > position[step_id]:
+                return None
+
+    prioritized = [by_id[step_id] for step_id in active_ids]
+    prioritized.extend(
+        by_id[step_id].model_copy(
+            update={
+                "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                "status_reason": "ai_priority_skip",
+            }
+        )
+        for step_id in priority.skipped_step_ids
+    )
+    return prioritized
 
 
 class SecurityInvestigationService:
@@ -194,6 +338,9 @@ class SecurityInvestigationService:
         rdap: RdapProvider | None = None,
         reputation: UrlReputationCascade | None = None,
         execution_ledger: ToolExecutionLedger | None = None,
+        planning_enabled: bool = False,
+        assistant_model: SecurityAssistantModel | None = None,
+        runtime_factory: Callable[[], SecurityAssistantRuntime] = SecurityAssistantRuntime,
         max_external_calls: int = 8,
         max_retries: int = 1,
         deadline_seconds: float = 20.0,
@@ -207,6 +354,9 @@ class SecurityInvestigationService:
         self._rdap = rdap
         self._reputation = reputation
         self._execution_ledger = execution_ledger
+        self._planning_enabled = planning_enabled
+        self._assistant_model = assistant_model
+        self._runtime_factory = runtime_factory
         self._max_external_calls = max_external_calls
         self._max_retries = max_retries
         self._deadline_seconds = deadline_seconds
@@ -220,13 +370,29 @@ class SecurityInvestigationService:
         context = scope.security_context
         if context is None:
             return scope
-        plan = build_security_investigation_plan(
+        plan = build_policy_constrained_investigation_plan(
             context,
             external_url_lookup=request.consent.external_url_lookup,
+            official_source_lookup=request.consent.official_source_lookup,
         )
         evidence = [self._context_evidence(context)]
         errors: list[SecurityToolErrorV4] = []
         limitations = list(scope.limitations)
+        if self._planning_enabled and self._assistant_model is not None:
+            runtime = self._runtime_factory()
+            result = await runtime.invoke(
+                AssistantOperation.PRIORITIZE_PLAN,
+                lambda: self._assistant_model.prioritize_plan(
+                    _planner_context(context),
+                    _candidate_payload(plan),
+                ),
+                PlanPriority,
+            )
+            prioritized = apply_plan_priority(plan, result.output) if result.output is not None else None
+            if prioritized is None:
+                limitations.append("AI planner không trả được plan hợp lệ; đã dùng deterministic plan.")
+            else:
+                plan = prioritized
         blocked_urls: set[str] = set()
         blacklisted_domains: set[str] = set()
 
@@ -307,6 +473,37 @@ class SecurityInvestigationService:
         calls_used = 0
         for index, item in enumerate(plan):
             if item.status is not SecurityInvestigationStepStatusV4.PENDING:
+                continue
+            if item.tool in _TRUST_TOOLS:
+                continue
+            completed = {step.step_id: step.status for step in plan}
+            if any(
+                completed.get(dependency) is not SecurityInvestigationStepStatusV4.COMPLETED
+                for dependency in item.depends_on
+            ):
+                plan[index] = item.model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "dependency_unsatisfied",
+                    }
+                )
+                continue
+            if (
+                item.tool
+                in {
+                    SecurityInvestigationToolV4.DNS,
+                    SecurityInvestigationToolV4.REDIRECT_RESOLVER,
+                    SecurityInvestigationToolV4.RDAP,
+                    SecurityInvestigationToolV4.URL_REPUTATION,
+                }
+                and not request.consent.external_url_lookup
+            ):
+                plan[index] = item.model_copy(
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "consent_required",
+                    }
+                )
                 continue
             host = (urlsplit(item.target).hostname or item.target).casefold()
             related_url = (
@@ -404,7 +601,7 @@ class SecurityInvestigationService:
             limitations.extend(produced_limitations)
 
         for index, item in enumerate(plan):
-            if item.status is SecurityInvestigationStepStatusV4.PENDING:
+            if item.status is SecurityInvestigationStepStatusV4.PENDING and item.tool not in _TRUST_TOOLS:
                 plan[index] = item.model_copy(
                     update={
                         "status": SecurityInvestigationStepStatusV4.SKIPPED,
@@ -420,6 +617,7 @@ class SecurityInvestigationService:
             or any(
                 item.status in {SecurityInvestigationStepStatusV4.FAILED, SecurityInvestigationStepStatusV4.SKIPPED}
                 for item in plan
+                if item.tool not in _TRUST_TOOLS
             )
             else SecurityInvestigationStatusV4.COMPLETED
         )
@@ -691,4 +889,9 @@ class SecurityInvestigationService:
                     await result
 
 
-__all__ = ["SecurityInvestigationService", "build_security_investigation_plan"]
+__all__ = [
+    "SecurityInvestigationService",
+    "apply_plan_priority",
+    "build_policy_constrained_investigation_plan",
+    "build_security_investigation_plan",
+]

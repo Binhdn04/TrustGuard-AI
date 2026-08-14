@@ -54,6 +54,7 @@ from src.services.realtime import (
 from src.services.screenshot import ScreenshotCaptureCoordinator
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
+from src.services.security_response import GroundedSecurityResponseService
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_trust import SecurityTrustAdminService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
@@ -113,6 +114,15 @@ async def get_security_understanding_service() -> SecuritySemanticUnderstandingS
     settings = get_settings()
     return SecuritySemanticUnderstandingService(
         enabled=settings.security_ai_understanding_enabled,
+        model=get_security_assistant_model(),
+        runtime=new_security_assistant_runtime(),
+    )
+
+
+async def get_grounded_security_response_service() -> GroundedSecurityResponseService:
+    settings = get_settings()
+    return GroundedSecurityResponseService(
+        ai_enabled=settings.security_ai_explanation_enabled,
         model=get_security_assistant_model(),
         runtime=new_security_assistant_runtime(),
     )
@@ -262,6 +272,9 @@ def get_security_investigation_service() -> SecurityInvestigationService:
         rdap=NormalizedRdapProvider(timeout=min(settings.provider_timeout_seconds, 5.0)),
         reputation=reputation,
         execution_ledger=blacklist,
+        planning_enabled=settings.security_ai_planning_enabled,
+        assistant_model=get_security_assistant_model(),
+        runtime_factory=new_security_assistant_runtime,
         max_external_calls=settings.security_investigation_max_external_calls,
         max_retries=settings.security_investigation_max_retries,
         deadline_seconds=settings.security_investigation_deadline_seconds,
@@ -587,6 +600,10 @@ SecurityAnalysisServiceDependency = Annotated[SecurityAnalysisService, Depends(r
 SecurityUnderstandingServiceDependency = Annotated[
     SecuritySemanticUnderstandingService,
     Depends(get_security_understanding_service),
+]
+SecurityResponseServiceDependency = Annotated[
+    GroundedSecurityResponseService,
+    Depends(get_grounded_security_response_service),
 ]
 SecurityTrustServiceDependency = Annotated[SecurityTrustService, Depends(resolve_security_trust_service)]
 SecurityTrustAdminServiceDependency = Annotated[

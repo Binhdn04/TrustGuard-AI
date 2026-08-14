@@ -2,9 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuditWorkspace } from "@/components/admin/audit/audit-workspace";
-import { CompatibilityOperations } from "@/components/admin/compatibility/compatibility-operations";
 import { TrustWorkspace } from "@/components/admin/trust/trust-workspace";
-import type { AnalysisApi } from "@/lib/api/analysis-api.types";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import type {
   BrandRecordV4,
@@ -100,22 +98,6 @@ function securityClient(overrides: Partial<SecurityAnalysisApi> = {}): SecurityA
     listAdminAudit: vi.fn().mockResolvedValue({ contract_version: "v4", items: [unifiedAudit], total: 1, limit: 20, offset: 0 }),
     ...overrides,
   } as unknown as SecurityAnalysisApi;
-}
-
-function legacyClient(overrides: Partial<AnalysisApi> = {}): AnalysisApi {
-  return {
-    getOperationsMetrics: vi.fn().mockResolvedValue({
-      contract_version: "v3", window: { started_at: "2026-08-12T08:00:00Z", ended_at: "2026-08-13T08:00:00Z" },
-      generated_at: "2026-08-13T08:00:00Z", latency: [{ operation: "fact_check", count: 2, p50_ms: 10, p95_ms: 20, p99_ms: 25 }],
-      cache: [], usage: [{ provider: "legacy-provider", model: null, calls: 2, tokens: 0, estimated_cost_usd: 0.01, quota_used: null, rate_limited: 0, timed_out: 0 }],
-      risk_distribution: [], feedback: { reports: 0, appeals: 0, appeals_upheld: 0, appeals_overturned: 0, appeals_inconclusive: 0, false_positive_rate: null },
-    }),
-    listSourcePolicies: vi.fn().mockResolvedValue([]),
-    listSourceDiscoveries: vi.fn().mockResolvedValue([]),
-    createSourcePolicy: vi.fn(),
-    decideSourceDiscovery: vi.fn(),
-    ...overrides,
-  } as unknown as AnalysisApi;
 }
 
 describe("FE8 trust lifecycle and audit isolation", () => {
@@ -214,15 +196,5 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     fireEvent.change(screen.getByLabelText("Lọc audit theo resource"), { target: { value: "campaign" } });
     fireEvent.change(screen.getByLabelText("Lọc audit theo action"), { target: { value: "campaign_confirmed" } });
     await waitFor(() => expect(listAdminAudit).toHaveBeenLastCalledWith({ limit: 20, offset: 0, resource_type: "campaign", action: "campaign_confirmed" }));
-  });
-
-  it("labels v3 metrics and source discovery as compatibility, not Security v4", async () => {
-    const api = legacyClient();
-    render(<CompatibilityOperations api={api} />);
-    expect(await screen.findByRole("heading", { name: "Compatibility Operations" })).toBeInTheDocument();
-    expect(screen.getAllByText("v3 compatibility")).not.toHaveLength(0);
-    expect(screen.getByText(/not Security v4 intelligence/i)).toBeInTheDocument();
-    expect(api.getOperationsMetrics).toHaveBeenCalled();
-    expect(api.listSourceDiscoveries).toHaveBeenCalled();
   });
 });

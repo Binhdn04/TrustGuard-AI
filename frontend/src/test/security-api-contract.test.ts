@@ -50,7 +50,7 @@ const requiredMethods = [
 ] satisfies Array<keyof SecurityAnalysisApi>;
 
 describe("Security API v4 contract", () => {
-  it("exposes every legacy and WP9A client operation", () => {
+  it("exposes every active Security v4 client operation", () => {
     const api: SecurityAnalysisApi = new HttpSecurityAnalysisApi("http://backend.test");
 
     for (const method of requiredMethods) {

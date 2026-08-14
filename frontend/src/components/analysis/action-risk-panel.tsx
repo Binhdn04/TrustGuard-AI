@@ -30,7 +30,8 @@ export function ActionRiskPanel({
   viewModel: SecurityCaseViewModel;
   mode: SecurityPresentationMode;
 }) {
-  const [primaryAction, ...supportingActions] = viewModel.actions;
+  const visibleActions = mode === "simple" ? viewModel.actions.slice(0, 3) : viewModel.actions;
+  const [primaryAction, ...supportingActions] = visibleActions;
   return (
     <section aria-labelledby="risk-heading" className="space-y-3">
       <div className="overflow-hidden rounded-2xl border border-foreground/15 bg-foreground text-background">
@@ -41,7 +42,7 @@ export function ActionRiskPanel({
           {primaryAction ? (
             <>
               <p className="text-lg font-semibold leading-6">{primaryAction.label}</p>
-              {mode === "analyst" && <p className="mt-2 font-mono text-[10px] opacity-60">{primaryAction.code}</p>}
+              {mode === "analyst" && <p className="mt-2 font-mono text-[10px] opacity-60">{primaryAction.code} · {primaryAction.policyRef ?? "—"}</p>}
             </>
           ) : (
             <p className="text-sm text-background/70">API chưa trả recommended action.</p>
@@ -49,7 +50,13 @@ export function ActionRiskPanel({
         </div>
         {supportingActions.length > 0 && (
           <ul className="border-t border-background/15 px-4 py-3 text-xs leading-5 text-background/80">
-            {supportingActions.map((action) => <li key={action.code}>+ {action.label}</li>)}
+            {supportingActions.map((action) => (
+              <li key={action.code}>
+                {mode === "simple" ? `+ ${action.label}` : (
+                  <>+ <span>{action.label}</span><span className="ml-1 font-mono text-[9px] opacity-60">· {action.policyRef ?? "—"}</span></>
+                )}
+              </li>
+            ))}
           </ul>
         )}
       </div>

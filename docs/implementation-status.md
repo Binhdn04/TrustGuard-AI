@@ -114,11 +114,10 @@ responsive/accessibility và production E2E. Frontend không còn task riêng; p
 
 ## 7. Test evidence hiện tại
 
-- Backend: **315 passed, 1 skipped**; skipped test là PostgreSQL integration khi không có
-  `TEST_DATABASE_URL`.
+- Backend: **194 passed** trong suite Security v4 và reviewed-action compatibility đang hoạt động.
 - Ruff: **pass**.
 - Alembic: **`0015_security_api_readiness` là head**.
-- Frontend unit: **88 passed trong 18 files**, gồm OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
+- Frontend unit: **57 passed trong 12 files**, gồm OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
 - Frontend lint và TypeScript: **pass**.
 - Chromium E2E: **2 passed**, gồm mobile/keyboard user report-appeal-resume và admin Review/Observatory/Trust/Audit;
   axe structural WCAG gate và computed theme contrast đạt yêu cầu.

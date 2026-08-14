@@ -58,14 +58,10 @@ def test_live_provider_profile_requires_only_security_v4_providers() -> None:
         official_verifier_api_url="https://verifier.example/check",
         official_verifier_api_key="official-verifier",
         openai_api_key="",
-        google_fact_check_api_key="",
-        tavily_api_key="",
         _env_file=None,
     )
 
     assert settings.openai_api_key == ""
-    assert settings.google_fact_check_api_key == ""
-    assert settings.tavily_api_key == ""
 
 
 @pytest.mark.parametrize(

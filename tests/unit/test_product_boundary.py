@@ -70,18 +70,6 @@ def test_structured_log_keeps_only_safe_product_usage_dimensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_middleware_emits_legacy_usage_dimensions(client, caplog) -> None:
-    with caplog.at_level(logging.INFO, logger="trustguard.http"):
-        response = await client.get("/api/v2/status")
-
-    assert response.status_code == 200
-    record = next(item for item in caplog.records if item.getMessage() == "http_request_completed")
-    assert record.api_contract == "v2"
-    assert record.product_profile == "legacy_analysis"
-    assert record.compatibility_usage == "legacy_read"
-
-
-@pytest.mark.asyncio
 async def test_cutover_middleware_freezes_legacy_writes_but_keeps_reviewed_actions() -> None:
     from src.api.middleware import StructuredRequestLogMiddleware
 

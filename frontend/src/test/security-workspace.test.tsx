@@ -165,6 +165,58 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByText(/tuyên bố|fact-check|ảnh trang web/i)).not.toBeInTheDocument();
   });
 
+  it("renders a grounded assistant answer and keeps suspicious URLs as plain text", async () => {
+    const evidenceRef = "evidence:aaaaaaaaaaaaaaaa";
+    const api = apiWith(vi.fn().mockResolvedValue(response({
+      scope_decision: "IN_SCOPE",
+      scope_reasons: ["url_present"],
+      security_context: {
+        schema_version: "security-context-v1", claimed_entity: "ACME", scenario: "account_verification",
+        requested_action: "open_link", amount: null, urgency: true, urls: ["https://danger.example/login"],
+        credential_request: true, otp_request: false, payment_request: false,
+        personal_information_request: false, impersonation_signals: [], potential_threat: "PHISHING",
+      },
+      follow_up_question: null,
+      evidence: [{
+        evidence_ref: evidenceRef, type: "local_url_rule", source: "local-rules",
+        target: "https://danger.example/login", signal: "credential_path",
+        description: "URL https://danger.example/login yêu cầu thông tin đăng nhập.",
+        observed_at: "2026-08-13T08:00:00Z", confidence: 0.9, provenance_ref: "rules:v1",
+      }],
+      risk: "HIGH_RISK", score: 90, confidence: 0.9, threat_type: "PHISHING",
+      policy_version: "security-risk-v1",
+      recommended_actions: ["DO_NOT_OPEN_LINK", "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE", "REVOKE_ACTIVE_SESSIONS", "PRESERVE_MESSAGE_FOR_REPORTING"],
+      explanation: "Liên kết có tín hiệu lấy cắp tài khoản.",
+      explanation_evidence_refs: [evidenceRef],
+      assistant_response: {
+        summary: "Liên kết này có rủi ro cao.",
+        top_reasons: [{ text: "Đường dẫn yêu cầu đăng nhập.", evidence_refs: [evidenceRef] }],
+        uncertainties: ["Chưa có reputation provider."],
+        immediate_steps: [
+          { action: "DO_NOT_OPEN_LINK", policy_ref: "security-risk-v1" },
+          { action: "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE", policy_ref: "security-risk-v1" },
+          { action: "REVOKE_ACTIVE_SESSIONS", policy_ref: "security-risk-v1" },
+          { action: "PRESERVE_MESSAGE_FOR_REPORTING", policy_ref: "security-risk-v1" },
+        ],
+        follow_up_offer: "Bạn có thể gửi thêm thông tin không nhạy cảm.",
+        response_version: "security-assistant-response-v1",
+        generation_mode: "ai",
+      },
+    })));
+    render(<AnalysisWorkspace api={api} />);
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra link" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByRole("region", { name: "Phản hồi của trợ lý bảo mật" })).toHaveTextContent("Liên kết này có rủi ro cao");
+    expect(screen.queryByRole("link", { name: /danger\.example/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Lưu lại tin nhắn để báo cáo")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
+    expect(screen.getAllByText(evidenceRef).length).toBeGreaterThan(0);
+    expect(screen.getByText(/security-assistant-response-v1/)).toBeInTheDocument();
+    expect(screen.getByText("Lưu lại tin nhắn để báo cáo")).toBeInTheDocument();
+  });
+
   it("submits reports and appeals through the v4 owner boundary", async () => {
     const api = apiWith(vi.fn().mockResolvedValue(response({
       scope_decision: "IN_SCOPE", scope_reasons: ["otp_request"], follow_up_question: null,

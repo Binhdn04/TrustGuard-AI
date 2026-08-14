@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from src.models import (
     SECURITY_RISK_POLICY_VERSION,
+    ExposureStateV4,
     PotentialThreatV4,
     RequestedActionV4,
     SecurityEvidenceV4,
@@ -55,6 +56,30 @@ def _actions(scope: SecurityScopeResponseV4, risk: SecurityRiskV4) -> list[Secur
     if context is None:
         return [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION]
     actions: list[SecurityRecommendedActionV4] = []
+    exposure = (
+        scope.assistant_context.exposure_state if scope.assistant_context is not None else ExposureStateV4.UNKNOWN
+    )
+    incident_actions = {
+        ExposureStateV4.LINK_OPENED: [
+            SecurityRecommendedActionV4.CLOSE_PAGE_AND_DO_NOT_RETURN,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+        ExposureStateV4.CREDENTIAL_SHARED: [
+            SecurityRecommendedActionV4.CHANGE_PASSWORD_FROM_TRUSTED_DEVICE,
+            SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+        ExposureStateV4.OTP_SHARED: [
+            SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS,
+            SecurityRecommendedActionV4.CONTACT_BANK_OR_PAYMENT_PROVIDER,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+        ExposureStateV4.PAYMENT_SENT: [
+            SecurityRecommendedActionV4.CONTACT_BANK_OR_PAYMENT_PROVIDER,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+    }
+    actions.extend(incident_actions.get(exposure, []))
     if context.urls or context.requested_action is RequestedActionV4.OPEN_LINK:
         actions.append(SecurityRecommendedActionV4.DO_NOT_OPEN_LINK)
     if context.credential_request:
@@ -95,7 +120,6 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
     context_evidence = next((item for item in scope.evidence if item.type.value == "security_context"), None)
     context_ref = context_evidence.evidence_ref if context_evidence else ""
     contributions: list[_Contribution] = []
-
     if context.credential_request:
         contributions.append(_Contribution(35, context_ref))
     if context.otp_request:

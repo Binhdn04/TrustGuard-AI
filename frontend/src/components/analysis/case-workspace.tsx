@@ -200,6 +200,7 @@ export function CaseWorkspace({
             transport={transport}
             error={error}
             busy={busy}
+            mode={mode}
             followUp={state === "NEED_MORE_INFO" ? latest?.follow_up_question : null}
             onSubmit={onSubmit}
             onRetry={onRetry}

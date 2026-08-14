@@ -91,6 +91,21 @@ export function completedSecurityCase(overrides: Partial<SecurityScopeResponseV4
     recommended_actions: ["DO_NOT_OPEN_LINK", "VERIFY_VIA_OFFICIAL_CHANNEL"],
     explanation: "The credential URL does not match the claimed bank.",
     explanation_evidence_refs: ["evidence:aaaaaaaaaaaaaaaa", "evidence:not-returned"],
+    assistant_response: {
+      summary: "Không mở liên kết và hãy xác minh trực tiếp với ngân hàng.",
+      top_reasons: [{
+        text: "Đường dẫn yêu cầu thông tin đăng nhập.",
+        evidence_refs: ["evidence:aaaaaaaaaaaaaaaa"],
+      }],
+      uncertainties: ["Provider reputation was unavailable."],
+      immediate_steps: [
+        { action: "DO_NOT_OPEN_LINK", policy_ref: "security-risk-v1" },
+        { action: "VERIFY_VIA_OFFICIAL_CHANNEL", policy_ref: "security-risk-v1" },
+      ],
+      follow_up_offer: "Bạn có thể gửi thêm thông tin không nhạy cảm.",
+      response_version: "security-assistant-response-v1",
+      generation_mode: "ai",
+    },
     created_at: "2026-08-13T08:00:00Z",
     completed_at: "2026-08-13T08:00:03Z",
     ...overrides,

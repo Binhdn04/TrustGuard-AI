@@ -5,7 +5,9 @@ import type {
   SecurityCaseTurn,
 } from "@/lib/hooks/use-security-case";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
+import type { SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
 
+import { AssistantResponseCard } from "./assistant-response-card";
 import { SecurityChatComposer } from "./security-chat-composer";
 
 function transportLabel(transport: AnalysisTransportState): string {
@@ -24,6 +26,7 @@ export function ConversationPanel({
   transport,
   error,
   busy,
+  mode,
   followUp,
   onSubmit,
   onRetry,
@@ -33,6 +36,7 @@ export function ConversationPanel({
   transport: AnalysisTransportState;
   error: string | null;
   busy: boolean;
+  mode: SecurityPresentationMode;
   followUp?: string | null;
   onSubmit(message: string, externalLookup: boolean, officialLookup: boolean): void;
   onRetry(): void;
@@ -69,6 +73,9 @@ export function ConversationPanel({
                 <p className="flex items-center gap-2 font-semibold"><MessageSquareWarning className="size-4" />Cần thêm thông tin</p>
                 <p className="mt-1 leading-6">{turn.result.follow_up_question}</p>
               </div>
+            )}
+            {turn.result?.scope_decision === "IN_SCOPE" && turn.result.assistant_response && (
+              <AssistantResponseCard response={turn.result.assistant_response} mode={mode} />
             )}
           </article>
         ))}

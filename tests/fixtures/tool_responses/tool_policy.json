@@ -1,12 +1,12 @@
 {
   "consent_allows_external_001": {
     "consent_to_scan_urls": true,
-    "requested_tools": ["url_reputation", "redirect_resolver", "rdap", "screenshot_renderer"],
-    "allowed_tools": ["url_reputation", "redirect_resolver", "rdap", "screenshot_renderer"]
+    "requested_tools": ["url_reputation", "redirect_resolver", "rdap"],
+    "allowed_tools": ["url_reputation", "redirect_resolver", "rdap"]
   },
   "no_consent_blocks_external_001": {
     "consent_to_scan_urls": false,
-    "requested_tools": ["url_reputation", "redirect_resolver", "rdap", "screenshot_renderer"],
+    "requested_tools": ["url_reputation", "redirect_resolver", "rdap"],
     "allowed_tools": []
   }
 }

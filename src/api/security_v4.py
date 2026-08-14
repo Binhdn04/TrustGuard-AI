@@ -14,6 +14,7 @@ from src.api.dependencies import (
     PrincipalDependency,
     SecurityAnalysisServiceDependency,
     SecurityMemoryServiceDependency,
+    SecurityResponseServiceDependency,
     SecurityTriageScopeServiceDependency,
     SecurityTrustAdminServiceDependency,
     SecurityTrustServiceDependency,
@@ -77,6 +78,7 @@ from src.models import (
     WhitelistPageV4,
     WhitelistRecordV4,
 )
+from src.services.security_conversation_policy import is_incident_exposure
 
 router = APIRouter(tags=["security-triage-v4"])
 
@@ -133,6 +135,7 @@ async def create_security_analysis_v4(
     analyses: SecurityAnalysisServiceDependency,
     trust: SecurityTrustServiceDependency,
     understanding: SecurityUnderstandingServiceDependency,
+    responses: SecurityResponseServiceDependency,
     principal: PrincipalDependency,
     http_request: Request,
 ) -> SecurityScopeResponseV4:
@@ -141,9 +144,14 @@ async def create_security_analysis_v4(
     scoped = await understanding.enrich(request, scoped)
     try:
         if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE:
-            investigation = await resolve_security_investigation_service(http_request)
-            scoped = await investigation.investigate(request, scoped)
-            scoped = assess_security_risk(await trust.enrich(request, scoped))
+            exposure = scoped.assistant_context.exposure_state if scoped.assistant_context else None
+            if exposure is not None and is_incident_exposure(exposure):
+                scoped = assess_security_risk(scoped)
+            else:
+                investigation = await resolve_security_investigation_service(http_request)
+                scoped = await investigation.investigate(request, scoped)
+                scoped = assess_security_risk(await trust.enrich(request, scoped))
+            scoped = await responses.enrich(scoped)
         else:
             scoped = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
     except Exception as exc:

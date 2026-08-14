@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
@@ -11,7 +12,9 @@ from src.models import (
     AnalysisStatus,
     AppealOutcome,
     AppealStatus,
+    AssistantContextV4,
     ErrorCode,
+    MissingInformationSlotV4,
     PotentialThreatV4,
     ReportReviewDecision,
     ReportStatus,
@@ -32,6 +35,23 @@ from src.models import (
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
 )
+from src.services.security_conversation_policy import deterministic_question, highest_exposure
+
+_EXPLICIT_GENERAL_FACT_REASONS = {
+    "general_fact_check_sports",
+    "general_fact_check_politics",
+    "general_fact_check_medical_science",
+    "general_fact_check_news",
+}
+_SENSITIVE_SUMMARY_VALUE = re.compile(
+    r"(?:otp|one[- ]time|pass(?:word|code)?|mật khẩu|mat khau|pin|secret|token|credential)"
+    r"|\b\d{4,8}\b|[\w.+-]+@[\w.-]+",
+    re.IGNORECASE,
+)
+_SENSITIVE_PATH_SEGMENT = re.compile(
+    r"^(?:\d{4,8}|.{24,})$|(?:otp|pass(?:word|code)?|secret|token|credential)",
+    re.IGNORECASE,
+)
 
 
 def _redact_context(context: SecurityContextV4 | None) -> SecurityContextV4 | None:
@@ -43,10 +63,41 @@ def _redact_context(context: SecurityContextV4 | None) -> SecurityContextV4 | No
         hostname = parsed.hostname or ""
         if parsed.port is not None:
             hostname = f"{hostname}:{parsed.port}"
-        redacted = urlunsplit((parsed.scheme, hostname, parsed.path, "", ""))
+        safe_path = "/".join(
+            "redacted" if _SENSITIVE_PATH_SEGMENT.search(segment) else segment for segment in parsed.path.split("/")
+        )
+        redacted = urlunsplit((parsed.scheme, hostname, safe_path, "", ""))
         if redacted not in urls:
             urls.append(redacted)
-    return context.model_copy(update={"urls": urls})
+    return context.model_copy(
+        update={
+            "urls": urls,
+            "claimed_entity": (
+                None
+                if context.claimed_entity and _SENSITIVE_SUMMARY_VALUE.search(context.claimed_entity)
+                else context.claimed_entity
+            ),
+        }
+    )
+
+
+def _redact_assistant_context(context: AssistantContextV4 | None) -> AssistantContextV4 | None:
+    if context is None:
+        return None
+    allowed_slots = {slot.value for slot in MissingInformationSlotV4}
+    return context.model_copy(
+        update={
+            "sender_intent": (
+                None
+                if context.sender_intent and _SENSITIVE_SUMMARY_VALUE.search(context.sender_intent)
+                else context.sender_intent
+            ),
+            "social_engineering_techniques": [
+                value for value in context.social_engineering_techniques if not _SENSITIVE_SUMMARY_VALUE.search(value)
+            ],
+            "missing_information": [value for value in context.missing_information if value in allowed_slots],
+        }
+    )
 
 
 def _merge_context(previous: SecurityContextV4, current: SecurityContextV4) -> SecurityContextV4:
@@ -139,7 +190,10 @@ class SecurityAnalysisService:
                     retryable=True,
                     details={"current_version": existing.context_version},
                 )
-            if response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
+            if (
+                response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+                and set(response.scope_reasons) & _EXPLICIT_GENERAL_FACT_REASONS
+            ):
                 raise PlatformError(
                     status_code=409,
                     code=ErrorCode.CONFLICT,
@@ -147,9 +201,38 @@ class SecurityAnalysisService:
                     retryable=False,
                 )
 
+        previous_assistant = existing.summary.assistant_context if existing else None
+        if existing is not None and response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
+            response = response.model_copy(
+                update={
+                    "scope_decision": ScopeDecisionV4.NEED_MORE_INFO,
+                    "terminal": True,
+                    "next_step": "END",
+                    "scope_reasons": [*response.scope_reasons, "active_security_conversation"],
+                    "security_context": existing.summary.security_context,
+                    "assistant_context": previous_assistant,
+                    "follow_up_question": deterministic_question(MissingInformationSlotV4.ACTION_TAKEN),
+                    "follow_up_slot": MissingInformationSlotV4.ACTION_TAKEN,
+                    "boundary_message": None,
+                }
+            )
+
         current = _redact_context(response.security_context)
         previous = existing.summary.security_context if existing else None
-        merged = _merge_context(previous, current) if previous is not None and current is not None else current
+        if previous is not None and current is not None:
+            merged = _merge_context(previous, current)
+        else:
+            merged = current or previous
+        assistant_context = response.assistant_context or previous_assistant
+        if assistant_context is not None and previous_assistant is not None:
+            assistant_context = assistant_context.model_copy(
+                update={
+                    "exposure_state": highest_exposure(
+                        previous_assistant.exposure_state,
+                        assistant_context.exposure_state,
+                    )
+                }
+            )
         conversation_id = request.conversation_id or response.conversation_id
         version = (existing.context_version + 1) if existing else 1
         response = response.model_copy(
@@ -157,6 +240,7 @@ class SecurityAnalysisService:
                 "conversation_id": conversation_id,
                 "conversation_version": version,
                 "security_context": merged,
+                "assistant_context": assistant_context,
             }
         )
         record = SecurityConversationV4(
@@ -164,7 +248,8 @@ class SecurityAnalysisService:
             active_analysis_id=response.analysis_id,
             summary=SecurityConversationSummaryV4(
                 security_context=merged,
-                assistant_context=(existing.summary.assistant_context if existing else None),
+                assistant_context=_redact_assistant_context(assistant_context),
+                unresolved_slots=existing.summary.unresolved_slots if existing else [],
                 evidence_refs=existing.summary.evidence_refs if existing else [],
             ),
             context_version=version,
@@ -268,7 +353,14 @@ class SecurityAnalysisService:
                 "summary": record.summary.model_copy(
                     update={
                         "security_context": _redact_context(response.security_context),
-                        "assistant_context": response.assistant_context,
+                        "assistant_context": _redact_assistant_context(response.assistant_context),
+                        "unresolved_slots": [
+                            MissingInformationSlotV4(value)
+                            for value in (
+                                response.assistant_context.missing_information if response.assistant_context else []
+                            )
+                            if value in {slot.value for slot in MissingInformationSlotV4}
+                        ],
                         "evidence_refs": refs[:100],
                     }
                 ),

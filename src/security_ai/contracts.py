@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.models.security_v4 import (
     ExposureStateV4,
+    MissingInformationSlotV4,
     RequestedActionV4,
     ScopeDecisionV4,
     SecurityScenarioV4,
@@ -57,20 +58,38 @@ class Understanding(StrictModel):
     exposure_state: ExposureStateV4 = ExposureStateV4.UNKNOWN
     security_signals: list[SemanticSecuritySignal] = Field(default_factory=list, max_length=10)
     missing_information: list[str] = Field(default_factory=list)
+    follow_up_slot: MissingInformationSlotV4 | None = None
+    follow_up_question: str | None = Field(default=None, max_length=500)
     field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(default_factory=dict, max_length=50)
     source_spans: list[UnderstandingSourceSpan] = Field(default_factory=list, max_length=50)
     understanding_version: Literal["security-understanding-v1"] = "security-understanding-v1"
 
 
 class PlanPriority(StrictModel):
-    ordered_step_ids: list[str]
-    skipped_step_ids: list[str] = Field(default_factory=list)
+    ordered_step_ids: list[str] = Field(default_factory=list, max_length=100)
+    skipped_step_ids: list[str] = Field(default_factory=list, max_length=100)
+    requested_step_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_step_ids(self) -> PlanPriority:
+        for values in (self.ordered_step_ids, self.skipped_step_ids, self.requested_step_ids):
+            if len(values) != len(set(values)):
+                raise ValueError("planner step ids must be unique")
+        if set(self.ordered_step_ids) & set(self.skipped_step_ids):
+            raise ValueError("a planner step cannot be both ordered and skipped")
+        return self
+
+
+class SynthesisReason(StrictModel):
+    text: str = Field(min_length=1, max_length=1000)
+    evidence_refs: list[str] = Field(min_length=1, max_length=20)
 
 
 class AssistantSynthesis(StrictModel):
-    summary: str
-    top_reasons: list[str] = Field(default_factory=list)
-    uncertainties: list[str] = Field(default_factory=list)
+    summary: str = Field(min_length=1, max_length=2000)
+    top_reasons: list[SynthesisReason] = Field(default_factory=list, max_length=5)
+    uncertainties: list[str] = Field(default_factory=list, max_length=20)
+    follow_up_offer: str | None = Field(default=None, max_length=500)
 
 
 class AdminReviewDraft(StrictModel):
