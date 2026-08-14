@@ -53,9 +53,7 @@ class SecurityTrustAdminService:
             )
         return record
 
-    async def create_whitelist(
-        self, request: WhitelistCreateRequestV4, principal: Principal
-    ) -> WhitelistRecordV4:
+    async def create_whitelist(self, request: WhitelistCreateRequestV4, principal: Principal) -> WhitelistRecordV4:
         require_security_admin(principal)
         indicator = request.indicator
         try:

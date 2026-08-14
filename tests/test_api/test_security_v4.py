@@ -127,10 +127,7 @@ async def test_v4_security_memory_campaign_admin_review_and_correction(client) -
                 "/api/v4/analyses",
                 headers=USER_HEADERS,
                 json={
-                    "message": (
-                        f"ACME gửi https://campaign.example/{suffix} yêu cầu đăng nhập "
-                        "và gửi mật khẩu ngay"
-                    )
+                    "message": (f"ACME gửi https://campaign.example/{suffix} yêu cầu đăng nhập và gửi mật khẩu ngay")
                 },
             )
             assert response.status_code == 200
@@ -145,9 +142,7 @@ async def test_v4_security_memory_campaign_admin_review_and_correction(client) -
             headers=ADMIN_HEADERS,
             json={"verdict": "false_positive", "note": "Verified test infrastructure."},
         )
-        memory_audit = await client.get(
-            f"/api/v4/admin/security-memory/{memory_id}/audit", headers=ADMIN_HEADERS
-        )
+        memory_audit = await client.get(f"/api/v4/admin/security-memory/{memory_id}/audit", headers=ADMIN_HEADERS)
         campaign_id = campaigns.json()[0]["campaign_id"]
         review = await client.post(
             f"/api/v4/admin/security-campaigns/{campaign_id}/decision",
@@ -220,9 +215,7 @@ async def test_v4_persistence_and_event_polling_round_trip(client) -> None:
         params={"cursor": events.json()["next_cursor"]},
     )
     other_owner = await client.get(f"/api/v4/analyses/{analysis_id}", headers=ADMIN_HEADERS)
-    ticket = await client.post(
-        "/api/v4/ws-tickets", headers=USER_HEADERS, json={"analysis_id": analysis_id}
-    )
+    ticket = await client.post("/api/v4/ws-tickets", headers=USER_HEADERS, json={"analysis_id": analysis_id})
 
     assert fetched.status_code == 200
     assert fetched.json() == created.json()
@@ -280,9 +273,7 @@ async def test_v4_trust_registry_mutations_require_admin(client) -> None:
         },
     )
     created = await client.post("/api/v4/admin/brands", headers=ADMIN_HEADERS, json=brand)
-    disabled = await client.post(
-        f"/api/v4/admin/brands/{created.json()['brand_id']}/disable", headers=ADMIN_HEADERS
-    )
+    disabled = await client.post(f"/api/v4/admin/brands/{created.json()['brand_id']}/disable", headers=ADMIN_HEADERS)
 
     assert denied_brand.status_code == 403
     assert denied_whitelist.status_code == 403

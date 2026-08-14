@@ -149,7 +149,9 @@ def _brand_for_message(message: str, claimed_entity: str | None, brands: list[Br
     folded_entity = _fold(claimed_entity) if claimed_entity else None
     for brand in brands:
         names = {_fold(brand.name), *(_fold(alias) for alias in brand.aliases)}
-        if folded_entity in names or any(re.search(rf"(?<!\w){re.escape(name)}(?!\w)", folded_message) for name in names):
+        if folded_entity in names or any(
+            re.search(rf"(?<!\w){re.escape(name)}(?!\w)", folded_message) for name in names
+        ):
             return brand
     return None
 
@@ -333,12 +335,15 @@ class SecurityTrustService:
                 except Exception:
                     provider_failed = True
                     trust_partial = True
-                    result, findings = OfficialVerificationResultV4(
-                        verdict=OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE,
-                        purpose=_purpose(scope),
-                        sources_checked=0,
-                        search_queries_used=0,
-                    ), []
+                    result, findings = (
+                        OfficialVerificationResultV4(
+                            verdict=OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE,
+                            purpose=_purpose(scope),
+                            sources_checked=0,
+                            search_queries_used=0,
+                        ),
+                        [],
+                    )
                     limitations.append("Official-source lookup không hoàn tất.")
                     errors.append(
                         SecurityToolErrorV4(
@@ -385,9 +390,7 @@ class SecurityTrustService:
             payload["investigation_status"] = SecurityInvestigationStatusV4.PARTIAL
         return SecurityScopeResponseV4.model_validate(payload)
 
-    def _local_plan(
-        self, scope: SecurityScopeResponseV4, brand: BrandRecordV4 | None
-    ) -> list[InvestigationStepV4]:
+    def _local_plan(self, scope: SecurityScopeResponseV4, brand: BrandRecordV4 | None) -> list[InvestigationStepV4]:
         context = scope.security_context
         assert context is not None
         steps = [
@@ -429,11 +432,9 @@ class SecurityTrustService:
         evidence: list[SecurityEvidenceV4] = []
         for record in records:
             matched = (
-                record.scope is WhitelistScopeV4.DOMAIN and record.indicator in domains
-            ) or (
-                record.scope is WhitelistScopeV4.URL and canonical_whitelist_url(record.indicator) in urls
-            ) or (
-                record.scope is WhitelistScopeV4.CONTACT and record.indicator.casefold() in contacts
+                (record.scope is WhitelistScopeV4.DOMAIN and record.indicator in domains)
+                or (record.scope is WhitelistScopeV4.URL and canonical_whitelist_url(record.indicator) in urls)
+                or (record.scope is WhitelistScopeV4.CONTACT and record.indicator.casefold() in contacts)
             )
             if not matched:
                 continue

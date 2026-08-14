@@ -209,9 +209,7 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
 def _is_payment_request(text: str, message: str) -> bool:
     if _contains_any(text, _PAYMENT_TERMS):
         return True
-    has_fee_action = _contains_any(text, ("đóng", "dong", "nộp", "nop")) and _contains_any(
-        text, ("phí", "phi")
-    )
+    has_fee_action = _contains_any(text, ("đóng", "dong", "nộp", "nop")) and _contains_any(text, ("phí", "phi"))
     return has_fee_action and _AMOUNT_RE.search(message) is not None
 
 
@@ -287,12 +285,41 @@ def _requested_action(
     if otp_request:
         return RequestedActionV4.SHARE_OTP
     if credential_request:
-        return RequestedActionV4.LOGIN if _contains_any(text, ("đăng nhập", "dang nhap", "login", "sign in")) else RequestedActionV4.SHARE_CREDENTIALS
+        return (
+            RequestedActionV4.LOGIN
+            if _contains_any(text, ("đăng nhập", "dang nhap", "login", "sign in"))
+            else RequestedActionV4.SHARE_CREDENTIALS
+        )
     if payment_request:
-        return RequestedActionV4.PAY_FEE if recruitment or _contains_any(text, ("đóng phí", "nộp phí", "pay fee")) else RequestedActionV4.TRANSFER_MONEY
+        return (
+            RequestedActionV4.PAY_FEE
+            if recruitment or _contains_any(text, ("đóng phí", "nộp phí", "pay fee"))
+            else RequestedActionV4.TRANSFER_MONEY
+        )
     if personal_information_request:
         return RequestedActionV4.PROVIDE_PERSONAL_INFORMATION
     return RequestedActionV4.OPEN_LINK if urls else None
+
+
+def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
+    """Derive threat type only from the validated, merged security context."""
+    if context.scenario is SecurityScenarioV4.RECRUITMENT:
+        return PotentialThreatV4.RECRUITMENT_SCAM
+    if context.scenario is SecurityScenarioV4.PROMOTION_PRIZE:
+        return PotentialThreatV4.PROMOTION_PRIZE_SCAM
+    if context.scenario is SecurityScenarioV4.ACCOUNT_VERIFICATION:
+        if context.payment_request:
+            return PotentialThreatV4.FINANCIAL_SCAM
+        if context.credential_request or context.otp_request:
+            return PotentialThreatV4.PHISHING
+        return PotentialThreatV4.BRAND_IMPERSONATION
+    if context.scenario in {SecurityScenarioV4.PAYMENT, SecurityScenarioV4.REFUND}:
+        return PotentialThreatV4.FINANCIAL_SCAM
+    if context.credential_request or context.otp_request:
+        return PotentialThreatV4.CREDENTIAL_THEFT
+    if context.impersonation_signals:
+        return PotentialThreatV4.BRAND_IMPERSONATION
+    return PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
 
 
 def extract_security_context(message: str) -> SecurityContextV4:
@@ -310,32 +337,16 @@ def extract_security_context(message: str) -> SecurityContextV4:
 
     if recruitment:
         scenario = SecurityScenarioV4.RECRUITMENT
-        threat = PotentialThreatV4.RECRUITMENT_SCAM
     elif promotion:
         scenario = SecurityScenarioV4.PROMOTION_PRIZE
-        threat = PotentialThreatV4.PROMOTION_PRIZE_SCAM
     elif account:
         scenario = SecurityScenarioV4.ACCOUNT_VERIFICATION
-        threat = (
-            PotentialThreatV4.FINANCIAL_SCAM
-            if payment_request
-            else PotentialThreatV4.PHISHING
-            if credential_request or otp_request
-            else PotentialThreatV4.BRAND_IMPERSONATION
-        )
     elif refund:
         scenario = SecurityScenarioV4.REFUND
-        threat = PotentialThreatV4.FINANCIAL_SCAM
     elif payment_request:
         scenario = SecurityScenarioV4.PAYMENT
-        threat = PotentialThreatV4.FINANCIAL_SCAM
     else:
         scenario = SecurityScenarioV4.UNKNOWN
-        threat = (
-            PotentialThreatV4.CREDENTIAL_THEFT
-            if credential_request or otp_request
-            else PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
-        )
 
     impersonation_signals: list[str] = []
     if entity is not None:
@@ -344,7 +355,7 @@ def extract_security_context(message: str) -> SecurityContextV4:
             impersonation_signals.append("organization_requests_action")
 
     amount_match = _AMOUNT_RE.search(message)
-    return SecurityContextV4(
+    context = SecurityContextV4(
         claimed_entity=entity,
         scenario=scenario,
         requested_action=_requested_action(
@@ -364,8 +375,9 @@ def extract_security_context(message: str) -> SecurityContextV4:
         payment_request=payment_request,
         personal_information_request=personal_information_request,
         impersonation_signals=impersonation_signals,
-        potential_threat=threat,
+        potential_threat=PotentialThreatV4.UNDETERMINED_SECURITY_THREAT,
     )
+    return context.model_copy(update={"potential_threat": derive_potential_threat(context)})
 
 
 def partial_security_context(message: str) -> SecurityContextV4:
@@ -384,6 +396,7 @@ def partial_security_context(message: str) -> SecurityContextV4:
 __all__ = [
     "ScopeAssessment",
     "classify_security_scope",
+    "derive_potential_threat",
     "extract_security_context",
     "partial_security_context",
 ]

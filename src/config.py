@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,9 +38,14 @@ class Settings(BaseSettings):
     security_admin_copilot_enabled: bool = False
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
     security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
+    security_ai_turn_deadline_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
     security_ai_max_retries: int = Field(default=1, ge=0, le=2)
     security_ai_small_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_synthesis_model: str = Field(default="gpt-4o-mini", min_length=1)
+    security_ai_small_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
+    security_ai_small_output_cost_per_million_usd: float = Field(default=0.60, gt=0.0)
+    security_ai_synthesis_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
+    security_ai_synthesis_output_cost_per_million_usd: float = Field(default=0.60, gt=0.0)
 
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
@@ -122,7 +127,7 @@ class Settings(BaseSettings):
         return required
 
     def enabled_security_capabilities(self) -> dict[str, bool]:
-        provider_ready = bool(self.openai_api_key.strip())
+        provider_ready = self.security_ai_provider_configuration_valid()
         return {
             "security_ai_understanding": self.security_ai_understanding_enabled and provider_ready,
             "security_ai_planning": self.security_ai_planning_enabled and provider_ready,
@@ -131,6 +136,22 @@ class Settings(BaseSettings):
             "security_memory_retrieval": self.security_memory_retrieval_enabled,
             "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
         }
+
+    def security_ai_provider_configuration_valid(self) -> bool:
+        """Return whether the locally verifiable OpenAI configuration is usable."""
+        return bool(
+            self.openai_api_key.strip()
+            and self.security_ai_small_model.strip()
+            and self.security_ai_synthesis_model.strip()
+        )
+
+    @field_validator("security_ai_small_model", "security_ai_synthesis_model")
+    @classmethod
+    def validate_security_ai_model_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Security AI model names must not be blank")
+        return value
 
     @staticmethod
     def _placeholder_or_short_secret(value: str) -> bool:
@@ -186,8 +207,11 @@ class Settings(BaseSettings):
                 self.security_admin_copilot_enabled,
             )
         )
-        if self.app_env == "production" and ai_enabled and not self.openai_api_key.strip():
-            raise ValueError("OPENAI_API_KEY is required when a production Security AI flag is enabled")
+        if self.app_env == "production" and ai_enabled and not self.security_ai_provider_configuration_valid():
+            raise ValueError(
+                "Valid OPENAI_API_KEY and Security AI model configuration are required "
+                "when a production Security AI flag is enabled"
+            )
         if self.post_processing_reserve_seconds >= self.analysis_deadline_seconds:
             raise ValueError("POST_PROCESSING_RESERVE_SECONDS must be smaller than ANALYSIS_DEADLINE_SECONDS")
         return self

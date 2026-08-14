@@ -26,9 +26,7 @@ async def _high_risk_response():
         message="Đăng nhập https://login.bad.example/verify?token=private và gửi mật khẩu ngay"
     )
     scoped = SecurityTriageScopeService().assess(request)
-    investigated = await SecurityInvestigationService(
-        blacklist=FakeBlacklistRepository()
-    ).investigate(request, scoped)
+    investigated = await SecurityInvestigationService(blacklist=FakeBlacklistRepository()).investigate(request, scoped)
     return assess_security_risk(investigated)
 
 

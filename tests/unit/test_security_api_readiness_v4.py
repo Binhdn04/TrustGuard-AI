@@ -58,9 +58,7 @@ async def test_sqlite_persists_feedback_decisions_conversations_and_unified_audi
     request = SecurityTriageCreateRequestV4(message="Is Spain the World Cup champion?")
     scoped = SecurityTriageScopeService().assess(request)
     scoped = await service.begin_turn(request, scoped, USER)
-    completed = scoped.model_copy(
-        update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)}
-    )
+    completed = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
     await service.persist_completed(completed, USER)
 
     report = await service.create_report(

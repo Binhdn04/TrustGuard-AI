@@ -97,7 +97,10 @@ def _response(url: str, *, completed_at: datetime = NOW) -> SecurityScopeRespons
     "records,expected_signal",
     [
         ([_memory(domain="bad.example") for _ in range(3)], "domain:bad.example"),
-        ([_memory(domain=f"bad-{i}.example", redirect="landing.example") for i in range(3)], "redirect:landing.example"),
+        (
+            [_memory(domain=f"bad-{i}.example", redirect="landing.example") for i in range(3)],
+            "redirect:landing.example",
+        ),
         ([_memory(domain=f"bad-{i}.example", brand="acme") for i in range(3)], "brand:acme"),
         (
             [

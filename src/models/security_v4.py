@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -19,6 +19,7 @@ from src.models.schemas import (
 CONTRACT_VERSION_V4 = SECURITY_TRIAGE_CONTRACT_VERSION
 SECURITY_CONTEXT_VERSION = "security-context-v1"
 SECURITY_RISK_POLICY_VERSION = "security-risk-v1"
+SECURITY_UNDERSTANDING_VERSION = "security-understanding-v1"
 
 
 class SecurityContractModel(BaseModel):
@@ -63,6 +64,9 @@ class RequestedActionV4(StrEnum):
     PAY_FEE = "pay_fee"
     PROVIDE_PERSONAL_INFORMATION = "provide_personal_information"
     OPEN_LINK = "open_link"
+    INSTALL_APP = "install_app"
+    SHARE_SCREEN = "share_screen"
+    SCAN_QR = "scan_qr"
 
 
 class PotentialThreatV4(StrEnum):
@@ -82,6 +86,21 @@ class SecurityRiskV4(StrEnum):
     HIGH_RISK = "HIGH_RISK"
     MALICIOUS = "MALICIOUS"
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+
+class AssistantProcessingModeV4(StrEnum):
+    HYBRID = "hybrid"
+    RULES_ONLY = "rules_only"
+    FALLBACK = "fallback"
+
+
+class ExposureStateV4(StrEnum):
+    PRE_ACTION = "PRE_ACTION"
+    LINK_OPENED = "LINK_OPENED"
+    CREDENTIAL_SHARED = "CREDENTIAL_SHARED"
+    OTP_SHARED = "OTP_SHARED"
+    PAYMENT_SENT = "PAYMENT_SENT"
+    UNKNOWN = "UNKNOWN"
 
 
 class SecurityRecommendedActionV4(StrEnum):
@@ -317,6 +336,33 @@ class SecurityContextV4(SecurityContractModel):
     potential_threat: PotentialThreatV4
 
 
+class AssistantSourceSpanV4(SecurityContractModel):
+    field_name: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> Self:
+        if self.end <= self.start:
+            raise ValueError("source span end must be greater than start")
+        return self
+
+
+class AssistantContextV4(SecurityContractModel):
+    processing_mode: AssistantProcessingModeV4
+    sender_intent: str | None = Field(default=None, max_length=500)
+    social_engineering_techniques: list[str] = Field(default_factory=list, max_length=20)
+    exposure_state: ExposureStateV4 = ExposureStateV4.UNKNOWN
+    missing_information: list[str] = Field(default_factory=list, max_length=20)
+    field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(
+        default_factory=dict,
+        max_length=50,
+    )
+    source_spans: list[AssistantSourceSpanV4] = Field(default_factory=list, max_length=50)
+    understanding_version: Literal["security-understanding-v1"] = SECURITY_UNDERSTANDING_VERSION
+    model_version: str = Field(min_length=1, max_length=200)
+
+
 class SecurityConversationStatusV4(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
@@ -324,6 +370,10 @@ class SecurityConversationStatusV4(StrEnum):
 
 class SecurityConversationSummaryV4(SecurityContractModel):
     security_context: SecurityContextV4 | None = None
+    assistant_context: AssistantContextV4 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
 
 
@@ -350,6 +400,10 @@ class SecurityScopeResponseV4(SecurityContractModel):
     next_step: Literal["END", "INVESTIGATION", "RISK_ASSESSMENT"]
     scope_reasons: list[str] = Field(min_length=1, max_length=10)
     security_context: SecurityContextV4 | None = None
+    assistant_context: AssistantContextV4 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     follow_up_question: str | None = None
     boundary_message: str | None = None
     limitations: list[str] = Field(default_factory=list, max_length=100)
@@ -378,9 +432,15 @@ class SecurityScopeResponseV4(SecurityContractModel):
                 raise ValueError("in-scope response cannot contain a terminal message")
             if (self.next_step == "END") != self.terminal:
                 raise ValueError("in-scope END transition must be terminal")
-            if self.next_step == "INVESTIGATION" and self.investigation_status is not SecurityInvestigationStatusV4.NOT_STARTED:
+            if (
+                self.next_step == "INVESTIGATION"
+                and self.investigation_status is not SecurityInvestigationStatusV4.NOT_STARTED
+            ):
                 raise ValueError("investigation transition requires not-started investigation state")
-            if self.next_step == "RISK_ASSESSMENT" and self.investigation_status is SecurityInvestigationStatusV4.NOT_STARTED:
+            if (
+                self.next_step == "RISK_ASSESSMENT"
+                and self.investigation_status is SecurityInvestigationStatusV4.NOT_STARTED
+            ):
                 raise ValueError("risk transition requires completed or partial investigation")
             if self.next_step == "END" and self.risk is None:
                 raise ValueError("completed in-scope response requires risk result")
@@ -404,7 +464,11 @@ class SecurityScopeResponseV4(SecurityContractModel):
             raise ValueError("terminal scope response cannot contain investigation output")
         risk_fields = (self.score, self.confidence, self.threat_type, self.policy_version, self.explanation)
         if self.risk is None:
-            if any(value is not None for value in risk_fields) or self.recommended_actions or self.explanation_evidence_refs:
+            if (
+                any(value is not None for value in risk_fields)
+                or self.recommended_actions
+                or self.explanation_evidence_refs
+            ):
                 raise ValueError("risk details require a risk class")
         elif any(value is None for value in risk_fields) or not self.recommended_actions:
             raise ValueError("risk result is incomplete")
@@ -448,9 +512,7 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     deferred_admin_actions: list[str] = Field(
         default_factory=lambda: ["block_domain", "publish_broad_warning", "ai_security_copilot"]
     )
-    compatibility_contracts: list[Literal["v2", "v3", "v4"]] = Field(
-        default_factory=lambda: ["v2", "v3", "v4"]
-    )
+    compatibility_contracts: list[Literal["v2", "v3", "v4"]] = Field(default_factory=lambda: ["v2", "v3", "v4"])
     security_ai_understanding: Literal[True] | None = None
     security_ai_planning: Literal[True] | None = None
     security_ai_explanation: Literal[True] | None = None

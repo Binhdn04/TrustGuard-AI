@@ -12,7 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.agents.security_investigation import build_security_investigation_plan
 from src.agents.security_risk import assess_security_risk
 from src.models import (
+    ExposureStateV4,
     PotentialThreatV4,
+    RequestedActionV4,
     ScopeDecisionV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
@@ -21,10 +23,17 @@ from src.models import (
     SecurityInvestigationToolV4,
     SecurityRecommendedActionV4,
     SecurityRiskV4,
+    SecurityScenarioV4,
     SecurityToolErrorV4,
     SecurityTriageCreateRequestV4,
 )
+from src.security_ai.contracts import (
+    SemanticSecuritySignal,
+    Understanding,
+    UnderstandingSourceSpan,
+)
 from src.services.security_triage import SecurityTriageScopeService
+from src.services.security_understanding import merge_semantic_understanding
 
 SECURITY_V4_EVALUATION_VERSION = "security-v4-eval-v1"
 REQUIRED_CATEGORIES = frozenset(
@@ -45,6 +54,14 @@ REQUIRED_CATEGORIES = frozenset(
         "multi_turn",
         "no_consent",
         "wide_action",
+        "semantic_typo",
+        "semantic_no_diacritics",
+        "semantic_slang",
+        "semantic_indirect",
+        "semantic_install_app",
+        "semantic_screen_share",
+        "semantic_qr_payment",
+        "semantic_prompt_injection",
     }
 )
 EXTERNAL_TOOLS = frozenset(
@@ -90,6 +107,20 @@ class EvaluationExpected(BaseModel):
         return self
 
 
+class EvaluationSemanticUnderstanding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope_decision: ScopeDecisionV4 | None = None
+    sender_intent: str | None = None
+    social_engineering_techniques: list[str] = Field(default_factory=list)
+    claimed_entity: str | None = None
+    scenario: SecurityScenarioV4 | None = None
+    requested_action: RequestedActionV4 | None = None
+    exposure_state: ExposureStateV4 = ExposureStateV4.UNKNOWN
+    security_signals: list[SemanticSecuritySignal] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+
+
 class SecurityEvaluationCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -102,6 +133,7 @@ class SecurityEvaluationCase(BaseModel):
     fixture_evidence: list[EvaluationEvidence] = Field(default_factory=list)
     fixture_error: str | None = None
     estimated_cost_usd: float = Field(default=0, ge=0)
+    semantic_understanding: EvaluationSemanticUnderstanding | None = None
     expected: EvaluationExpected
 
 
@@ -157,6 +189,38 @@ def _fixture_evidence(case: SecurityEvaluationCase) -> list[SecurityEvidenceV4]:
     return [context, *injected]
 
 
+def _semantic_fixture_output(case: SecurityEvaluationCase) -> Understanding | None:
+    fixture = case.semantic_understanding
+    if fixture is None:
+        return None
+    field_names: list[str] = []
+    for field_name in (
+        "scope_decision",
+        "sender_intent",
+        "social_engineering_techniques",
+        "claimed_entity",
+        "scenario",
+        "requested_action",
+        "exposure_state",
+    ):
+        value = getattr(fixture, field_name)
+        if value not in (None, [], ExposureStateV4.UNKNOWN):
+            field_names.append(field_name)
+    field_names.extend(signal.value for signal in fixture.security_signals)
+    return Understanding(
+        **fixture.model_dump(),
+        field_confidences={field_name: 0.95 for field_name in field_names},
+        source_spans=[
+            UnderstandingSourceSpan(
+                field_name=field_name,
+                start=0,
+                end=len(case.message),
+            )
+            for field_name in field_names
+        ],
+    )
+
+
 def load_evaluation_set(path: str | Path) -> list[SecurityEvaluationCase]:
     source = Path(path)
     cases = [
@@ -187,6 +251,14 @@ def evaluate_case(case: SecurityEvaluationCase) -> EvaluationCaseResult:
         },
     )
     scoped = SecurityTriageScopeService().assess(request)
+    semantic_output = _semantic_fixture_output(case)
+    if semantic_output is not None:
+        scoped = merge_semantic_understanding(
+            case.message,
+            scoped,
+            semantic_output,
+            model_version="deterministic-semantic-eval-v1",
+        )
     plan = []
     result = scoped
     if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE and scoped.security_context is not None:
@@ -210,9 +282,7 @@ def evaluate_case(case: SecurityEvaluationCase) -> EvaluationCaseResult:
             update={
                 "next_step": "RISK_ASSESSMENT",
                 "investigation_status": (
-                    SecurityInvestigationStatusV4.PARTIAL
-                    if errors
-                    else SecurityInvestigationStatusV4.COMPLETED
+                    SecurityInvestigationStatusV4.PARTIAL if errors else SecurityInvestigationStatusV4.COMPLETED
                 ),
                 "investigation_plan": plan,
                 "evidence": _fixture_evidence(case),
@@ -228,8 +298,7 @@ def evaluate_case(case: SecurityEvaluationCase) -> EvaluationCaseResult:
 
     tools = list(dict.fromkeys(step.tool for step in plan))
     provider_calls = sum(
-        step.tool in EXTERNAL_TOOLS and step.status is SecurityInvestigationStepStatusV4.PENDING
-        for step in plan
+        step.tool in EXTERNAL_TOOLS and step.status is SecurityInvestigationStepStatusV4.PENDING for step in plan
     )
     expected = case.expected
     evidence_refs = {item.evidence_ref for item in result.evidence}

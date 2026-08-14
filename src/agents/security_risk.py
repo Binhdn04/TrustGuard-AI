@@ -148,7 +148,9 @@ def assess_security_risk(scope: SecurityScopeResponseV4) -> SecurityScopeRespons
     if contributions and sum(item.points for item in contributions) == weak_external:
         risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS
 
-    refs = list(dict.fromkeys([item.evidence_ref for item in contributions if item.evidence_ref] + strong_refs + safe_refs))
+    refs = list(
+        dict.fromkeys([item.evidence_ref for item in contributions if item.evidence_ref] + strong_refs + safe_refs)
+    )
     grounded = [item for item in scope.evidence if item.evidence_ref in refs]
     if not grounded and scope.evidence:
         grounded = [scope.evidence[0]]

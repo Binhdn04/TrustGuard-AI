@@ -54,14 +54,18 @@ class RuntimeResult(Generic[OutputT]):
     output: OutputT | None
     status: str
     error: str | None = None
+    provider: str | None = None
+    model: str | None = None
 
 
 @dataclass(slots=True)
 class SecurityAssistantRuntime:
     timeout_seconds: float = 12.0
+    turn_deadline_seconds: float = 15.0
     max_retries: int = 1
     budget: TurnBudget = field(default_factory=TurnBudget)
     metrics: list[InvocationMetric] = field(default_factory=list)
+    turn_started_at: float = field(default_factory=perf_counter)
 
     async def invoke(
         self,
@@ -74,6 +78,10 @@ class SecurityAssistantRuntime:
         Metrics deliberately contain no prompt, raw response, or reasoning text.
         """
         for attempt in range(self.max_retries + 1):
+            remaining_seconds = self.turn_deadline_seconds - (perf_counter() - self.turn_started_at)
+            if remaining_seconds <= 0:
+                self._metric(operation, 0, "turn_deadline_exceeded", error="turn_deadline_exceeded")
+                return RuntimeResult(None, "fallback", "turn_deadline_exceeded")
             try:
                 # Retries are provider calls too and consume the same per-turn
                 # budget. A synthesis is intentionally never called twice.
@@ -82,17 +90,24 @@ class SecurityAssistantRuntime:
                 self._metric(operation, 0, "budget_exceeded", error=str(exc))
                 return RuntimeResult(None, "fallback", str(exc))
             started = perf_counter()
+            call_timeout = min(self.timeout_seconds, remaining_seconds)
+            deadline_limited = remaining_seconds <= self.timeout_seconds
             try:
-                response = await asyncio.wait_for(call(), timeout=self.timeout_seconds)
+                response = await asyncio.wait_for(call(), timeout=call_timeout)
                 parsed = ModelResponse[output_type].model_validate(response)
                 output = output_type.model_validate(parsed.output)
                 self.budget.input_tokens += parsed.usage.input_tokens
                 self.budget.output_tokens += parsed.usage.output_tokens
                 self.budget.cost_usd += parsed.usage.cost_usd
                 self._metric(operation, started, "ok", parsed)
-                return RuntimeResult(output, "ok")
+                return RuntimeResult(
+                    output,
+                    "ok",
+                    provider=parsed.provider,
+                    model=parsed.model,
+                )
             except TimeoutError:
-                error = "timeout"
+                error = "turn_deadline_exceeded" if deadline_limited else "timeout"
             except (ValidationError, TypeError, ValueError):
                 error = "invalid_structured_output"
             except Exception:  # provider errors are normalized and never leak details

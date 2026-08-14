@@ -1302,9 +1302,7 @@ class Wave2PlatformService:
         items, total = await self.repository.list_admin_actions(status, limit, offset)
         return AdminActionPageV3(items=items, total=total, limit=limit, offset=offset)
 
-    async def propose_security_admin_actions(
-        self, response: SecurityScopeResponseV4
-    ) -> list[AdminActionRecordV3]:
+    async def propose_security_admin_actions(self, response: SecurityScopeResponseV4) -> list[AdminActionRecordV3]:
         """Produce idempotent HITL proposals from completed v4 risk evidence."""
         if response.risk not in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
             return []

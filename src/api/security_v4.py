@@ -17,6 +17,7 @@ from src.api.dependencies import (
     SecurityTriageScopeServiceDependency,
     SecurityTrustAdminServiceDependency,
     SecurityTrustServiceDependency,
+    SecurityUnderstandingServiceDependency,
     TicketManagerDependency,
     get_security_analysis_service,
     get_ticket_manager,
@@ -117,11 +118,7 @@ def _page(items: list, limit: int, offset: int) -> tuple[list, int]:
 )
 async def security_capabilities_v4() -> SecurityCapabilitiesResponseV4:
     settings = get_settings()
-    configured = (
-        settings.enabled_security_capabilities()
-        if hasattr(settings, "enabled_security_capabilities")
-        else {}
-    )
+    configured = settings.enabled_security_capabilities() if hasattr(settings, "enabled_security_capabilities") else {}
     capabilities = {name: True for name, enabled in configured.items() if enabled}
     return SecurityCapabilitiesResponseV4(
         release_profile=settings.security_release_profile,
@@ -135,24 +132,22 @@ async def create_security_analysis_v4(
     service: SecurityTriageScopeServiceDependency,
     analyses: SecurityAnalysisServiceDependency,
     trust: SecurityTrustServiceDependency,
+    understanding: SecurityUnderstandingServiceDependency,
     principal: PrincipalDependency,
     http_request: Request,
 ) -> SecurityScopeResponseV4:
     scoped = service.assess(request)
     scoped = await analyses.begin_turn(request, scoped, principal)
+    scoped = await understanding.enrich(request, scoped)
     try:
         if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE:
             investigation = await resolve_security_investigation_service(http_request)
             scoped = await investigation.investigate(request, scoped)
             scoped = assess_security_risk(await trust.enrich(request, scoped))
         else:
-            scoped = scoped.model_copy(
-                update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)}
-            )
+            scoped = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
     except Exception as exc:
-        failed = scoped.model_copy(
-            update={"status": AnalysisStatus.FAILED, "completed_at": datetime.now(UTC)}
-        )
+        failed = scoped.model_copy(update={"status": AnalysisStatus.FAILED, "completed_at": datetime.now(UTC)})
         await analyses.persist_failed(failed, principal)
         raise PlatformError(
             status_code=500,
@@ -167,18 +162,14 @@ async def create_security_analysis_v4(
             memory = await resolve_security_memory_service(http_request)
             await memory.record(scoped)
         except Exception:
-            limitations = list(
-                dict.fromkeys([*scoped.limitations, "Không thể cập nhật Security Memory."])
-            )
+            limitations = list(dict.fromkeys([*scoped.limitations, "Không thể cập nhật Security Memory."]))
             scoped = scoped.model_copy(update={"limitations": limitations})
             await analyses.persist_completed(scoped, principal)
         try:
             wave2 = await resolve_wave2_service(http_request)
             await wave2.propose_security_admin_actions(scoped)
         except Exception:
-            limitations = list(
-                dict.fromkeys([*scoped.limitations, "Không thể tạo đề xuất HITL cho Security Admin."])
-            )
+            limitations = list(dict.fromkeys([*scoped.limitations, "Không thể tạo đề xuất HITL cho Security Admin."]))
             scoped = scoped.model_copy(update={"limitations": limitations})
             await analyses.persist_completed(scoped, principal)
     return scoped
@@ -206,7 +197,8 @@ async def page_security_memory_v4(
     if q:
         needle = q.casefold()
         records = [
-            item for item in records
+            item
+            for item in records
             if needle in (item.claimed_brand or "").casefold()
             or any(needle in domain.casefold() for domain in item.canonical_domains)
         ]
@@ -257,9 +249,7 @@ async def list_security_campaigns_v4(
     return await memory.list_campaigns(principal)
 
 
-@router.get(
-    "/admin/security-campaigns/page", response_model=SecurityCampaignPageV4, responses=_COMMON_ERRORS
-)
+@router.get("/admin/security-campaigns/page", response_model=SecurityCampaignPageV4, responses=_COMMON_ERRORS)
 async def page_security_campaigns_v4(
     memory: SecurityMemoryServiceDependency,
     principal: PrincipalDependency,
@@ -393,9 +383,7 @@ async def list_security_conversations_v4(
     return SecurityConversationPageV4(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get(
-    "/conversations/{conversation_id}", response_model=SecurityConversationV4, responses=_COMMON_ERRORS
-)
+@router.get("/conversations/{conversation_id}", response_model=SecurityConversationV4, responses=_COMMON_ERRORS)
 async def get_security_conversation_v4(
     conversation_id: UUID,
     analyses: SecurityAnalysisServiceDependency,
@@ -435,7 +423,8 @@ async def page_brands_v4(
     if q:
         needle = q.casefold()
         records = [
-            item for item in records
+            item
+            for item in records
             if needle in item.name.casefold()
             or any(needle in alias.casefold() for alias in item.aliases)
             or any(needle in domain.casefold() for domain in item.official_domains)
@@ -453,9 +442,7 @@ async def disable_brand_v4(
     return await admin.disable_brand(str(brand_id), principal)
 
 
-@router.post(
-    "/admin/whitelist", response_model=WhitelistRecordV4, status_code=201, responses=_COMMON_ERRORS
-)
+@router.post("/admin/whitelist", response_model=WhitelistRecordV4, status_code=201, responses=_COMMON_ERRORS)
 async def create_whitelist_v4(
     request: WhitelistCreateRequestV4,
     admin: SecurityTrustAdminServiceDependency,
@@ -490,9 +477,7 @@ async def page_whitelist_v4(
     return WhitelistPageV4(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.post(
-    "/admin/whitelist/{whitelist_id}/disable", response_model=WhitelistRecordV4, responses=_COMMON_ERRORS
-)
+@router.post("/admin/whitelist/{whitelist_id}/disable", response_model=WhitelistRecordV4, responses=_COMMON_ERRORS)
 async def disable_whitelist_v4(
     whitelist_id: UUID,
     admin: SecurityTrustAdminServiceDependency,
@@ -522,7 +507,8 @@ async def page_security_analyses_v4(
     if q:
         needle = q.casefold()
         records = [
-            item for item in records
+            item
+            for item in records
             if item.security_context is not None
             and (
                 needle in (item.security_context.claimed_entity or "").casefold()
@@ -546,7 +532,8 @@ async def list_security_reports_admin_v4(
     if q:
         needle = q.casefold()
         records = [
-            item for item in records
+            item
+            for item in records
             if needle in item.owner_id.casefold()
             or needle in item.reason.casefold()
             or needle in (item.comment or "").casefold()
@@ -596,7 +583,8 @@ async def list_security_appeals_admin_v4(
     if q:
         needle = q.casefold()
         records = [
-            item for item in records
+            item
+            for item in records
             if needle in item.owner_id.casefold()
             or needle in item.reason.casefold()
             or needle in (item.comment or "").casefold()
@@ -693,9 +681,7 @@ async def list_security_appeals_v4(
     return await analyses.list_appeals_for(analysis_id, principal)
 
 
-@router.get(
-    "/analyses/{analysis_id}/events", response_model=SecurityAnalysisEventPageV4, responses=_COMMON_ERRORS
-)
+@router.get("/analyses/{analysis_id}/events", response_model=SecurityAnalysisEventPageV4, responses=_COMMON_ERRORS)
 async def security_analysis_events_v4(
     analysis_id: UUID,
     analyses: SecurityAnalysisServiceDependency,
@@ -711,9 +697,7 @@ async def security_analysis_events_v4(
     )
 
 
-@router.post(
-    "/ws-tickets", response_model=SecurityWebSocketTicketResponseV4, status_code=201, responses=_COMMON_ERRORS
-)
+@router.post("/ws-tickets", response_model=SecurityWebSocketTicketResponseV4, status_code=201, responses=_COMMON_ERRORS)
 async def create_security_websocket_ticket_v4(
     request: SecurityWebSocketTicketRequestV4,
     analyses: SecurityAnalysisServiceDependency,

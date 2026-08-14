@@ -33,7 +33,7 @@ from src.core.errors import PlatformError
 from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
-from src.security_ai import OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
+from src.security_ai import ModelTokenPricing, OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
 from src.services.analysis import AnalysisService
 from src.services.platform_wave2 import (
     ArtifactSigner,
@@ -56,6 +56,7 @@ from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_trust import SecurityTrustAdminService
+from src.services.security_understanding import SecuritySemanticUnderstandingService
 
 _worker: DurableAnalysisWorker | None = None
 _worker_task = None
@@ -79,13 +80,21 @@ def get_security_assistant_model():
             settings.security_admin_copilot_enabled,
         )
     )
-    if not ai_operation_enabled or not settings.openai_api_key.strip():
+    if not ai_operation_enabled or not settings.security_ai_provider_configuration_valid():
         return None
     return OpenAISecurityAssistant(
         api_key=settings.openai_api_key,
         small_model=settings.security_ai_small_model,
         synthesis_model=settings.security_ai_synthesis_model,
         timeout=settings.security_ai_timeout_seconds,
+        small_pricing=ModelTokenPricing(
+            settings.security_ai_small_input_cost_per_million_usd,
+            settings.security_ai_small_output_cost_per_million_usd,
+        ),
+        synthesis_pricing=ModelTokenPricing(
+            settings.security_ai_synthesis_input_cost_per_million_usd,
+            settings.security_ai_synthesis_output_cost_per_million_usd,
+        ),
     )
 
 
@@ -94,8 +103,18 @@ def new_security_assistant_runtime() -> SecurityAssistantRuntime:
     settings = get_settings()
     return SecurityAssistantRuntime(
         timeout_seconds=settings.security_ai_timeout_seconds,
+        turn_deadline_seconds=settings.security_ai_turn_deadline_seconds,
         max_retries=settings.security_ai_max_retries,
         budget=TurnBudget(max_calls=settings.security_ai_max_calls_per_turn),
+    )
+
+
+async def get_security_understanding_service() -> SecuritySemanticUnderstandingService:
+    settings = get_settings()
+    return SecuritySemanticUnderstandingService(
+        enabled=settings.security_ai_understanding_enabled,
+        model=get_security_assistant_model(),
+        runtime=new_security_assistant_runtime(),
     )
 
 
@@ -565,6 +584,10 @@ SecurityTriageScopeServiceDependency = Annotated[
 ]
 SecurityMemoryServiceDependency = Annotated[SecurityMemoryService, Depends(resolve_security_memory_service)]
 SecurityAnalysisServiceDependency = Annotated[SecurityAnalysisService, Depends(resolve_security_analysis_service)]
+SecurityUnderstandingServiceDependency = Annotated[
+    SecuritySemanticUnderstandingService,
+    Depends(get_security_understanding_service),
+]
 SecurityTrustServiceDependency = Annotated[SecurityTrustService, Depends(resolve_security_trust_service)]
 SecurityTrustAdminServiceDependency = Annotated[
     SecurityTrustAdminService, Depends(resolve_security_trust_admin_service)

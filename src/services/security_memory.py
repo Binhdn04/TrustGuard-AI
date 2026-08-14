@@ -135,9 +135,7 @@ class SecurityMemoryService:
                 item["threats"][record.threat_type] = item["threats"].get(record.threat_type, 0) + 1
                 item["first_seen_at"] = min(item["first_seen_at"], record.first_seen_at)
                 item["last_seen_at"] = max(item["last_seen_at"], record.last_seen_at)
-                item["evidence_refs"] = list(
-                    dict.fromkeys([*item["evidence_refs"], *record.evidence_refs])
-                )[:100]
+                item["evidence_refs"] = list(dict.fromkeys([*item["evidence_refs"], *record.evidence_refs]))[:100]
         return sorted(
             (
                 SecurityDomainIntelligenceV4(
@@ -177,9 +175,7 @@ class SecurityMemoryService:
             item["domains"] = list(dict.fromkeys([*item["domains"], *record.canonical_domains]))[:100]
             item["first_seen_at"] = min(item["first_seen_at"], record.first_seen_at)
             item["last_seen_at"] = max(item["last_seen_at"], record.last_seen_at)
-            item["evidence_refs"] = list(
-                dict.fromkeys([*item["evidence_refs"], *record.evidence_refs])
-            )[:100]
+            item["evidence_refs"] = list(dict.fromkeys([*item["evidence_refs"], *record.evidence_refs]))[:100]
         return sorted(
             (
                 SecurityThreatIntelligenceV4(
@@ -310,9 +306,7 @@ class SecurityMemoryService:
             self._memory.campaign_audit.setdefault(campaign_id, []).append(audit)
             return updated.model_copy(deep=True)
 
-    async def campaign_audit(
-        self, campaign_id: UUID, principal: Principal
-    ) -> list[SecurityCampaignAuditRecordV4]:
+    async def campaign_audit(self, campaign_id: UUID, principal: Principal) -> list[SecurityCampaignAuditRecordV4]:
         require_security_admin(principal)
         load = getattr(self._repository, "list_security_campaign_audit", None)
         if load is not None:

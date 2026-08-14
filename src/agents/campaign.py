@@ -437,7 +437,9 @@ def build_security_memory_record(
         fingerprint_version=config.fingerprint_version,
         first_seen_at=observed_at,
         last_seen_at=observed_at,
-        evidence_refs=list(dict.fromkeys(response.explanation_evidence_refs or [e.evidence_ref for e in response.evidence])),
+        evidence_refs=list(
+            dict.fromkeys(response.explanation_evidence_refs or [e.evidence_ref for e in response.evidence])
+        ),
     )
 
 
@@ -495,10 +497,8 @@ def cluster_security_memory(
     eligible = [
         item
         for item in observations
-        if cutoff is not None
-        and item.last_seen_at >= cutoff
-        if item.admin_verdict
-        not in {SecurityMemoryAdminVerdictV4.SAFE, SecurityMemoryAdminVerdictV4.FALSE_POSITIVE}
+        if cutoff is not None and item.last_seen_at >= cutoff
+        if item.admin_verdict not in {SecurityMemoryAdminVerdictV4.SAFE, SecurityMemoryAdminVerdictV4.FALSE_POSITIVE}
         and item.risk not in {SecurityRiskV4.SAFE, SecurityRiskV4.LOW_RISK, SecurityRiskV4.INSUFFICIENT_EVIDENCE}
     ]
     remaining = {item.analysis_id: item for item in eligible}

@@ -309,9 +309,13 @@ class SecurityInvestigationService:
             if item.status is not SecurityInvestigationStepStatusV4.PENDING:
                 continue
             host = (urlsplit(item.target).hostname or item.target).casefold()
-            related_url = item.target if "://" in item.target else next(
-                (url for url in context.urls if (urlsplit(url).hostname or "").casefold() == host),
-                None,
+            related_url = (
+                item.target
+                if "://" in item.target
+                else next(
+                    (url for url in context.urls if (urlsplit(url).hostname or "").casefold() == host),
+                    None,
+                )
             )
             if (related_url is not None and related_url in blocked_urls) or host in blacklisted_domains:
                 reason = "ssrf_short_circuit" if related_url in blocked_urls else "blacklist_short_circuit"
@@ -402,7 +406,10 @@ class SecurityInvestigationService:
         for index, item in enumerate(plan):
             if item.status is SecurityInvestigationStepStatusV4.PENDING:
                 plan[index] = item.model_copy(
-                    update={"status": SecurityInvestigationStepStatusV4.SKIPPED, "status_reason": "policy_short_circuit"}
+                    update={
+                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
+                        "status_reason": "policy_short_circuit",
+                    }
                 )
 
         evidence = list({item.evidence_ref: item for item in evidence}.values())
@@ -492,9 +499,7 @@ class SecurityInvestigationService:
         try:
             finish = getattr(self._execution_ledger, "finish_security_tool_execution", None)
             finish = finish or getattr(self._execution_ledger, "finish_tool_execution")
-            await finish(
-                str(scope.analysis_id), step.step_id, _ledger_target_ref(step.target), provider, status
-            )
+            await finish(str(scope.analysis_id), step.step_id, _ledger_target_ref(step.target), provider, status)
         except Exception:
             errors.append(
                 SecurityToolErrorV4(
@@ -624,7 +629,11 @@ class SecurityInvestigationService:
             if result.registrar is not None:
                 details.append(f"registrar={result.registrar}")
             signal = "+".join(result.signals) if result.signals else "registration_metadata"
-            limitations = ["RDAP không tìm thấy registration record; kết quả này không chứng minh domain an toàn."] if result.signals == ["not_found"] else []
+            limitations = (
+                ["RDAP không tìm thấy registration record; kết quả này không chứng minh domain an toàn."]
+                if result.signals == ["not_found"]
+                else []
+            )
             return [
                 _evidence(
                     SecurityEvidenceTypeV4.RDAP,

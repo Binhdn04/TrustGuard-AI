@@ -88,8 +88,22 @@ class _Search:
 @pytest.mark.parametrize(
     ("findings", "expected"),
     [
-        ([OfficialSourceFindingV4(source_url="https://acme.example/news", finding="confirmed", title="Offer", observed_at=NOW)], OfficialVerificationVerdictV4.OFFICIAL_CONFIRMED),
-        ([OfficialSourceFindingV4(source_url="https://acme.example/news", finding="contradicted", title="Warning", observed_at=NOW)], OfficialVerificationVerdictV4.OFFICIAL_CONTRADICTED),
+        (
+            [
+                OfficialSourceFindingV4(
+                    source_url="https://acme.example/news", finding="confirmed", title="Offer", observed_at=NOW
+                )
+            ],
+            OfficialVerificationVerdictV4.OFFICIAL_CONFIRMED,
+        ),
+        (
+            [
+                OfficialSourceFindingV4(
+                    source_url="https://acme.example/news", finding="contradicted", title="Warning", observed_at=NOW
+                )
+            ],
+            OfficialVerificationVerdictV4.OFFICIAL_CONTRADICTED,
+        ),
         ([], OfficialVerificationVerdictV4.NOT_FOUND),
     ],
 )
@@ -142,9 +156,7 @@ async def test_official_not_found_is_a_limitation_not_contradiction() -> None:
     request = SecurityTriageCreateRequestV4(
         message="ACME thông báo trúng thưởng", consent={"official_source_lookup": True}
     )
-    scoped = await SecurityInvestigationService().investigate(
-        request, SecurityTriageScopeService().assess(request)
-    )
+    scoped = await SecurityInvestigationService().investigate(request, SecurityTriageScopeService().assess(request))
     enriched = await SecurityTrustService(
         _TrustRepository(brands=[_brand()]), verifier=OfficialClaimVerifier(search), clock=lambda: NOW
     ).enrich(request, scoped)
@@ -177,9 +189,7 @@ async def test_official_lookup_requires_separate_consent_and_rejects_non_officia
     )
     search = _Search([finding])
     request = SecurityTriageCreateRequestV4(message="ACME thông báo trúng thưởng")
-    scoped = await SecurityInvestigationService().investigate(
-        request, SecurityTriageScopeService().assess(request)
-    )
+    scoped = await SecurityInvestigationService().investigate(request, SecurityTriageScopeService().assess(request))
     service = SecurityTrustService(
         _TrustRepository(brands=[_brand()]), verifier=OfficialClaimVerifier(search), clock=lambda: NOW
     )
@@ -187,9 +197,7 @@ async def test_official_lookup_requires_separate_consent_and_rejects_non_officia
     assert search.calls == []
     assert not any(item.type is SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION for item in without_consent.evidence)
 
-    consented = SecurityTriageCreateRequestV4(
-        message=request.message, consent={"official_source_lookup": True}
-    )
+    consented = SecurityTriageCreateRequestV4(message=request.message, consent={"official_source_lookup": True})
     enriched = await service.enrich(consented, scoped)
     official = next(item for item in enriched.evidence if item.type is SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION)
     assert official.signal == "insufficient_evidence"
@@ -234,9 +242,9 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
 async def test_brand_mismatch_alone_is_low_risk() -> None:
     request, scoped = _scope("ACME xem https://unrelated.example")
     investigated = await SecurityInvestigationService().investigate(request, scoped)
-    enriched = await SecurityTrustService(
-        _TrustRepository(brands=[_brand()]), clock=lambda: NOW
-    ).enrich(request, investigated)
+    enriched = await SecurityTrustService(_TrustRepository(brands=[_brand()]), clock=lambda: NOW).enrich(
+        request, investigated
+    )
     result = assess_security_risk(enriched)
     assert result.risk is SecurityRiskV4.LOW_RISK
     assert result.risk is not SecurityRiskV4.MALICIOUS
@@ -273,9 +281,7 @@ async def test_repository_enforces_effective_interval_and_disable(tmp_path) -> N
     await repository.create_whitelist(active_whitelist)
     await repository.create_whitelist(expired_whitelist)
     assert await repository.list_active_whitelist(NOW) == [active_whitelist]
-    disabled_whitelist = await repository.disable_whitelist(
-        str(active_whitelist.whitelist_id), "reviewer-2", NOW
-    )
+    disabled_whitelist = await repository.disable_whitelist(str(active_whitelist.whitelist_id), "reviewer-2", NOW)
     assert disabled_whitelist is not None and disabled_whitelist.lifecycle.value == "disabled"
     assert await repository.list_active_whitelist(NOW) == []
     await repository.close()

@@ -215,10 +215,19 @@ class PostgresPlatformRepository:
                        id,name,aliases,official_domains,official_contacts,provenance,policy_version,
                        lifecycle,effective_from,effective_until,reviewer_id,created_at,record
                    ) VALUES($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)""",
-                record.brand_id, record.name, json.dumps(record.aliases), json.dumps(record.official_domains),
-                json.dumps(record.official_contacts), record.provenance, record.policy_version,
-                record.lifecycle.value, record.effective_from, record.effective_until,
-                record.reviewer_id, record.created_at, record.model_dump_json(),
+                record.brand_id,
+                record.name,
+                json.dumps(record.aliases),
+                json.dumps(record.official_domains),
+                json.dumps(record.official_contacts),
+                record.provenance,
+                record.policy_version,
+                record.lifecycle.value,
+                record.effective_from,
+                record.effective_until,
+                record.reviewer_id,
+                record.created_at,
+                record.model_dump_json(),
             )
             await self._insert_trust_audit(
                 connection, "brand", record.brand_id, "created", record.reviewer_id, record.created_at
@@ -232,8 +241,10 @@ class PostgresPlatformRepository:
 
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
         return [
-            item for item in await self.list_brands()
-            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.effective_from <= at
+            item
+            for item in await self.list_brands()
+            if item.lifecycle is TrustLifecycleV4.ACTIVE
+            and item.effective_from <= at
             and (item.effective_until is None or at < item.effective_until)
         ]
 
@@ -248,7 +259,9 @@ class PostgresPlatformRepository:
             )
             await connection.execute(
                 "UPDATE security_brands SET lifecycle='disabled', reviewer_id=$2, record=$3::jsonb WHERE id=$1",
-                UUID(brand_id), reviewer_id, record.model_dump_json(),
+                UUID(brand_id),
+                reviewer_id,
+                record.model_dump_json(),
             )
             await self._insert_trust_audit(connection, "brand", UUID(brand_id), "disabled", reviewer_id, at)
         return record
@@ -261,9 +274,17 @@ class PostgresPlatformRepository:
                        id,scope,indicator,provenance,policy_version,lifecycle,effective_from,
                        effective_until,reviewer_id,created_at,record
                    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)""",
-                record.whitelist_id, record.scope.value, record.indicator, record.provenance,
-                record.policy_version, record.lifecycle.value, record.effective_from,
-                record.effective_until, record.reviewer_id, record.created_at, record.model_dump_json(),
+                record.whitelist_id,
+                record.scope.value,
+                record.indicator,
+                record.provenance,
+                record.policy_version,
+                record.lifecycle.value,
+                record.effective_from,
+                record.effective_until,
+                record.reviewer_id,
+                record.created_at,
+                record.model_dump_json(),
             )
             await self._insert_trust_audit(
                 connection, "whitelist", record.whitelist_id, "created", record.reviewer_id, record.created_at
@@ -277,14 +298,14 @@ class PostgresPlatformRepository:
 
     async def list_active_whitelist(self, at: datetime) -> list[WhitelistRecordV4]:
         return [
-            item for item in await self.list_whitelist()
-            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.effective_from <= at
+            item
+            for item in await self.list_whitelist()
+            if item.lifecycle is TrustLifecycleV4.ACTIVE
+            and item.effective_from <= at
             and (item.effective_until is None or at < item.effective_until)
         ]
 
-    async def disable_whitelist(
-        self, whitelist_id: str, reviewer_id: str, at: datetime
-    ) -> WhitelistRecordV4 | None:
+    async def disable_whitelist(self, whitelist_id: str, reviewer_id: str, at: datetime) -> WhitelistRecordV4 | None:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
             row = await connection.fetchrow(
@@ -297,11 +318,11 @@ class PostgresPlatformRepository:
             )
             await connection.execute(
                 "UPDATE security_whitelist SET lifecycle='disabled', reviewer_id=$2, record=$3::jsonb WHERE id=$1",
-                UUID(whitelist_id), reviewer_id, record.model_dump_json(),
+                UUID(whitelist_id),
+                reviewer_id,
+                record.model_dump_json(),
             )
-            await self._insert_trust_audit(
-                connection, "whitelist", UUID(whitelist_id), "disabled", reviewer_id, at
-            )
+            await self._insert_trust_audit(connection, "whitelist", UUID(whitelist_id), "disabled", reviewer_id, at)
         return record
 
     async def _insert_trust_audit(
@@ -311,7 +332,12 @@ class PostgresPlatformRepository:
             """INSERT INTO security_trust_audit(
                    id,resource_type,resource_id,action,reviewer_id,occurred_at
                ) VALUES($1,$2,$3,$4,$5,$6)""",
-            uuid4(), resource_type, resource_id, action, reviewer_id, at,
+            uuid4(),
+            resource_type,
+            resource_id,
+            action,
+            reviewer_id,
+            at,
         )
 
     async def save_security_analysis(
@@ -380,9 +406,15 @@ class PostgresPlatformRepository:
                            created_at,updated_at,expires_at
                        ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
                        ON CONFLICT(id) DO NOTHING""",
-                    record.conversation_id, owner_id, record.status.value, record.active_analysis_id,
-                    record.context_version, record.model_dump_json(), record.created_at,
-                    record.updated_at, record.expires_at,
+                    record.conversation_id,
+                    owner_id,
+                    record.status.value,
+                    record.active_analysis_id,
+                    record.context_version,
+                    record.model_dump_json(),
+                    record.created_at,
+                    record.updated_at,
+                    record.expires_at,
                 )
                 updated = status.endswith("1")
             else:
@@ -390,32 +422,44 @@ class PostgresPlatformRepository:
                     """UPDATE security_conversations SET status=$3,active_analysis_id=$4,
                            context_version=$5,summary=$6::jsonb,updated_at=$7,expires_at=$8
                        WHERE id=$1 AND owner_id=$2 AND context_version=$9 RETURNING id""",
-                    record.conversation_id, owner_id, record.status.value, record.active_analysis_id,
-                    record.context_version, record.model_dump_json(), record.updated_at,
-                    record.expires_at, expected_version,
+                    record.conversation_id,
+                    owner_id,
+                    record.status.value,
+                    record.active_analysis_id,
+                    record.context_version,
+                    record.model_dump_json(),
+                    record.updated_at,
+                    record.expires_at,
+                    expected_version,
                 )
                 updated = row is not None
             if not updated:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Security conversation was updated by another turn.", retryable=True,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security conversation was updated by another turn.",
+                    retryable=True,
                 )
             await connection.execute(
                 """INSERT INTO security_conversation_turns(
                        conversation_id,context_version,analysis_id,created_at
                    ) VALUES($1,$2,$3,$4)""",
-                record.conversation_id, record.context_version, record.active_analysis_id, record.updated_at,
+                record.conversation_id,
+                record.context_version,
+                record.active_analysis_id,
+                record.updated_at,
             )
 
-    async def finalize_security_conversation(
-        self, owner_id: str, record: SecurityConversationV4
-    ) -> None:
+    async def finalize_security_conversation(self, owner_id: str, record: SecurityConversationV4) -> None:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             await connection.execute(
                 """UPDATE security_conversations SET summary=$3::jsonb,updated_at=$4
                    WHERE id=$1 AND owner_id=$2 AND context_version=$5""",
-                record.conversation_id, owner_id, record.model_dump_json(), record.updated_at,
+                record.conversation_id,
+                owner_id,
+                record.model_dump_json(),
+                record.updated_at,
                 record.context_version,
             )
 
@@ -441,9 +485,7 @@ class PostgresPlatformRepository:
     async def expire_security_conversations(self, cutoff: datetime) -> int:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
-            result = await connection.execute(
-                "DELETE FROM security_conversations WHERE expires_at <= $1", cutoff
-            )
+            result = await connection.execute("DELETE FROM security_conversations WHERE expires_at <= $1", cutoff)
         return int(result.rsplit(" ", 1)[-1])
 
     async def load_security_analysis(self, analysis_id: str):
@@ -483,9 +525,15 @@ class PostgresPlatformRepository:
                    ) VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9)
                    ON CONFLICT(analysis_id) DO UPDATE SET analysis_id=EXCLUDED.analysis_id
                    RETURNING record""",
-                record.memory_id, record.analysis_id, record.model_dump_json(), record.admin_verdict.value,
-                record.first_seen_at, record.last_seen_at, record.report_count,
-                record.fingerprint_version, record.risk_policy_version,
+                record.memory_id,
+                record.analysis_id,
+                record.model_dump_json(),
+                record.admin_verdict.value,
+                record.first_seen_at,
+                record.last_seen_at,
+                record.report_count,
+                record.fingerprint_version,
+                record.risk_policy_version,
             )
         return SecurityMemoryRecordV4.model_validate(_json_value(row["record"]))
 
@@ -513,9 +561,7 @@ class PostgresPlatformRepository:
     ) -> SecurityMemoryRecordV4 | None:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
-            row = await connection.fetchrow(
-                "SELECT record FROM security_memory WHERE id=$1 FOR UPDATE", memory_id
-            )
+            row = await connection.fetchrow("SELECT record FROM security_memory WHERE id=$1 FOR UPDATE", memory_id)
             if row is None:
                 return None
             current = SecurityMemoryRecordV4.model_validate(_json_value(row["record"]))
@@ -533,11 +579,16 @@ class PostgresPlatformRepository:
             )
             await connection.execute(
                 "UPDATE security_memory SET record=$2::jsonb,admin_verdict=$3 WHERE id=$1",
-                memory_id, updated.model_dump_json(), verdict.value,
+                memory_id,
+                updated.model_dump_json(),
+                verdict.value,
             )
             await connection.execute(
                 "INSERT INTO security_memory_audit(id,memory_id,record,occurred_at) VALUES($1,$2,$3::jsonb,$4)",
-                audit.audit_id, memory_id, audit.model_dump_json(), occurred_at,
+                audit.audit_id,
+                memory_id,
+                audit.model_dump_json(),
+                occurred_at,
             )
         return updated
 
@@ -558,31 +609,33 @@ class PostgresPlatformRepository:
                        clustering_version,created_at
                    ) VALUES($1,$2::jsonb,$3,$4,$5,$6,$7)
                    ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING record""",
-                record.campaign_id, record.model_dump_json(), record.reviewer_status.value,
-                record.window_started_at, record.window_ended_at, record.clustering_version, record.created_at,
+                record.campaign_id,
+                record.model_dump_json(),
+                record.reviewer_status.value,
+                record.window_started_at,
+                record.window_ended_at,
+                record.clustering_version,
+                record.created_at,
             )
             for analysis_id in record.analysis_ids:
                 await connection.execute(
                     """INSERT INTO security_campaign_members_v4(campaign_id,analysis_id)
                        VALUES($1,$2) ON CONFLICT DO NOTHING""",
-                    record.campaign_id, analysis_id,
+                    record.campaign_id,
+                    analysis_id,
                 )
         return SecurityCampaignRecordV4.model_validate(_json_value(row["record"]))
 
     async def list_security_campaigns(self) -> list[SecurityCampaignRecordV4]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                "SELECT record FROM security_campaigns_v4 ORDER BY window_ended_at DESC"
-            )
+            rows = await connection.fetch("SELECT record FROM security_campaigns_v4 ORDER BY window_ended_at DESC")
         return [SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) for row in rows]
 
     async def get_security_campaign(self, campaign_id: UUID) -> SecurityCampaignRecordV4 | None:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                "SELECT record FROM security_campaigns_v4 WHERE id=$1", campaign_id
-            )
+            row = await connection.fetchrow("SELECT record FROM security_campaigns_v4 WHERE id=$1", campaign_id)
         return SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) if row else None
 
     async def review_security_campaign(
@@ -603,8 +656,10 @@ class PostgresPlatformRepository:
                 return None
             if row["reviewer_status"] != SecurityCampaignReviewerStatusV4.PENDING_REVIEW.value:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Security campaign was already reviewed.", retryable=False,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security campaign was already reviewed.",
+                    retryable=False,
                 )
             current = SecurityCampaignRecordV4.model_validate(_json_value(row["record"]))
             updated = current.model_copy(
@@ -628,12 +683,20 @@ class PostgresPlatformRepository:
             await connection.execute(
                 """UPDATE security_campaigns_v4 SET record=$2::jsonb,reviewer_status=$3,
                        reviewer_id=$4,review_note=$5,reviewed_at=$6 WHERE id=$1""",
-                campaign_id, updated.model_dump_json(), status.value, reviewer_id, note, occurred_at,
+                campaign_id,
+                updated.model_dump_json(),
+                status.value,
+                reviewer_id,
+                note,
+                occurred_at,
             )
             await connection.execute(
                 """INSERT INTO security_campaign_audit(id,campaign_id,record,occurred_at)
                    VALUES($1,$2,$3::jsonb,$4)""",
-                audit.audit_id, campaign_id, audit.model_dump_json(), occurred_at,
+                audit.audit_id,
+                campaign_id,
+                audit.model_dump_json(),
+                occurred_at,
             )
         return updated
 
@@ -653,8 +716,12 @@ class PostgresPlatformRepository:
                 """INSERT INTO security_analysis_reports_v4(
                        id,analysis_id,owner_id,status,record,created_at
                    ) VALUES($1,$2,$3,$4,$5::jsonb,$6)""",
-                record.report_id, record.analysis_id, owner_id, record.status.value,
-                record.model_dump_json(), record.created_at,
+                record.report_id,
+                record.analysis_id,
+                owner_id,
+                record.status.value,
+                record.model_dump_json(),
+                record.created_at,
             )
             row = await connection.fetchrow(
                 "SELECT id,record FROM security_memory WHERE analysis_id=$1 FOR UPDATE", record.analysis_id
@@ -664,24 +731,23 @@ class PostgresPlatformRepository:
                 updated = memory.model_copy(update={"report_count": memory.report_count + 1})
                 await connection.execute(
                     "UPDATE security_memory SET record=$2::jsonb,report_count=$3 WHERE id=$1",
-                    row["id"], updated.model_dump_json(), updated.report_count,
+                    row["id"],
+                    updated.model_dump_json(),
+                    updated.report_count,
                 )
 
-    async def list_security_reports(
-        self, analysis_id: str, owner_id: str
-    ) -> list[SecurityReportRecordV4]:
+    async def list_security_reports(self, analysis_id: str, owner_id: str) -> list[SecurityReportRecordV4]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
                 """SELECT record FROM security_analysis_reports_v4
                    WHERE analysis_id=$1 AND owner_id=$2 ORDER BY created_at""",
-                UUID(analysis_id), owner_id,
+                UUID(analysis_id),
+                owner_id,
             )
         return [SecurityReportRecordV4.model_validate(_json_value(row["record"])) for row in rows]
 
-    async def list_security_reports_admin(
-        self, status: str | None = None
-    ) -> list[SecurityReportAdminRecordV4]:
+    async def list_security_reports_admin(self, status: str | None = None) -> list[SecurityReportAdminRecordV4]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
@@ -698,8 +764,12 @@ class PostgresPlatformRepository:
         ]
 
     async def decide_security_report(
-        self, report_id: UUID, decision: ReportReviewDecision, note: str,
-        reviewer_id: str, occurred_at: datetime,
+        self,
+        report_id: UUID,
+        decision: ReportReviewDecision,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
     ) -> SecurityReportAdminRecordV4 | None:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
@@ -711,22 +781,34 @@ class PostgresPlatformRepository:
                 return None
             if row["status"] == ReportStatus.PROCESSED.value:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Security report was already processed.", retryable=False,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security report was already processed.",
+                    retryable=False,
                 )
             current = SecurityReportRecordV4.model_validate(_json_value(row["record"]))
-            updated = current.model_copy(update={
-                "status": ReportStatus.PROCESSED, "decision": decision, "reviewer_id": reviewer_id,
-                "review_note": note, "reviewed_at": occurred_at,
-            })
+            updated = current.model_copy(
+                update={
+                    "status": ReportStatus.PROCESSED,
+                    "decision": decision,
+                    "reviewer_id": reviewer_id,
+                    "review_note": note,
+                    "reviewed_at": occurred_at,
+                }
+            )
             audit = SecurityAdminAuditEventV4(
-                resource_type=SecurityAuditResourceV4.REPORT, resource_id=report_id,
-                action=f"report_{decision.value}", actor_id=reviewer_id, note=note,
+                resource_type=SecurityAuditResourceV4.REPORT,
+                resource_id=report_id,
+                action=f"report_{decision.value}",
+                actor_id=reviewer_id,
+                note=note,
                 occurred_at=occurred_at,
             )
             await connection.execute(
                 "UPDATE security_analysis_reports_v4 SET status=$2,record=$3::jsonb WHERE id=$1",
-                report_id, updated.status.value, updated.model_dump_json(),
+                report_id,
+                updated.status.value,
+                updated.model_dump_json(),
             )
             await self._insert_security_feedback_audit(connection, audit)
         return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=row["owner_id"])
@@ -738,25 +820,26 @@ class PostgresPlatformRepository:
                 """INSERT INTO security_analysis_appeals_v4(
                        id,analysis_id,owner_id,status,record,created_at
                    ) VALUES($1,$2,$3,$4,$5::jsonb,$6)""",
-                record.appeal_id, record.analysis_id, owner_id, record.status.value,
-                record.model_dump_json(), record.created_at,
+                record.appeal_id,
+                record.analysis_id,
+                owner_id,
+                record.status.value,
+                record.model_dump_json(),
+                record.created_at,
             )
 
-    async def list_security_appeals(
-        self, analysis_id: str, owner_id: str
-    ) -> list[SecurityAppealRecordV4]:
+    async def list_security_appeals(self, analysis_id: str, owner_id: str) -> list[SecurityAppealRecordV4]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
                 """SELECT record FROM security_analysis_appeals_v4
                    WHERE analysis_id=$1 AND owner_id=$2 ORDER BY created_at""",
-                UUID(analysis_id), owner_id,
+                UUID(analysis_id),
+                owner_id,
             )
         return [SecurityAppealRecordV4.model_validate(_json_value(row["record"])) for row in rows]
 
-    async def list_security_appeals_admin(
-        self, status: str | None = None
-    ) -> list[SecurityAppealAdminRecordV4]:
+    async def list_security_appeals_admin(self, status: str | None = None) -> list[SecurityAppealAdminRecordV4]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             rows = await connection.fetch(
@@ -773,8 +856,12 @@ class PostgresPlatformRepository:
         ]
 
     async def decide_security_appeal(
-        self, appeal_id: UUID, outcome: AppealOutcome, note: str,
-        reviewer_id: str, occurred_at: datetime,
+        self,
+        appeal_id: UUID,
+        outcome: AppealOutcome,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
     ) -> SecurityAppealAdminRecordV4 | None:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
@@ -786,22 +873,34 @@ class PostgresPlatformRepository:
                 return None
             if row["status"] == AppealStatus.RESOLVED.value:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Security appeal was already resolved.", retryable=False,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security appeal was already resolved.",
+                    retryable=False,
                 )
             current = SecurityAppealRecordV4.model_validate(_json_value(row["record"]))
-            updated = current.model_copy(update={
-                "status": AppealStatus.RESOLVED, "outcome": outcome, "resolution_note": note,
-                "reviewer_id": reviewer_id, "resolved_at": occurred_at,
-            })
+            updated = current.model_copy(
+                update={
+                    "status": AppealStatus.RESOLVED,
+                    "outcome": outcome,
+                    "resolution_note": note,
+                    "reviewer_id": reviewer_id,
+                    "resolved_at": occurred_at,
+                }
+            )
             audit = SecurityAdminAuditEventV4(
-                resource_type=SecurityAuditResourceV4.APPEAL, resource_id=appeal_id,
-                action=f"appeal_{outcome.value}", actor_id=reviewer_id, note=note,
+                resource_type=SecurityAuditResourceV4.APPEAL,
+                resource_id=appeal_id,
+                action=f"appeal_{outcome.value}",
+                actor_id=reviewer_id,
+                note=note,
                 occurred_at=occurred_at,
             )
             await connection.execute(
                 "UPDATE security_analysis_appeals_v4 SET status=$2,record=$3::jsonb WHERE id=$1",
-                appeal_id, updated.status.value, updated.model_dump_json(),
+                appeal_id,
+                updated.status.value,
+                updated.model_dump_json(),
             )
             await self._insert_security_feedback_audit(connection, audit)
         return SecurityAppealAdminRecordV4(**updated.model_dump(), owner_id=row["owner_id"])
@@ -811,8 +910,14 @@ class PostgresPlatformRepository:
             """INSERT INTO security_feedback_audit_v4(
                    id,resource_type,resource_id,action,actor_id,note,evidence_refs,occurred_at
                ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)""",
-            audit.audit_id, audit.resource_type.value, audit.resource_id, audit.action,
-            audit.actor_id, audit.note, json.dumps(audit.evidence_refs), audit.occurred_at,
+            audit.audit_id,
+            audit.resource_type.value,
+            audit.resource_id,
+            audit.action,
+            audit.actor_id,
+            audit.note,
+            json.dumps(audit.evidence_refs),
+            audit.occurred_at,
         )
 
     async def list_security_admin_audit(self) -> list[SecurityAdminAuditEventV4]:
@@ -831,46 +936,69 @@ class PostgresPlatformRepository:
             campaigns = await connection.fetch("SELECT record FROM security_campaign_audit")
         events = [
             SecurityAdminAuditEventV4(
-                audit_id=row["id"], resource_type=SecurityAuditResourceV4(row["resource_type"]),
-                resource_id=row["resource_id"], action=row["action"], actor_id=row["actor_id"],
-                note=row["note"], evidence_refs=list(_json_value(row["evidence_refs"])),
+                audit_id=row["id"],
+                resource_type=SecurityAuditResourceV4(row["resource_type"]),
+                resource_id=row["resource_id"],
+                action=row["action"],
+                actor_id=row["actor_id"],
+                note=row["note"],
+                evidence_refs=list(_json_value(row["evidence_refs"])),
                 occurred_at=row["occurred_at"],
             )
             for row in [*feedback, *trust]
         ]
         for row in memory:
             item = SecurityMemoryAuditRecordV4.model_validate(_json_value(row["record"]))
-            events.append(SecurityAdminAuditEventV4(
-                audit_id=item.audit_id, resource_type=SecurityAuditResourceV4.MEMORY,
-                resource_id=item.memory_id, action=f"memory_{item.verdict.value}", actor_id=item.reviewer_id,
-                note=item.note, occurred_at=item.occurred_at, evidence_refs=item.evidence_refs,
-            ))
+            events.append(
+                SecurityAdminAuditEventV4(
+                    audit_id=item.audit_id,
+                    resource_type=SecurityAuditResourceV4.MEMORY,
+                    resource_id=item.memory_id,
+                    action=f"memory_{item.verdict.value}",
+                    actor_id=item.reviewer_id,
+                    note=item.note,
+                    occurred_at=item.occurred_at,
+                    evidence_refs=item.evidence_refs,
+                )
+            )
         for row in campaigns:
             item = SecurityCampaignAuditRecordV4.model_validate(_json_value(row["record"]))
-            events.append(SecurityAdminAuditEventV4(
-                audit_id=item.audit_id, resource_type=SecurityAuditResourceV4.CAMPAIGN,
-                resource_id=item.campaign_id, action=f"campaign_{item.status.value}", actor_id=item.reviewer_id,
-                note=item.note, occurred_at=item.occurred_at, evidence_refs=item.evidence_refs,
-            ))
+            events.append(
+                SecurityAdminAuditEventV4(
+                    audit_id=item.audit_id,
+                    resource_type=SecurityAuditResourceV4.CAMPAIGN,
+                    resource_id=item.campaign_id,
+                    action=f"campaign_{item.status.value}",
+                    actor_id=item.reviewer_id,
+                    note=item.note,
+                    occurred_at=item.occurred_at,
+                    evidence_refs=item.evidence_refs,
+                )
+            )
         return sorted(events, key=lambda item: item.occurred_at, reverse=True)
 
-    async def claim_security_tool_execution(
-        self, analysis_id: str, step_id: str, target: str, provider: str
-    ) -> bool:
+    async def claim_security_tool_execution(self, analysis_id: str, step_id: str, target: str, provider: str) -> bool:
         pool = await self._get_pool()
         now = datetime.now(UTC)
         async with pool.acquire() as connection, connection.transaction():
             row = await connection.fetchrow(
                 """SELECT status, attempt_count FROM security_tool_executions
                    WHERE analysis_id=$1 AND step_id=$2 AND target_ref=$3 AND provider=$4 FOR UPDATE""",
-                UUID(analysis_id), step_id, target, provider,
+                UUID(analysis_id),
+                step_id,
+                target,
+                provider,
             )
             if row is None:
                 await connection.execute(
                     """INSERT INTO security_tool_executions(
                            analysis_id,step_id,target_ref,provider,status,attempt_count,updated_at
                        ) VALUES($1,$2,$3,$4,'running',1,$5)""",
-                    UUID(analysis_id), step_id, target, provider, now,
+                    UUID(analysis_id),
+                    step_id,
+                    target,
+                    provider,
+                    now,
                 )
                 return True
             if row["status"] != "failed":
@@ -878,7 +1006,12 @@ class PostgresPlatformRepository:
             await connection.execute(
                 """UPDATE security_tool_executions SET status='running', attempt_count=$5, updated_at=$6
                    WHERE analysis_id=$1 AND step_id=$2 AND target_ref=$3 AND provider=$4""",
-                UUID(analysis_id), step_id, target, provider, row["attempt_count"] + 1, now,
+                UUID(analysis_id),
+                step_id,
+                target,
+                provider,
+                row["attempt_count"] + 1,
+                now,
             )
             return True
 
@@ -892,7 +1025,12 @@ class PostgresPlatformRepository:
             updated = await connection.execute(
                 """UPDATE security_tool_executions SET status=$5, updated_at=$6
                    WHERE analysis_id=$1 AND step_id=$2 AND target_ref=$3 AND provider=$4""",
-                UUID(analysis_id), step_id, target, provider, status, datetime.now(UTC),
+                UUID(analysis_id),
+                step_id,
+                target,
+                provider,
+                status,
+                datetime.now(UTC),
             )
         if updated != "UPDATE 1":
             raise LookupError("security tool execution was not claimed")
@@ -1639,9 +1777,7 @@ class PostgresPlatformRepository:
                 decision=ReviewDecision(row["decision"]),
                 action=ReviewedAction(row["action"]),
                 execution_status=AdminActionStatus(row["execution_status"]),
-                evidence_snapshot=[
-                    Evidence.model_validate(item) for item in _json_value(row["evidence_snapshot"])
-                ],
+                evidence_snapshot=[Evidence.model_validate(item) for item in _json_value(row["evidence_snapshot"])],
                 note=row["note"],
                 decided_at=row["decided_at"],
                 execution_error=row["execution_error"],

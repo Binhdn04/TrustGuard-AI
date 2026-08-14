@@ -273,9 +273,7 @@ class SQLiteBlacklistRepository:
         columns = {row[1] for row in self._connection.execute("PRAGMA table_info(admin_decisions)").fetchall()}
         if "analysis_id" not in columns:
             self._connection.execute("ALTER TABLE admin_decisions ADD COLUMN analysis_id TEXT")
-        report_columns = {
-            row[1] for row in self._connection.execute("PRAGMA table_info(security_analysis_reports_v4)")
-        }
+        report_columns = {row[1] for row in self._connection.execute("PRAGMA table_info(security_analysis_reports_v4)")}
         if "status" not in report_columns:
             self._connection.execute(
                 "ALTER TABLE security_analysis_reports_v4 ADD COLUMN status TEXT NOT NULL DEFAULT 'submitted'"
@@ -405,7 +403,9 @@ class SQLiteBlacklistRepository:
                        brand_id,record_json,lifecycle,effective_from,effective_until,created_at
                    ) VALUES(?,?,?,?,?,?)""",
                 (
-                    str(record.brand_id), record.model_dump_json(), record.lifecycle.value,
+                    str(record.brand_id),
+                    record.model_dump_json(),
+                    record.lifecycle.value,
                     record.effective_from.isoformat(),
                     record.effective_until.isoformat() if record.effective_until else None,
                     record.created_at.isoformat(),
@@ -421,7 +421,8 @@ class SQLiteBlacklistRepository:
 
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
         return [
-            item for item in await self.list_brands()
+            item
+            for item in await self.list_brands()
             if item.lifecycle is TrustLifecycleV4.ACTIVE
             and item.effective_from <= at
             and (item.effective_until is None or at < item.effective_until)
@@ -452,35 +453,34 @@ class SQLiteBlacklistRepository:
                        whitelist_id,scope,indicator,record_json,lifecycle,effective_from,effective_until,created_at
                    ) VALUES(?,?,?,?,?,?,?,?)""",
                 (
-                    str(record.whitelist_id), record.scope.value, record.indicator, record.model_dump_json(),
-                    record.lifecycle.value, record.effective_from.isoformat(),
+                    str(record.whitelist_id),
+                    record.scope.value,
+                    record.indicator,
+                    record.model_dump_json(),
+                    record.lifecycle.value,
+                    record.effective_from.isoformat(),
                     record.effective_until.isoformat() if record.effective_until else None,
                     record.created_at.isoformat(),
                 ),
             )
-            self._trust_audit(
-                "whitelist", str(record.whitelist_id), "created", record.reviewer_id, record.created_at
-            )
+            self._trust_audit("whitelist", str(record.whitelist_id), "created", record.reviewer_id, record.created_at)
             self._connection.commit()
 
     async def list_whitelist(self) -> list[WhitelistRecordV4]:
         async with self._lock:
-            rows = self._connection.execute(
-                "SELECT record_json FROM security_whitelist ORDER BY created_at"
-            ).fetchall()
+            rows = self._connection.execute("SELECT record_json FROM security_whitelist ORDER BY created_at").fetchall()
         return [WhitelistRecordV4.model_validate_json(row[0]) for row in rows]
 
     async def list_active_whitelist(self, at: datetime) -> list[WhitelistRecordV4]:
         return [
-            item for item in await self.list_whitelist()
+            item
+            for item in await self.list_whitelist()
             if item.lifecycle is TrustLifecycleV4.ACTIVE
             and item.effective_from <= at
             and (item.effective_until is None or at < item.effective_until)
         ]
 
-    async def disable_whitelist(
-        self, whitelist_id: str, reviewer_id: str, at: datetime
-    ) -> WhitelistRecordV4 | None:
+    async def disable_whitelist(self, whitelist_id: str, reviewer_id: str, at: datetime) -> WhitelistRecordV4 | None:
         async with self._lock:
             row = self._connection.execute(
                 "SELECT record_json FROM security_whitelist WHERE whitelist_id=?", (whitelist_id,)
@@ -569,9 +569,15 @@ class SQLiteBlacklistRepository:
                                record_json,created_at,updated_at,expires_at
                            ) VALUES(?,?,?,?,?,?,?,?,?)""",
                         (
-                            str(record.conversation_id), owner_id, record.status.value,
-                            str(record.active_analysis_id), record.context_version, record.model_dump_json(),
-                            record.created_at.isoformat(), record.updated_at.isoformat(), record.expires_at.isoformat(),
+                            str(record.conversation_id),
+                            owner_id,
+                            record.status.value,
+                            str(record.active_analysis_id),
+                            record.context_version,
+                            record.model_dump_json(),
+                            record.created_at.isoformat(),
+                            record.updated_at.isoformat(),
+                            record.expires_at.isoformat(),
                         ),
                     )
                 else:
@@ -580,9 +586,15 @@ class SQLiteBlacklistRepository:
                                record_json=?,updated_at=?,expires_at=?
                            WHERE conversation_id=? AND owner_id=? AND context_version=?""",
                         (
-                            record.status.value, str(record.active_analysis_id), record.context_version,
-                            record.model_dump_json(), record.updated_at.isoformat(), record.expires_at.isoformat(),
-                            str(record.conversation_id), owner_id, expected_version,
+                            record.status.value,
+                            str(record.active_analysis_id),
+                            record.context_version,
+                            record.model_dump_json(),
+                            record.updated_at.isoformat(),
+                            record.expires_at.isoformat(),
+                            str(record.conversation_id),
+                            owner_id,
+                            expected_version,
                         ),
                     )
                 if cursor.rowcount != 1:
@@ -591,32 +603,41 @@ class SQLiteBlacklistRepository:
                     """INSERT INTO security_conversation_turns(
                            conversation_id,context_version,analysis_id,created_at
                        ) VALUES(?,?,?,?)""",
-                    (str(record.conversation_id), record.context_version, str(record.active_analysis_id), record.updated_at.isoformat()),
+                    (
+                        str(record.conversation_id),
+                        record.context_version,
+                        str(record.active_analysis_id),
+                        record.updated_at.isoformat(),
+                    ),
                 )
                 self._connection.commit()
             except Exception as exc:
                 self._connection.rollback()
                 if isinstance(exc, RuntimeError) and str(exc) == "SECURITY_CONVERSATION_VERSION_CONFLICT":
                     raise PlatformError(
-                        status_code=409, code=ErrorCode.CONFLICT,
-                        message="Security conversation was updated by another turn.", retryable=True,
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Security conversation was updated by another turn.",
+                        retryable=True,
                     ) from exc
                 raise
 
-    async def finalize_security_conversation(
-        self, owner_id: str, record: SecurityConversationV4
-    ) -> None:
+    async def finalize_security_conversation(self, owner_id: str, record: SecurityConversationV4) -> None:
         async with self._lock:
             self._connection.execute(
                 """UPDATE security_conversations SET record_json=?,updated_at=?
                    WHERE conversation_id=? AND owner_id=? AND context_version=?""",
-                (record.model_dump_json(), record.updated_at.isoformat(), str(record.conversation_id), owner_id, record.context_version),
+                (
+                    record.model_dump_json(),
+                    record.updated_at.isoformat(),
+                    str(record.conversation_id),
+                    owner_id,
+                    record.context_version,
+                ),
             )
             self._connection.commit()
 
-    async def load_security_conversation(
-        self, conversation_id: str
-    ) -> tuple[str, SecurityConversationV4] | None:
+    async def load_security_conversation(self, conversation_id: str) -> tuple[str, SecurityConversationV4] | None:
         async with self._lock:
             row = self._connection.execute(
                 "SELECT owner_id,record_json FROM security_conversations WHERE conversation_id=?",
@@ -691,9 +712,15 @@ class SQLiteBlacklistRepository:
                        report_count,fingerprint_version,risk_policy_version
                    ) VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
-                    str(record.memory_id), str(record.analysis_id), record.model_dump_json(),
-                    record.admin_verdict.value, record.first_seen_at.isoformat(), record.last_seen_at.isoformat(),
-                    record.report_count, record.fingerprint_version, record.risk_policy_version,
+                    str(record.memory_id),
+                    str(record.analysis_id),
+                    record.model_dump_json(),
+                    record.admin_verdict.value,
+                    record.first_seen_at.isoformat(),
+                    record.last_seen_at.isoformat(),
+                    record.report_count,
+                    record.fingerprint_version,
+                    record.risk_policy_version,
                 ),
             )
             row = self._connection.execute(
@@ -780,9 +807,13 @@ class SQLiteBlacklistRepository:
                            clustering_version,created_at
                        ) VALUES(?,?,?,?,?,?,?)""",
                     (
-                        str(record.campaign_id), record.model_dump_json(), record.reviewer_status.value,
-                        record.window_started_at.isoformat(), record.window_ended_at.isoformat(),
-                        record.clustering_version, record.created_at.isoformat(),
+                        str(record.campaign_id),
+                        record.model_dump_json(),
+                        record.reviewer_status.value,
+                        record.window_started_at.isoformat(),
+                        record.window_ended_at.isoformat(),
+                        record.clustering_version,
+                        record.created_at.isoformat(),
                     ),
                 )
                 for analysis_id in record.analysis_ids:
@@ -834,8 +865,10 @@ class SQLiteBlacklistRepository:
                 current = SecurityCampaignRecordV4.model_validate_json(row[0])
                 if current.reviewer_status is not SecurityCampaignReviewerStatusV4.PENDING_REVIEW:
                     raise PlatformError(
-                        status_code=409, code=ErrorCode.CONFLICT,
-                        message="Security campaign was already reviewed.", retryable=False,
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Security campaign was already reviewed.",
+                        retryable=False,
                     )
                 updated = current.model_copy(
                     update={
@@ -885,8 +918,14 @@ class SQLiteBlacklistRepository:
                     """INSERT INTO security_analysis_reports_v4(
                            report_id,analysis_id,owner_id,status,record_json,created_at
                        ) VALUES(?,?,?,?,?,?)""",
-                    (str(record.report_id), str(record.analysis_id), owner_id, record.status.value,
-                     record.model_dump_json(), record.created_at.isoformat()),
+                    (
+                        str(record.report_id),
+                        str(record.analysis_id),
+                        owner_id,
+                        record.status.value,
+                        record.model_dump_json(),
+                        record.created_at.isoformat(),
+                    ),
                 )
                 memory_row = self._connection.execute(
                     "SELECT memory_id,record_json FROM security_memory WHERE analysis_id=?",
@@ -904,9 +943,7 @@ class SQLiteBlacklistRepository:
                 self._connection.rollback()
                 raise
 
-    async def list_security_reports(
-        self, analysis_id: str, owner_id: str
-    ) -> list[SecurityReportRecordV4]:
+    async def list_security_reports(self, analysis_id: str, owner_id: str) -> list[SecurityReportRecordV4]:
         async with self._lock:
             rows = self._connection.execute(
                 """SELECT record_json FROM security_analysis_reports_v4
@@ -915,9 +952,7 @@ class SQLiteBlacklistRepository:
             ).fetchall()
         return [SecurityReportRecordV4.model_validate_json(row[0]) for row in rows]
 
-    async def list_security_reports_admin(
-        self, status: str | None = None
-    ) -> list[SecurityReportAdminRecordV4]:
+    async def list_security_reports_admin(self, status: str | None = None) -> list[SecurityReportAdminRecordV4]:
         query = "SELECT owner_id,record_json FROM security_analysis_reports_v4"
         params: tuple[str, ...] = ()
         if status is not None:
@@ -934,8 +969,12 @@ class SQLiteBlacklistRepository:
         ]
 
     async def decide_security_report(
-        self, report_id: UUID, decision: ReportReviewDecision, note: str,
-        reviewer_id: str, occurred_at: datetime,
+        self,
+        report_id: UUID,
+        decision: ReportReviewDecision,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
     ) -> SecurityReportAdminRecordV4 | None:
         async with self._lock:
             try:
@@ -949,17 +988,21 @@ class SQLiteBlacklistRepository:
                     return None
                 if row[1] == ReportStatus.PROCESSED.value:
                     raise PlatformError(
-                        status_code=409, code=ErrorCode.CONFLICT,
-                        message="Security report was already processed.", retryable=False,
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Security report was already processed.",
+                        retryable=False,
                     )
                 current = SecurityReportRecordV4.model_validate_json(row[2])
-                updated = current.model_copy(update={
-                    "status": ReportStatus.PROCESSED,
-                    "decision": decision,
-                    "reviewer_id": reviewer_id,
-                    "review_note": note,
-                    "reviewed_at": occurred_at,
-                })
+                updated = current.model_copy(
+                    update={
+                        "status": ReportStatus.PROCESSED,
+                        "decision": decision,
+                        "reviewer_id": reviewer_id,
+                        "review_note": note,
+                        "reviewed_at": occurred_at,
+                    }
+                )
                 audit = SecurityAdminAuditEventV4(
                     resource_type=SecurityAuditResourceV4.REPORT,
                     resource_id=report_id,
@@ -985,13 +1028,18 @@ class SQLiteBlacklistRepository:
                 """INSERT INTO security_analysis_appeals_v4(
                        appeal_id,analysis_id,owner_id,status,record_json,created_at
                    ) VALUES(?,?,?,?,?,?)""",
-                (str(record.appeal_id), str(record.analysis_id), owner_id, record.status.value, record.model_dump_json(), record.created_at.isoformat()),
+                (
+                    str(record.appeal_id),
+                    str(record.analysis_id),
+                    owner_id,
+                    record.status.value,
+                    record.model_dump_json(),
+                    record.created_at.isoformat(),
+                ),
             )
             self._connection.commit()
 
-    async def list_security_appeals(
-        self, analysis_id: str, owner_id: str
-    ) -> list[SecurityAppealRecordV4]:
+    async def list_security_appeals(self, analysis_id: str, owner_id: str) -> list[SecurityAppealRecordV4]:
         async with self._lock:
             rows = self._connection.execute(
                 """SELECT record_json FROM security_analysis_appeals_v4
@@ -1000,9 +1048,7 @@ class SQLiteBlacklistRepository:
             ).fetchall()
         return [SecurityAppealRecordV4.model_validate_json(row[0]) for row in rows]
 
-    async def list_security_appeals_admin(
-        self, status: str | None = None
-    ) -> list[SecurityAppealAdminRecordV4]:
+    async def list_security_appeals_admin(self, status: str | None = None) -> list[SecurityAppealAdminRecordV4]:
         query = "SELECT owner_id,record_json FROM security_analysis_appeals_v4"
         params: tuple[str, ...] = ()
         if status is not None:
@@ -1019,8 +1065,12 @@ class SQLiteBlacklistRepository:
         ]
 
     async def decide_security_appeal(
-        self, appeal_id: UUID, outcome: AppealOutcome, note: str,
-        reviewer_id: str, occurred_at: datetime,
+        self,
+        appeal_id: UUID,
+        outcome: AppealOutcome,
+        note: str,
+        reviewer_id: str,
+        occurred_at: datetime,
     ) -> SecurityAppealAdminRecordV4 | None:
         async with self._lock:
             try:
@@ -1034,17 +1084,21 @@ class SQLiteBlacklistRepository:
                     return None
                 if row[1] == AppealStatus.RESOLVED.value:
                     raise PlatformError(
-                        status_code=409, code=ErrorCode.CONFLICT,
-                        message="Security appeal was already resolved.", retryable=False,
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Security appeal was already resolved.",
+                        retryable=False,
                     )
                 current = SecurityAppealRecordV4.model_validate_json(row[2])
-                updated = current.model_copy(update={
-                    "status": AppealStatus.RESOLVED,
-                    "outcome": outcome,
-                    "resolution_note": note,
-                    "reviewer_id": reviewer_id,
-                    "resolved_at": occurred_at,
-                })
+                updated = current.model_copy(
+                    update={
+                        "status": AppealStatus.RESOLVED,
+                        "outcome": outcome,
+                        "resolution_note": note,
+                        "reviewer_id": reviewer_id,
+                        "resolved_at": occurred_at,
+                    }
+                )
                 audit = SecurityAdminAuditEventV4(
                     resource_type=SecurityAuditResourceV4.APPEAL,
                     resource_id=appeal_id,
@@ -1070,8 +1124,14 @@ class SQLiteBlacklistRepository:
                    audit_id,resource_type,resource_id,action,actor_id,note,evidence_refs_json,occurred_at
                ) VALUES(?,?,?,?,?,?,?,?)""",
             (
-                str(audit.audit_id), audit.resource_type.value, str(audit.resource_id), audit.action,
-                audit.actor_id, audit.note, json.dumps(audit.evidence_refs), audit.occurred_at.isoformat(),
+                str(audit.audit_id),
+                audit.resource_type.value,
+                str(audit.resource_id),
+                audit.action,
+                audit.actor_id,
+                audit.note,
+                json.dumps(audit.evidence_refs),
+                audit.occurred_at.isoformat(),
             ),
         )
 
@@ -1089,26 +1149,45 @@ class SQLiteBlacklistRepository:
             campaigns = self._connection.execute("SELECT record_json FROM security_campaign_audit").fetchall()
         events = [
             SecurityAdminAuditEventV4(
-                audit_id=UUID(row[0]), resource_type=SecurityAuditResourceV4(row[1]),
-                resource_id=UUID(row[2]), action=row[3], actor_id=row[4], note=row[5],
-                evidence_refs=json.loads(row[6]), occurred_at=datetime.fromisoformat(row[7]).astimezone(UTC),
+                audit_id=UUID(row[0]),
+                resource_type=SecurityAuditResourceV4(row[1]),
+                resource_id=UUID(row[2]),
+                action=row[3],
+                actor_id=row[4],
+                note=row[5],
+                evidence_refs=json.loads(row[6]),
+                occurred_at=datetime.fromisoformat(row[7]).astimezone(UTC),
             )
             for row in [*feedback, *trust]
         ]
         for row in memory:
             item = SecurityMemoryAuditRecordV4.model_validate_json(row[0])
-            events.append(SecurityAdminAuditEventV4(
-                audit_id=item.audit_id, resource_type=SecurityAuditResourceV4.MEMORY,
-                resource_id=item.memory_id, action=f"memory_{item.verdict.value}", actor_id=item.reviewer_id,
-                note=item.note, occurred_at=item.occurred_at, evidence_refs=item.evidence_refs,
-            ))
+            events.append(
+                SecurityAdminAuditEventV4(
+                    audit_id=item.audit_id,
+                    resource_type=SecurityAuditResourceV4.MEMORY,
+                    resource_id=item.memory_id,
+                    action=f"memory_{item.verdict.value}",
+                    actor_id=item.reviewer_id,
+                    note=item.note,
+                    occurred_at=item.occurred_at,
+                    evidence_refs=item.evidence_refs,
+                )
+            )
         for row in campaigns:
             item = SecurityCampaignAuditRecordV4.model_validate_json(row[0])
-            events.append(SecurityAdminAuditEventV4(
-                audit_id=item.audit_id, resource_type=SecurityAuditResourceV4.CAMPAIGN,
-                resource_id=item.campaign_id, action=f"campaign_{item.status.value}", actor_id=item.reviewer_id,
-                note=item.note, occurred_at=item.occurred_at, evidence_refs=item.evidence_refs,
-            ))
+            events.append(
+                SecurityAdminAuditEventV4(
+                    audit_id=item.audit_id,
+                    resource_type=SecurityAuditResourceV4.CAMPAIGN,
+                    resource_id=item.campaign_id,
+                    action=f"campaign_{item.status.value}",
+                    actor_id=item.reviewer_id,
+                    note=item.note,
+                    occurred_at=item.occurred_at,
+                    evidence_refs=item.evidence_refs,
+                )
+            )
         return sorted(events, key=lambda item: item.occurred_at, reverse=True)
 
     async def get(self, domain: str) -> BlacklistLookupEntry | None:
@@ -1584,9 +1663,7 @@ class SQLiteBlacklistRepository:
                 self._connection.rollback()
                 raise
 
-    async def claim_security_tool_execution(
-        self, analysis_id: str, step_id: str, target: str, provider: str
-    ) -> bool:
+    async def claim_security_tool_execution(self, analysis_id: str, step_id: str, target: str, provider: str) -> bool:
         now = datetime.now(UTC).isoformat()
         key = (analysis_id, step_id, target, provider)
         async with self._lock:

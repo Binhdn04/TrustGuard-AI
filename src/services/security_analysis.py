@@ -164,6 +164,7 @@ class SecurityAnalysisService:
             active_analysis_id=response.analysis_id,
             summary=SecurityConversationSummaryV4(
                 security_context=merged,
+                assistant_context=(existing.summary.assistant_context if existing else None),
                 evidence_refs=existing.summary.evidence_refs if existing else [],
             ),
             context_version=version,
@@ -265,7 +266,11 @@ class SecurityAnalysisService:
         updated = record.model_copy(
             update={
                 "summary": record.summary.model_copy(
-                    update={"security_context": _redact_context(response.security_context), "evidence_refs": refs[:100]}
+                    update={
+                        "security_context": _redact_context(response.security_context),
+                        "assistant_context": response.assistant_context,
+                        "evidence_refs": refs[:100],
+                    }
                 ),
                 "updated_at": response.completed_at or datetime.now(UTC),
             }
@@ -352,9 +357,7 @@ class SecurityAnalysisService:
             self._reports[record.report_id] = (principal.user_id, record)
         return record
 
-    async def list_reports_for(
-        self, analysis_id: UUID, principal: Principal
-    ) -> list[SecurityReportRecordV4]:
+    async def list_reports_for(self, analysis_id: UUID, principal: Principal) -> list[SecurityReportRecordV4]:
         await self.get_for(analysis_id, principal)
         load = getattr(self._repository, "list_security_reports", None)
         if load is not None:
@@ -385,9 +388,7 @@ class SecurityAnalysisService:
             self._appeals[record.appeal_id] = (principal.user_id, record)
         return record
 
-    async def list_appeals_for(
-        self, analysis_id: UUID, principal: Principal
-    ) -> list[SecurityAppealRecordV4]:
+    async def list_appeals_for(self, analysis_id: UUID, principal: Principal) -> list[SecurityAppealRecordV4]:
         await self.get_for(analysis_id, principal)
         load = getattr(self._repository, "list_security_appeals", None)
         if load is not None:
@@ -428,39 +429,49 @@ class SecurityAnalysisService:
             record = await decide(report_id, decision, note, principal.user_id, now)
             if record is None:
                 raise PlatformError(
-                    status_code=404, code=ErrorCode.NOT_FOUND,
-                    message="Security report was not found.", retryable=False,
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security report was not found.",
+                    retryable=False,
                 )
             return record
         async with self._lock:
             stored = self._reports.get(report_id)
             if stored is None:
                 raise PlatformError(
-                    status_code=404, code=ErrorCode.NOT_FOUND,
-                    message="Security report was not found.", retryable=False,
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security report was not found.",
+                    retryable=False,
                 )
             owner_id, current = stored
             if current.status is ReportStatus.PROCESSED:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Security report was already processed.", retryable=False,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security report was already processed.",
+                    retryable=False,
                 )
-            updated = current.model_copy(update={
-                "status": ReportStatus.PROCESSED,
-                "decision": decision,
-                "reviewer_id": principal.user_id,
-                "review_note": note,
-                "reviewed_at": now,
-            })
+            updated = current.model_copy(
+                update={
+                    "status": ReportStatus.PROCESSED,
+                    "decision": decision,
+                    "reviewer_id": principal.user_id,
+                    "review_note": note,
+                    "reviewed_at": now,
+                }
+            )
             self._reports[report_id] = (owner_id, updated)
-            self._admin_audit.append(SecurityAdminAuditEventV4(
-                resource_type=SecurityAuditResourceV4.REPORT,
-                resource_id=report_id,
-                action=f"report_{decision.value}",
-                actor_id=principal.user_id,
-                note=note,
-                occurred_at=now,
-            ))
+            self._admin_audit.append(
+                SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.REPORT,
+                    resource_id=report_id,
+                    action=f"report_{decision.value}",
+                    actor_id=principal.user_id,
+                    note=note,
+                    occurred_at=now,
+                )
+            )
         return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=owner_id)
 
     async def list_appeals_admin(
@@ -492,39 +503,49 @@ class SecurityAnalysisService:
             record = await decide(appeal_id, outcome, note, principal.user_id, now)
             if record is None:
                 raise PlatformError(
-                    status_code=404, code=ErrorCode.NOT_FOUND,
-                    message="Security appeal was not found.", retryable=False,
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security appeal was not found.",
+                    retryable=False,
                 )
             return record
         async with self._lock:
             stored = self._appeals.get(appeal_id)
             if stored is None:
                 raise PlatformError(
-                    status_code=404, code=ErrorCode.NOT_FOUND,
-                    message="Security appeal was not found.", retryable=False,
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security appeal was not found.",
+                    retryable=False,
                 )
             owner_id, current = stored
             if current.status is AppealStatus.RESOLVED:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Security appeal was already resolved.", retryable=False,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security appeal was already resolved.",
+                    retryable=False,
                 )
-            updated = current.model_copy(update={
-                "status": AppealStatus.RESOLVED,
-                "outcome": outcome,
-                "resolution_note": note,
-                "reviewer_id": principal.user_id,
-                "resolved_at": now,
-            })
+            updated = current.model_copy(
+                update={
+                    "status": AppealStatus.RESOLVED,
+                    "outcome": outcome,
+                    "resolution_note": note,
+                    "reviewer_id": principal.user_id,
+                    "resolved_at": now,
+                }
+            )
             self._appeals[appeal_id] = (owner_id, updated)
-            self._admin_audit.append(SecurityAdminAuditEventV4(
-                resource_type=SecurityAuditResourceV4.APPEAL,
-                resource_id=appeal_id,
-                action=f"appeal_{outcome.value}",
-                actor_id=principal.user_id,
-                note=note,
-                occurred_at=now,
-            ))
+            self._admin_audit.append(
+                SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.APPEAL,
+                    resource_id=appeal_id,
+                    action=f"appeal_{outcome.value}",
+                    actor_id=principal.user_id,
+                    note=note,
+                    occurred_at=now,
+                )
+            )
         return SecurityAppealAdminRecordV4(**updated.model_dump(), owner_id=owner_id)
 
     async def list_admin_audit(self, principal: Principal) -> list[SecurityAdminAuditEventV4]:

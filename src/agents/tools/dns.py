@@ -62,7 +62,9 @@ class SafeDnsEvidenceResolver:
                 calls=0,
             )
         except ToolCallError as exc:
-            code = ToolErrorCode.PROVIDER_TIMEOUT if exc.error.code == "PROVIDER_TIMEOUT" else ToolErrorCode.PROVIDER_ERROR
+            code = (
+                ToolErrorCode.PROVIDER_TIMEOUT if exc.error.code == "PROVIDER_TIMEOUT" else ToolErrorCode.PROVIDER_ERROR
+            )
             return self._error(
                 started,
                 ToolResultStatus.FAILED,

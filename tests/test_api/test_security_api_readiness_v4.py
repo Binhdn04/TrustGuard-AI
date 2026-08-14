@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.api.dependencies import get_security_analysis_service, get_security_memory_service
+from src.config import Settings
 from src.main import app
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
@@ -58,6 +59,65 @@ async def test_capabilities_publish_truthful_pre_cutover_boundary(client) -> Non
 
 
 @pytest.mark.asyncio
+async def test_disabled_ai_flags_are_byte_compatible_with_legacy_capabilities(client, monkeypatch) -> None:
+    disabled_settings = Settings(_env_file=None)
+    monkeypatch.setattr(
+        "src.api.security_v4.get_settings",
+        lambda: disabled_settings,
+    )
+    disabled = await client.get("/api/v4/capabilities")
+
+    monkeypatch.setattr(
+        "src.api.security_v4.get_settings",
+        lambda: SimpleNamespace(security_release_profile="pre_cutover"),
+    )
+    legacy = await client.get("/api/v4/capabilities")
+
+    assert disabled.status_code == legacy.status_code == 200
+    assert disabled.content == legacy.content
+
+
+@pytest.mark.asyncio
+async def test_capabilities_publish_only_actually_enabled_ai_features(client, monkeypatch) -> None:
+    enabled_settings = Settings(
+        openai_api_key="configured-test-provider-key",
+        security_ai_understanding_enabled=True,
+        security_ai_planning_enabled=True,
+        security_ai_explanation_enabled=True,
+        security_async_execution_enabled=True,
+        security_memory_retrieval_enabled=True,
+        security_admin_copilot_enabled=True,
+        _env_file=None,
+    )
+    monkeypatch.setattr(
+        "src.api.security_v4.get_settings",
+        lambda: enabled_settings,
+    )
+
+    response = await client.get("/api/v4/capabilities")
+
+    assert response.status_code == 200
+    assert {
+        name: response.json()[name]
+        for name in (
+            "security_ai_understanding",
+            "security_ai_planning",
+            "security_ai_explanation",
+            "security_async_execution",
+            "security_memory_retrieval",
+            "security_admin_copilot",
+        )
+    } == {
+        "security_ai_understanding": True,
+        "security_ai_planning": True,
+        "security_ai_explanation": True,
+        "security_async_execution": True,
+        "security_memory_retrieval": True,
+        "security_admin_copilot": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_capabilities_publish_configured_cutover_profile(client, monkeypatch) -> None:
     monkeypatch.setattr(
         "src.api.security_v4.get_settings",
@@ -81,9 +141,7 @@ async def test_paginated_history_and_conversations_are_owner_scoped(client) -> N
             headers=USER_HEADERS,
             json={"message": "Bank asks me to share an OTP immediately"},
         )
-        history = await client.get(
-            "/api/v4/analyses/page", headers=USER_HEADERS, params={"limit": 1}
-        )
+        history = await client.get("/api/v4/analyses/page", headers=USER_HEADERS, params={"limit": 1})
         in_scope = await client.get(
             "/api/v4/analyses/page",
             headers=USER_HEADERS,
@@ -94,9 +152,7 @@ async def test_paginated_history_and_conversations_are_owner_scoped(client) -> N
             headers=USER_HEADERS,
             params={"scope_decision": "NEED_MORE_INFO"},
         )
-        conversations = await client.get(
-            "/api/v4/conversations", headers=USER_HEADERS, params={"limit": 1}
-        )
+        conversations = await client.get("/api/v4/conversations", headers=USER_HEADERS, params={"limit": 1})
         other_owner = await client.get("/api/v4/conversations", headers=ADMIN_HEADERS)
     finally:
         app.dependency_overrides.pop(get_security_analysis_service, None)
@@ -137,12 +193,8 @@ async def test_admin_can_review_v4_report_and_appeal_with_immutable_audit(client
         denied = await client.get("/api/v4/admin/reports", headers=USER_HEADERS)
         reports = await client.get("/api/v4/admin/reports", headers=ADMIN_HEADERS)
         appeals = await client.get("/api/v4/admin/appeals", headers=ADMIN_HEADERS)
-        detail_denied = await client.get(
-            f"/api/v4/admin/analyses/{analysis_id}", headers=USER_HEADERS
-        )
-        detail = await client.get(
-            f"/api/v4/admin/analyses/{analysis_id}", headers=ADMIN_HEADERS
-        )
+        detail_denied = await client.get(f"/api/v4/admin/analyses/{analysis_id}", headers=USER_HEADERS)
+        detail = await client.get(f"/api/v4/admin/analyses/{analysis_id}", headers=ADMIN_HEADERS)
         report_decision = await client.post(
             f"/api/v4/admin/reports/{report.json()['report_id']}/decision",
             headers=ADMIN_HEADERS,
@@ -184,12 +236,8 @@ async def test_admin_can_review_v4_report_and_appeal_with_immutable_audit(client
 @pytest.mark.asyncio
 async def test_intelligence_explorer_is_admin_only_and_paginated(client) -> None:
     denied = await client.get("/api/v4/admin/intelligence/domains", headers=USER_HEADERS)
-    domains = await client.get(
-        "/api/v4/admin/intelligence/domains", headers=ADMIN_HEADERS, params={"limit": 1}
-    )
-    threats = await client.get(
-        "/api/v4/admin/intelligence/threats", headers=ADMIN_HEADERS, params={"limit": 1}
-    )
+    domains = await client.get("/api/v4/admin/intelligence/domains", headers=ADMIN_HEADERS, params={"limit": 1})
+    threats = await client.get("/api/v4/admin/intelligence/threats", headers=ADMIN_HEADERS, params={"limit": 1})
 
     assert denied.status_code == 403
     assert domains.status_code == 200

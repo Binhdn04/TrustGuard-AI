@@ -8,9 +8,7 @@ ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 
 @pytest.mark.asyncio
 async def test_create_and_continue_conversation_from_need_more_info(client) -> None:
-    first = await client.post(
-        "/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tôi nhận được tin nhắn lạ"}
-    )
+    first = await client.post("/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tôi nhận được tin nhắn lạ"})
     first_body = first.json()
 
     second = await client.post(
@@ -22,9 +20,7 @@ async def test_create_and_continue_conversation_from_need_more_info(client) -> N
             "conversation_version": first_body["conversation_version"],
         },
     )
-    conversation = await client.get(
-        f"/api/v4/conversations/{first_body['conversation_id']}", headers=USER_HEADERS
-    )
+    conversation = await client.get(f"/api/v4/conversations/{first_body['conversation_id']}", headers=USER_HEADERS)
 
     assert first.status_code == 200
     assert first_body["scope_decision"] == "NEED_MORE_INFO"
@@ -39,13 +35,9 @@ async def test_create_and_continue_conversation_from_need_more_info(client) -> N
 
 @pytest.mark.asyncio
 async def test_conversation_owner_is_enforced_before_context_read(client) -> None:
-    created = await client.post(
-        "/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tin nhắn yêu cầu OTP"}
-    )
+    created = await client.post("/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tin nhắn yêu cầu OTP"})
     body = created.json()
-    denied_get = await client.get(
-        f"/api/v4/conversations/{body['conversation_id']}", headers=ADMIN_HEADERS
-    )
+    denied_get = await client.get(f"/api/v4/conversations/{body['conversation_id']}", headers=ADMIN_HEADERS)
     denied_continue = await client.post(
         "/api/v4/analyses",
         headers=ADMIN_HEADERS,
@@ -62,9 +54,7 @@ async def test_conversation_owner_is_enforced_before_context_read(client) -> Non
 
 @pytest.mark.asyncio
 async def test_stale_and_concurrent_conversation_updates_conflict(client) -> None:
-    created = await client.post(
-        "/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tin nhắn yêu cầu OTP"}
-    )
+    created = await client.post("/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tin nhắn yêu cầu OTP"})
     body = created.json()
     payload = {
         "message": "Họ còn yêu cầu đăng nhập",
@@ -123,9 +113,7 @@ async def test_conversation_summary_redacts_url_secrets_and_does_not_inherit_con
             "conversation_version": body["conversation_version"],
         },
     )
-    conversation = await client.get(
-        f"/api/v4/conversations/{body['conversation_id']}", headers=USER_HEADERS
-    )
+    conversation = await client.get(f"/api/v4/conversations/{body['conversation_id']}", headers=USER_HEADERS)
     retained_url = conversation.json()["summary"]["security_context"]["urls"][0]
 
     assert retained_url == "https://example.com/login"

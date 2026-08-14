@@ -21,9 +21,9 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 async def _assess(message: str, *, blacklist: list[str] | None = None):
     request = SecurityTriageCreateRequestV4(message=message)
     scoped = SecurityTriageScopeService().assess(request)
-    investigated = await SecurityInvestigationService(
-        blacklist=FakeBlacklistRepository(blacklist or [])
-    ).investigate(request, scoped)
+    investigated = await SecurityInvestigationService(blacklist=FakeBlacklistRepository(blacklist or [])).investigate(
+        request, scoped
+    )
     return assess_security_risk(investigated)
 
 
