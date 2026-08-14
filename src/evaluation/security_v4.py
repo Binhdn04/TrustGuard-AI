@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,6 +75,11 @@ EXTERNAL_TOOLS = frozenset(
     }
 )
 HIGH_RISKS = frozenset({SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS})
+RELEASE_BASELINE = {
+    "malicious_precision": 1.0,
+    "false_positive_rate": 0.0,
+    "unnecessary_provider_call_rate": 0.0,
+}
 
 
 class EvaluationEvidence(BaseModel):
@@ -335,6 +341,11 @@ def _ratio(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator else 0.0
 
 
+def _percentile(values: list[float], percentile: float) -> float:
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)] if ordered else 0.0
+
+
 def evaluate_set(cases: list[SecurityEvaluationCase]) -> dict[str, object]:
     results = [evaluate_case(case) for case in cases]
     expected_by_id = {case.id: case.expected for case in cases}
@@ -378,16 +389,30 @@ def evaluate_set(cases: list[SecurityEvaluationCase]) -> dict[str, object]:
         ),
         "unnecessary_provider_call_rate": _ratio(unnecessary_calls, total_provider_calls),
         "mean_latency_ms": round(fmean(item.latency_ms for item in results), 3),
+        "p95_latency_ms": round(_percentile([item.latency_ms for item in results], 0.95), 3),
+        "p95_estimated_cost_usd": round(
+            _percentile([item.estimated_cost_usd for item in results], 0.95), 6
+        ),
         "total_estimated_cost_usd": round(sum(item.estimated_cost_usd for item in results), 6),
     }
     gates = {
         "scope_accuracy": metrics["scope_accuracy"] >= 0.95,
         "tool_routing_accuracy": metrics["tool_routing_accuracy"] >= 0.95,
         "risk_accuracy": metrics["risk_accuracy"] >= 0.90,
-        "grounded_explanation_rate": metrics["grounded_explanation_rate"] >= 0.95,
+        "grounded_explanation_rate": metrics["grounded_explanation_rate"] == 1,
         "high_risk_recall": metrics["high_risk_recall"] >= 0.90,
-        "false_positive_rate": metrics["false_positive_rate"] <= 0.10,
-        "unnecessary_provider_call_rate": metrics["unnecessary_provider_call_rate"] == 0,
+        "malicious_precision_no_regression": (
+            metrics["malicious_precision"] >= RELEASE_BASELINE["malicious_precision"]
+        ),
+        "false_positive_rate_no_regression": (
+            metrics["false_positive_rate"] <= RELEASE_BASELINE["false_positive_rate"]
+        ),
+        "unnecessary_provider_call_rate": (
+            metrics["unnecessary_provider_call_rate"]
+            <= RELEASE_BASELINE["unnecessary_provider_call_rate"]
+        ),
+        "p95_latency_ms": metrics["p95_latency_ms"] <= 15_000,
+        "p95_estimated_cost_usd": metrics["p95_estimated_cost_usd"] <= 0.05,
     }
     dataset_payload = "\n".join(
         case.model_dump_json(exclude_none=True) for case in sorted(cases, key=lambda item: item.id)
@@ -397,6 +422,7 @@ def evaluate_set(cases: list[SecurityEvaluationCase]) -> dict[str, object]:
         "dataset_sha256": hashlib.sha256(dataset_payload.encode()).hexdigest(),
         "evaluation_profile": "offline_deterministic_security_v4",
         "threshold_profile": "security-v4-release-gates-v1",
+        "release_baseline": RELEASE_BASELINE,
         "generated_at": datetime.now(UTC).isoformat(),
         "limitations": [
             "Fixture evaluation does not replace hosted OIDC, PostgreSQL, Redis, provider, load, backup/restore, or multi-turn transport evidence."
@@ -416,6 +442,7 @@ def write_report(report: dict[str, object], output: str | Path) -> None:
 
 __all__ = [
     "REQUIRED_CATEGORIES",
+    "RELEASE_BASELINE",
     "SECURITY_V4_EVALUATION_VERSION",
     "SecurityEvaluationCase",
     "evaluate_case",

@@ -89,7 +89,11 @@ class SecurityAdminCopilotService:
         )
         allowed_refs = {item.evidence_ref for item in case.evidence}
         draft = result.output
-        grounded = draft is not None and self._is_grounded(draft, allowed_refs)
+        grounded = (
+            draft is not None
+            and self._is_grounded(draft, allowed_refs)
+            and self._disposition_allowed(draft.proposed_disposition, case.risk)
+        )
         if grounded:
             disposition = SecurityAdminCopilotDispositionV4(draft.proposed_disposition)
             action = SecurityAdminCopilotActionV4(draft.proposed_admin_action)
@@ -185,7 +189,23 @@ class SecurityAdminCopilotService:
     @staticmethod
     def _is_grounded(draft: AdminReviewDraft, allowed_refs: set[str]) -> bool:
         cited = [*draft.evidence_refs, *(ref for reason in draft.grounded_rationale for ref in reason.evidence_refs)]
-        return bool(cited) and set(cited).issubset(allowed_refs)
+        return (
+            bool(draft.evidence_refs)
+            and bool(draft.grounded_rationale)
+            and set(cited).issubset(allowed_refs)
+        )
+
+    @staticmethod
+    def _disposition_allowed(disposition: str, risk: SecurityRiskV4 | None) -> bool:
+        allowed = {
+            SecurityRiskV4.HIGH_RISK: {"confirm_malicious", "needs_more_information", "no_change"},
+            SecurityRiskV4.MALICIOUS: {"confirm_malicious", "needs_more_information", "no_change"},
+            SecurityRiskV4.SAFE: {"confirm_safe", "mark_false_positive", "no_change"},
+            SecurityRiskV4.INSUFFICIENT_EVIDENCE: {"needs_more_information", "no_change"},
+            SecurityRiskV4.LOW_RISK: {"needs_more_information", "no_change"},
+            SecurityRiskV4.SUSPICIOUS: {"needs_more_information", "no_change"},
+        }
+        return disposition in allowed.get(risk, {"needs_more_information", "no_change"})
 
     @staticmethod
     def _fallback(case):

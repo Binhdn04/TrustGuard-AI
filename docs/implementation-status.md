@@ -17,9 +17,10 @@ Security Triage v4 và frontend investigation workspace đã triển khai end-to
 context, consent-gated investigation, deterministic risk, brand/whitelist/official verification,
 multi-turn Security Chat, owner persistence, report/appeal, HITL blacklist action, Security Memory và
 explainable campaign hypotheses, paginated API, admin feedback lifecycle, intelligence explorer và unified audit.
-AI Copilot roadmap WP0–WP7 cũng đã implemented trong repository: shared provider runtime/budget,
+AI Copilot roadmap WP0–WP8 đã implemented ở mức repository/local gate: shared provider runtime/budget,
 hybrid understanding, adaptive incident conversation, constrained planning, grounded response, durable Security v4 async
-và owner-isolated reviewed Security Memory retrieval, cộng với grounded Security Admin Copilot suggestion-only.
+và owner-isolated reviewed Security Memory retrieval, grounded Security Admin Copilot suggestion-only, versioned
+AI evaluation và sequential rollout guard. Hosted WP8 rollout vẫn chưa có external evidence.
 
 Codebase vẫn giữ legacy `/api/v2`/`/api/v3`, general fact-check providers/corpus/source discovery,
 claim-vector campaign và một số frontend compatibility code. Các phần này không nằm trên Security v4
@@ -58,6 +59,7 @@ zero-usage window và cleanup vẫn còn lại.
 | Durable Security v4 WP5 | Inline mặc định; PostgreSQL async 202/idempotency/encrypted payload/lease/outbox/realtime, SQLite giữ inline | migration `0016`, durable worker, WP5 tests |
 | Reviewed Security Memory WP6 | Owner-scoped/non-self lookup chỉ dùng reviewed verdict/confirmed campaign; privacy-minimized evidence, poisoning controls và risk v2 | `security_memory_lookup`, repository joins, WP6 tests |
 | Admin AI Copilot WP7 | Admin-only grounded suggestion, related reviewed campaign, typed disposition/existing action, dedicated rate limit, audit/snapshot hash và `executed=false` UI | migration `0017`, `security_admin_copilot.py`, WP7/API/frontend tests |
+| AI evaluation/rollout WP8 | Ba tier evaluator, scenario metrics, 100% grounding/zero hallucination gate, hosted observation validator và sequential flag/rollback checker | `security_ai_v1.py`, `security_ai_hosted.py`, `security_ai_rollout.py`, versioned reports/tests |
 
 ## 3. Hạ tầng dùng chung vẫn có thể tái sử dụng
 
@@ -82,7 +84,7 @@ zero-usage window và cleanup vẫn còn lại.
 | Security v4 execution model | Inline compatibility và durable PostgreSQL worker/lease/outbox path đều có; async chỉ được công bố khi config thật sự ready | Chưa có hosted lease-loss/load/Redis outage evidence trên deployment thật |
 | Reviewed-memory rollout | Local tool, owner isolation, reviewed-only filtering, risk v2 và v1 fallback đã có; flag mặc định tắt | Chưa chạy hosted PostgreSQL fixture/poisoning/scoring evaluation trước khi bật flag |
 | Official/live providers | Adapter, bounded policy và deterministic fakes có | Chưa có live-provider smoke trong môi trường được cấp credential |
-| Evaluation | Versioned 16-category deterministic dataset/report đo routing, calls, risk, precision/recall, grounding, latency/cost | Offline fixture evidence không thay thế hosted provider/multi-turn transport/load evidence |
+| Evaluation | Versioned 24-category deterministic, 5-case memory và 9-category AI datasets/reports đo routing, field/scenario precision/recall, conversation, grounding, hallucination, fallback, p95 latency/token/cost | Offline fixture evidence không thay thế hosted provider/multi-turn transport/load evidence; hosted validator đã có nhưng chưa có input thật |
 | Production readiness | Frontend OIDC PKCE, backend JWT/RBAC, hardened production validation, Security v4 live-smoke CLI và release/rollback runbook | Chưa verify với IdP/hosted PostgreSQL/Redis/provider thật, backup/restore và load |
 | Cutover | Frontend dùng v4; route telemetry tách legacy/security/reviewed-action; cutover config freeze legacy writes và source discovery | Chưa kích hoạt freeze hoặc đạt API/provider/job/DB zero-usage window trên deployment thật |
 
@@ -124,7 +126,7 @@ responsive/accessibility và production E2E. Frontend không còn task riêng; p
 
 ## 7. Test evidence hiện tại
 
-- Backend: **217 passed** trong suite Security v4, AI WP0–WP7 và reviewed-action compatibility đang hoạt động.
+- Backend: **226 passed** trong suite Security v4, AI WP0–WP8 và reviewed-action compatibility đang hoạt động.
 - Ruff: **pass**.
 - Alembic: **`0017_security_admin_copilot` là head**.
 - Frontend unit: **59 passed trong 12 files**, gồm Admin Copilot suggestion isolation, async capability/idempotency, OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
@@ -133,7 +135,8 @@ responsive/accessibility và production E2E. Frontend không còn task riêng; p
   axe structural WCAG gate và computed theme contrast đạt yêu cầu.
 - Next.js default Turbopack và webpack standalone production build: **pass**; `/admin` redirect sang Review Room.
 
-Offline Security v4 evaluation 16 nhóm và reviewed-memory risk-v2 evaluation 5 gate đã pass, có version/hash report. Chưa có bằng chứng hosted
+Offline Security v4 evaluation 24 category, reviewed-memory risk-v2 evaluation 5 gate và AI understanding/conversation/grounding
+evaluation 9 category đều pass, có version/hash report. Chưa có bằng chứng hosted
 PostgreSQL/Redis/OIDC/live-provider, backup/restore/load hoặc compatibility window. Vì vậy trạng thái đúng là
 “Security v4, frontend và phần local WP9 đã implemented trong repository; WP9
 release/evaluation/cutover tổng thể chưa hoàn tất”, không phải “full production scope complete”.

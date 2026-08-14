@@ -1,0 +1,37 @@
+{
+  "evaluation_version": "security-ai-hosted-eval-v1",
+  "rollout_stage": "understanding",
+  "environment": "replace-with-hosted-environment",
+  "oidc_verified": false,
+  "postgresql_verified": false,
+  "redis_verified": false,
+  "live_provider_verified": false,
+  "observed_malicious_precision": 0.0,
+  "observed_false_positive_rate": 1.0,
+  "baseline": {
+    "malicious_precision": 1.0,
+    "false_positive_rate": 0.0,
+    "unnecessary_provider_call_rate": 0.0,
+    "report_appeal_overturn_rate": 0.0
+  },
+  "observations": [
+    {
+      "id": "replace-with-observation",
+      "success": false,
+      "fallback_expected": false,
+      "fallback_success": false,
+      "latency_ms": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0,
+      "grounded_reasons": 0,
+      "total_reasons": 0,
+      "hallucinated_evidence": 0,
+      "hallucinated_actions": 0,
+      "provider_calls": 0,
+      "max_expected_provider_calls": 0,
+      "report_appeal_decisions": 0,
+      "report_appeal_overturns": 0
+    }
+  ]
+}

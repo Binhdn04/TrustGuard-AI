@@ -29,6 +29,9 @@ def test_security_v4_evaluation_passes_release_gates() -> None:
     assert all(report["gates"].values())
     assert report["metrics"]["unnecessary_provider_call_rate"] == 0
     assert report["metrics"]["malicious_precision"] == 1
+    assert report["metrics"]["grounded_explanation_rate"] == 1
+    assert report["gates"]["malicious_precision_no_regression"] is True
+    assert report["gates"]["false_positive_rate_no_regression"] is True
 
 
 def test_no_consent_and_boundary_cases_do_not_plan_provider_calls() -> None:

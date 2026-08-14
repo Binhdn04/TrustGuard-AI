@@ -379,6 +379,9 @@
 
   ### WP8 — Evaluation, rollout và cleanup gate
 
+  **Status:** `REPOSITORY DONE / HOSTED ROLLOUT PENDING` — ba tầng evaluation và sequential rollout checker
+  đã có code/test; tier hosted chưa được đánh dấu pass vì repository không có OIDC/PostgreSQL/Redis/live-provider evidence.
+
   Mở rộng evaluation thành ba tầng:
 
   1. Deterministic security regression.
@@ -411,6 +414,33 @@
 
   Mỗi flag chỉ bật sau hosted smoke với OIDC, PostgreSQL, Redis và live provider; rollback bằng tắt flag, không downgrade
   dữ liệu. Legacy v2/v3 cleanup không nằm trong roadmap này và chỉ thực hiện sau zero-usage window hiện có.
+
+  Hiện thực trong repository:
+
+  - Tier 1: `security-v4-eval-v1` có 24 category và `security-memory-v2-eval-v1` có 5 scoring/poisoning gate;
+    grounded explanation bắt buộc 100%, malicious precision/FPR/provider-call không được regression.
+  - Tier 2: `security-ai-eval-v1` chạy production merge/conversation/grounding code trên 9 category, đo field
+    precision/recall theo scenario, scope/exposure, follow-up/turns-to-verdict, hallucination, fallback và p95.
+    Report version/hash nằm tại `docs/evidence/security-ai-v1-report.json`.
+  - Tier 3: `evaluate_security_ai_hosted.py` chỉ validate observation thật về OIDC/PostgreSQL/Redis/live provider,
+    reliability, latency/token/cost và report/appeal overturn; tool không tự tạo hoặc giả lập hosted evidence.
+  - `check_security_ai_rollout.py` fail closed nếu thiếu report, provider/durable readiness hoặc bật flag vượt thứ tự;
+    rollback luôn chỉ dẫn tắt flag hiện tại và `database_action=none`.
+  - Audit WP1–WP7 trước WP8 đã siết WP7: rationale phải có evidence hợp lệ và proposed disposition không được
+    xung đột với deterministic risk. Toàn bộ flag vẫn mặc định tắt.
+
+  Local gate commands:
+
+  ```powershell
+  .\.venv\Scripts\python.exe scripts\evaluate_security_v4.py
+  .\.venv\Scripts\python.exe scripts\evaluate_security_memory_v2.py
+  .\.venv\Scripts\python.exe scripts\evaluate_security_ai.py
+  .\.venv\Scripts\python.exe scripts\check_security_ai_rollout.py --target-stage off
+  ```
+
+  Để rollout một stage, operator phải thu observation theo template
+  `docs/templates/security-ai-hosted-evidence.example.json`, validate thành hosted report rồi chạy rollout checker với
+  `--hosted-report`. Không xóa legacy v2/v3 trong WP8.
 
   ## 3. Quy tắc chống conflict khi implement
 

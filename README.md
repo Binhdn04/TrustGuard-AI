@@ -5,7 +5,7 @@ hoặc giả mạo trước khi user thực hiện hành động rủi ro. [Prod
 thật về goal.
 
 > Security Triage v4 và frontend investigation workspace đã được triển khai. WP9 đã có deterministic
-> evaluation, cutover/freeze guard, compatibility checker và release
+> evaluation, WP8 AI evaluation/rollout guard, cutover/freeze guard, compatibility checker và release
 > runbook. Hosted OIDC/provider/PostgreSQL/Redis/load, restore rehearsal và zero-usage window vẫn chưa có evidence.
 > Xem [Implementation Status](docs/implementation-status.md) để biết ranh giới chính xác.
 
@@ -24,6 +24,7 @@ thật về goal.
   case-detail, domain/threat intelligence, unified v4 audit và reviewed blacklist workflow.
 - Next.js frontend gọi API thật, có case workspace/history, Observatory, Security Review Room, Trust lifecycle,
   grounded suggestion-only Admin Copilot, Unified Audit và compatibility surface riêng cho v3 metrics/source discovery.
+- AI roadmap WP8 có versioned AI quality report, hosted evidence validator và sequential feature-flag rollout/rollback checker.
 
 Chưa đạt scope:
 
@@ -109,16 +110,40 @@ docker compose down
 
 ## Kiểm thử
 
-```bash
-ruff check src tests
-pytest -q
-cd frontend
-npm run lint
-npm run typecheck
-npm test
+Quick backend gate từ repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m alembic heads
 ```
 
-Kết quả gần nhất 2026-08-15: backend 217 passed; Ruff pass; frontend 59 test/12 files,
+AI roadmap WP8 offline evaluation/rollout gate (không cần credential hosted):
+
+```powershell
+.\.venv\Scripts\python.exe scripts\evaluate_security_v4.py
+.\.venv\Scripts\python.exe scripts\evaluate_security_memory_v2.py
+.\.venv\Scripts\python.exe scripts\evaluate_security_ai.py
+.\.venv\Scripts\python.exe scripts\check_security_ai_rollout.py --target-stage off
+```
+
+Frontend production gate:
+
+```powershell
+Push-Location frontend
+npm.cmd test
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd run check:cutover
+npm.cmd run build
+npm.cmd run test:e2e
+Pop-Location
+```
+
+Hosted rollout không nằm trong local gate; dùng observation thật và quy trình trong
+[WP9 Release Runbook](docs/WP9_RELEASE_RUNBOOK.md), không bật flag chỉ dựa trên offline report.
+
+Kết quả gần nhất 2026-08-15: backend 226 passed; Ruff pass; frontend 59 test/12 files,
 lint/typecheck/cutover check, Next.js Turbopack + webpack standalone production build và Chromium E2E 2 pass.
 Đây chưa phải hosted release evidence.
 

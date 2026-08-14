@@ -92,19 +92,24 @@ class _Repository:
 
 
 class _Model:
-    def __init__(self, *, ref=REF, action="block_domain"):
+    def __init__(self, *, ref=REF, action="block_domain", disposition="confirm_malicious", rationale=True):
         self.calls = 0
         self.ref = ref
         self.action = action
+        self.disposition = disposition
+        self.rationale = rationale
     async def draft_admin_review(self, case_detail):
         self.calls += 1
         assert case_detail["allowed_admin_actions"] == ["add_to_blacklist", "block_domain", "publish_broad_warning", "none"]
         return ModelResponse(
             output=AdminReviewDraft(
                 evidence_summary="Grounded reviewer summary.",
-                proposed_disposition="confirm_malicious",
+                proposed_disposition=self.disposition,
                 proposed_admin_action=self.action,
-                grounded_rationale=[{"text": "Credential request is recorded.", "evidence_refs": [self.ref]}],
+                grounded_rationale=(
+                    [{"text": "Credential request is recorded.", "evidence_refs": [self.ref]}]
+                    if self.rationale else []
+                ),
                 evidence_refs=[self.ref],
             ),
             provider="fake",
@@ -140,6 +145,26 @@ async def test_ungrounded_or_low_risk_output_falls_back_or_removes_high_impact_a
     assert result.generation_mode.value == "template_fallback"
     assert result.proposed_admin_action is SecurityAdminCopilotActionV4.NONE
     assert "ffffffff" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        _Model(rationale=False),
+        _Model(disposition="confirm_safe"),
+    ],
+)
+async def test_copilot_rejects_missing_rationale_or_disposition_that_conflicts_with_risk(model) -> None:
+    case = _case(SecurityRiskV4.HIGH_RISK)
+    service = SecurityAdminCopilotService(
+        _Analyses(case), _Memory(), _Repository(), model,
+        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
+    )
+    result = await service.suggest(case.analysis_id, ADMIN)
+    assert result.generation_mode.value == "template_fallback"
+    assert result.proposed_disposition.value == "confirm_malicious"
+    assert result.proposed_admin_action is SecurityAdminCopilotActionV4.NONE
 
 
 def test_wp7_migration_is_additive_and_stores_no_prompt_or_raw_completion() -> None:

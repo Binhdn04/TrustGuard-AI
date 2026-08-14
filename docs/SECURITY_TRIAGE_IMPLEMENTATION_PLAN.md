@@ -1,11 +1,14 @@
 # Kế hoạch triển khai AI Security Triage Assistant
 
-**Cập nhật:** 14/08/2026
+**Cập nhật:** 15/08/2026
 
 **Trạng thái:** WP0–WP8, API/frontend WP9 và local evaluation/cutover tooling hoàn tất; hosted release/cutover đang triển khai
 
 **Nguồn yêu cầu:** [scope.md](scope.md)  
 **Tài liệu hiện trạng:** [implementation-status.md](implementation-status.md), [01-ARCHITECTURE.md](01-ARCHITECTURE.md), [02-CONTRACT_AND_FIXTURES.md](02-CONTRACT_AND_FIXTURES.md), [04-POSTGRESQL_ALEMBIC_PLAN.md](04-POSTGRESQL_ALEMBIC_PLAN.md)
+
+> Quy ước: WP0–WP9 trong tài liệu này thuộc roadmap Security Triage nền. Roadmap nâng cấp AI có bộ WP0–WP8
+> riêng trong [AI_copilot.md](AI_copilot.md); vì vậy “WP8 Security Memory” và “AI WP8 evaluation/rollout” không phải cùng work package.
 
 Tài liệu này là kế hoạch thực thi, không lặp lại toàn bộ nội dung audit hoặc product scope. Khi tài liệu
 và runtime khác nhau, phải kiểm tra code/test hiện tại rồi cập nhật lại kế hoạch trước khi implement.
@@ -764,7 +767,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
 | WP7 | DONE | 6 test WP7 mới; full backend 279 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass | Scope deviation: BLOCK_DOMAIN, PUBLISH_BROAD_WARNING, Copilot chưa có sink; DISABLE_BLACKLIST chưa có v4 producer |
 | WP8 | DONE | 9 test WP8 mới; full backend 288 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass; Alembic 0014 head | Không có; legacy claim-vector compatibility path được giữ đến cleanup WP9 nhưng Security v4 không phụ thuộc embeddings |
-| WP9 | IN_PROGRESS | API/frontend readiness; `scope_decision` filter; hardened production env; versioned 16-category offline evaluation + 5 reviewed-memory risk-v2 gate; AI roadmap WP0–WP7; durable Security v4 revision 0016; Admin Copilot revision 0017; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Active suite: backend 217 pass; frontend 59 pass/12 files; Ruff/lint/typecheck/build pass; Alembic 0017 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load, durable lease-loss, reviewed-memory hoặc Admin Copilot rollout evidence, restore rehearsal, API/provider/job/DB zero-usage window hay legacy cleanup; async, memory và admin-copilot flags mặc định tắt nên profile đúng là `pre_cutover` |
+| WP9 | IN_PROGRESS | API/frontend readiness; `scope_decision` filter; hardened production env; versioned 24-category deterministic + 5 reviewed-memory + 9-category AI evaluation; AI roadmap WP0–WP8 repository gates; hosted evidence validator và sequential rollout checker; durable Security v4 revision 0016; Admin Copilot revision 0017; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Active suite: backend 226 pass; frontend 59 pass/12 files; Ruff/lint/typecheck/build/E2E pass; Alembic 0017 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load, durable lease-loss, reviewed-memory hoặc Admin Copilot rollout evidence, restore rehearsal, API/provider/job/DB zero-usage window hay legacy cleanup; mọi AI/async/memory/admin-copilot flag mặc định tắt nên profile đúng là `pre_cutover` |
 
 Trạng thái hợp lệ: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
 
