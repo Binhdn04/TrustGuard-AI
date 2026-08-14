@@ -33,6 +33,7 @@ from src.core.errors import PlatformError
 from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
+from src.security_ai import OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
 from src.services.analysis import AnalysisService
 from src.services.platform_wave2 import (
     ArtifactSigner,
@@ -64,6 +65,38 @@ _retention: RetentionWorker | None = None
 _retention_task = None
 _memory_wave2_repository = MemoryWave2Repository()
 _source_registry = VersionedSourceRegistry(default_source_policies())
+
+
+@lru_cache
+def get_security_assistant_model():
+    """Construct the provider only when at least one AI operation is enabled."""
+    settings = get_settings()
+    ai_operation_enabled = any(
+        (
+            settings.security_ai_understanding_enabled,
+            settings.security_ai_planning_enabled,
+            settings.security_ai_explanation_enabled,
+            settings.security_admin_copilot_enabled,
+        )
+    )
+    if not ai_operation_enabled or not settings.openai_api_key.strip():
+        return None
+    return OpenAISecurityAssistant(
+        api_key=settings.openai_api_key,
+        small_model=settings.security_ai_small_model,
+        synthesis_model=settings.security_ai_synthesis_model,
+        timeout=settings.security_ai_timeout_seconds,
+    )
+
+
+def new_security_assistant_runtime() -> SecurityAssistantRuntime:
+    """Budgets are per turn, so this dependency must never be cached."""
+    settings = get_settings()
+    return SecurityAssistantRuntime(
+        timeout_seconds=settings.security_ai_timeout_seconds,
+        max_retries=settings.security_ai_max_retries,
+        budget=TurnBudget(max_calls=settings.security_ai_max_calls_per_turn),
+    )
 
 
 @lru_cache

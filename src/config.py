@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
     llm_max_retries: int = Field(default=2, ge=0)
 
+    # Security assistant runtime. Every capability is independently gated and
+    # defaults off so the existing v4 path remains unchanged.
+    security_ai_understanding_enabled: bool = False
+    security_ai_planning_enabled: bool = False
+    security_ai_explanation_enabled: bool = False
+    security_async_execution_enabled: bool = False
+    security_memory_retrieval_enabled: bool = False
+    security_admin_copilot_enabled: bool = False
+    security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
+    security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
+    security_ai_max_retries: int = Field(default=1, ge=0, le=2)
+    security_ai_small_model: str = Field(default="gpt-4o-mini", min_length=1)
+    security_ai_synthesis_model: str = Field(default="gpt-4o-mini", min_length=1)
+
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
     google_web_risk_api_key: str = ""
@@ -107,6 +121,17 @@ class Settings(BaseSettings):
             required["VIRUSTOTAL_API_KEY"] = self.virustotal_api_key
         return required
 
+    def enabled_security_capabilities(self) -> dict[str, bool]:
+        provider_ready = bool(self.openai_api_key.strip())
+        return {
+            "security_ai_understanding": self.security_ai_understanding_enabled and provider_ready,
+            "security_ai_planning": self.security_ai_planning_enabled and provider_ready,
+            "security_ai_explanation": self.security_ai_explanation_enabled and provider_ready,
+            "security_async_execution": self.security_async_execution_enabled,
+            "security_memory_retrieval": self.security_memory_retrieval_enabled,
+            "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
+        }
+
     @staticmethod
     def _placeholder_or_short_secret(value: str) -> bool:
         lowered = value.strip().lower()
@@ -153,6 +178,16 @@ class Settings(BaseSettings):
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError("Live provider profile is missing: " + ", ".join(missing))
+        ai_enabled = any(
+            (
+                self.security_ai_understanding_enabled,
+                self.security_ai_planning_enabled,
+                self.security_ai_explanation_enabled,
+                self.security_admin_copilot_enabled,
+            )
+        )
+        if self.app_env == "production" and ai_enabled and not self.openai_api_key.strip():
+            raise ValueError("OPENAI_API_KEY is required when a production Security AI flag is enabled")
         if self.post_processing_reserve_seconds >= self.analysis_deadline_seconds:
             raise ValueError("POST_PROCESSING_RESERVE_SECONDS must be smaller than ANALYSIS_DEADLINE_SECONDS")
         return self

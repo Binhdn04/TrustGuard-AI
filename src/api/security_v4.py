@@ -110,9 +110,23 @@ def _page(items: list, limit: int, offset: int) -> tuple[list, int]:
     return items[offset : offset + limit], len(items)
 
 
-@router.get("/capabilities", response_model=SecurityCapabilitiesResponseV4)
+@router.get(
+    "/capabilities",
+    response_model=SecurityCapabilitiesResponseV4,
+    response_model_exclude_none=True,
+)
 async def security_capabilities_v4() -> SecurityCapabilitiesResponseV4:
-    return SecurityCapabilitiesResponseV4(release_profile=get_settings().security_release_profile)
+    settings = get_settings()
+    configured = (
+        settings.enabled_security_capabilities()
+        if hasattr(settings, "enabled_security_capabilities")
+        else {}
+    )
+    capabilities = {name: True for name, enabled in configured.items() if enabled}
+    return SecurityCapabilitiesResponseV4(
+        release_profile=settings.security_release_profile,
+        **capabilities,
+    )
 
 
 @router.post("/analyses", response_model=SecurityScopeResponseV4, responses=_COMMON_ERRORS)

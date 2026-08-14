@@ -451,6 +451,12 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     compatibility_contracts: list[Literal["v2", "v3", "v4"]] = Field(
         default_factory=lambda: ["v2", "v3", "v4"]
     )
+    security_ai_understanding: Literal[True] | None = None
+    security_ai_planning: Literal[True] | None = None
+    security_ai_explanation: Literal[True] | None = None
+    security_async_execution: Literal[True] | None = None
+    security_memory_retrieval: Literal[True] | None = None
+    security_admin_copilot: Literal[True] | None = None
 
 
 class SecurityWebSocketTicketRequestV4(SecurityContractModel):
