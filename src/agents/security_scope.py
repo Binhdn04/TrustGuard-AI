@@ -18,6 +18,7 @@ _AMOUNT_RE = re.compile(
     r"(?<!\w)(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*(?:k|tr(?:iệu)?|triệu|đ|đồng|vnd|usd|\$)(?!\w)",
     re.IGNORECASE,
 )
+_DEADLINE_RE = re.compile(r"\b(?:trước|truoc)\s+\d{1,2}\s*h\b", re.IGNORECASE)
 
 _CREDENTIAL_TERMS = (
     "đăng nhập",
@@ -46,6 +47,11 @@ _PAYMENT_TERMS = (
     "bank account",
     "tài khoản nhận tiền",
     "qr thanh toán",
+    "chuyển toàn bộ tiền",
+    "chuyen toan bo tien",
+    "nạp tiền",
+    "nap tien",
+    "nạp ",
 )
 _RECRUITMENT_TERMS = (
     "tuyển dụng",
@@ -60,6 +66,8 @@ _RECRUITMENT_TERMS = (
     "phỏng vấn",
     "recruitment",
     "job offer",
+    "tuyendung",
+    "tuyển cộng tác viên",
 )
 _PROMOTION_TERMS = (
     "trúng thưởng",
@@ -87,6 +95,19 @@ _ACCOUNT_TERMS = (
     "account locked",
 )
 _REFUND_TERMS = ("hoàn tiền", "hoan tien", "refund")
+_CHARITY_TERMS = ("quỹ cứu trợ", "quy cuu tro", "từ thiện", "tu thien", "quyên góp", "quyen gop")
+_INVESTMENT_TERMS = ("đầu tư", "dau tu", "lợi nhuận", "loi nhuan", "cam kết lãi", "cam ket lai")
+_ONLINE_TASK_TERMS = (
+    "cộng tác viên",
+    "cong tac vien",
+    "đặt đơn online",
+    "dat don online",
+    "làm nhiệm vụ",
+    "lam nhiem vu",
+    "hoàn vốn",
+    "hoan von",
+)
+_FEE_TERMS = ("phí xử lý", "phi xu ly", "phí hồ sơ", "phi ho so", "trả phí", "tra phi")
 _PERSONAL_INFO_TERMS = (
     "cccd",
     "cmnd",
@@ -115,6 +136,9 @@ _URGENCY_TERMS = (
     "urgent",
 )
 _IMPERSONATION_ENTITIES = (
+    ("tập đoàn vingroup", "Vingroup"),
+    ("tap doan vingroup", "Vingroup"),
+    ("vingroup", "Vingroup"),
     ("ngân hàng", "ngân hàng"),
     ("ngan hang", "ngân hàng"),
     ("bank", "bank"),
@@ -172,6 +196,17 @@ _GENERAL_NEWS_TERMS = (
     "fake news",
     "sự kiện này có thật",
     "su kien nay co that",
+    "có đúng không",
+    "co dung khong",
+    "có thật không",
+    "co that khong",
+)
+_ASSISTANT_CAPABILITY_TERMS = (
+    "bạn có thể làm gì",
+    "ban co the lam gi",
+    "bạn làm được gì",
+    "ban lam duoc gi",
+    "what can you do",
 )
 _VAGUE_SECURITY_TERMS = (
     "tin nhắn lạ",
@@ -209,8 +244,19 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
 def _is_payment_request(text: str, message: str) -> bool:
     if _contains_any(text, _PAYMENT_TERMS):
         return True
+    if _AMOUNT_RE.search(message) is not None and _contains_any(
+        text,
+        ("yêu cầu chuyển", "yeu cau chuyen", "chuyển trước", "chuyen truoc", "phải chuyển", "phai chuyen"),
+    ):
+        return True
     has_fee_action = _contains_any(text, ("đóng", "dong", "nộp", "nop")) and _contains_any(text, ("phí", "phi"))
     return has_fee_action and _AMOUNT_RE.search(message) is not None
+
+
+def _is_refund_context(text: str, message: str) -> bool:
+    return _contains_any(text, _REFUND_TERMS) or (
+        _contains_any(text, ("hoàn ", "hoan ")) and _AMOUNT_RE.search(message) is not None
+    )
 
 
 def classify_security_scope(message: str) -> ScopeAssessment:
@@ -218,19 +264,26 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     urls = extract_urls(message)
     reasons: list[str] = []
 
+    if _contains_any(text, _ASSISTANT_CAPABILITY_TERMS):
+        return ScopeAssessment(ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK, ("assistant_capabilities",))
+
     security_groups = (
         ("credential_request", _CREDENTIAL_TERMS),
         ("otp_request", _OTP_TERMS),
         ("recruitment_context", _RECRUITMENT_TERMS),
         ("promotion_prize_context", _PROMOTION_TERMS),
         ("account_verification_context", _ACCOUNT_TERMS),
-        ("refund_context", _REFUND_TERMS),
+        ("charity_context", _CHARITY_TERMS),
+        ("investment_context", _INVESTMENT_TERMS),
+        ("online_task_context", _ONLINE_TASK_TERMS),
         ("personal_information_request", _PERSONAL_INFO_TERMS),
         ("impersonation_signal", _IMPERSONATION_TERMS),
     )
     for reason, terms in security_groups:
         if _contains_any(text, terms):
             reasons.append(reason)
+    if _is_refund_context(text, message):
+        reasons.append("refund_context")
     if _is_payment_request(text, message):
         reasons.append("payment_request")
 
@@ -293,7 +346,7 @@ def _requested_action(
     if payment_request:
         return (
             RequestedActionV4.PAY_FEE
-            if recruitment or _contains_any(text, ("đóng phí", "nộp phí", "pay fee"))
+            if recruitment or _contains_any(text, ("đóng phí", "nộp phí", "pay fee", *_FEE_TERMS))
             else RequestedActionV4.TRANSFER_MONEY
         )
     if personal_information_request:
@@ -304,16 +357,36 @@ def _requested_action(
 def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
     """Derive threat type only from the validated, merged security context."""
     if context.scenario is SecurityScenarioV4.RECRUITMENT:
-        return PotentialThreatV4.RECRUITMENT_SCAM
+        return (
+            PotentialThreatV4.RECRUITMENT_IMPERSONATION
+            if context.claimed_entity == "Vingroup"
+            else PotentialThreatV4.RECRUITMENT_SCAM
+        )
     if context.scenario is SecurityScenarioV4.PROMOTION_PRIZE:
-        return PotentialThreatV4.PROMOTION_PRIZE_SCAM
+        return (
+            PotentialThreatV4.BRAND_IMPERSONATION if context.claimed_entity else PotentialThreatV4.PROMOTION_PRIZE_SCAM
+        )
+    if context.scenario is SecurityScenarioV4.CHARITY:
+        return PotentialThreatV4.CHARITY_IMPERSONATION_SCAM
+    if context.scenario is SecurityScenarioV4.INVESTMENT:
+        return PotentialThreatV4.INVESTMENT_IMPERSONATION_SCAM
+    if context.scenario is SecurityScenarioV4.ONLINE_TASK:
+        return PotentialThreatV4.ADVANCE_FEE_TASK_SCAM
     if context.scenario is SecurityScenarioV4.ACCOUNT_VERIFICATION:
         if context.payment_request:
             return PotentialThreatV4.FINANCIAL_SCAM
+        if context.credential_request and context.otp_request:
+            return PotentialThreatV4.CREDENTIAL_AND_OTP_PHISHING
         if context.credential_request or context.otp_request:
             return PotentialThreatV4.PHISHING
         return PotentialThreatV4.BRAND_IMPERSONATION
+    if context.scenario is SecurityScenarioV4.REFUND and context.otp_request:
+        return PotentialThreatV4.PAYMENT_AND_OTP_PHISHING
+    if context.scenario is SecurityScenarioV4.REFUND and context.requested_action is RequestedActionV4.PAY_FEE:
+        return PotentialThreatV4.ADVANCE_FEE_SCAM
     if context.scenario in {SecurityScenarioV4.PAYMENT, SecurityScenarioV4.REFUND}:
+        if context.claimed_entity:
+            return PotentialThreatV4.IMPERSONATION_FINANCIAL_SCAM
         return PotentialThreatV4.FINANCIAL_SCAM
     if context.credential_request or context.otp_request:
         return PotentialThreatV4.CREDENTIAL_THEFT
@@ -331,11 +404,23 @@ def extract_security_context(message: str) -> SecurityContextV4:
     recruitment = _contains_any(text, _RECRUITMENT_TERMS)
     promotion = _contains_any(text, _PROMOTION_TERMS)
     account = _contains_any(text, _ACCOUNT_TERMS)
-    refund = _contains_any(text, _REFUND_TERMS)
+    account = account or (
+        _contains_any(text, ("tài khoản", "tai khoan")) and _contains_any(text, ("bị khóa", "bi khoa", "sắp bị khóa"))
+    )
+    refund = _is_refund_context(text, message)
+    charity = _contains_any(text, _CHARITY_TERMS)
+    investment = _contains_any(text, _INVESTMENT_TERMS)
+    online_task = _contains_any(text, _ONLINE_TASK_TERMS)
     personal_information_request = _contains_any(text, _PERSONAL_INFO_TERMS)
     entity = _claimed_entity(text)
 
-    if recruitment:
+    if online_task:
+        scenario = SecurityScenarioV4.ONLINE_TASK
+    elif charity:
+        scenario = SecurityScenarioV4.CHARITY
+    elif investment:
+        scenario = SecurityScenarioV4.INVESTMENT
+    elif recruitment:
         scenario = SecurityScenarioV4.RECRUITMENT
     elif promotion:
         scenario = SecurityScenarioV4.PROMOTION_PRIZE
@@ -368,7 +453,7 @@ def extract_security_context(message: str) -> SecurityContextV4:
             urls=urls,
         ),
         amount=amount_match.group(0) if amount_match else None,
-        urgency=_contains_any(text, _URGENCY_TERMS),
+        urgency=_contains_any(text, _URGENCY_TERMS) or _DEADLINE_RE.search(text) is not None,
         urls=urls,
         credential_request=credential_request,
         otp_request=otp_request,

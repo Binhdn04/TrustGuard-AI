@@ -8,6 +8,7 @@ from src.agents.security_scope import (
     partial_security_context,
 )
 from src.models import (
+    MissingInformationSlotV4,
     ScopeDecisionV4,
     SecurityContextV4,
     SecurityScopeResponseV4,
@@ -24,6 +25,18 @@ _FOLLOW_UP_QUESTION = (
     "Bạn có thể gửi nội dung đầy đủ của tin nhắn, tên người gửi và đường link hoặc hành động họ yêu cầu không?"
 )
 _EXTRACTION_LIMITATION = "Chỉ trích xuất được một phần security context; cần xác minh thêm ở bước điều tra."
+_CAPABILITIES_MESSAGE = (
+    "Tôi có thể kiểm tra dấu hiệu phishing, lừa đảo, giả mạo thương hiệu, URL đáng ngờ và các yêu cầu "
+    "chuyển tiền, đăng nhập hoặc cung cấp OTP. Hãy gửi nội dung tin nhắn hoặc đường link bạn muốn kiểm tra."
+)
+_GENERAL_FACT_BOUNDARY_MESSAGE = (
+    "Tôi không hỗ trợ kiểm chứng tin tức chung. Nếu thông tin này đang được dùng để yêu cầu bạn chuyển tiền, "
+    "đăng nhập, cung cấp OTP hoặc thực hiện hành động có rủi ro, hãy gửi thêm nội dung để tôi kiểm tra dấu hiệu lừa đảo."
+)
+_RECRUITMENT_FOLLOW_UP = (
+    "Yêu cầu ứng viên đóng phí hồ sơ là dấu hiệu đáng ngờ. Bạn có thể gửi URL tuyển dụng, địa chỉ email, "
+    "số điện thoại hoặc thông tin tài khoản nhận tiền của người liên hệ không?"
+)
 
 
 class SecurityTriageScopeService:
@@ -36,12 +49,18 @@ class SecurityTriageScopeService:
         assessment = classify_security_scope(request.message)
         reasons = list(assessment.reason_codes)
         if assessment.decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
+            if "assistant_capabilities" in reasons:
+                boundary_message = _CAPABILITIES_MESSAGE
+            elif "no_security_signal" in reasons or any(reason.startswith("general_fact_check_") for reason in reasons):
+                boundary_message = _GENERAL_FACT_BOUNDARY_MESSAGE
+            else:
+                boundary_message = _BOUNDARY_MESSAGE
             return SecurityScopeResponseV4(
                 scope_decision=assessment.decision,
                 terminal=True,
                 next_step="END",
                 scope_reasons=reasons,
-                boundary_message=_BOUNDARY_MESSAGE,
+                boundary_message=boundary_message,
             )
         if assessment.decision is ScopeDecisionV4.NEED_MORE_INFO:
             return SecurityScopeResponseV4(
@@ -58,6 +77,22 @@ class SecurityTriageScopeService:
         except Exception:
             context = partial_security_context(request.message)
             limitations.append(_EXTRACTION_LIMITATION)
+        if (
+            context.claimed_entity == "Vingroup"
+            and context.scenario.value == "recruitment"
+            and context.payment_request
+            and not context.urls
+        ):
+            return SecurityScopeResponseV4(
+                scope_decision=ScopeDecisionV4.NEED_MORE_INFO,
+                terminal=True,
+                next_step="END",
+                scope_reasons=[*reasons, "recruitment_contact_required"],
+                security_context=context,
+                follow_up_slot=MissingInformationSlotV4.URL_OR_CONTACT,
+                follow_up_question=_RECRUITMENT_FOLLOW_UP,
+                limitations=limitations,
+            )
         return SecurityScopeResponseV4(
             scope_decision=ScopeDecisionV4.IN_SCOPE,
             terminal=False,

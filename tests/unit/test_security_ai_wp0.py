@@ -138,8 +138,9 @@ async def test_runtime_cancels_inflight_call_at_turn_deadline() -> None:
 @pytest.mark.asyncio
 async def test_openai_adapter_accounts_configured_token_cost() -> None:
     class StructuredClient:
-        def with_structured_output(self, schema, include_raw):
+        def with_structured_output(self, schema, method, include_raw):
             assert schema is Understanding
+            assert method == "function_calling"
             assert include_raw is True
             return self
 
@@ -168,6 +169,26 @@ async def test_openai_adapter_accounts_configured_token_cost() -> None:
     assert response.model == "priced-model-2026-08-01"
 
 
+def test_understanding_treats_unknown_optional_candidates_as_omitted() -> None:
+    parsed = Understanding.model_validate(
+        {
+            "scope_decision": "UNKNOWN",
+            "sender_intent": "UNKNOWN",
+            "claimed_entity": "UNKNOWN",
+            "scenario": "UNKNOWN",
+            "requested_action": "UNKNOWN",
+            "follow_up_slot": "UNKNOWN",
+        }
+    )
+
+    assert parsed.scope_decision is None
+    assert parsed.sender_intent is None
+    assert parsed.claimed_entity is None
+    assert parsed.scenario is None
+    assert parsed.requested_action is None
+    assert parsed.follow_up_slot is None
+
+
 def test_production_rejects_enabled_ai_without_provider_configuration() -> None:
     from tests.unit.test_config import production_settings
 
@@ -190,4 +211,10 @@ def test_security_ai_rejects_invalid_pricing_configuration() -> None:
 
 def test_all_security_ai_flags_default_off() -> None:
     settings = Settings(_env_file=None)
+    assert settings.security_ai_understanding_enabled is False
+    assert settings.security_ai_planning_enabled is False
+    assert settings.security_ai_explanation_enabled is False
+    assert settings.security_async_execution_enabled is False
+    assert settings.security_memory_retrieval_enabled is False
+    assert settings.security_admin_copilot_enabled is False
     assert not any(settings.enabled_security_capabilities().values())

@@ -18,6 +18,14 @@ export type PotentialThreatV4 =
   | "RECRUITMENT_SCAM"
   | "PROMOTION_PRIZE_SCAM"
   | "CREDENTIAL_THEFT"
+  | "IMPERSONATION_FINANCIAL_SCAM"
+  | "CREDENTIAL_AND_OTP_PHISHING"
+  | "RECRUITMENT_IMPERSONATION"
+  | "CHARITY_IMPERSONATION_SCAM"
+  | "INVESTMENT_IMPERSONATION_SCAM"
+  | "ADVANCE_FEE_TASK_SCAM"
+  | "PAYMENT_AND_OTP_PHISHING"
+  | "ADVANCE_FEE_SCAM"
   | "UNDETERMINED_SECURITY_THREAT";
 
 export type RequestedActionV4 =
@@ -35,6 +43,9 @@ export type RequestedActionV4 =
 export type SecurityScenarioV4 =
   | "recruitment"
   | "promotion_prize"
+  | "charity"
+  | "investment"
+  | "online_task"
   | "account_verification"
   | "payment"
   | "refund"
@@ -56,7 +67,7 @@ export type SecurityRecommendedActionV4 =
   | "CONTACT_BANK_OR_PAYMENT_PROVIDER"
   | "PRESERVE_MESSAGE_FOR_REPORTING";
 
-export type AssistantGenerationModeV4 = "ai" | "template_fallback";
+export type AssistantGenerationModeV4 = "ai" | "policy_grounded" | "template_fallback";
 export type AssistantProcessingModeV4 = "hybrid" | "rules_only" | "fallback";
 export type ExposureStateV4 = "PRE_ACTION" | "LINK_OPENED" | "CREDENTIAL_SHARED" | "OTP_SHARED" | "PAYMENT_SENT" | "UNKNOWN";
 export type MissingInformationSlotV4 = "action_taken" | "requested_sensitive_action" | "url_or_contact" | "claimed_organization" | "amount_deadline_channel";
@@ -116,7 +127,7 @@ export type SecurityAdminCopilotActionV4 = "add_to_blacklist" | "block_domain" |
 export interface SecurityAdminCopilotRequestV4 { refresh: boolean; }
 export interface SecurityAdminCopilotRationaleV4 { text: string; evidence_refs: string[]; }
 export interface SecurityAdminCopilotCampaignV4 { campaign_id: string; hypothesis: string; reviewed_at: string; evidence_refs: string[]; }
-export interface SecurityAdminCopilotUsageV4 { input_tokens: number; output_tokens: number; cost_usd: number; status: "ok" | "fallback"; }
+export interface SecurityAdminCopilotUsageV4 { input_tokens: number; output_tokens: number; cost_usd: number; status: "ok" | "policy_grounded" | "fallback"; }
 export interface SecurityAdminCopilotResponseV4 {
   contract_version: "v4";
   suggestion_id: string;

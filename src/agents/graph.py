@@ -7,9 +7,9 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from src.agents.chatbot import build_chatbot_node
 from src.agents.contracts import LiveStepTransition
 from src.agents.fact_check import ExtractedClaim, FactCheckOrchestrator, registrable_domain
-from src.agents.nodes.example_node import analyze_node, respond_node
 from src.agents.nodes.explanation import explain_result, route_action
 from src.agents.nodes.extraction import classify_input, extract_indicators
 from src.agents.nodes.llm import (
@@ -622,17 +622,16 @@ def build_graph(
     return graph.compile()
 
 
-def should_continue(state: LegacyAgentState) -> str:
-    return END if state.get("error") else "respond"
-
-
 def build_legacy_graph():
+    """Build the GPT chatbot retained on the compatibility `/chat` route."""
+    return build_chatbot_graph()
+
+
+def build_chatbot_graph(*, llm: Any | None = None):
     graph = StateGraph(LegacyAgentState)
-    graph.add_node("analyze", analyze_node)
-    graph.add_node("respond", respond_node)
-    graph.set_entry_point("analyze")
-    graph.add_edge("analyze", "respond")
-    graph.add_edge("respond", END)
+    graph.add_node("chat", build_chatbot_node(llm))
+    graph.set_entry_point("chat")
+    graph.add_edge("chat", END)
     return graph.compile()
 
 
@@ -698,6 +697,7 @@ agent = build_legacy_graph()
 __all__ = [
     "agent",
     "build_graph",
+    "build_chatbot_graph",
     "build_legacy_graph",
     "build_openai_graph",
     "close_graph_resources",

@@ -24,4 +24,4 @@ async def chat(request: ChatRequest) -> ChatResponse:
 @router.get("/status")
 async def agent_status():
     """Kiểm tra trạng thái agent."""
-    return {"status": "ready", "agent": "LangGraph Agent v1.0"}
+    return {"status": "ready", "agent": "TrustGuard GPT Chatbot", "tools": ["check_scam"]}

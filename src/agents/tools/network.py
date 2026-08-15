@@ -122,7 +122,10 @@ class GuardedHttpClient:
             headers = request_headers.copy()
             headers["host"] = target.host_header
             extensions = request_extensions.copy()
-            extensions["sni_hostname"] = target.host.encode("ascii")
+            # httpcore/anyio expects the SNI hostname as text and performs its
+            # own IDNA/ASCII encoding. Passing bytes reaches TLSStream.wrap()
+            # and crashes with ``bytes has no attribute encode``.
+            extensions["sni_hostname"] = target.host
             request = self._client.build_request(
                 "GET",
                 target.pinned_url(target.addresses[0]),

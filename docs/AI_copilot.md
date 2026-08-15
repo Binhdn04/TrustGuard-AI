@@ -186,7 +186,7 @@
 
   ### WP4 — Grounded assistant response và frontend experience
 
-  **Status:** `DONE` — grounding verifier, template fallback và simple/analyst frontend đã có test.
+  **Status:** `DONE` — grounding verifier, phản hồi hội thoại policy-grounded và simple/analyst frontend đã có test.
 
   Mục tiêu: kết quả đọc như trợ lý bảo mật, không như raw tool report.
 
@@ -198,7 +198,7 @@
   - immediate_steps[]: action enum + policy ref
   - follow_up_offer
   - response_version
-  - generation_mode: ai | template_fallback
+  - generation_mode: ai | policy_grounded (`template_fallback` chỉ được đọc để tương thích dữ liệu cũ)
 
   Validation:
 
@@ -206,7 +206,8 @@
   - Procedural advice phải tham chiếu deterministic action/policy.
   - Không cho phép citation hoặc signal không tồn tại.
   - Không render URL đáng ngờ thành clickable anchor.
-  - Synthesis failure trả template hiện tại và limitation rõ.
+  - Synthesis failure giữ câu trả lời hội thoại được dựng trực tiếp từ verdict, evidence và action đã kiểm chứng;
+    không chuyển sang template.
 
   Frontend:
 
@@ -424,8 +425,10 @@
     Report version/hash nằm tại `docs/evidence/security-ai-v1-report.json`.
   - Tier 3: `evaluate_security_ai_hosted.py` chỉ validate observation thật về OIDC/PostgreSQL/Redis/live provider,
     reliability, latency/token/cost và report/appeal overturn; tool không tự tạo hoặc giả lập hosted evidence.
-  - `check_security_ai_rollout.py` fail closed nếu thiếu report, provider/durable readiness hoặc bật flag vượt thứ tự;
-    rollback luôn chỉ dẫn tắt flag hiện tại và `database_action=none`.
+  - `check_security_ai_rollout.py` fail closed nếu thiếu report đầy đủ do hosted evaluator tạo ra,
+    provider/durable readiness hoặc bật flag vượt thứ tự. Kết quả local `target-stage=off` chỉ có
+    `rollout_status=disabled` và `production_rollout_complete=false`; rollback luôn chỉ dẫn tắt flag hiện tại và
+    `database_action=none`.
   - Audit WP1–WP7 trước WP8 đã siết WP7: rationale phải có evidence hợp lệ và proposed disposition không được
     xung đột với deterministic risk. Toàn bộ flag vẫn mặc định tắt.
 

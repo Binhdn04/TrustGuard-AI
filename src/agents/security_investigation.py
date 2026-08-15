@@ -58,6 +58,16 @@ _TRUST_TOOLS = {
 }
 
 
+def _requires_high_risk_reputation(context: SecurityContextV4) -> bool:
+    """Escalate reputation checks for requests that can lose money or access."""
+    return bool(
+        context.credential_request
+        or context.otp_request
+        or context.payment_request
+        or context.personal_information_request
+    )
+
+
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
@@ -522,7 +532,7 @@ class SecurityInvestigationService:
                     update={"status": SecurityInvestigationStepStatusV4.SKIPPED, "status_reason": reason}
                 )
                 continue
-            call = self._external_call(item)
+            call = self._external_call(item, high_risk=_requires_high_risk_reputation(context))
             if call is None:
                 plan[index] = item.model_copy(
                     update={"status": SecurityInvestigationStepStatusV4.SKIPPED, "status_reason": "not_configured"}
@@ -664,7 +674,7 @@ class SecurityInvestigationService:
             target=target,
         )
 
-    def _external_call(self, step: InvestigationStepV4) -> ExternalCall | None:
+    def _external_call(self, step: InvestigationStepV4, *, high_risk: bool) -> ExternalCall | None:
         if step.tool is SecurityInvestigationToolV4.DNS and self._dns is not None:
             return lambda: self._dns.resolve(step.target)
         if step.tool is SecurityInvestigationToolV4.REDIRECT_RESOLVER and self._redirect is not None:
@@ -672,7 +682,7 @@ class SecurityInvestigationService:
         if step.tool is SecurityInvestigationToolV4.RDAP and self._rdap is not None:
             return lambda: self._rdap.lookup(step.target)
         if step.tool is SecurityInvestigationToolV4.URL_REPUTATION and self._reputation is not None:
-            return lambda: self._reputation.assess(step.target)
+            return lambda: self._reputation.assess(step.target, high_risk=high_risk)
         return None
 
     def _provider_name(self, step: InvestigationStepV4) -> str:

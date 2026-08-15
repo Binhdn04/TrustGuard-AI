@@ -67,7 +67,7 @@ export function CaseReviewPanel({
               {copilot.grounded_rationale.map((item, index) => <div key={`${item.text}:${index}`} className="rounded-lg border border-border bg-background/60 p-2"><p>{item.text}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{item.evidence_refs.join(" · ")}</p></div>)}
               {(copilot.conflicts.length > 0 || copilot.missing_information.length > 0) && <p className="text-muted-foreground">Conflicts: {copilot.conflicts.join("; ") || "none"} · Missing: {copilot.missing_information.join("; ") || "none"}</p>}
               {copilot.related_reviewed_campaigns.length > 0 && <p className="text-muted-foreground">Related reviewed campaigns: {copilot.related_reviewed_campaigns.map((item) => item.hypothesis).join("; ")}</p>}
-              <p className="font-mono text-[10px] text-muted-foreground">{copilot.model ?? "rules fallback"} · {copilot.suggestion_version} · executed=false</p>
+              <p className="font-mono text-[10px] text-muted-foreground">{copilot.model ?? "policy grounded"} · {copilot.suggestion_version} · executed=false</p>
             </div>}
           </section>
           <ActionRiskPanel viewModel={viewModel} mode="analyst" />

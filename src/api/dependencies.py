@@ -24,7 +24,6 @@ from src.agents.graph import build_openai_graph
 from src.agents.security_investigation import SecurityInvestigationService
 from src.agents.security_trust import HttpOfficialSourceSearch, OfficialClaimVerifier, SecurityTrustService
 from src.agents.tools import (
-    GoogleWebRiskProvider,
     GuardedRedirectResolver,
     NormalizedRdapProvider,
     ProductionUrlReputationCascade,
@@ -290,23 +289,14 @@ def get_security_investigation_service() -> SecurityInvestigationService:
         else SQLiteBlacklistRepository(settings.security_database_path)
     )
     reputation = None
-    if settings.google_web_risk_api_key:
-        primary = GoogleWebRiskProvider(
-            settings.google_web_risk_api_key,
+    if settings.virustotal_api_key:
+        primary = VirusTotalUrlProvider(
+            settings.virustotal_api_key,
             timeout=settings.provider_timeout_seconds,
-        )
-        secondary = (
-            VirusTotalUrlProvider(
-                settings.virustotal_api_key,
-                timeout=settings.provider_timeout_seconds,
-            )
-            if settings.virustotal_api_key
-            else None
         )
         reputation = ProductionUrlReputationCascade(
             primary,
-            secondary,
-            allow_secondary=settings.reputation_secondary_enabled,
+            allow_secondary=False,
             max_network_calls=settings.reputation_max_network_calls,
         )
     return SecurityInvestigationService(

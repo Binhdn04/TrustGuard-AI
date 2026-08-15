@@ -57,7 +57,7 @@ export interface SecurityCaseViewModel {
     uncertainties: string[];
     followUpOffer: string | null;
     responseVersion: string;
-    generationMode: "ai" | "template_fallback";
+    generationMode: "ai" | "policy_grounded" | "template_fallback";
   } | null;
   signalNodes: CaseSignalNode[];
   signalEdges: CaseSignalEdge[];

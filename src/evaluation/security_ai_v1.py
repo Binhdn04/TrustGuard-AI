@@ -360,7 +360,10 @@ async def evaluate_ai_case(case: SecurityAIEvaluationCase) -> SecurityAICaseResu
         latency += sum(item.latency_ms for item in runtime.metrics)
         response = completed.assistant_response
         assert response is not None
-        fallback_seen = fallback_seen or response.generation_mode is AssistantGenerationModeV4.TEMPLATE_FALLBACK
+        fallback_seen = fallback_seen or response.generation_mode in {
+            AssistantGenerationModeV4.POLICY_GROUNDED,
+            AssistantGenerationModeV4.TEMPLATE_FALLBACK,
+        }
         available_refs = {item.evidence_ref for item in completed.evidence}
         allowed_actions = set(completed.recommended_actions)
         total_reasons = len(response.top_reasons)

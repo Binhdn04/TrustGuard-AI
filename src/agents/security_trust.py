@@ -179,7 +179,11 @@ class BrandMatcher:
                 signal, confidence = "official_match", 1.0
             elif host.startswith("xn--") or ".xn--" in host:
                 signal, confidence = "homograph_domain", 0.9
-            elif any(_distance(host.split(".")[0], official.split(".")[0]) <= 2 for official in official_domains):
+            elif any(
+                _distance(host.split(".")[0], official.split(".")[0]) <= 2
+                or host.split(".")[0].startswith(f"{official.split('.')[0]}-")
+                for official in official_domains
+            ):
                 signal, confidence = "lookalike_domain", 0.85
             else:
                 signal, confidence = "domain_mismatch", 0.7

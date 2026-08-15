@@ -52,6 +52,9 @@ class ScopeDecisionV4(StrEnum):
 class SecurityScenarioV4(StrEnum):
     RECRUITMENT = "recruitment"
     PROMOTION_PRIZE = "promotion_prize"
+    CHARITY = "charity"
+    INVESTMENT = "investment"
+    ONLINE_TASK = "online_task"
     ACCOUNT_VERIFICATION = "account_verification"
     PAYMENT = "payment"
     REFUND = "refund"
@@ -78,6 +81,14 @@ class PotentialThreatV4(StrEnum):
     RECRUITMENT_SCAM = "RECRUITMENT_SCAM"
     PROMOTION_PRIZE_SCAM = "PROMOTION_PRIZE_SCAM"
     CREDENTIAL_THEFT = "CREDENTIAL_THEFT"
+    IMPERSONATION_FINANCIAL_SCAM = "IMPERSONATION_FINANCIAL_SCAM"
+    CREDENTIAL_AND_OTP_PHISHING = "CREDENTIAL_AND_OTP_PHISHING"
+    RECRUITMENT_IMPERSONATION = "RECRUITMENT_IMPERSONATION"
+    CHARITY_IMPERSONATION_SCAM = "CHARITY_IMPERSONATION_SCAM"
+    INVESTMENT_IMPERSONATION_SCAM = "INVESTMENT_IMPERSONATION_SCAM"
+    ADVANCE_FEE_TASK_SCAM = "ADVANCE_FEE_TASK_SCAM"
+    PAYMENT_AND_OTP_PHISHING = "PAYMENT_AND_OTP_PHISHING"
+    ADVANCE_FEE_SCAM = "ADVANCE_FEE_SCAM"
     UNDETERMINED_SECURITY_THREAT = "UNDETERMINED_SECURITY_THREAT"
 
 
@@ -132,6 +143,9 @@ class SecurityRecommendedActionV4(StrEnum):
 
 class AssistantGenerationModeV4(StrEnum):
     AI = "ai"
+    POLICY_GROUNDED = "policy_grounded"
+    # Kept for reading responses persisted by older deployments. New turns
+    # must use POLICY_GROUNDED instead of presenting a template fallback.
     TEMPLATE_FALLBACK = "template_fallback"
 
 
@@ -895,7 +909,7 @@ class SecurityAdminCopilotUsageV4(SecurityContractModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0, ge=0)
-    status: Literal["ok", "fallback"]
+    status: Literal["ok", "policy_grounded", "fallback"]
 
 
 class SecurityAdminCopilotResponseV4(SecurityContractModel):

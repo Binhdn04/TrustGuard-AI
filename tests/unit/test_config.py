@@ -53,7 +53,6 @@ def test_post_processing_reserve_must_fit_analysis_deadline() -> None:
 def test_live_provider_profile_requires_only_security_v4_providers() -> None:
     settings = Settings(
         live_providers_required=True,
-        google_web_risk_api_key="web-risk",
         virustotal_api_key="virus-total",
         official_verifier_api_url="https://verifier.example/check",
         official_verifier_api_key="official-verifier",
@@ -62,6 +61,20 @@ def test_live_provider_profile_requires_only_security_v4_providers() -> None:
     )
 
     assert settings.openai_api_key == ""
+
+
+def test_live_provider_profile_does_not_require_google_web_risk() -> None:
+    settings = Settings(
+        live_providers_required=True,
+        google_web_risk_api_key="",
+        virustotal_api_key="virus-total",
+        official_verifier_api_url="https://verifier.example/check",
+        official_verifier_api_key="official-verifier",
+        _env_file=None,
+    )
+
+    assert settings.security_live_provider_requirements()["VIRUSTOTAL_API_KEY"] == "virus-total"
+    assert "GOOGLE_WEB_RISK_API_KEY" not in settings.security_live_provider_requirements()
 
 
 @pytest.mark.parametrize(

@@ -25,8 +25,8 @@ class _Copilot:
             evidence_summary="Grounded summary.",
             proposed_disposition=SecurityAdminCopilotDispositionV4.NO_CHANGE,
             evidence_refs=[],
-            generation_mode=AssistantGenerationModeV4.TEMPLATE_FALLBACK,
-            usage=SecurityAdminCopilotUsageV4(status="fallback"),
+            generation_mode=AssistantGenerationModeV4.POLICY_GROUNDED,
+            usage=SecurityAdminCopilotUsageV4(status="policy_grounded"),
             generated_at=datetime.now(UTC),
         )
 

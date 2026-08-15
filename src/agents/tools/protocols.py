@@ -24,7 +24,9 @@ class UrlReputationProvider(Protocol):
 
 
 class UrlReputationCascade(Protocol):
-    async def assess(self, normalized_url: str) -> NormalizedToolResult[UrlReputationCascadeResult]: ...
+    async def assess(
+        self, normalized_url: str, *, high_risk: bool = False
+    ) -> NormalizedToolResult[UrlReputationCascadeResult]: ...
 
 
 class RedirectResolver(Protocol):

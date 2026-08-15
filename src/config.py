@@ -119,12 +119,10 @@ class Settings(BaseSettings):
 
     def security_live_provider_requirements(self) -> dict[str, str]:
         required = {
-            "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
+            "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
             "OFFICIAL_VERIFIER_API_URL": self.official_verifier_api_url,
             "OFFICIAL_VERIFIER_API_KEY": self.official_verifier_api_key,
         }
-        if self.reputation_secondary_enabled:
-            required["VIRUSTOTAL_API_KEY"] = self.virustotal_api_key
         return required
 
     def enabled_security_capabilities(self) -> dict[str, bool]:
