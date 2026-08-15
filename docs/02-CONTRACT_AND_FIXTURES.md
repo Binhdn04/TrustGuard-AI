@@ -138,7 +138,12 @@ mọi decision append campaign audit.
 ## 6. Safety invariants đã enforce
 
 - Out-of-scope không gọi investigation/provider/legacy analysis service.
-- External URL lookup cần consent; local rules/trust lookup vẫn chạy an toàn.
+- Web intake đầu gọi `POST /api/v4/analyses`. Sau khi có verdict, follow-up gọi authenticated `POST /api/v4/chat`;
+  `tools_called=[]` chỉ tạo câu trả lời hội thoại, còn `check_scam` là tín hiệu để frontend tạo analysis v4 tiếp theo.
+  Chat route không tự gọi URL/domain/official provider.
+- Hai consent field vẫn thuộc API v4 để integration client có thể fail closed. Web product không hỏi checkbox từng lượt:
+  thao tác gửi dưới disclosure cấp authorization cho automatic URL/official lookup, còn executor chỉ gọi provider khi
+  context, purpose, normalized target, SSRF guard và budget đều cho phép. Local rules/trust lookup luôn chạy an toàn.
 - Whitelist có provenance/version và precedes negative scoring.
 - `NOT_FOUND`, provider no-hit/error, domain age hoặc mismatch riêng lẻ không đủ tạo malicious.
 - LLM không trực tiếp ghi score/risk/admin action.

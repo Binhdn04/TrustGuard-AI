@@ -17,12 +17,15 @@ thật về goal.
   Security Admin RBAC và rate limiting.
 - Security scope gate, structured scam/threat context, multi-turn conversation và deterministic v4 risk.
 - Text/URL analysis, URL normalization, local phishing rules, brand/whitelist và approved blacklist.
-- Consent-gated URL reputation, guarded redirect, RDAP và SSRF protection.
+- Automatic URL/official lookup theo context dưới disclosure cố định; executor vẫn enforce request authorization,
+  guarded redirect, RDAP, provider budget và SSRF protection.
 - Typed evidence, bounded official verification, WebSocket + polling replay.
 - SQLite local; PostgreSQL durable jobs/outbox, Redis delivery, retention và operations metrics.
 - Paginated history/conversation/trust/memory/campaign API; report/appeal admin lifecycle, bounded admin
   case-detail, domain/threat intelligence, unified v4 audit và reviewed blacklist workflow.
-- Next.js frontend gọi API thật, có case workspace/history, Observatory, Security Review Room, Trust lifecycle,
+- Next.js frontend gọi API thật, có Security v4 cho lượt kiểm tra đầu và chatbot router cho các lượt sau;
+  hội thoại thường không mở analysis mới, còn `check_scam` chuyển về pipeline v4. Verdict gọn cho user, analyst detail theo yêu cầu,
+  case history, Observatory, Security Review Room, Trust lifecycle,
   grounded suggestion-only Admin Copilot, Unified Audit và compatibility surface riêng cho v3 metrics/source discovery.
 - AI roadmap WP8 có versioned AI quality report, hosted evidence validator và sequential feature-flag rollout/rollback checker.
 
@@ -143,7 +146,7 @@ Pop-Location
 Hosted rollout không nằm trong local gate; dùng observation thật và quy trình trong
 [WP9 Release Runbook](docs/WP9_RELEASE_RUNBOOK.md), không bật flag chỉ dựa trên offline report.
 
-Kết quả gần nhất 2026-08-15: backend 226 passed; Ruff pass; frontend 59 test/12 files,
+Kết quả gần nhất 2026-08-15: backend 248 passed; Ruff pass; frontend 60 test/12 files,
 lint/typecheck/cutover check, Next.js Turbopack + webpack standalone production build và Chromium E2E 2 pass.
 Đây chưa phải hosted release evidence.
 
@@ -159,7 +162,10 @@ lint/typecheck/cutover check, Next.js Turbopack + webpack standalone production 
 
 ## Safety invariants đang áp dụng
 
-- Không gọi URL/domain provider khi chưa có consent.
+- Web product chỉ gọi URL/domain/official provider theo context sau disclosure; API executor vẫn yêu cầu authorization
+  trong request, kiểm tra target allowlist và không cho AI tự tạo target.
+- Lượt intake đầu luôn vào `/api/v4/analyses`. Sau verdict, `/api/v4/chat` chỉ trả lời hội thoại thường khi GPT không
+  gọi tool; nếu có `check_scam`, frontend mở một lượt analysis v4 mới trước khi hiển thị kết luận bảo mật.
 - SSRF guard chặn private/local/metadata target và revalidate redirect.
 - Provider no-hit/error hoặc thiếu evidence không tự động tạo `SAFE`.
 - LLM không trực tiếp ghi score/risk/action.

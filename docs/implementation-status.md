@@ -14,7 +14,7 @@ trên hosted production, PostgreSQL/Redis thật hoặc live provider.
 ## 1. Kết luận ngắn
 
 Security Triage v4 và frontend investigation workspace đã triển khai end-to-end: product boundary, scope gate, structured scam
-context, consent-gated investigation, deterministic risk, brand/whitelist/official verification,
+context, policy-gated automatic investigation dưới disclosure, deterministic risk, brand/whitelist/official verification,
 multi-turn Security Chat, owner persistence, report/appeal, HITL blacklist action, Security Memory và
 explainable campaign hypotheses, paginated API, admin feedback lifecycle, intelligence explorer và unified audit.
 AI Copilot roadmap WP0–WP8 đã implemented ở mức repository/local gate: shared provider runtime/budget,
@@ -47,7 +47,7 @@ zero-usage window và cleanup vẫn còn lại.
 | Multi-turn conversation | Owner-scoped ID/list, optimistic version, redacted summary, conflict isolation và retention | `SecurityAnalysisService`, migration `0011` |
 | Analysis lifecycle | Terminal persistence, owner list/get/page/filter, queued/running/completed/failed events | v4 API/service/repositories |
 | Realtime replay | Cursor polling, single-use WebSocket ticket và terminal event replay | v4 event/stream tests |
-| Security Chat frontend | Multi-turn composer, OOS/need-more-info states, risk/evidence/recommendations, history/report/appeal | frontend components + tests/E2E |
+| Security Chat frontend | Chatbot multi-turn với automatic lookup disclosure; Simple mode chat + grounded verdict, detail/report/appeal thu gọn; Analyst mode giữ plan/evidence; OOS/need-more-info/history/resume đầy đủ | frontend components + tests/E2E |
 | User feedback | V4 user create/list; admin page/decision, terminal conflict, reviewer/note và immutable audit | migrations `0012`/`0015`, API tests |
 | HITL blacklist | High-risk URL producer, canonical target/evidence snapshot, approve/reject, idempotent execution và audit | `platform_wave2.py`, migration `0013` |
 | Security Memory | Domain/URL fingerprint/redirect/brand/pattern/threat/risk/version/report count/admin verdict | `security_memory.py`, migration `0014` |
@@ -126,10 +126,11 @@ responsive/accessibility và production E2E. Frontend không còn task riêng; p
 
 ## 7. Test evidence hiện tại
 
-- Backend: **226 passed** trong suite Security v4, AI WP0–WP8 và reviewed-action compatibility đang hoạt động.
+- Backend: **249 passed** trong suite Security v4, authenticated follow-up chat, AI WP0–WP8, chatbot tool và reviewed-action compatibility đang hoạt động.
 - Ruff: **pass**.
 - Alembic: **`0017_security_admin_copilot` là head**.
-- Frontend unit: **59 passed trong 12 files**, gồm Admin Copilot suggestion isolation, async capability/idempotency, OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
+- Frontend unit: **61 passed trong 12 files**, gồm automatic lookup/chat routing/continuation, Simple/Analyst presentation,
+  Admin Copilot suggestion isolation, async capability/idempotency, OIDC state/nonce/PKCE/code exchange/per-tab session và refresh-token rotation.
 - Frontend lint và TypeScript: **pass**.
 - Chromium E2E: **2 passed**, gồm mobile/keyboard user report-appeal-resume và admin Review/Observatory/Trust/Audit;
   axe structural WCAG gate và computed theme contrast đạt yêu cầu.

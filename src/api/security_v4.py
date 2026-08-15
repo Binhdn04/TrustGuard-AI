@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
@@ -11,6 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
+from src.agents.graph import agent as chatbot_agent
 from src.agents.security_risk import assess_security_risk
 from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.api.dependencies import (
@@ -65,6 +67,9 @@ from src.models import (
     SecurityCampaignRecordV4,
     SecurityCampaignReviewerStatusV4,
     SecurityCapabilitiesResponseV4,
+    SecurityChatRequestV4,
+    SecurityChatResponseV4,
+    SecurityChatRouteV4,
     SecurityConversationPageV4,
     SecurityConversationV4,
     SecurityDomainIntelligencePageV4,
@@ -137,6 +142,38 @@ async def security_capabilities_v4() -> SecurityCapabilitiesResponseV4:
     return SecurityCapabilitiesResponseV4(
         release_profile=settings.security_release_profile,
         **capabilities,
+    )
+
+
+@router.post("/chat", response_model=SecurityChatResponseV4, responses=_COMMON_ERRORS)
+async def security_chat_v4(
+    request: SecurityChatRequestV4,
+    principal: PrincipalDependency,
+) -> SecurityChatResponseV4:
+    """Route a follow-up through the bounded chatbot before opening another analysis turn."""
+    del principal  # Authentication is required even though ordinary chat is not persisted.
+    try:
+        result = await chatbot_agent.ainvoke({"query": request.message})
+    except Exception as exc:
+        raise PlatformError(
+            status_code=503,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Security assistant chat is temporarily unavailable.",
+            retryable=True,
+        ) from exc
+    try:
+        metadata = json.loads(result.get("analysis", ""))
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    tools_called = metadata.get("tools_called", []) if isinstance(metadata, dict) else []
+    route = (
+        SecurityChatRouteV4.SECURITY_ANALYSIS
+        if isinstance(tools_called, list) and "check_scam" in tools_called
+        else SecurityChatRouteV4.CONVERSATION
+    )
+    return SecurityChatResponseV4(
+        route=route,
+        response=result.get("response", ""),
     )
 
 

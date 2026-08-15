@@ -19,6 +19,7 @@ import type {
   SecurityCampaignPageV4,
   SecurityCampaignRecordV4,
   SecurityCapabilitiesResponseV4,
+  SecurityChatResponseV4,
   SecurityConversationPageV4,
   SecurityConversationV4,
   SecurityDomainIntelligencePageV4,
@@ -104,6 +105,10 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async getCapabilities(): Promise<SecurityCapabilitiesResponseV4> {
     return this.get<SecurityCapabilitiesResponseV4>("capabilities");
+  }
+
+  async chat(message: string): Promise<SecurityChatResponseV4> {
+    return this.post<SecurityChatResponseV4>("chat", { message });
   }
 
   async createAnalysis(

@@ -47,7 +47,8 @@ medical/science, sports, deepfake và malware sandbox vẫn ngoài scope theo `s
 - `provider no-hit != SAFE`; `provider timeout != SAFE`.
 - `official NOT_FOUND != FALSE`.
 - Domain mismatch hoặc domain mới, nếu đứng riêng, không đủ để kết luận `MALICIOUS`.
-- External URL/domain lookup cần consent; official-source lookup có consent/purpose riêng.
+- API vẫn giữ consent URL/official riêng để integration fail closed. Web product cấp cả hai authorization khi user gửi
+  dưới disclosure cố định; executor chỉ gọi tool theo context/purpose, normalized target, SSRF guard và budget.
 - Không dùng URL/target do LLM tự sinh để gọi network tool.
 - Giữ SSRF guard, redirect revalidation, ownership, RBAC, safe logging, durable job, idempotency,
   outbox và realtime lifecycle.
@@ -550,8 +551,9 @@ boundary realtime/auth/report/appeal không regression.
 
 - Main workspace và history dùng adapter/type v4 riêng; legacy v3 adapter/component vẫn tách biệt cho
   compatibility/admin flow, không còn claim-stance hoặc general fact-check semantics trên main flow.
-- Chat composer hỗ trợ multi-turn `conversation_id`/version, focused follow-up, consent URL và consent
-  official-source riêng từng lượt; không còn screenshot consent/panel trong Security Triage profile.
+- Chat composer hỗ trợ multi-turn `conversation_id`/version và focused follow-up; checkbox lookup từng lượt đã được thay
+  bằng automatic lookup disclosure. Simple mode là chat + verdict/giải thích gọn, Analyst mode giữ investigation detail;
+  không còn screenshot consent/panel trong Security Triage profile.
 - Render riêng OOS, NEED_MORE_INFO, RUNNING, PROVISIONAL_WARNING, COMPLETED và FAILED; kết luận risk,
   recommended actions, limitations, evidence và technical detail dùng security contract.
 - Realtime v4 dùng single-use WebSocket ticket, cursor replay/reconnect và polling fallback; history
@@ -767,7 +769,7 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
 | WP7 | DONE | 6 test WP7 mới; full backend 279 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass | Scope deviation: BLOCK_DOMAIN, PUBLISH_BROAD_WARNING, Copilot chưa có sink; DISABLE_BLACKLIST chưa có v4 producer |
 | WP8 | DONE | 9 test WP8 mới; full backend 288 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass; Alembic 0014 head | Không có; legacy claim-vector compatibility path được giữ đến cleanup WP9 nhưng Security v4 không phụ thuộc embeddings |
-| WP9 | IN_PROGRESS | API/frontend readiness; `scope_decision` filter; hardened production env; versioned 24-category deterministic + 5 reviewed-memory + 9-category AI evaluation; AI roadmap WP0–WP8 repository gates; hosted evidence validator và sequential rollout checker; durable Security v4 revision 0016; Admin Copilot revision 0017; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Active suite: backend 226 pass; frontend 59 pass/12 files; Ruff/lint/typecheck/build/E2E pass; Alembic 0017 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load, durable lease-loss, reviewed-memory hoặc Admin Copilot rollout evidence, restore rehearsal, API/provider/job/DB zero-usage window hay legacy cleanup; mọi AI/async/memory/admin-copilot flag mặc định tắt nên profile đúng là `pre_cutover` |
+| WP9 | IN_PROGRESS | API/frontend readiness; automatic lookup + authenticated follow-up chatbot routing + compact user verdict/analyst detail; `scope_decision` filter; hardened production env; versioned 24-category deterministic + 5 reviewed-memory + 9-category AI evaluation; AI roadmap WP0–WP8 repository gates; hosted evidence validator và sequential rollout checker; durable Security v4 revision 0016; Admin Copilot revision 0017; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Active suite: backend 249 pass; frontend 61 pass/12 files; Ruff/lint/typecheck/build/E2E pass; Alembic 0017 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load, durable lease-loss, reviewed-memory hoặc Admin Copilot rollout evidence, restore rehearsal, API/provider/job/DB zero-usage window hay legacy cleanup; mọi AI/async/memory/admin-copilot flag mặc định tắt nên profile đúng là `pre_cutover` |
 
 Trạng thái hợp lệ: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
 

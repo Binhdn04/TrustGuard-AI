@@ -211,12 +211,16 @@
 
   Frontend:
 
-  - Conversation panel hiển thị assistant answer theo turn.
-  - Investigation panel tiếp tục là nguồn evidence/detail.
-  - Action panel ưu tiên “Làm ngay” theo exposure state.
-  - Simple mode dùng summary và ba hành động quan trọng nhất.
+  - Lượt intake đầu luôn chạy Security v4; trong lúc đang kiểm tra, conversation composer được ẩn và chỉ hiện lại sau
+    verdict. Các lượt sau đi qua authenticated `/api/v4/chat`: hội thoại thường được trả lời trực tiếp, còn
+    `check_scam` mở lượt Security v4 mới trong cùng `conversation_id`/version.
+  - Web product bỏ checkbox lookup từng lượt; thao tác gửi dưới disclosure cố định cấp authorization cho automatic
+    URL/official lookup. Executor vẫn quyết định call theo context/purpose và enforce target/SSRF/budget.
+  - Simple mode dùng layout hai vùng: chat và `Kết luận và hướng dẫn`; summary, ba lý do/hành động quan trọng nhất hiển thị
+    trước, investigation/evidence/report/appeal nằm trong disclosure mở rộng.
   - Analyst mode hiển thị plan, source, confidence, limitation và version.
-  - Disclosure chung nêu rõ nội dung được xử lý bởi AI provider; không thêm consent riêng theo lựa chọn sản phẩm.
+  - Disclosure chung nêu rõ nội dung có thể được xử lý bởi AI/security/official provider; không thêm checkbox consent
+    riêng trong composer theo lựa chọn sản phẩm.
 
   Gate hoàn thành:
 

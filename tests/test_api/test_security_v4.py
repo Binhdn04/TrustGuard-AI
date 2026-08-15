@@ -17,6 +17,38 @@ ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 
 
 @pytest.mark.asyncio
+async def test_v4_chat_routes_authenticated_follow_up_without_opening_analysis(client, monkeypatch) -> None:
+    class FakeChatbot:
+        async def ainvoke(self, state):
+            if state == {"query": "Kiểm tra link này"}:
+                return {
+                    "response": "Tôi sẽ kiểm tra nội dung này.",
+                    "analysis": '{"model":"gpt","tools_called":["check_scam"]}',
+                }
+            assert state == {"query": "Cảm ơn bạn"}
+            return {
+                "response": "Không có gì. Bạn cứ gửi tiếp nếu cần kiểm tra.",
+                "analysis": '{"model":"gpt","tools_called":[]}',
+            }
+
+    monkeypatch.setattr("src.api.security_v4.chatbot_agent", FakeChatbot())
+
+    denied = await client.post("/api/v4/chat", json={"message": "Cảm ơn bạn"})
+    response = await client.post("/api/v4/chat", headers=USER_HEADERS, json={"message": "Cảm ơn bạn"})
+    security = await client.post("/api/v4/chat", headers=USER_HEADERS, json={"message": "Kiểm tra link này"})
+
+    assert denied.status_code == 403
+    assert response.status_code == 200
+    assert response.json() == {
+        "contract_version": "v4",
+        "route": "conversation",
+        "response": "Không có gì. Bạn cứ gửi tiếp nếu cần kiểm tra.",
+    }
+    assert security.status_code == 200
+    assert security.json()["route"] == "security_analysis"
+
+
+@pytest.mark.asyncio
 async def test_v4_requires_authentication(client) -> None:
     response = await client.post("/api/v4/analyses", json={"message": "Tôi nhận được tin nhắn lạ"})
 

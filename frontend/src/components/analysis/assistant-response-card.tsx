@@ -10,7 +10,7 @@ export function AssistantResponseCard({
   response: AssistantResponseV4;
   mode: SecurityPresentationMode;
 }) {
-  const reasons = mode === "simple" ? response.top_reasons.slice(0, 3) : response.top_reasons;
+  const reasons = mode === "analyst" ? response.top_reasons : [];
   return (
     <section aria-label="Phản hồi của trợ lý bảo mật" className="max-w-[94%] rounded-2xl rounded-bl-sm border border-primary/20 bg-primary/5 p-4 text-sm">
       <div className="flex items-center gap-2">

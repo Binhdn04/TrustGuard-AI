@@ -300,6 +300,11 @@ class SecurityExecutionModeV4(StrEnum):
     ASYNC = "async"
 
 
+class SecurityChatRouteV4(StrEnum):
+    CONVERSATION = "conversation"
+    SECURITY_ANALYSIS = "security_analysis"
+
+
 class BrandCreateRequestV4(SecurityContractModel):
     name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=50)
@@ -389,6 +394,16 @@ class SecurityTriageCreateRequestV4(SecurityContractModel):
         if (self.conversation_id is None) != (self.conversation_version is None):
             raise ValueError("conversation_id and conversation_version must be provided together")
         return self
+
+
+class SecurityChatRequestV4(SecurityContractModel):
+    message: str = Field(min_length=1, max_length=5000)
+
+
+class SecurityChatResponseV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    route: SecurityChatRouteV4
+    response: str
 
 
 class SecurityContextV4(SecurityContractModel):
@@ -1043,6 +1058,9 @@ __all__ = [
     "SecurityWebSocketTicketRequestV4",
     "SecurityWebSocketTicketResponseV4",
     "SecurityCapabilitiesResponseV4",
+    "SecurityChatRequestV4",
+    "SecurityChatResponseV4",
+    "SecurityChatRouteV4",
     "TrustLifecycleV4",
     "WhitelistCreateRequestV4",
     "WhitelistRecordV4",

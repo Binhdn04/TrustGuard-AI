@@ -70,15 +70,17 @@ export function ActionRiskPanel({
             {viewModel.risk.explanation && <p className="mt-2 text-sm leading-6 text-foreground">{viewModel.risk.explanation}</p>}
           </div>
         </div>
-        <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-current/15 pt-3 text-xs">
-          <div><dt>Risk score</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.score ?? "—"}{viewModel.risk.score !== null && "/100"}</dd></div>
-          <div><dt>Confidence</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.confidence ?? "—"}</dd></div>
-        </dl>
         {mode === "analyst" && (
-          <dl className="mt-3 space-y-1 border-t border-current/15 pt-3 text-[11px]">
-            <div className="flex justify-between gap-3"><dt>Threat type</dt><dd className="text-right font-mono">{viewModel.risk.threatType ?? "—"}</dd></div>
-            <div className="flex justify-between gap-3"><dt>Policy</dt><dd className="text-right font-mono">{viewModel.policyVersion ?? "—"}</dd></div>
-          </dl>
+          <>
+            <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-current/15 pt-3 text-xs">
+              <div><dt>Risk score</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.score ?? "—"}{viewModel.risk.score !== null && "/100"}</dd></div>
+              <div><dt>Confidence</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.confidence ?? "—"}</dd></div>
+            </dl>
+            <dl className="mt-3 space-y-1 border-t border-current/15 pt-3 text-[11px]">
+              <div className="flex justify-between gap-3"><dt>Threat type</dt><dd className="text-right font-mono">{viewModel.risk.threatType ?? "—"}</dd></div>
+              <div className="flex justify-between gap-3"><dt>Policy</dt><dd className="text-right font-mono">{viewModel.policyVersion ?? "—"}</dd></div>
+            </dl>
+          </>
         )}
       </div>
     </section>

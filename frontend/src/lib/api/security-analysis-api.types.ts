@@ -22,6 +22,7 @@ import type {
   SecurityCampaignRecordV4,
   SecurityCampaignReviewerStatusV4,
   SecurityCapabilitiesResponseV4,
+  SecurityChatResponseV4,
   SecurityConversationPageV4,
   SecurityConversationV4,
   SecurityDomainIntelligencePageV4,
@@ -105,6 +106,7 @@ export interface SecurityAppealPageQuery extends SecurityPaginationQuery {
 
 export interface SecurityAnalysisApi {
   getCapabilities(): Promise<SecurityCapabilitiesResponseV4>;
+  chat?(message: string): Promise<SecurityChatResponseV4>;
   createAnalysis(
     request: SecurityTriageCreateRequestV4,
     options?: { idempotencyKey?: string },

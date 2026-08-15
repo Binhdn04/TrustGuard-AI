@@ -14,6 +14,7 @@ import { EvidenceDeck } from "@/components/analysis/evidence-deck";
 import { InvestigationTimelineV4 } from "@/components/analysis/investigation-timeline-v4";
 import { SimpleAnalystToggle } from "@/components/analysis/simple-analyst-toggle";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
+import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
 import { ApiError } from "@/lib/api/http-analysis-api";
@@ -129,7 +130,7 @@ export function CaseDetail({
     };
   }, [load, stopRuntime]);
 
-  const resume = async (message: string, externalLookup: boolean, officialLookup: boolean): Promise<boolean> => {
+  const resume = async (message: string): Promise<boolean> => {
     if (!conversation) return false;
     const activeGeneration = ++generation.current;
     stopRuntime();
@@ -140,10 +141,7 @@ export function CaseDetail({
         message,
         conversation_id: conversation.conversation_id,
         conversation_version: conversation.context_version,
-        consent: {
-          external_url_lookup: externalLookup,
-          official_source_lookup: officialLookup,
-        },
+        consent: AUTOMATIC_LOOKUP_CONSENT,
       });
       if (activeGeneration !== generation.current) return false;
       if (!("scope_decision" in next)) {
@@ -257,7 +255,7 @@ function ResumedContextCardOrIssue({
   conversation: SecurityConversationV4 | null;
   busy: boolean;
   issue: string | null;
-  onResume(message: string, externalLookup: boolean, officialLookup: boolean): Promise<boolean>;
+  onResume(message: string): Promise<boolean>;
 }) {
   if (conversation) return <ResumedContextCard conversation={conversation} busy={busy} issue={issue} onResume={onResume} />;
   return (

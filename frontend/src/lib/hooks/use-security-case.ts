@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
+import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
 export type SecurityCaseState =
   | "IDLE"
+  | "CHATTING"
   | "RUNNING"
   | "PROVISIONAL_WARNING"
   | "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
@@ -18,8 +20,6 @@ export type SecurityCaseState =
 
 export interface SecurityCaseSubmission {
   message: string;
-  externalLookup: boolean;
-  officialLookup: boolean;
 }
 
 export interface SecurityCaseTurn extends SecurityCaseSubmission {
@@ -27,6 +27,7 @@ export interface SecurityCaseTurn extends SecurityCaseSubmission {
   analysisId?: string;
   idempotencyKey: string;
   result: SecurityScopeResponseV4 | null;
+  chatResponse?: string;
 }
 
 function stateFor(result: SecurityScopeResponseV4): SecurityCaseState {
@@ -136,10 +137,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
       const useAsync = capabilities?.security_async_execution === true;
       const result = await api.createAnalysis({
         message: submission.message,
-        consent: {
-          external_url_lookup: submission.externalLookup,
-          official_source_lookup: submission.officialLookup,
-        },
+        consent: AUTOMATIC_LOOKUP_CONSENT,
         execution_mode: useAsync ? "async" : "inline",
         ...(conversation
           ? { conversation_id: conversation.id, conversation_version: conversation.version }
@@ -165,16 +163,51 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     }
   }, [api, applyResult, conversation, monitor, stopRuntime]);
 
-  const submit = useCallback((
-    message: string,
-    externalLookup: boolean,
-    officialLookup: boolean,
+  const routeFollowUp = useCallback(async (
+    turnId: string,
+    submission: SecurityCaseSubmission,
+    settledState: SecurityCaseState,
   ) => {
-    const submission = { message, externalLookup, officialLookup };
+    generation.current += 1;
+    const activeGeneration = generation.current;
+    stopRuntime();
+    setError(null);
+    setState("CHATTING");
+    setTransport("disconnected");
+
+    try {
+      const reply = await api.chat!(submission.message);
+      if (!mounted.current || activeGeneration !== generation.current) return;
+      if (reply.route === "security_analysis") {
+        await execute(turnId, submission);
+        return;
+      }
+      if (!reply.response.trim()) throw new Error("Trợ lý không trả về nội dung.");
+      setTurns((current) => current.map((turn) => (
+        turn.id === turnId ? { ...turn, chatResponse: reply.response } : turn
+      )));
+      setState(settledState);
+    } catch (chatError) {
+      if (!mounted.current || activeGeneration !== generation.current) return;
+      setError(messageForError(chatError));
+      setState("FAILED");
+    }
+  }, [api, execute, stopRuntime]);
+
+  const submit = useCallback((message: string) => {
+    const submission = { message };
     const turnId = crypto.randomUUID();
     setTurns((current) => [...current, { id: turnId, idempotencyKey: turnId, result: null, ...submission }]);
-    void execute(turnId, submission);
-  }, [execute]);
+    const hasCompletedTurn = turns.some((turn) => turn.result !== null);
+    const shouldUseChatRouter = hasCompletedTurn
+      && state !== "NEED_MORE_INFO"
+      && typeof api.chat === "function";
+    if (shouldUseChatRouter) {
+      void routeFollowUp(turnId, submission, state);
+    } else {
+      void execute(turnId, submission);
+    }
+  }, [api.chat, execute, routeFollowUp, state, turns]);
 
   const retry = useCallback(() => {
     const latestTurn = turns.at(-1);
@@ -202,8 +235,8 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     setLifecycleEvents([]);
   }, [stopRuntime]);
 
-  const latest = turns.at(-1)?.result ?? null;
-  const busy = state === "RUNNING" || state === "PROVISIONAL_WARNING";
+  const latest = turns.findLast((turn) => turn.result !== null)?.result ?? null;
+  const busy = state === "CHATTING" || state === "RUNNING" || state === "PROVISIONAL_WARNING";
 
   return {
     turns,

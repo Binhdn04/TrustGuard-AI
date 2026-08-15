@@ -160,6 +160,15 @@ export async function installUserAnalysisFlow(page: Page) {
     contentType: "application/json",
     body: JSON.stringify(followUp),
   }));
+  await page.route("**/api/v4/chat", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      contract_version: "v4",
+      route: "conversation",
+      response: "Không có gì. Bạn có thể tiếp tục trò chuyện hoặc gửi nội dung khác để kiểm tra.",
+    }),
+  }));
   await page.route("**/api/v4/analyses", (route) => {
     if (route.request().method() === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([completed]) });

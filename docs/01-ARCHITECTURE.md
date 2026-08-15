@@ -54,7 +54,7 @@ async như legacy PostgreSQL analysis path.
 validate request/conversation version
 → scope decision + SecurityContextV4
 → terminal OUT_OF_SCOPE / NEED_MORE_INFO, hoặc investigation
-→ local rules and consent-gated external tools
+→ local rules and policy-gated automatic external tools
 → brand/whitelist/official trust enrichment
 → deterministic risk and grounded explanation
 → terminal persistence
@@ -64,7 +64,8 @@ validate request/conversation version
 Các invariant đang enforce:
 
 - Out-of-scope kết thúc trước khi resolve investigation hoặc legacy analysis service.
-- Planner chỉ nhận normalized target từ `SecurityContextV4`; external URL lookup cần consent.
+- Planner chỉ nhận normalized target từ `SecurityContextV4`. Web product cấp lookup authorization qua disclosure cố định
+  cho mỗi turn; executor vẫn revalidate request consent, purpose và target ngay trước external call.
 - DNS/redirect/reputation dùng SSRF guard; redirect revalidate từng hop.
 - Brand và whitelist record có provenance, lifecycle, reviewer và policy version.
 - Official verifier bị giới hạn purpose, một claim, tối đa hai query và năm official sources;
@@ -111,6 +112,11 @@ snapshot hash/usage/audit nhưng không lưu prompt/raw completion và không đ
 conversation, explorer, feedback, trust, unified audit và case-detail contracts trong case workspace,
 Observatory, Review Room, Trust lifecycle và Audit. Reviewed-action detail/audit/decision tiếp tục dùng contract
 v3 có nhãn compatibility; metrics/source discovery v3 chỉ xuất hiện trong compatibility surface riêng.
+
+User conversation dùng routing hai tầng. Lượt intake đầu luôn tạo Security v4 analysis và khóa composer trong lúc
+pipeline chạy. Sau verdict, authenticated `POST /api/v4/chat` xử lý follow-up: không có tool call thì trả lời như chatbot
+bình thường; có `check_scam` thì frontend tạo analysis v4 mới. Chỉ pipeline analysis mới được quyền lập investigation
+plan và gọi DNS/redirect/RDAP/reputation/official provider theo context, SSRF guard và budget.
 
 ## 6. Hạ tầng legacy còn được giữ
 

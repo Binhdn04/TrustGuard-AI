@@ -48,11 +48,13 @@ describe("FE4 security case presentation", () => {
   it("places the primary backend recommendation before risk metrics", () => {
     render(<Presentation />);
 
+    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
+
     const recommendation = screen.getByText("Không mở liên kết");
     const score = screen.getByText("91/100");
     expect(recommendation.compareDocumentPosition(score) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Rủi ro cao" })).toBeInTheDocument();
-    expect(screen.getByText("+ Tự liên hệ qua kênh chính thức")).toBeInTheDocument();
+    expect(screen.getByText("Tự liên hệ qua kênh chính thức")).toBeInTheDocument();
   });
 
   it("keeps all evidence and marks only exact explanation references", () => {

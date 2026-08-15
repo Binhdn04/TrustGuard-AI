@@ -38,7 +38,7 @@ export function ConversationPanel({
   busy: boolean;
   mode: SecurityPresentationMode;
   followUp?: string | null;
-  onSubmit(message: string, externalLookup: boolean, officialLookup: boolean): void;
+  onSubmit(message: string): void;
   onRetry(): void;
 }) {
   return (
@@ -50,7 +50,8 @@ export function ConversationPanel({
         </div>
         {busy && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold text-primary">
-            <Radio className="size-3" aria-hidden="true" />{transportLabel(transport)}
+            <Radio className="size-3" aria-hidden="true" />
+            {state === "CHATTING" ? "Đang trả lời" : transportLabel(transport)}
           </span>
         )}
       </header>
@@ -62,6 +63,11 @@ export function ConversationPanel({
               <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">Input {index + 1}</p>
               <p className="whitespace-pre-wrap break-words">{turn.message}</p>
             </div>
+            {turn.chatResponse && (
+              <div className="max-w-[94%] rounded-2xl rounded-bl-sm border border-border bg-muted/40 p-4 text-sm leading-6">
+                <p className="whitespace-pre-wrap break-words">{turn.chatResponse}</p>
+              </div>
+            )}
             {turn.result?.scope_decision === "OUT_OF_SCOPE_GENERAL_FACT_CHECK" && (
               <div className="max-w-[94%] rounded-2xl rounded-bl-sm border border-border bg-muted/40 p-4 text-sm">
                 <p className="font-semibold">Nội dung này nằm ngoài phạm vi Security Triage</p>
@@ -88,8 +94,14 @@ export function ConversationPanel({
                 <span className="relative inline-flex size-2.5 rounded-full bg-primary" />
               </span>
               <div>
-                <p className="text-sm font-semibold">Analysis lifecycle đang chạy</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{transportLabel(transport)}</p>
+                <p className="text-sm font-semibold">
+                  {state === "CHATTING" ? "Trợ lý đang trả lời" : "Trợ lý đang kiểm tra nội dung"}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {state === "CHATTING"
+                    ? "Nếu phát hiện yêu cầu kiểm tra an toàn, trợ lý sẽ mở lượt phân tích mới."
+                    : `Tự chọn công cụ cần thiết · ${transportLabel(transport)}`}
+                </p>
               </div>
             </div>
             {state === "PROVISIONAL_WARNING" && (

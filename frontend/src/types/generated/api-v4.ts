@@ -163,6 +163,14 @@ export interface SecurityConsentV4 {
   official_source_lookup: boolean;
 }
 
+export type SecurityChatRouteV4 = "conversation" | "security_analysis";
+
+export interface SecurityChatResponseV4 {
+  contract_version: "v4";
+  route: SecurityChatRouteV4;
+  response: string;
+}
+
 export interface SecurityCapabilitiesResponseV4 {
   contract_version: "v4";
   product_profile: "security_triage_vnext";
