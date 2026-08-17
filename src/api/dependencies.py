@@ -22,7 +22,7 @@ from src.agents.campaign import (
 )
 from src.agents.graph import build_openai_graph
 from src.agents.security_investigation import SecurityInvestigationService
-from src.agents.security_trust import HttpOfficialSourceSearch, OfficialClaimVerifier, SecurityTrustService
+from src.agents.security_trust import SecurityTrustService
 from src.agents.tools import (
     GuardedRedirectResolver,
     NormalizedRdapProvider,
@@ -41,7 +41,6 @@ from src.repositories import PostgresPlatformRepository, SQLiteBlacklistReposito
 from src.security_ai import ModelTokenPricing, OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
 from src.services.analysis import AnalysisService
 from src.services.platform_wave2 import (
-    ArtifactSigner,
     MemoryWave2Repository,
     VersionedSourceRegistry,
     Wave2PlatformService,
@@ -56,7 +55,6 @@ from src.services.realtime import (
     RedisTicketStore,
     WebSocketTicketManager,
 )
-from src.services.screenshot import ScreenshotCaptureCoordinator
 from src.services.security_admin_copilot import SecurityAdminCopilotService
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
@@ -169,7 +167,7 @@ def get_security_analysis_service() -> SecurityAnalysisService:
         PostgresPlatformRepository(
             settings.database_url,
             settings.database_encryption_key,
-            content_retention_days=settings.artifact_retention_days,
+            content_retention_days=settings.content_retention_days,
         )
         if settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
         else SQLiteBlacklistRepository(settings.security_database_path)
@@ -187,28 +185,14 @@ def get_security_trust_repository():
         return PostgresPlatformRepository(
             settings.database_url,
             settings.database_encryption_key,
-            content_retention_days=settings.artifact_retention_days,
+            content_retention_days=settings.content_retention_days,
         )
     return SQLiteBlacklistRepository(settings.security_database_path)
 
 
 @lru_cache
 def get_security_trust_service() -> SecurityTrustService:
-    settings = get_settings()
-    search = (
-        HttpOfficialSourceSearch(
-            settings.official_verifier_api_url,
-            settings.official_verifier_api_key,
-            timeout=settings.provider_timeout_seconds,
-        )
-        if settings.official_verifier_api_url
-        else None
-    )
-    return SecurityTrustService(
-        get_security_trust_repository(),
-        verifier=OfficialClaimVerifier(search),
-        max_external_calls=settings.security_investigation_max_external_calls,
-    )
+    return SecurityTrustService(get_security_trust_repository())
 
 
 @lru_cache
@@ -283,7 +267,7 @@ def get_security_investigation_service() -> SecurityInvestigationService:
         PostgresPlatformRepository(
             settings.database_url,
             settings.database_encryption_key,
-            content_retention_days=settings.artifact_retention_days,
+            content_retention_days=settings.content_retention_days,
         )
         if postgres
         else SQLiteBlacklistRepository(settings.security_database_path)
@@ -371,7 +355,7 @@ def get_analysis_service() -> AnalysisService:
         PostgresPlatformRepository(
             settings.database_url,
             settings.database_encryption_key,
-            content_retention_days=settings.artifact_retention_days,
+            content_retention_days=settings.content_retention_days,
         )
         if postgres
         else SQLiteBlacklistRepository(settings.security_database_path)
@@ -396,18 +380,10 @@ def get_analysis_service() -> AnalysisService:
             deadline_seconds=settings.analysis_deadline_seconds,
             max_tool_cost_usd=settings.max_provider_cost_usd,
         )
-    artifact_repository = blacklist if postgres else _memory_wave2_repository
-    screenshot_capture = ScreenshotCaptureCoordinator(
-        artifact_repository,
-        settings.artifact_storage_dir,
-        retention_days=settings.artifact_retention_days,
-        timeout_seconds=settings.provider_timeout_seconds,
-    )
     return AnalysisService(
         blacklist=blacklist,
         processor=processor,
         durable_jobs=postgres,
-        screenshot_capture=screenshot_capture,
     )
 
 
@@ -650,14 +626,12 @@ async def close_rate_limiter() -> None:
 
 @lru_cache
 def get_wave2_service() -> Wave2PlatformService:
-    settings = get_settings()
     analysis_service = get_analysis_service()
     repository = analysis_service.repository
     if not isinstance(repository, PostgresPlatformRepository):
         _memory_wave2_repository.action_sink = repository
         repository = _memory_wave2_repository
-    signer = ArtifactSigner(settings.artifact_signing_key, settings.artifact_access_ttl_seconds)
-    return Wave2PlatformService(repository, signer, _source_registry)
+    return Wave2PlatformService(repository, _source_registry)
 
 
 async def resolve_wave2_service(request: Request) -> Wave2PlatformService:

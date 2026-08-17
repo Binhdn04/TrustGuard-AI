@@ -87,7 +87,6 @@ export type SecurityInvestigationToolV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist_lookup"
-  | "official_claim_verifier"
   | "security_memory_lookup";
 
 export type SecurityEvidenceTypeV4 =
@@ -100,22 +99,10 @@ export type SecurityEvidenceTypeV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist"
-  | "official_verification"
   | "reviewed_security_memory";
 
 export type TrustLifecycleV4 = "active" | "disabled";
 export type WhitelistScopeV4 = "domain" | "url" | "contact";
-export type OfficialVerificationPurposeV4 =
-  | "verify_official_campaign"
-  | "verify_brand_announcement"
-  | "verify_recruitment_program"
-  | "verify_official_domain"
-  | "verify_official_contact";
-export type OfficialVerificationVerdictV4 =
-  | "OFFICIAL_CONFIRMED"
-  | "OFFICIAL_CONTRADICTED"
-  | "NOT_FOUND"
-  | "INSUFFICIENT_EVIDENCE";
 export type SecurityReportStatusV4 = "submitted" | "reviewing" | "processed";
 export type SecurityReportReviewDecisionV4 = "approved" | "rejected" | "dismissed";
 export type SecurityAppealStatusV4 = "submitted" | "under_review" | "resolved";
@@ -160,7 +147,6 @@ export interface SecurityPageV4<T> {
 
 export interface SecurityConsentV4 {
   external_url_lookup: boolean;
-  official_source_lookup: boolean;
 }
 
 export type SecurityChatRouteV4 = "conversation" | "security_analysis";
@@ -242,21 +228,6 @@ export interface WhitelistRecordV4 {
 }
 
 export type WhitelistPageV4 = SecurityPageV4<WhitelistRecordV4>;
-
-export interface OfficialSourceFindingV4 {
-  source_url: string;
-  finding: "confirmed" | "contradicted";
-  title: string;
-  observed_at: string;
-}
-
-export interface OfficialVerificationResultV4 {
-  verdict: OfficialVerificationVerdictV4;
-  purpose: OfficialVerificationPurposeV4;
-  sources_checked: number;
-  search_queries_used: number;
-  evidence_refs: string[];
-}
 
 export interface SecurityTriageCreateRequestV4 {
   message: string;

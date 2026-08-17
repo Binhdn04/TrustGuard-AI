@@ -331,26 +331,20 @@ class OutboxPublisher:
 
 
 class RetentionWorker:
-    """Delete expired artifact objects, then tombstone minimized retained input."""
+    """Tombstone minimized retained input and security payloads."""
 
     def __init__(
         self,
         repository: PostgresPlatformRepository,
         *,
-        delete_object: Callable[[str], Awaitable[None]] | None = None,
         interval_seconds: float = 3600,
     ) -> None:
         self._repository = repository
-        self._delete_object = delete_object
         self._interval_seconds = interval_seconds
         self._stopping = asyncio.Event()
 
-    async def run_once(self, now: datetime | None = None) -> tuple[int, int]:
+    async def run_once(self, now: datetime | None = None) -> int:
         cutoff = now or datetime.now(UTC)
-        storage_keys = await self._repository.expire_artifacts(cutoff)
-        if self._delete_object is not None:
-            for storage_key in storage_keys:
-                await self._delete_object(storage_key)
         minimized = await self._repository.expire_minimized_content(cutoff)
         expire_conversations = getattr(self._repository, "expire_security_conversations", None)
         if expire_conversations is not None:
@@ -358,7 +352,7 @@ class RetentionWorker:
         expire_security_payloads = getattr(self._repository, "expire_security_job_payloads", None)
         if expire_security_payloads is not None:
             await expire_security_payloads(cutoff)
-        return len(storage_keys), minimized
+        return minimized
 
     async def run(self) -> None:
         while not self._stopping.is_set():

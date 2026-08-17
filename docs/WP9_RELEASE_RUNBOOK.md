@@ -7,7 +7,7 @@ Runbook này không tự drop legacy schema. `pre_cutover` là profile mặc đ�
 ## 1. Release invariants
 
 - Production dùng PostgreSQL, Redis, HTTPS OIDC/CORS và hai secret độc lập tối thiểu 32 ký tự.
-- `LIVE_PROVIDERS_REQUIRED=true` kiểm tra Web Risk, official verifier và VirusTotal khi secondary reputation được bật.
+- `LIVE_PROVIDERS_REQUIRED=true` kiểm tra VirusTotal.
   OpenAI không thuộc base Security v4/Web Risk readiness, nhưng cấu hình OpenAI hợp lệ là bắt buộc trước khi bật bất kỳ
   AI stage nào; Google Fact Check và Tavily vẫn không thuộc Security v4 readiness.
 - `SECURITY_RELEASE_PROFILE=cutover` chỉ khởi động khi legacy write/source-discovery/provisional/promotion đã tắt và live-provider profile đầy đủ.
@@ -59,7 +59,7 @@ $env:LIVE_SMOKE_TOKEN="<short-lived OIDC user access token>"
 .\.venv\Scripts\python.exe scripts\live_provider_smoke.py "Khoa tai khoan, dang nhap ngay tai https://public-test-target.example/login" --expect-risk HIGH_RISK
 ```
 
-Smoke chỉ đạt khi `/health/ready` ready, API quảng bá Security v4, analysis hoàn thành, có network call, `url_reputation` evidence và explanation refs trỏ tới evidence trả về. Với brand/official fixture đã được reviewer đăng ký, chạy thêm `--require-official-verification`.
+Smoke chỉ đạt khi `/health/ready` ready, API quảng bá Security v4, analysis hoàn thành, có network call, `url_reputation` evidence và explanation refs trỏ tới evidence trả về.
 
 Thực hiện riêng:
 

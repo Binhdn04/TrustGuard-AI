@@ -10,7 +10,6 @@ from .models import (
     FactCheckSearchResult,
     NormalizedToolResult,
     RedirectResolutionResult,
-    ScreenshotResult,
     UrlReputationCascadeResult,
     UrlReputationFinding,
 )
@@ -43,10 +42,6 @@ class RdapProvider(Protocol):
 
 class FactCheckCorpus(Protocol):
     async def search(self, claim: str, limit: int = 5) -> NormalizedToolResult[FactCheckSearchResult]: ...
-
-
-class ScreenshotRenderer(Protocol):
-    async def render(self, normalized_url: str) -> NormalizedToolResult[ScreenshotResult]: ...
 
 
 class EmbeddingProvider(Protocol):

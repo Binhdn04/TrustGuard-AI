@@ -18,7 +18,7 @@ describe("HttpSecurityAnalysisApi", () => {
     const api = new HttpSecurityAnalysisApi("http://backend.test", () => "owner-token");
     await api.createAnalysis({
       message: "Họ yêu cầu OTP",
-      consent: { external_url_lookup: false, official_source_lookup: true },
+      consent: { external_url_lookup: false },
       conversation_id: "conversation-1",
       conversation_version: 2,
     });
@@ -28,7 +28,7 @@ describe("HttpSecurityAnalysisApi", () => {
       headers: expect.objectContaining({ Authorization: "Bearer owner-token" }),
       body: JSON.stringify({
         message: "Họ yêu cầu OTP",
-        consent: { external_url_lookup: false, official_source_lookup: true },
+        consent: { external_url_lookup: false },
         conversation_id: "conversation-1",
         conversation_version: 2,
       }),

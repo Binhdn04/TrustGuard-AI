@@ -21,7 +21,6 @@ from .models import (
     GoogleClaimReviewMatch,
     NormalizedToolError,
     NormalizedToolResult,
-    ScreenshotResult,
     TavilyExtractBatch,
     ToolErrorCode,
     ToolName,
@@ -695,94 +694,3 @@ class TavilyExtractAdapter:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
-
-
-class PlaywrightScreenshotRenderer:
-    """Isolated screenshot boundary. The browser launcher must be preinstalled in the image."""
-
-    provider = "playwright-chromium"
-    provider_version = "v1"
-
-    def __init__(
-        self,
-        capture: Callable[..., Any],
-        artifact_store: Callable[[bytes], Any],
-        *,
-        guard: SsrfGuard | None = None,
-        timeout_seconds: float = 8,
-    ) -> None:
-        self._capture, self._store = capture, artifact_store
-        self._guard, self.timeout_seconds = guard or SsrfGuard(), timeout_seconds
-
-    async def render(self, normalized_url: str) -> NormalizedToolResult[ScreenshotResult]:
-        """Capture callable must use a fresh context with downloads and persistence disabled."""
-        import asyncio
-
-        started = perf_counter()
-        try:
-            await self._guard.validate(normalized_url)
-            captured = await asyncio.wait_for(
-                self._capture(
-                    normalized_url,
-                    fresh_context=True,
-                    accept_downloads=False,
-                    storage_state=None,
-                    revalidate=self._guard.validate,
-                ),
-                self.timeout_seconds,
-            )
-            final_url = canonicalize_evidence_url(str(captured["final_url"]))
-            await self._guard.validate(final_url)
-            if captured.get("download_attempted"):
-                return _failure(
-                    ToolName.SCREENSHOT_RENDERER,
-                    self.provider,
-                    self.provider_version,
-                    "render",
-                    started,
-                    ToolErrorCode.DOWNLOAD_BLOCKED,
-                    "The page attempted a download",
-                    retryable=False,
-                )
-            artifact_ref = await self._store(bytes(captured["image"]))
-            visible = " ".join(str(captured.get("visible_text", "")).split())
-            result = ScreenshotResult(
-                artifact_ref=str(artifact_ref),
-                final_url=final_url,
-                visible_text_sha256=sha256(visible.encode()).hexdigest(),
-                signals=list(captured.get("signals", [])),
-                observed_at=_now(),
-            )
-            return NormalizedToolResult(
-                status=ToolResultStatus.SUCCESS,
-                result=result,
-                cache=_miss(),
-                usage=_usage(self.provider, self.provider_version, "render", started),
-            )
-        except TimeoutError:
-            return _failure(
-                ToolName.SCREENSHOT_RENDERER,
-                self.provider,
-                self.provider_version,
-                "render",
-                started,
-                ToolErrorCode.PROVIDER_TIMEOUT,
-                "Screenshot renderer timed out",
-                retryable=True,
-            )
-        except Exception as exc:
-            code = ToolErrorCode.SSRF_BLOCKED if getattr(exc, "error", None) else ToolErrorCode.PROVIDER_ERROR
-            status = ToolResultStatus.BLOCKED if code is ToolErrorCode.SSRF_BLOCKED else ToolResultStatus.FAILED
-            result = _failure(
-                ToolName.SCREENSHOT_RENDERER,
-                self.provider,
-                self.provider_version,
-                "render",
-                started,
-                code,
-                "Screenshot rendering was blocked"
-                if status is ToolResultStatus.BLOCKED
-                else "Screenshot renderer failed",
-                retryable=False,
-            )
-            return result.model_copy(update={"status": status})

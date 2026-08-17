@@ -9,7 +9,7 @@ from src.api.dependencies import (
     get_wave2_service,
 )
 from src.main import app
-from src.services.platform_wave2 import ArtifactSigner, MemoryWave2Repository, Wave2PlatformService
+from src.services.platform_wave2 import MemoryWave2Repository, Wave2PlatformService
 from src.services.security_memory import SecurityMemoryService
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
@@ -93,7 +93,7 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
             headers=USER_HEADERS,
             json={
                 "message": "HR yêu cầu tôi đóng 500k phí hồ sơ",
-                "consent": {"external_url_lookup": True, "official_source_lookup": False},
+                "consent": {"external_url_lookup": True},
             },
         )
 
@@ -106,7 +106,6 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     assert [step["tool"] for step in body["investigation_plan"]] == [
         "security_context_analysis",
         "brand_match",
-        "official_claim_verifier",
     ]
     assert body["evidence"][0]["type"] == "security_context"
     assert body["tool_calls_used"] == 0
@@ -126,7 +125,7 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
 @pytest.mark.asyncio
 async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
     repository = MemoryWave2Repository()
-    wave2 = Wave2PlatformService(repository, ArtifactSigner("security-hitl-test-key"))
+    wave2 = Wave2PlatformService(repository)
     app.dependency_overrides[get_wave2_service] = lambda: wave2
     try:
         response = await client.post(
@@ -222,7 +221,7 @@ async def test_v4_rejects_legacy_or_unknown_request_fields(client) -> None:
         json={
             "message": "Kiểm tra example.com",
             "consent_to_scan_urls": True,
-            "consent_to_capture_screenshot": True,
+            "unsupported_legacy_option": True,
         },
     )
 

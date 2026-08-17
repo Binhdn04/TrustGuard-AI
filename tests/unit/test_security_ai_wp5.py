@@ -173,10 +173,6 @@ class RetentionRepository:
     def __init__(self) -> None:
         self.security_payloads_expired = False
 
-    async def expire_artifacts(self, cutoff):
-        del cutoff
-        return []
-
     async def expire_minimized_content(self, cutoff):
         del cutoff
         return 0

@@ -30,14 +30,10 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/data \
     && chown appuser:appuser /app/data
 
-# ---- Worker (the only service that launches Chromium) ----
+# ---- Worker ----
 FROM runtime-base AS worker
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    RUN_DURABLE_WORKER=true
-RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 \
-    /opt/venv/bin/playwright install --with-deps chromium \
-    && chmod -R 755 /ms-playwright
+ENV RUN_DURABLE_WORKER=true
 
 COPY --chown=appuser:appuser src ./src
 

@@ -11,8 +11,7 @@ Single-turn request:
 {
   "message": "HR yêu cầu tôi đóng 500.000 đồng phí hồ sơ",
   "consent": {
-    "external_url_lookup": true,
-    "official_source_lookup": false
+    "external_url_lookup": true
   }
 }
 ```
@@ -25,8 +24,7 @@ Follow-up phải gửi đồng thời owner-scoped conversation ID và optimisti
   "conversation_id": "10000000-0000-4000-8000-000000000001",
   "conversation_version": 1,
   "consent": {
-    "external_url_lookup": false,
-    "official_source_lookup": false
+    "external_url_lookup": false
   }
 }
 ```
@@ -78,12 +76,6 @@ Product risk taxonomy:
 SAFE | LOW_RISK | SUSPICIOUS | HIGH_RISK | MALICIOUS | INSUFFICIENT_EVIDENCE
 ```
 
-Official verification taxonomy:
-
-```text
-OFFICIAL_CONFIRMED | OFFICIAL_CONTRADICTED | NOT_FOUND | INSUFFICIENT_EVIDENCE
-```
-
 Contract v4 không expose `TRUE/FALSE/FAKE_NEWS`, `ClaimStance`, claim retriever hoặc general
 fact-check confidence như product verdict.
 
@@ -110,8 +102,8 @@ Security v4 tái sử dụng reviewed-action API v3:
 - action record có `security_analysis_id`, canonical target và immutable evidence snapshot;
 - final status là `rejected`, `executed` hoặc `failed`; `approved` chỉ là execution attempt trung gian.
 
-V3 report-review/appeal/metrics infrastructure vẫn tồn tại. V3 source discovery, general campaigns,
-screenshot và v2 routes là legacy compatibility, không phải Security v4 product contract.
+V3 report-review/appeal/metrics infrastructure vẫn tồn tại. V3 source discovery, general campaigns
+và v2 routes là legacy compatibility, không phải Security v4 product contract.
 
 Các route page là additive và trả `{contract_version, items, total, limit, offset}`. Route list cũ vẫn trả
 array để giữ compatibility cho frontend hiện tại. `SecurityReportRecordV4` và `SecurityAppealRecordV4`
@@ -140,12 +132,12 @@ mọi decision append campaign audit.
 - Out-of-scope không gọi investigation/provider/legacy analysis service.
 - Web intake đầu gọi `POST /api/v4/analyses`. Sau khi có verdict, follow-up gọi authenticated `POST /api/v4/chat`;
   `tools_called=[]` chỉ tạo câu trả lời hội thoại, còn `check_scam` là tín hiệu để frontend tạo analysis v4 tiếp theo.
-  Chat route không tự gọi URL/domain/official provider.
-- Hai consent field vẫn thuộc API v4 để integration client có thể fail closed. Web product không hỏi checkbox từng lượt:
-  thao tác gửi dưới disclosure cấp authorization cho automatic URL/official lookup, còn executor chỉ gọi provider khi
-  context, purpose, normalized target, SSRF guard và budget đều cho phép. Local rules/trust lookup luôn chạy an toàn.
+  Chat route không tự gọi URL/domain provider.
+- Consent external URL thuộc API v4 để integration client có thể fail closed. Web product không hỏi checkbox từng lượt:
+  thao tác gửi dưới disclosure cấp authorization cho automatic URL lookup, còn executor chỉ gọi provider khi
+  context, normalized target, SSRF guard và budget đều cho phép. Local rules/trust lookup luôn chạy an toàn.
 - Whitelist có provenance/version và precedes negative scoring.
-- `NOT_FOUND`, provider no-hit/error, domain age hoặc mismatch riêng lẻ không đủ tạo malicious.
+- Provider no-hit/error, domain age hoặc mismatch riêng lẻ không đủ tạo malicious.
 - LLM không trực tiếp ghi score/risk/admin action.
 - Wide action không execute khi chưa có approved decision, reviewer, note, evidence snapshot và target.
 - Duplicate proposal/decision/execution không tạo side effect thứ hai.
@@ -159,7 +151,7 @@ Automated tests hiện tại cover:
 - phishing/credential/OTP, financial, recruitment và promotion/prize context;
 - out-of-scope và need-more-info terminal transitions;
 - text, URL, consent/no-consent, DNS/redirect/RDAP/reputation errors và SSRF;
-- whitelist precedence, brand match/mismatch, official confirmed/contradicted/not-found;
+- whitelist precedence và brand match/mismatch;
 - deterministic risk thresholds, grounded evidence refs và persistence lifecycle;
 - multi-turn owner/version/retention/conflicting-case behavior;
 - HITL auth, rejection, idempotency, execution rollback và audit;
@@ -170,8 +162,8 @@ Automated tests hiện tại cover:
 - frontend OOS/need-more-info/risk presentation, polling fallback, multi-turn/history resume, report/appeal,
   admin review, Observatory, Trust/Audit, RBAC và compatibility isolation bằng typed v4 fixtures.
 
-Các fixture analysis, claim/stance, source-discovery và screenshot cũ đã được xóa cùng test contract của
-deprecated product path. WP9 giữ versioned deterministic dataset/report cho threat, safe official,
+Các fixture analysis, claim/stance và source-discovery cũ đã được xóa cùng test contract của
+deprecated product path. WP9 giữ versioned deterministic dataset/report cho threat, safe whitelist,
 false-positive, OOS, provider failure, multi-turn và wide-action, cùng contract reviewed-action v3 còn hoạt động.
 
 ## 8. Compatibility và cutover còn lại

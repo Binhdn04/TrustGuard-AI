@@ -9,7 +9,7 @@
 | `0003_durable_jobs` | jobs, outbox, tool usage, schema imports |
 | `0004_review_queue` | persisted report review queue |
 | `0005_fact_check_corpus` | appeals, admin actions/decisions, blacklist và toàn bộ fact-check corpus |
-| `0006_campaign_artifacts` | retention, campaign clusters/members/signals và artifacts |
+| `0006_campaign_artifacts` | migration lịch sử cho campaign và bảng artifact đã ngừng sử dụng |
 | `0007_runtime_integration` | campaign observations và claim-feature vectors |
 | `0008_source_discovery` | source discovery/decision telemetry và bootstrap nguồn general fact-check |
 | `0009_security_triage_v4` | Security v4 analyses/events và owner-scoped lifecycle |
@@ -23,7 +23,7 @@
 | `0017_security_admin_copilot` | grounded admin suggestion, usage metadata, evidence snapshot hash, reviewer timestamps và audit |
 
 Production repository có implementation cho durable analysis, owner reads, reports/review, appeals,
-admin actions, blacklist, source/corpus, legacy campaigns, Security v4 memory/campaigns, artifacts,
+admin actions, blacklist, source/corpus, legacy campaigns, Security v4 memory/campaigns,
 retention và operations metrics.
 
 ## 2. Schema phù hợp scope và nên giữ
@@ -33,7 +33,7 @@ retention và operations metrics.
 - `analysis_reports`, `review_queue_items`, `appeals`, `review_decisions`, `user_notifications`.
 - `admin_actions` và `blacklist_entries`, sau khi chỉnh flow proposal/execution.
 - `campaign_clusters`, `campaign_members`, `campaign_signals`, sau khi thay feature semantics.
-- Retention/audit-safe artifact metadata chỉ giữ nếu capability liên quan còn được phê duyệt.
+- Bảng artifact lịch sử không còn application reader/writer; chỉ giữ migration để bảo toàn upgrade path.
 
 ## 3. Schema scope mới đã bổ sung
 
@@ -71,7 +71,6 @@ retention và operations metrics.
 - Monotonic unique event sequence và unique job/outbox idempotency key.
 - Whitelist/blacklist mutations có approved decision và provenance.
 - Wide action không thể executed nếu thiếu approved decision/evidence/reviewer/note.
-- Official verification `NOT_FOUND` được lưu đúng enum, không biến thành contradiction.
 - Evidence không chứa raw provider body, OTP, password, token hoặc raw private conversation.
 - Corrective decision append record mới, không xóa immutable audit history.
 - Report chỉ chuyển terminal một lần sang `processed`; appeal chỉ chuyển terminal một lần sang `resolved`;

@@ -39,7 +39,6 @@ def validate_security_v4_result(
     result: dict[str, Any],
     *,
     expected_risk: str | None,
-    require_official_verification: bool,
 ) -> dict[str, Any]:
     if result.get("contract_version") != "v4":
         raise ValueError("hosted smoke returned a non-v4 contract")
@@ -54,9 +53,6 @@ def validate_security_v4_result(
     evidence_types = {item.get("type") for item in evidence}
     if result.get("tool_calls_used", 0) < 1 or "url_reputation" not in evidence_types:
         raise ValueError("hosted smoke did not produce live URL-reputation evidence")
-    if require_official_verification and "official_verification" not in evidence_types:
-        raise ValueError("hosted smoke did not produce official-verification evidence")
-
     evidence_refs = {item.get("evidence_ref") for item in evidence}
     explanation_refs = set(result.get("explanation_evidence_refs") or [])
     if not explanation_refs or not explanation_refs <= evidence_refs:
@@ -70,9 +66,7 @@ def validate_security_v4_result(
         "evidence_types": sorted(item for item in evidence_types if item),
         "tool_calls_used": result.get("tool_calls_used"),
         "limitation_count": len(result.get("limitations") or []),
-        "error_codes": sorted(
-            {item.get("code") for item in result.get("errors") or [] if item.get("code")}
-        ),
+        "error_codes": sorted({item.get("code") for item in result.get("errors") or [] if item.get("code")}),
     }
 
 
@@ -84,7 +78,6 @@ def main() -> int:
         default=os.getenv("TRUSTGUARD_BASE_URL", "http://localhost:8000"),
     )
     parser.add_argument("--expect-risk", choices=["SAFE", "LOW_RISK", "SUSPICIOUS", "HIGH_RISK", "MALICIOUS"])
-    parser.add_argument("--require-official-verification", action="store_true")
     args = parser.parse_args()
     token = os.getenv("LIVE_SMOKE_TOKEN")
     if not token:
@@ -106,14 +99,12 @@ def main() -> int:
             "message": args.message,
             "consent": {
                 "external_url_lookup": True,
-                "official_source_lookup": args.require_official_verification,
             },
         },
     )
     summary = validate_security_v4_result(
         result,
         expected_risk=args.expect_risk,
-        require_official_verification=args.require_official_verification,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

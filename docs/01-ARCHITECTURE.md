@@ -28,7 +28,7 @@ flowchart TD
     Scope -->|IN_SCOPE| Planner[Allowlisted investigation planner]
     Planner --> Local[Local URL rules + blacklist]
     Planner --> External[DNS + redirect + RDAP + reputation]
-    Planner --> Trust[Brand + whitelist + bounded official verifier]
+    Planner --> Trust[Brand + whitelist]
     Local --> Evidence[Versioned evidence]
     External --> Evidence
     Trust --> Evidence
@@ -55,7 +55,7 @@ validate request/conversation version
 → scope decision + SecurityContextV4
 → terminal OUT_OF_SCOPE / NEED_MORE_INFO, hoặc investigation
 → local rules and policy-gated automatic external tools
-→ brand/whitelist/official trust enrichment
+→ brand/whitelist trust enrichment
 → deterministic risk and grounded explanation
 → terminal persistence
 → HITL proposal and Security Memory producers
@@ -68,8 +68,6 @@ Các invariant đang enforce:
   cho mỗi turn; executor vẫn revalidate request consent, purpose và target ngay trước external call.
 - DNS/redirect/reputation dùng SSRF guard; redirect revalidate từng hop.
 - Brand và whitelist record có provenance, lifecycle, reviewer và policy version.
-- Official verifier bị giới hạn purpose, một claim, tối đa hai query và năm official sources;
-  `NOT_FOUND` không đồng nghĩa false hoặc malicious.
 - Risk/score/action là deterministic policy output; LLM không có quyền tự ghi verdict.
 - Whitelist chạy trước negative scoring; mismatch, domain age, provider no-hit hoặc timeout đứng riêng
   không đủ tạo `MALICIOUS`.
@@ -116,12 +114,12 @@ v3 có nhãn compatibility; metrics/source discovery v3 chỉ xuất hiện tron
 User conversation dùng routing hai tầng. Lượt intake đầu luôn tạo Security v4 analysis và khóa composer trong lúc
 pipeline chạy. Sau verdict, authenticated `POST /api/v4/chat` xử lý follow-up: không có tool call thì trả lời như chatbot
 bình thường; có `check_scam` thì frontend tạo analysis v4 mới. Chỉ pipeline analysis mới được quyền lập investigation
-plan và gọi DNS/redirect/RDAP/reputation/official provider theo context, SSRF guard và budget.
+plan và gọi DNS/redirect/RDAP/reputation provider theo context, SSRF guard và budget.
 
 ## 6. Hạ tầng legacy còn được giữ
 
 Legacy v2/v3 vẫn có `AnalysisService`, durable PostgreSQL worker, outbox, general fact-check providers,
-claim corpus/embeddings, source discovery, screenshot artifacts và claim-vector campaign path. Chúng
+claim corpus/embeddings, source discovery và claim-vector campaign path. Chúng
 không được Security v4 scope/investigation/memory path import hoặc gọi, nhưng chưa bị xóa để giữ
 compatibility và rollback an toàn.
 

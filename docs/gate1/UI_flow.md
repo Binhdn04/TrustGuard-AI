@@ -146,4 +146,4 @@ diện rộng thiếu note/evidence; backend vẫn là hard gate cuối và lưu
 - Loading, empty, validation error, forbidden, provider-limited, failed và offline/reconnect.
 - `inconclusive` khác `safe`; provisional khác final; reviewed khác auto-generated.
 - Admin approval đang xử lý phải chống double-submit và hiển thị conflict nếu case đã được review.
-- Screenshot consent/timeout và appeal submitted/resolved có trạng thái riêng.
+- Appeal submitted/resolved có trạng thái riêng.

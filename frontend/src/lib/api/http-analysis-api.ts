@@ -32,7 +32,6 @@ import type {
   CampaignPageV3,
   CapabilitiesResponseV3,
   OperationsMetricsResponseV3,
-  ScreenshotStatusResponseV3,
   SourcePolicyCreateRequestV3,
   SourcePolicyRecordV3,
   SourceDiscoveryRecordV3,
@@ -230,22 +229,6 @@ export class HttpAnalysisApi implements AnalysisApi {
     return this.getV3<AppealResponseV3[]>(
       `analyses/${encodeURIComponent(analysisId)}/appeals`,
     );
-  }
-
-  async getScreenshotStatus(analysisId: string): Promise<ScreenshotStatusResponseV3> {
-    const response = await this.getV3<ScreenshotStatusResponseV3>(
-      `analyses/${encodeURIComponent(analysisId)}/screenshot`,
-    );
-    if (!response.artifact) return response;
-    return {
-      ...response,
-      artifact: {
-        ...response.artifact,
-        access_path: response.artifact.access_path.startsWith("http")
-          ? response.artifact.access_path
-          : `${this.baseUrl}${response.artifact.access_path}`,
-      },
-    };
   }
 
   async listAdminAppeals(

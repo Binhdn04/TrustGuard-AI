@@ -10,9 +10,7 @@ import type {
 
 export const CONTRACT_VERSION_V3 = "v3" as const;
 
-export type AnalysisCreateRequestV3 = AnalysisCreateRequest & {
-  consent_to_capture_screenshot?: boolean;
-};
+export type AnalysisCreateRequestV3 = AnalysisCreateRequest;
 
 export interface AnalysisAcceptedResponseV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
@@ -24,28 +22,6 @@ export interface AnalysisAcceptedResponseV3 {
 export type AnalysisResponseV3 = Omit<AnalysisResponse, "contract_version"> & {
   contract_version: typeof CONTRACT_VERSION_V3;
 };
-
-export type ScreenshotStatusV3 = "not_requested" | "pending" | "ready" | "failed" | "expired";
-
-export interface ScreenshotArtifactV3 {
-  artifact_id: string;
-  media_type: "image/png" | "image/jpeg" | "image/webp";
-  size_bytes: number;
-  sha256: string;
-  created_at: string;
-  expires_at: string;
-  access_path: string;
-  access_expires_at: string;
-}
-
-export interface ScreenshotStatusResponseV3 {
-  contract_version: typeof CONTRACT_VERSION_V3;
-  analysis_id: string;
-  consented: boolean;
-  status: ScreenshotStatusV3;
-  artifact: ScreenshotArtifactV3 | null;
-  failure_code: string | null;
-}
 
 export type AnalysisEventTypeV3 =
   | "analysis_status"

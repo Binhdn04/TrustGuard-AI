@@ -124,7 +124,7 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByLabelText(/Dán tin nhắn đáng ngờ/i)).not.toBeInTheDocument();
     expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({
       execution_mode: "async",
-      consent: { external_url_lookup: true, official_source_lookup: true },
+      consent: { external_url_lookup: true },
     }));
     expect(create.mock.calls[0][1]).toEqual({ idempotencyKey: expect.any(String) });
   });
@@ -168,7 +168,7 @@ describe("Security Chat workspace", () => {
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       conversation_id: "10000000-0000-4000-8000-000000000001",
       conversation_version: 1,
-      consent: { external_url_lookup: true, official_source_lookup: true },
+      consent: { external_url_lookup: true },
     }));
   });
 
@@ -203,7 +203,7 @@ describe("Security Chat workspace", () => {
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       conversation_id: "10000000-0000-4000-8000-000000000001",
       conversation_version: 1,
-      consent: { external_url_lookup: true, official_source_lookup: true },
+      consent: { external_url_lookup: true },
     }));
   });
 
@@ -259,7 +259,7 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByText(/Nên làm ngay/i)).not.toBeInTheDocument();
   });
 
-  it("renders a completed security risk without claim or screenshot semantics", async () => {
+  it("renders a completed security risk without claim semantics", async () => {
     const api = apiWith(vi.fn().mockResolvedValue(response({
       scope_decision: "IN_SCOPE",
       scope_reasons: ["otp_request"],

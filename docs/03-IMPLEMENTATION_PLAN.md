@@ -12,7 +12,7 @@ hosted release evidence, restore/zero-usage window và destructive cleanup còn 
 - [x] Tách `/api/v4` Security Triage khỏi `/api/v2`/`/api/v3` legacy profile.
 - [x] Security Scope Classifier kết thúc sớm cho general fact-check/news/politics/sports/science/medical.
 - [x] Test terminal out-of-scope không resolve investigation hoặc legacy analysis service.
-- [x] Security frontend không hiển thị claim stance, medical/news examples hoặc screenshot semantics.
+- [x] Security frontend không hiển thị claim stance hoặc medical/news examples.
 - [x] Security v4 risk không dùng legacy rule `REFUTES => MALICIOUS`.
 - [x] Có cutover config để freeze legacy write/source-discovery và fail-fast nếu production profile sai — WP9.
 - [ ] Kích hoạt freeze và chứng minh zero usage trên deployment thật — WP9.
@@ -31,15 +31,14 @@ Exit hiện đạt cho Security v4; legacy code/schema vẫn tồn tại có ch�
 
 Exit: text, URL, text + URL, no-consent và multi-turn tests chạy đúng Security scope.
 
-## Phase 2 — Brand, whitelist và official verification — DONE
+## Phase 2 — Brand và whitelist — DONE
 
 - [x] Brand registry có alias, official domain/contact, provenance, lifecycle và reviewer.
 - [x] Brand mismatch/lookalike signal không tự tạo malicious.
 - [x] First-class whitelist SQLite/PostgreSQL/admin API/UI và precedence trong risk policy.
-- [x] Bounded OfficialClaimVerifier theo allowed purpose; `NOT_FOUND != FALSE`.
 - [x] DNS là investigation evidence/tool riêng, vẫn dùng safe resolver/SSRF guard.
 
-Exit: safe official, domain mismatch only, Unicode/homograph và official-not-found regressions pass.
+Exit: safe whitelist, domain mismatch only và Unicode/homograph regressions pass.
 
 ## Phase 3 — Risk, Security Chat và HITL — DONE WITH EXPLICIT SINK LIMITS
 

@@ -31,7 +31,6 @@ import type {
   CampaignPageV3,
   CapabilitiesResponseV3,
   OperationsMetricsResponseV3,
-  ScreenshotStatusResponseV3,
   SourcePolicyCreateRequestV3,
   SourcePolicyRecordV3,
   SourceDiscoveryRecordV3,
@@ -68,7 +67,6 @@ export interface AnalysisApi {
   createAppeal(analysisId: string, request: AppealCreateRequestV3): Promise<AppealReceiptV3>;
   getAppeal(appealId: string): Promise<AppealResponseV3>;
   listAnalysisAppeals(analysisId: string): Promise<AppealResponseV3[]>;
-  getScreenshotStatus(analysisId: string): Promise<ScreenshotStatusResponseV3>;
 
   listAdminAppeals(query?: PageQuery<"submitted" | "under_review" | "resolved">): Promise<AppealPageV3>;
   decideAppeal(appealId: string, request: AppealDecisionRequestV3): Promise<AppealDecisionResponseV3>;

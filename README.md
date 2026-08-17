@@ -13,7 +13,7 @@ flowchart LR
     Understanding --> Decision{In scope?}
     Decision -->|No / need info| Boundary[Boundary or<br/>follow-up question]
     Decision -->|Incident exposure| Recovery[Recovery-first path]
-    Decision -->|Security investigation| Tools[Local checks + consented<br/>DNS, redirect, RDAP,<br/>reputation, official verification]
+    Decision -->|Security investigation| Tools[Local checks + consented<br/>DNS, redirect, RDAP,<br/>reputation]
     Tools --> Trust[Brand, whitelist,<br/>approved blacklist]
     Recovery --> MemoryLookup[Reviewed Security Memory]
     Trust --> MemoryLookup
@@ -35,7 +35,7 @@ Xem sơ đồ chi tiết tại [Architecture_diagram.md](Architecture_diagram.md
 
 - Security scope gate, structured context và multi-turn conversation có optimistic versioning.
 - Local URL rules, approved blacklist, SSRF guard, DNS, redirect resolution, RDAP và VirusTotal reputation khi được cấu hình.
-- Brand registry, whitelist và official-source verification có consent.
+- Brand registry và whitelist có provenance.
 - Risk policy xác định: `SAFE`, `LOW_RISK`, `SUSPICIOUS`, `HIGH_RISK`, `MALICIOUS`, `INSUFFICIENT_EVIDENCE`.
 - Grounded assistant response; AI output không hợp lệ hoặc không grounded tự động rơi về policy response.
 - Owner-isolated history, reports, appeals, event replay và WebSocket stream.
@@ -48,7 +48,6 @@ Xem sơ đồ chi tiết tại [Architecture_diagram.md](Architecture_diagram.md
 - [uv](https://docs.astral.sh/uv/) — khuyến nghị, hoặc `venv` + `pip`
 - Node.js 22+ và npm
 - Docker + Docker Compose nếu chạy full stack
-- Chromium của Playwright chỉ cần cho E2E hoặc screenshot capability
 
 ## Quick start — local inline
 
@@ -102,12 +101,6 @@ NEXT_PUBLIC_DEMO_ADMIN_TOKEN=dev-admin-token
 
 Mở <http://localhost:3000>. Không đưa demo token vào hosted/production build.
 
-### 3. Optional Playwright browser
-
-```bash
-uv run playwright install chromium
-```
-
 ## Full stack bằng Docker Compose
 
 ```bash
@@ -156,7 +149,7 @@ Toàn bộ giá trị mẫu nằm trong [.env.example](.env.example) và [fronte
 | `SECURITY_ASYNC_EXECUTION_ENABLED` | `false` | Cho phép request `execution_mode=async` khi durable runtime thực sự ready. |
 | `JOB_LEASE_SECONDS` | `60` | Thời hạn lease của durable job. |
 | `SECURITY_CONVERSATION_RETENTION_DAYS` | `30` | Thời gian giữ conversation summary đã redacted. |
-| `ARTIFACT_RETENTION_DAYS` | `30` | Thời gian giữ artifact trước retention cleanup. |
+| `CONTENT_RETENTION_DAYS` | `30` | Thời gian giữ nội dung phân tích đã tối giản trước retention cleanup. |
 | `LOG_LEVEL` | `INFO` | Structured application logging. |
 
 ### Authentication và abuse controls
@@ -207,15 +200,13 @@ Mọi flag AI mặc định tắt. Khi bật bất kỳ AI operation nào trong 
 | Biến | Mặc định | Ý nghĩa |
 |---|---:|---|
 | `VIRUSTOTAL_API_KEY` | rỗng | Bật URL reputation provider. |
-| `OFFICIAL_VERIFIER_API_URL` | rỗng | Endpoint verifier chuyên dụng cho official-source lookup. |
-| `OFFICIAL_VERIFIER_API_KEY` | rỗng | Bearer credential của verifier. |
 | `PROVIDER_TIMEOUT_SECONDS` | `10` | Timeout adapter bên ngoài. |
 | `SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS` | `8` | Network-call budget của một analysis. |
 | `SECURITY_INVESTIGATION_MAX_RETRIES` | `1` | Retry budget. |
 | `SECURITY_INVESTIGATION_DEADLINE_SECONDS` | `20` | Deadline của investigation. |
 | `LIVE_PROVIDERS_REQUIRED` | `false` | Fail fast nếu provider bắt buộc chưa được cấu hình. |
 
-DNS, redirect và RDAP không cần API key nhưng chỉ chạy khi request cấp `external_url_lookup=true`. Official verifier còn cần `official_source_lookup=true`. Provider no-hit/error không được suy diễn thành `SAFE`.
+DNS, redirect và RDAP không cần API key nhưng chỉ chạy khi request cấp `external_url_lookup=true`. Provider no-hit/error không được suy diễn thành `SAFE`.
 
 ## Sample API queries
 
@@ -249,8 +240,7 @@ curl -sS -X POST "$API_URL/api/v4/analyses" \
     "message": "Ngân hàng yêu cầu tôi gửi OTP và đăng nhập tại https://secure-check.example/login",
     "execution_mode": "inline",
     "consent": {
-      "external_url_lookup": false,
-      "official_source_lookup": false
+      "external_url_lookup": false
     }
   }'
 ```
@@ -308,7 +298,7 @@ Offline pass không thay thế hosted OIDC/provider/PostgreSQL/Redis/load/backup
 - `APP_ENV=production`, `DEMO_AUTH_ENABLED=false`.
 - PostgreSQL và Redis URLs thật; chạy migrations trước traffic.
 - HTTPS OIDC issuer/audience và frontend Authorization Code + PKCE configuration.
-- `DATABASE_ENCRYPTION_KEY` và `ARTIFACT_SIGNING_KEY` khác nhau, không phải placeholder và dài tối thiểu 32 ký tự.
+- `DATABASE_ENCRYPTION_KEY` không phải placeholder và dài tối thiểu 32 ký tự.
 - `CORS_ORIGINS` chỉ chứa HTTPS origins cụ thể.
 - Chỉ bật từng AI/provider/memory/async flag sau evaluation tương ứng.
 - Xác minh `/health/ready`, `/api/v4/capabilities`, worker lease, outbox, WebSocket fallback và retention.

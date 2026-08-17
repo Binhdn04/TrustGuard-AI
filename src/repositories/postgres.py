@@ -74,7 +74,6 @@ from src.models import (
     WhitelistRecordV4,
 )
 from src.services.platform_wave2 import (
-    ArtifactRecord,
     CampaignWrite,
     FactCheckCorpusRecordWrite,
     FactCheckResultWrite,
@@ -3279,84 +3278,6 @@ class PostgresPlatformRepository:
             clustering_version=row["clustering_version"],
         )
 
-    async def register_artifact(self, artifact: ArtifactRecord) -> None:
-        pool = await self._get_pool()
-        async with pool.acquire() as connection:
-            await connection.execute(
-                """INSERT INTO artifacts(
-                       id,analysis_id,owner_id,storage_key,media_type,size_bytes,sha256,created_at,expires_at
-                   ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
-                artifact.artifact_id,
-                artifact.analysis_id,
-                artifact.owner_id,
-                artifact.storage_key,
-                artifact.media_type,
-                artifact.size_bytes,
-                artifact.sha256,
-                artifact.created_at,
-                artifact.expires_at,
-            )
-
-    async def get_artifact(self, artifact_id: UUID) -> ArtifactRecord | None:
-        pool = await self._get_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow("SELECT * FROM artifacts WHERE id=$1", artifact_id)
-        return (
-            ArtifactRecord(
-                artifact_id=row["id"],
-                analysis_id=row["analysis_id"],
-                owner_id=row["owner_id"],
-                storage_key=row["storage_key"],
-                media_type=row["media_type"],
-                size_bytes=row["size_bytes"],
-                sha256=row["sha256"],
-                created_at=row["created_at"],
-                expires_at=row["expires_at"],
-                deleted_at=row["deleted_at"],
-            )
-            if row
-            else None
-        )
-
-    async def list_artifacts_for_analysis(self, analysis_id: UUID) -> list[ArtifactRecord]:
-        pool = await self._get_pool()
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                "SELECT * FROM artifacts WHERE analysis_id=$1 ORDER BY created_at DESC",
-                analysis_id,
-            )
-        return [
-            ArtifactRecord(
-                artifact_id=row["id"],
-                analysis_id=row["analysis_id"],
-                owner_id=row["owner_id"],
-                storage_key=row["storage_key"],
-                media_type=row["media_type"],
-                size_bytes=row["size_bytes"],
-                sha256=row["sha256"],
-                created_at=row["created_at"],
-                expires_at=row["expires_at"],
-                deleted_at=row["deleted_at"],
-            )
-            for row in rows
-        ]
-
-    async def expire_artifacts(self, now: datetime) -> list[str]:
-        pool = await self._get_pool()
-        async with pool.acquire() as connection, connection.transaction():
-            rows = await connection.fetch(
-                """SELECT id,storage_key FROM artifacts
-                   WHERE deleted_at IS NULL AND expires_at <= $1 FOR UPDATE SKIP LOCKED""",
-                now,
-            )
-            if rows:
-                await connection.execute(
-                    "UPDATE artifacts SET deleted_at=$2 WHERE id=ANY($1::uuid[])",
-                    [row["id"] for row in rows],
-                    now,
-                )
-        return [row["storage_key"] for row in rows]
-
     async def expire_minimized_content(self, now: datetime) -> int:
         """Cryptographically replace retained user input while preserving immutable audit rows."""
         pool = await self._get_pool()
@@ -3584,8 +3505,7 @@ def _json_value(value: Any) -> Any:
 
 def _analysis_request_from_json(value: str) -> AnalysisCreateRequest:
     payload = json.loads(value)
-    model = AnalysisCreateRequestV3 if "consent_to_capture_screenshot" in payload else AnalysisCreateRequest
-    return model.model_validate(payload)
+    return AnalysisCreateRequestV3.model_validate(payload)
 
 
 class LostJobLeaseError(RuntimeError):

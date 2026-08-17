@@ -28,7 +28,6 @@ def test_live_smoke_validates_v4_provider_and_grounding() -> None:
     summary = validate_security_v4_result(
         completed_result(),
         expected_risk="HIGH_RISK",
-        require_official_verification=False,
     )
 
     assert summary["evidence_types"] == ["security_context", "url_reputation"]
@@ -43,5 +42,4 @@ def test_live_smoke_rejects_missing_provider_evidence() -> None:
         validate_security_v4_result(
             result,
             expected_risk=None,
-            require_official_verification=False,
         )

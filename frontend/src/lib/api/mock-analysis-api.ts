@@ -34,7 +34,6 @@ import type {
   CampaignPageV3,
   CapabilitiesResponseV3,
   OperationsMetricsResponseV3,
-  ScreenshotStatusResponseV3,
   SourcePolicyCreateRequestV3,
   SourcePolicyRecordV3,
   SourceDiscoveryRecordV3,
@@ -498,20 +497,6 @@ export class MockAnalysisApi implements AnalysisApi {
     return [...appeals.values()]
       .filter((appeal) => appeal.analysis_id === analysisId)
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
-  }
-
-  async getScreenshotStatus(analysisId: string): Promise<ScreenshotStatusResponseV3> {
-    const record = records.get(analysisId);
-    if (!record) throw new Error("Không tìm thấy phiên phân tích.");
-    const consented = record.request.consent_to_capture_screenshot === true;
-    return {
-      contract_version: "v3",
-      analysis_id: analysisId,
-      consented,
-      status: consented ? "failed" : "not_requested",
-      artifact: null,
-      failure_code: consented ? "capture_unavailable" : null,
-    };
   }
 
   async listAdminAppeals(): Promise<AppealPageV3> {

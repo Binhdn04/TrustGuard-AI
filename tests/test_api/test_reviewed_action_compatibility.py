@@ -6,7 +6,7 @@ from src.api.dependencies import get_analysis_service, get_wave2_service
 from src.main import app
 from src.models import Evidence, EvidenceType, ReviewedAction
 from src.services.analysis import AnalysisService
-from src.services.platform_wave2 import ArtifactSigner, MemoryWave2Repository, Wave2PlatformService
+from src.services.platform_wave2 import MemoryWave2Repository, Wave2PlatformService
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
@@ -17,7 +17,7 @@ NOW = datetime.now(UTC).replace(microsecond=0)
 def reviewed_action_platform():
     analysis = AnalysisService()
     repository = MemoryWave2Repository()
-    service = Wave2PlatformService(repository, ArtifactSigner("reviewed-action-test-signing-key"))
+    service = Wave2PlatformService(repository)
     app.dependency_overrides[get_analysis_service] = lambda: analysis
     app.dependency_overrides[get_wave2_service] = lambda: service
     try:

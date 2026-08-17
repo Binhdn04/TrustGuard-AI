@@ -80,6 +80,6 @@ describe("FE4 security case presentation", () => {
     expect(screen.getByText("ruleset:security-url-v1")).toBeInTheDocument();
     expect(screen.getAllByText("evidence:aaaaaaaaaaaaaaaa").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Depends on:/).some((item) => item.textContent?.includes("step-aaaaaaaaaaaa"))).toBe(true);
-    expect(screen.queryByText(/screenshot|PCAP|ASN|geolocation/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PCAP|ASN|geolocation/i)).not.toBeInTheDocument();
   });
 });

@@ -20,7 +20,7 @@ flowchart LR
     API -. compatibility .-> Legacy[v2/v3 general fact-check]
 ```
 
-Security v4 đã có scope gate, multi-turn, trust/whitelist, bounded official verification, deterministic
+Security v4 đã có scope gate, multi-turn, brand/whitelist trust matching, deterministic
 risk, Security Memory, admin feedback, explorer và audit API. Review Room đọc privacy-minimized admin case
 detail v4 trước feedback decision; reviewed action execution tạm tái sử dụng contract v3 có nhãn riêng trong
 compatibility window. Frontend đã hoàn tất workspace, Trust lifecycle và Unified Audit trên contract v4;
@@ -33,7 +33,6 @@ WP9 tổng thể và legacy cleanup vẫn chờ hosted evaluation, telemetry và
 security scope gate
 → structured scam understanding
 → URL/domain + brand + whitelist/blacklist investigation
-→ bounded official verification khi thật sự cần
 → deterministic security risk
 → grounded chat warning
 → reviewed wide action

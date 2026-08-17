@@ -166,8 +166,8 @@
   - Executor revalidate consent, dependency, SSRF, deadline, retries, quota và cost ngay trước call.
   - Scenario routing:
       - Phishing URL: local rules, blacklist, DNS, redirect, RDAP, reputation, brand match.
-      - Recruitment: brand/career domain và official recruitment verification.
-      - Promotion/prize: official campaign verification.
+      - Recruitment: brand/career domain matching.
+      - Promotion/prize: brand/domain and reputation checks.
       - Impersonation không URL: brand/contact registry và official channel verification.
       - Payment/OTP không URL: context-based risk; không gọi URL provider.
       - Incident response: ưu tiên recovery guidance; investigation không trì hoãn warning.
@@ -215,11 +215,11 @@
     verdict. Các lượt sau đi qua authenticated `/api/v4/chat`: hội thoại thường được trả lời trực tiếp, còn
     `check_scam` mở lượt Security v4 mới trong cùng `conversation_id`/version.
   - Web product bỏ checkbox lookup từng lượt; thao tác gửi dưới disclosure cố định cấp authorization cho automatic
-    URL/official lookup. Executor vẫn quyết định call theo context/purpose và enforce target/SSRF/budget.
+    URL lookup. Executor vẫn quyết định call theo context và enforce target/SSRF/budget.
   - Simple mode dùng layout hai vùng: chat và `Kết luận và hướng dẫn`; summary, ba lý do/hành động quan trọng nhất hiển thị
     trước, investigation/evidence/report/appeal nằm trong disclosure mở rộng.
   - Analyst mode hiển thị plan, source, confidence, limitation và version.
-  - Disclosure chung nêu rõ nội dung có thể được xử lý bởi AI/security/official provider; không thêm checkbox consent
+  - Disclosure chung nêu rõ nội dung có thể được xử lý bởi AI/security provider; không thêm checkbox consent
     riêng trong composer theo lựa chọn sản phẩm.
 
   Gate hoàn thành:

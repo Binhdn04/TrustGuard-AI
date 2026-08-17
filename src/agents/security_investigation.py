@@ -54,7 +54,6 @@ _MANDATORY_PLANNER_TOOLS = {
 _TRUST_TOOLS = {
     SecurityInvestigationToolV4.BRAND_MATCH,
     SecurityInvestigationToolV4.WHITELIST_LOOKUP,
-    SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
 }
 
 
@@ -130,7 +129,6 @@ def build_policy_constrained_investigation_plan(
     context: SecurityContextV4,
     *,
     external_url_lookup: bool,
-    official_source_lookup: bool = False,
 ) -> list[InvestigationStepV4]:
     """Create a safe plan exclusively from normalized SecurityContext targets."""
     plan: list[InvestigationStepV4] = []
@@ -232,20 +230,6 @@ def build_policy_constrained_investigation_plan(
                     depends_on=[brand.step_id],
                 )
             )
-        plan.append(
-            _step(
-                SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
-                "message",
-                "official_verification_requested",
-                depends_on=[brand.step_id],
-                status=(
-                    SecurityInvestigationStepStatusV4.PENDING
-                    if official_source_lookup
-                    else SecurityInvestigationStepStatusV4.SKIPPED
-                ),
-                status_reason=None if official_source_lookup else "consent_required",
-            )
-        )
     return plan
 
 
@@ -385,7 +369,6 @@ class SecurityInvestigationService:
         plan = build_policy_constrained_investigation_plan(
             context,
             external_url_lookup=request.consent.external_url_lookup,
-            official_source_lookup=request.consent.official_source_lookup,
         )
         evidence = [self._context_evidence(context)]
         errors: list[SecurityToolErrorV4] = []

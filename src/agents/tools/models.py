@@ -38,7 +38,6 @@ class ToolName(StrEnum):
     REDIRECT_RESOLVER = "redirect_resolver"
     RDAP = "rdap"
     FACT_CHECK_CORPUS = "fact_check_corpus"
-    SCREENSHOT_RENDERER = "screenshot_renderer"
 
 
 class ToolResultStatus(StrEnum):
@@ -262,14 +261,6 @@ class FactCheckCorpusMatch(ToolContractModel):
 class FactCheckSearchResult(ToolContractModel):
     matches: list[FactCheckCorpusMatch]
     corpus_version: str
-
-
-class ScreenshotResult(ToolContractModel):
-    artifact_ref: str
-    final_url: str
-    visible_text_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    signals: list[str] = Field(default_factory=list)
-    observed_at: datetime
 
 
 class EmbeddingVector(ToolContractModel):

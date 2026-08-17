@@ -123,12 +123,9 @@ CASES = [
 
 def _fixture_evidence(case_id: str) -> list[SecurityEvidenceV4]:
     fixtures = {
-        "003": (SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION, "not_found"),
         "004": (SecurityEvidenceTypeV4.BLACKLIST, "approved_blacklist_hit"),
-        "007": (SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION, "not_found"),
         "011": (SecurityEvidenceTypeV4.WHITELIST, "approved_whitelist"),
         "012": (SecurityEvidenceTypeV4.BRAND_MATCH, "lookalike_domain"),
-        "013": (SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION, "not_found"),
         "014": (SecurityEvidenceTypeV4.BRAND_MATCH, "lookalike_domain"),
     }
     fixture = fixtures.get(case_id)

@@ -62,7 +62,6 @@ class WorkflowState(AgentState, total=False):
     summary: str
     fact_check_basis: Literal["reviewed", "provisional", "inconclusive"]
     fact_check_confidence: float | None
-    consent_to_capture_screenshot: bool
     extracted_claims: list[ExtractedClaim]
     next_tool: ToolRoute
     tool_target: str

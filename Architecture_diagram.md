@@ -41,7 +41,7 @@ flowchart LR
         Pipeline[SecurityTriagePipeline]
         Understanding[Semantic understanding<br/>rules + optional grounded AI]
         Investigation[Policy-constrained<br/>investigation]
-        Trust[Trust enrichment<br/>brand, whitelist, official claim]
+        Trust[Trust enrichment<br/>brand and whitelist]
         MemoryLookup[Reviewed Security Memory<br/>owner-isolated, non-self]
         Risk[Deterministic risk policy<br/>v1 or memory-aware v2]
         Response[Grounded response<br/>policy fallback + optional AI prose]
@@ -63,12 +63,10 @@ flowchart LR
         Local[Local rules + approved blacklist]
         Net[Safe DNS, guarded redirects,<br/>normalized RDAP]
         Reputation[VirusTotal URL reputation<br/>when configured]
-        Official[Purpose-built official<br/>source verifier]
         OpenAI[OpenAI structured operations<br/>when feature flags enable them]
         Investigation --> Local
         Investigation -->|explicit consent| Net
         Investigation -->|explicit consent| Reputation
-        Trust -->|official-source consent| Official
         Understanding -.-> OpenAI
         Investigation -.->|plan priority only| OpenAI
         Response -.->|grounded synthesis only| OpenAI
@@ -137,7 +135,7 @@ sequenceDiagram
         else Chưa xảy ra incident
             Pipe->>Tools: Local checks
             opt Có consent và provider được cấu hình
-                Pipe->>Tools: DNS / redirect / RDAP / reputation / official verification
+                Pipe->>Tools: DNS / redirect / RDAP / reputation
             end
             Pipe->>DB: Trust registry + reviewed-memory lookup
             Pipe->>Pipe: Deterministic risk + grounded response

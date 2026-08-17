@@ -46,7 +46,7 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 def _request(message: str, *, consent: bool = False) -> SecurityTriageCreateRequestV4:
     return SecurityTriageCreateRequestV4(
         message=message,
-        consent={"external_url_lookup": consent, "official_source_lookup": False},
+        consent={"external_url_lookup": consent},
     )
 
 

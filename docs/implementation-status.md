@@ -14,7 +14,7 @@ trên hosted production, PostgreSQL/Redis thật hoặc live provider.
 ## 1. Kết luận ngắn
 
 Security Triage v4 và frontend investigation workspace đã triển khai end-to-end: product boundary, scope gate, structured scam
-context, policy-gated automatic investigation dưới disclosure, deterministic risk, brand/whitelist/official verification,
+context, policy-gated automatic investigation dưới disclosure, deterministic risk, brand/whitelist matching,
 multi-turn Security Chat, owner persistence, report/appeal, HITL blacklist action, Security Memory và
 explainable campaign hypotheses, paginated API, admin feedback lifecycle, intelligence explorer và unified audit.
 AI Copilot roadmap WP0–WP8 đã implemented ở mức repository/local gate: shared provider runtime/budget,
@@ -43,7 +43,6 @@ zero-usage window và cleanup vẫn còn lại.
 | False-positive policy | Whitelist precedence; mismatch/age/no-hit/timeout riêng lẻ không đủ malicious | trust/risk regression tests |
 | Brand registry | Alias, official domains/contacts, provenance, effective interval, lifecycle và reviewer | `security_trust.py`, migration `0010` |
 | Whitelist | Domain/URL/contact scope, provenance/version/lifecycle, SQLite/PostgreSQL và admin API | trust services/repositories |
-| Official verifier | Allowed purpose, một claim, tối đa hai query/năm official sources; `NOT_FOUND != FALSE` | `OfficialClaimVerifier` tests |
 | Multi-turn conversation | Owner-scoped ID/list, optimistic version, redacted summary, conflict isolation và retention | `SecurityAnalysisService`, migration `0011` |
 | Analysis lifecycle | Terminal persistence, owner list/get/page/filter, queued/running/completed/failed events | v4 API/service/repositories |
 | Realtime replay | Cursor polling, single-use WebSocket ticket và terminal event replay | v4 event/stream tests |
@@ -71,7 +70,7 @@ zero-usage window và cleanup vẫn còn lại.
 | PostgreSQL durable jobs/outbox | Legacy worker và isolated Security v4 worker đều implemented; Redis chỉ notify, PostgreSQL giữ source of truth |
 | Operations metrics | V3 latency, provider usage, quota/error và feedback aggregates |
 | Report review/appeal infrastructure | Persisted queue/decision/audit/optimistic conflict paths có thể tái sử dụng |
-| Retention/artifacts | Retention worker và guarded signed screenshot artifacts tồn tại; screenshot ngoài Security scope |
+| Retention | Retention worker xóa nội dung đã tối giản và security payload hết hạn |
 | Local topology | Frontend, API, worker, PostgreSQL/pgvector và Redis trong Compose |
 
 ## 4. Partial capability và gap thật còn lại
@@ -83,7 +82,7 @@ zero-usage window và cleanup vẫn còn lại.
 | Admin exploration | Domain/threat Observatory, Review Room, Trust lifecycle và Unified Audit dùng contract thật; `/admin` redirect sang Review Room; v3 metrics/source discovery được cô lập trong compatibility surface | Không còn repository frontend gap; hosted release evidence vẫn thuộc WP9 |
 | Security v4 execution model | Inline compatibility và durable PostgreSQL worker/lease/outbox path đều có; async chỉ được công bố khi config thật sự ready | Chưa có hosted lease-loss/load/Redis outage evidence trên deployment thật |
 | Reviewed-memory rollout | Local tool, owner isolation, reviewed-only filtering, risk v2 và v1 fallback đã có; flag mặc định tắt | Chưa chạy hosted PostgreSQL fixture/poisoning/scoring evaluation trước khi bật flag |
-| Official/live providers | Adapter, bounded policy và deterministic fakes có | Chưa có live-provider smoke trong môi trường được cấp credential |
+| Live providers | URL reputation adapter, bounded policy và deterministic fakes có | Chưa có live-provider smoke trong môi trường được cấp credential |
 | Evaluation | Versioned 24-category deterministic, 5-case memory và 9-category AI datasets/reports đo routing, field/scenario precision/recall, conversation, grounding, hallucination, fallback, p95 latency/token/cost | Offline fixture evidence không thay thế hosted provider/multi-turn transport/load evidence; hosted validator đã có nhưng chưa có input thật |
 | Production readiness | Frontend OIDC PKCE, backend JWT/RBAC, hardened production validation, Security v4 live-smoke CLI và release/rollback runbook | Chưa verify với IdP/hosted PostgreSQL/Redis/provider thật, backup/restore và load |
 | Cutover | Frontend dùng v4; route telemetry tách legacy/security/reviewed-action; cutover config freeze legacy writes và source discovery | Chưa kích hoạt freeze hoặc đạt API/provider/job/DB zero-usage window trên deployment thật |
@@ -98,7 +97,6 @@ Các phần sau không nằm trong Security v4 product path nhưng vẫn còn đ
 - Source Registry discovery/promotion API, DB tables và admin source tab.
 - `fact_check_*`, `source_discoveries*`, `campaign_claim_features` và legacy campaign tables.
 - Claim-stance mapper/types/tests và old analysis frontend compatibility components.
-- Screenshot capture/artifact flow, nếu không có quyết định scope mới giữ lại.
 - pgvector extension/index sau khi mọi legacy vector consumer đã được chứng minh bằng zero usage.
 
 Không drop các phần này trước compatibility telemetry, backup/export, restore rehearsal và rollback plan.

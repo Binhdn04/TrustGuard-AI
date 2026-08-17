@@ -188,7 +188,6 @@ class SecurityInvestigationToolV4(StrEnum):
     URL_REPUTATION = "url_reputation"
     BRAND_MATCH = "brand_match"
     WHITELIST_LOOKUP = "whitelist_lookup"
-    OFFICIAL_CLAIM_VERIFIER = "official_claim_verifier"
     SECURITY_MEMORY_LOOKUP = "security_memory_lookup"
 
 
@@ -215,7 +214,6 @@ class SecurityEvidenceTypeV4(StrEnum):
     URL_REPUTATION = "url_reputation"
     BRAND_MATCH = "brand_match"
     WHITELIST = "whitelist"
-    OFFICIAL_VERIFICATION = "official_verification"
     REVIEWED_SECURITY_MEMORY = "reviewed_security_memory"
 
 
@@ -228,21 +226,6 @@ class WhitelistScopeV4(StrEnum):
     DOMAIN = "domain"
     URL = "url"
     CONTACT = "contact"
-
-
-class OfficialVerificationPurposeV4(StrEnum):
-    VERIFY_OFFICIAL_CAMPAIGN = "verify_official_campaign"
-    VERIFY_BRAND_ANNOUNCEMENT = "verify_brand_announcement"
-    VERIFY_RECRUITMENT_PROGRAM = "verify_recruitment_program"
-    VERIFY_OFFICIAL_DOMAIN = "verify_official_domain"
-    VERIFY_OFFICIAL_CONTACT = "verify_official_contact"
-
-
-class OfficialVerificationVerdictV4(StrEnum):
-    OFFICIAL_CONFIRMED = "OFFICIAL_CONFIRMED"
-    OFFICIAL_CONTRADICTED = "OFFICIAL_CONTRADICTED"
-    NOT_FOUND = "NOT_FOUND"
-    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
 class SecurityMemoryAdminVerdictV4(StrEnum):
@@ -292,7 +275,6 @@ class SecurityToolErrorV4(SecurityContractModel):
 
 class SecurityConsentV4(SecurityContractModel):
     external_url_lookup: bool = False
-    official_source_lookup: bool = False
 
 
 class SecurityExecutionModeV4(StrEnum):
@@ -365,21 +347,6 @@ class WhitelistPageV4(SecurityContractModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
     offset: int = Field(ge=0)
-
-
-class OfficialSourceFindingV4(SecurityContractModel):
-    source_url: str
-    finding: Literal["confirmed", "contradicted"]
-    title: str
-    observed_at: datetime
-
-
-class OfficialVerificationResultV4(SecurityContractModel):
-    verdict: OfficialVerificationVerdictV4
-    purpose: OfficialVerificationPurposeV4
-    sources_checked: int = Field(ge=0, le=5)
-    search_queries_used: int = Field(default=0, ge=0, le=2)
-    evidence_refs: list[str] = Field(default_factory=list, max_length=5)
 
 
 class SecurityTriageCreateRequestV4(SecurityContractModel):
@@ -1033,10 +1000,6 @@ __all__ = [
     "InvestigationStepV4",
     "RequestedActionV4",
     "ScopeDecisionV4",
-    "OfficialSourceFindingV4",
-    "OfficialVerificationPurposeV4",
-    "OfficialVerificationResultV4",
-    "OfficialVerificationVerdictV4",
     "SecurityConsentV4",
     "SecurityConversationStatusV4",
     "SecurityConversationSummaryV4",

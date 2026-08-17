@@ -38,7 +38,6 @@ _SAFE_SIGNALS = {
     "approved_whitelist",
     "official_match",
     "official_contact_match",
-    "official_confirmed",
     "safe",
 }
 
@@ -184,8 +183,6 @@ def assess_security_risk(
         points = max((_WEAK_SIGNAL_POINTS.get(signal, 0) for signal in signal_parts), default=0)
         if has_whitelist and item.type.value in {"local_url_rule", "rdap", "brand_match"}:
             points = 0
-        if "official_contradicted" in signal_parts:
-            points = max(points, 20)
         if points:
             weak_contributions.append(_Contribution(points, item.evidence_ref))
 

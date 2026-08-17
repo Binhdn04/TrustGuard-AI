@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
-import os
-import stat
 from contextlib import suppress
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Query, WebSocket, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import Response
 from starlette.websockets import WebSocketDisconnect
 
 from src.api.dependencies import (
@@ -69,7 +64,6 @@ from src.models import (
     ReportStatus,
     ReviewQueueDecisionRequest,
     ReviewQueueItem,
-    ScreenshotStatusResponseV3,
     SourceDiscoveryDecisionRequestV3,
     SourceDiscoveryRecordV3,
     SourcePolicyCreateRequestV3,
@@ -91,7 +85,6 @@ _COMMON_ERRORS = {
     422: {"model": ErrorEnvelope},
 }
 _PLANNED_ERRORS = _COMMON_ERRORS
-_MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
 
 
 @router.get("/capabilities", response_model=CapabilitiesResponseV3, responses=_COMMON_ERRORS)
@@ -106,7 +99,6 @@ async def capabilities_v3(principal: PrincipalDependency) -> CapabilitiesRespons
         "virustotal": bool(settings.virustotal_api_key),
         "postgresql": settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")),
         "redis": bool(settings.redis_url),
-        "screenshot": True,
     }
     ready_count = sum(configured.values())
     profile = "live" if ready_count == len(configured) else "partial" if ready_count else "offline"
@@ -327,84 +319,6 @@ async def list_analysis_appeals_v3(
 ) -> list[AppealResponseV3]:
     await service.get_for(analysis_id, principal)
     return await wave2.list_user_appeals(analysis_id, principal)
-
-
-@router.get(
-    "/analyses/{analysis_id}/screenshot",
-    response_model=ScreenshotStatusResponseV3,
-    responses=_COMMON_ERRORS,
-)
-async def get_analysis_screenshot_v3(
-    analysis_id: UUID,
-    service: AnalysisServiceDependency,
-    wave2: Wave2ServiceDependency,
-    principal: PrincipalDependency,
-) -> ScreenshotStatusResponseV3:
-    analysis = await service.get_for(analysis_id, principal)
-    request = await service.get_request_for(analysis_id, principal)
-    return await wave2.screenshot_status(
-        analysis_id,
-        consented=bool(getattr(request, "consent_to_capture_screenshot", False)),
-        analysis_status=analysis.status,
-        principal=principal,
-    )
-
-
-@router.get("/artifacts/{artifact_id}", response_class=Response, responses=_COMMON_ERRORS)
-async def get_artifact_v3(
-    artifact_id: UUID,
-    wave2: Wave2ServiceDependency,
-    token: str = Query(max_length=1024),
-) -> Response:
-    artifact = await wave2.artifact_for_download(artifact_id, token)
-    settings = get_settings()
-    storage_root = Path(settings.artifact_storage_dir).resolve()
-    artifact_path = (storage_root / artifact.storage_key).resolve()
-    if not artifact_path.is_relative_to(storage_root):
-        raise PlatformError(
-            status_code=404,
-            code=ErrorCode.NOT_FOUND,
-            message="Artifact was not found.",
-            retryable=False,
-        )
-    # Keep the download boundary independently capped even if storage or
-    # metadata was populated outside the capture coordinator.
-    content = _read_verified_artifact(artifact_path, artifact.size_bytes, artifact.sha256)
-    if content is None:
-        raise PlatformError(
-            status_code=404,
-            code=ErrorCode.NOT_FOUND,
-            message="Artifact was not found.",
-            retryable=False,
-        )
-    return Response(
-        content=content,
-        media_type=artifact.media_type,
-        headers={
-            "Cache-Control": "private, no-store",
-            "Content-Disposition": "inline",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
-
-
-def _read_verified_artifact(path: Path, expected_size: int, expected_sha256: str) -> bytes | None:
-    if not 0 <= expected_size <= _MAX_ARTIFACT_BYTES:
-        return None
-    try:
-        with path.open("rb") as handle:
-            file_stat = os.fstat(handle.fileno())
-            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != expected_size:
-                return None
-            # The extra byte detects growth after fstat without ever allocating
-            # more than the configured limit plus one byte.
-            content = handle.read(expected_size + 1)
-    except (OSError, ValueError):
-        return None
-    if len(content) != expected_size or hashlib.sha256(content).hexdigest() != expected_sha256:
-        return None
-    return content
 
 
 @router.post(
