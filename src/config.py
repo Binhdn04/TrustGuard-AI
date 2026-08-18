@@ -1,7 +1,8 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,26 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
     llm_max_retries: int = Field(default=2, ge=0)
 
+    # Security assistant runtime. Every capability is independently gated and
+    # defaults off so the existing v4 path remains unchanged.
+    security_ai_understanding_enabled: bool = False
+    security_ai_planning_enabled: bool = False
+    security_ai_explanation_enabled: bool = False
+    security_async_execution_enabled: bool = False
+    security_memory_retrieval_enabled: bool = False
+    security_admin_copilot_enabled: bool = False
+    security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
+    security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
+    security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
+    security_ai_turn_deadline_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
+    security_ai_max_retries: int = Field(default=1, ge=0, le=2)
+    security_ai_small_model: str = Field(default="gpt-4o-mini", min_length=1)
+    security_ai_synthesis_model: str = Field(default="gpt-4o-mini", min_length=1)
+    security_ai_small_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
+    security_ai_small_output_cost_per_million_usd: float = Field(default=0.60, gt=0.0)
+    security_ai_synthesis_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
+    security_ai_synthesis_output_cost_per_million_usd: float = Field(default=0.60, gt=0.0)
+
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
     google_web_risk_api_key: str = ""
@@ -43,12 +64,17 @@ class Settings(BaseSettings):
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
-    source_discovery_enabled: bool = True
-    source_provisional_enabled: bool = True
-    source_auto_promotion_enabled: bool = True
+    source_discovery_enabled: bool = False
+    source_provisional_enabled: bool = False
+    source_auto_promotion_enabled: bool = False
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
+    security_investigation_max_external_calls: int = Field(default=8, ge=1, le=100)
+    security_investigation_max_retries: int = Field(default=1, ge=0, le=3)
+    security_investigation_deadline_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
+    security_conversation_retention_days: int = Field(default=30, ge=1, le=365)
+    security_release_profile: Literal["pre_cutover", "cutover"] = "pre_cutover"
 
     # Demo auth
     demo_auth_enabled: bool = True
@@ -78,31 +104,97 @@ class Settings(BaseSettings):
     job_lease_seconds: int = Field(default=60, ge=5, le=3600)
     run_durable_worker: bool = True
 
-    # Signed artifact access and retention. Access tokens are derived and are
-    # never stored in PostgreSQL.
-    artifact_signing_key: str = "development-artifact-signing-key"
-    artifact_access_ttl_seconds: int = Field(default=300, ge=30, le=3600)
-    artifact_retention_days: int = Field(default=30, ge=1, le=365)
-    artifact_storage_dir: str = "./data/artifacts"
+    # Retention for minimized analysis content and security payloads.
+    content_retention_days: int = Field(default=30, ge=1, le=365)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
 
+    def security_live_provider_requirements(self) -> dict[str, str]:
+        required = {
+            "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
+        }
+        return required
+
+    def enabled_security_capabilities(self) -> dict[str, bool]:
+        provider_ready = self.security_ai_provider_configuration_valid()
+        durable_ready = (
+            self.security_async_execution_enabled
+            and self.run_durable_worker
+            and self.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
+        )
+        return {
+            "security_ai_understanding": self.security_ai_understanding_enabled and provider_ready,
+            "security_ai_planning": self.security_ai_planning_enabled and provider_ready,
+            "security_ai_explanation": self.security_ai_explanation_enabled and provider_ready,
+            "security_async_execution": durable_ready,
+            "security_memory_retrieval": self.security_memory_retrieval_enabled,
+            "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
+        }
+
+    def security_ai_provider_configuration_valid(self) -> bool:
+        """Return whether the locally verifiable OpenAI configuration is usable."""
+        return bool(
+            self.openai_api_key.strip()
+            and self.security_ai_small_model.strip()
+            and self.security_ai_synthesis_model.strip()
+        )
+
+    @field_validator("security_ai_small_model", "security_ai_synthesis_model")
+    @classmethod
+    def validate_security_ai_model_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Security AI model names must not be blank")
+        return value
+
+    @staticmethod
+    def _placeholder_or_short_secret(value: str) -> bool:
+        lowered = value.strip().lower()
+        markers = ("development", "change-me", "replace-with", "placeholder", "example-secret")
+        return len(value.strip()) < 32 or any(marker in lowered for marker in markers)
+
     @model_validator(mode="after")
-    def reject_demo_auth_in_production(self) -> "Settings":
-        if self.app_env == "production" and self.demo_auth_enabled:
-            raise ValueError("DEMO_AUTH_ENABLED must be false in production")
+    def validate_runtime_profile(self) -> "Settings":
+        if self.app_env == "production":
+            if self.demo_auth_enabled:
+                raise ValueError("DEMO_AUTH_ENABLED must be false in production")
+            if not self.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+                raise ValueError("DATABASE_URL must use PostgreSQL in production")
+            if not self.redis_url.startswith(("redis://", "rediss://")):
+                raise ValueError("REDIS_URL must use Redis in production")
+            if not self.oidc_issuer or not self.oidc_audience:
+                raise ValueError("OIDC_ISSUER and OIDC_AUDIENCE are required in production")
+            if urlparse(self.oidc_issuer).scheme != "https":
+                raise ValueError("OIDC_ISSUER must use HTTPS in production")
+            if self._placeholder_or_short_secret(self.database_encryption_key):
+                raise ValueError("DATABASE_ENCRYPTION_KEY must be a non-placeholder secret of at least 32 characters")
+            origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+            if not origins or any(origin == "*" or urlparse(origin).scheme != "https" for origin in origins):
+                raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins in production")
+            if self.security_release_profile == "cutover":
+                if not self.live_providers_required:
+                    raise ValueError("LIVE_PROVIDERS_REQUIRED must be true for production cutover")
         if self.live_providers_required:
-            required = {
-                "OPENAI_API_KEY": self.openai_api_key,
-                "GOOGLE_FACT_CHECK_API_KEY": self.google_fact_check_api_key,
-                "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
-                "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
-                "TAVILY_API_KEY": self.tavily_api_key,
-            }
+            required = self.security_live_provider_requirements()
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError("Live provider profile is missing: " + ", ".join(missing))
+        ai_enabled = any(
+            (
+                self.security_ai_understanding_enabled,
+                self.security_ai_planning_enabled,
+                self.security_ai_explanation_enabled,
+                self.security_admin_copilot_enabled,
+            )
+        )
+        if self.app_env == "production" and ai_enabled and not self.security_ai_provider_configuration_valid():
+            raise ValueError(
+                "Valid OPENAI_API_KEY and Security AI model configuration are required "
+                "when a production Security AI flag is enabled"
+            )
+        if self.app_env == "production" and self.security_async_execution_enabled and not self.run_durable_worker:
+            raise ValueError("RUN_DURABLE_WORKER must be true when async Security v4 is enabled")
         if self.post_processing_reserve_seconds >= self.analysis_deadline_seconds:
             raise ValueError("POST_PROCESSING_RESERVE_SECONDS must be smaller than ANALYSIS_DEADLINE_SECONDS")
         return self

@@ -252,24 +252,6 @@ def build_resolve_redirects_node(resolver: RedirectResolver | None):
     return resolve_redirects
 
 
-def _claim_type(finding: str) -> EvidenceType:
-    folded = finding.casefold()
-    if any(
-        word in folded
-        for word in (
-            "bác bỏ",
-            "sai sự thật",
-            "giả mạo",
-            "không đúng",
-            "false",
-            "incorrect",
-            "misleading",
-        )
-    ):
-        return EvidenceType.FACT_CHECK
-    return EvidenceType.OFFICIAL_SOURCE
-
-
 def _corpus_claim_evidence(match) -> ClaimEvidence:
     """Project a trusted corpus record without deriving stance from similarity."""
     record = match.record

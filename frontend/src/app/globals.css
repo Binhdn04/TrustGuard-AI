@@ -3,48 +3,56 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #f4f7f8;
-  --foreground: #172033;
-  --card: #ffffff;
-  --card-foreground: #172033;
+  --background: #f5f5f0;
+  --foreground: #17201f;
+  --card: #fbfbf8;
+  --card-foreground: #17201f;
   --popover: #ffffff;
   --popover-foreground: #172033;
-  --primary: #047857;
+  --primary: #046c4e;
   --primary-foreground: #ffffff;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #0f172a;
-  --muted: #f1f5f9;
-  --muted-foreground: #475569;
-  --accent: #f1f5f9;
-  --accent-foreground: #0f172a;
-  --destructive: #ef4444;
+  --secondary: #eceee8;
+  --secondary-foreground: #17201f;
+  --muted: #eceee8;
+  --muted-foreground: #596460;
+  --accent: #e4ebe6;
+  --accent-foreground: #17201f;
+  --destructive: #c53f4f;
   --destructive-foreground: #f8fafc;
-  --border: #e2e8f0;
-  --input: #e2e8f0;
+  --border: #dce1db;
+  --input: #cfd6cf;
   --ring: #047857;
-  --radius: 0.75rem;
+  --radius: 0.875rem;
+  --risk-safe: #16845d;
+  --risk-caution: #b36b16;
+  --risk-danger: #c53f4f;
+  --evidence: #356fa3;
 }
 
 .dark {
-  --background: #0b1729;
-  --foreground: #f8fafc;
-  --card: #172033;
-  --card-foreground: #f8fafc;
-  --popover: #172033;
-  --popover-foreground: #f8fafc;
+  --background: #0f1515;
+  --foreground: #f1f4ef;
+  --card: #171f1e;
+  --card-foreground: #f1f4ef;
+  --popover: #171f1e;
+  --popover-foreground: #f1f4ef;
   --primary: #34d399;
   --primary-foreground: #052e16;
-  --secondary: #1e293b;
+  --secondary: #202a28;
   --secondary-foreground: #f8fafc;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --accent: #1e293b;
+  --muted: #202a28;
+  --muted-foreground: #9caaa4;
+  --accent: #26332f;
   --accent-foreground: #f8fafc;
   --destructive: #ef4444;
   --destructive-foreground: #f8fafc;
-  --border: #334155;
-  --input: #334155;
+  --border: #2d3936;
+  --input: #3a4743;
   --ring: #10b981;
+  --risk-safe: #4ed6a2;
+  --risk-caution: #f0b35d;
+  --risk-danger: #fb7185;
+  --evidence: #7bbcf0;
 }
 
 @theme inline {
@@ -83,8 +91,13 @@ html {
 body {
   min-width: 320px;
   background: var(--background);
+  background-image:
+    radial-gradient(circle at 88% 4%, color-mix(in srgb, var(--primary) 7%, transparent) 0, transparent 28rem),
+    linear-gradient(color-mix(in srgb, var(--border) 28%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 22%, transparent) 1px, transparent 1px);
+  background-size: auto, 48px 48px, 48px 48px;
   color: var(--foreground);
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-family: Inter, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   @apply antialiased;
 }
 
@@ -92,6 +105,11 @@ button,
 textarea,
 input {
   font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
 }
 
 ::selection {
@@ -105,4 +123,23 @@ input {
 
 .glass-input {
   @apply bg-background/50 backdrop-blur-sm border border-input focus:ring-2 focus:ring-ring focus:border-transparent outline-none transition-all duration-300;
+}
+
+.case-panel {
+  @apply rounded-2xl border border-border/80 bg-card/88 shadow-[0_18px_55px_rgba(15,23,42,0.06)] backdrop-blur-sm;
+}
+
+.micro-label {
+  @apply text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

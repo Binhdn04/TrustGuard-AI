@@ -31,7 +31,6 @@ chưa có acceptance coverage đầy đủ cho:
 - multi-turn investigation và conversation ownership;
 - recruitment/payment/OTP/fake-promotion threat taxonomy;
 - whitelist precedence và brand/official-domain matching;
-- bounded OfficialClaimVerifier và `NOT_FOUND != FALSE`;
 - risk taxonomy mới và false-positive thresholds;
 - wide-action proposal → review → execution end-to-end.
 

@@ -6,7 +6,7 @@
 flowchart TD
     A[Login] --> B[Chat / Analyze]
     B --> C[User chọn message hoặc URL]
-    C --> D[Disclosure + consent]
+    C --> D[Automatic lookup disclosure]
     D --> E{Input hợp lệ?}
     E -->|Không| F[Validation error]
     F --> C
@@ -37,22 +37,23 @@ flowchart TD
 
 Production dùng IdP/session auth. Demo token/local role chỉ được ghi rõ là development mode.
 
-## 3. Chat / Analyze và consent
+## 3. Chatbot và automatic lookup disclosure
 
 ```text
-┌────────────┬────────────────────────────────────────────┐
-│ Analyze    │ Dán message hoặc URL bạn muốn kiểm tra     │
-│ History    │ ┌────────────────────────────────────────┐ │
-│ Appeals    │ │ Tài khoản sắp bị khóa... https://...  │ │
-│            │ └────────────────────────────────────────┘ │
-│            │ [✓] Cho phép tra URL/domain qua provider   │
-│            │ Dữ liệu gửi đi: URL/domain đã chuẩn hóa.   │
-│            │ [ Phân tích ]                              │
-└────────────┴────────────────────────────────────────────┘
+┌──────────────────────────────────┬──────────────────────┐
+│ Conversation                     │ Kết luận             │
+│ User ↔ Security Agent            │ Mức rủi ro           │
+│                                  │ Lý do chính          │
+│ [Nhập message hoặc URL...] [Gửi] │ Việc cần làm ngay     │
+│ Automatic lookup disclosure      │ [Xem chi tiết ▼]     │
+└──────────────────────────────────┴──────────────────────┘
 ```
 
 Disclosure phải nói rõ hệ thống chỉ xử lý nội dung đang chọn, không đọc toàn bộ private chat và
-external provider có thể quan sát URL/domain. Screenshot advanced có consent riêng khi được đề xuất.
+external provider có thể quan sát URL/domain. Không dùng checkbox từng lượt: thao tác gửi cấp lookup authorization
+cho web product; executor vẫn chỉ gọi provider khi context/purpose cần và mọi target/SSRF/budget gate đều đạt.
+Lượt intake đầu ẩn composer trong khi Security v4 đang chạy. Sau verdict, composer hiện lại; follow-up thông thường
+nhận câu trả lời chatbot, còn follow-up khiến chatbot gọi `check_scam` sẽ chuyển sang trạng thái kiểm tra và mở analysis v4.
 
 ## 4. Provisional warning và processing
 
@@ -145,4 +146,4 @@ diện rộng thiếu note/evidence; backend vẫn là hard gate cuối và lưu
 - Loading, empty, validation error, forbidden, provider-limited, failed và offline/reconnect.
 - `inconclusive` khác `safe`; provisional khác final; reviewed khác auto-generated.
 - Admin approval đang xử lý phải chống double-submit và hiển thị conflict nếu case đã được review.
-- Screenshot consent/timeout và appeal submitted/resolved có trạng thái riêng.
+- Appeal submitted/resolved có trạng thái riêng.

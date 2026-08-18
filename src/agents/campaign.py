@@ -7,11 +7,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from src.agents.contracts import CampaignDetectionOutput, CampaignFeatures, CampaignHypothesis
 from src.agents.fact_check import canonicalize_claim
 from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
+from src.models.security_v4 import (
+    SecurityCampaignRecordV4,
+    SecurityEvidenceTypeV4,
+    SecurityMemoryAdminVerdictV4,
+    SecurityMemoryRecordV4,
+    SecurityRiskV4,
+    SecurityScopeResponseV4,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +320,223 @@ class ConfigurableCampaignDetector:
         return {"campaign_features": features, "campaign_hypotheses": hypotheses}
 
 
+@dataclass(frozen=True, slots=True)
+class SecurityCampaignConfig:
+    """Explainable v4 fingerprint policy; it never calls an embedding provider."""
+
+    window: timedelta = timedelta(hours=24)
+    minimum_analyses: int = 3
+    fingerprint_version: str = "security-fingerprint-v1"
+    clustering_version: str = "security-clustering-v1"
+
+    def __post_init__(self) -> None:
+        if self.window <= timedelta(0):
+            raise ValueError("security campaign window must be positive")
+        if self.minimum_analyses < 3:
+            raise ValueError("security campaign minimum must be at least three analyses")
+        if not self.fingerprint_version.strip() or not self.clustering_version.strip():
+            raise ValueError("security campaign versions must not be empty")
+
+
+_SENSITIVE_PATH_MARKERS = {
+    "account",
+    "credential",
+    "login",
+    "otp",
+    "password",
+    "pay",
+    "payment",
+    "secure",
+    "signin",
+    "verify",
+    "wallet",
+}
+
+
+def _security_url_parts(value: str) -> tuple[str, str, set[str]]:
+    canonical = canonicalize_url(value)
+    parsed = urlsplit(canonical)
+    domain = canonicalize_registrable_domain(canonical)
+    minimized = urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
+    lexical: set[str] = set()
+    hostname = parsed.hostname or ""
+    if "xn--" in hostname:
+        lexical.add("host:punycode")
+    if "-" in hostname:
+        lexical.add("host:hyphenated")
+    if any(character.isdigit() for character in hostname):
+        lexical.add("host:contains_digit")
+    path_tokens = {token.casefold() for token in parsed.path.replace("-", "/").replace("_", "/").split("/")}
+    lexical.update(f"path:{token}" for token in sorted(path_tokens & _SENSITIVE_PATH_MARKERS))
+    depth = len([part for part in parsed.path.split("/") if part])
+    lexical.add(f"path_depth:{min(depth, 3)}")
+    return domain, "url:sha256:" + sha256(minimized.encode()).hexdigest(), lexical
+
+
+def _redirect_domains(response: SecurityScopeResponseV4) -> set[str]:
+    values: set[str] = set()
+    for evidence in response.evidence:
+        if evidence.type is not SecurityEvidenceTypeV4.REDIRECT:
+            continue
+        candidate = evidence.description.rsplit(" -> ", 1)[-1].strip()
+        try:
+            values.add(canonicalize_registrable_domain(candidate))
+        except ValueError:
+            continue
+    return values
+
+
+def build_security_memory_record(
+    response: SecurityScopeResponseV4,
+    *,
+    config: SecurityCampaignConfig = SecurityCampaignConfig(),
+) -> SecurityMemoryRecordV4:
+    """Build privacy-minimized intelligence from a completed v4 response."""
+
+    context = response.security_context
+    if context is None or response.risk is None or response.threat_type is None or response.policy_version is None:
+        raise ValueError("completed in-scope security result is required")
+    domains: set[str] = set()
+    fingerprints: set[str] = set()
+    lexical: set[str] = set()
+    for value in context.urls:
+        try:
+            domain, fingerprint, features = _security_url_parts(value)
+        except ValueError:
+            continue
+        domains.add(domain)
+        fingerprints.add(fingerprint)
+        lexical.update(features)
+    patterns = {
+        name
+        for name, present in (
+            ("credential_request", context.credential_request),
+            ("otp_request", context.otp_request),
+            ("payment_request", context.payment_request),
+            ("personal_information_request", context.personal_information_request),
+            ("urgency", context.urgency),
+        )
+        if present
+    }
+    observed_at = response.completed_at or response.created_at
+    claimed_brand = " ".join(context.claimed_entity.casefold().split()) if context.claimed_entity else None
+    return SecurityMemoryRecordV4(
+        memory_id=uuid5(NAMESPACE_URL, f"security-memory\0{response.analysis_id}"),
+        analysis_id=response.analysis_id,
+        canonical_domains=sorted(domains),
+        url_fingerprints=sorted(fingerprints),
+        redirect_targets=sorted(_redirect_domains(response)),
+        claimed_brand=claimed_brand,
+        scenario=context.scenario,
+        requested_action=context.requested_action,
+        security_patterns=sorted(patterns),
+        lexical_features=sorted(lexical),
+        threat_type=response.threat_type,
+        risk=response.risk,
+        risk_policy_version=response.policy_version,
+        fingerprint_version=config.fingerprint_version,
+        first_seen_at=observed_at,
+        last_seen_at=observed_at,
+        evidence_refs=list(
+            dict.fromkeys(response.explanation_evidence_refs or [e.evidence_ref for e in response.evidence])
+        ),
+    )
+
+
+def _security_signal_set(record: SecurityMemoryRecordV4) -> set[str]:
+    values = {f"domain:{item}" for item in record.canonical_domains}
+    values.update(f"redirect:{item}" for item in record.redirect_targets)
+    values.add(f"scenario:{record.scenario.value}")
+    values.update(f"pattern:{item}" for item in record.security_patterns)
+    values.update(f"lexical:{item}" for item in record.lexical_features)
+    if record.claimed_brand:
+        values.add(f"brand:{record.claimed_brand}")
+    if record.requested_action:
+        values.add(f"action:{record.requested_action.value}")
+    values.add(f"threat:{record.threat_type.value}")
+    return values
+
+
+def _security_matches(left: SecurityMemoryRecordV4, right: SecurityMemoryRecordV4) -> bool:
+    if set(left.canonical_domains) & set(right.canonical_domains):
+        return True
+    if set(left.redirect_targets) & set(right.redirect_targets):
+        return True
+    if left.claimed_brand and left.claimed_brand == right.claimed_brand:
+        return True
+    same_scenario = left.scenario == right.scenario and left.scenario.value != "unknown"
+    same_action = left.requested_action is not None and left.requested_action == right.requested_action
+    shared_patterns = set(left.security_patterns) & set(right.security_patterns)
+    return same_scenario and (same_action or (left.threat_type == right.threat_type and bool(shared_patterns)))
+
+
+def _security_component(
+    seed: SecurityMemoryRecordV4, observations: Sequence[SecurityMemoryRecordV4]
+) -> list[SecurityMemoryRecordV4]:
+    by_id = {item.analysis_id: item for item in observations}
+    selected = {seed.analysis_id}
+    pending = deque([seed])
+    while pending:
+        current = pending.popleft()
+        for candidate in observations:
+            if candidate.analysis_id not in selected and _security_matches(current, candidate):
+                selected.add(candidate.analysis_id)
+                pending.append(candidate)
+    return [by_id[item_id] for item_id in sorted(selected, key=str)]
+
+
+def cluster_security_memory(
+    observations: Sequence[SecurityMemoryRecordV4],
+    *,
+    config: SecurityCampaignConfig = SecurityCampaignConfig(),
+) -> list[SecurityCampaignRecordV4]:
+    """Cluster on named security signals and keep every hypothesis reviewer-gated."""
+
+    newest = max((item.last_seen_at for item in observations), default=None)
+    cutoff = newest - config.window if newest is not None else None
+    eligible = [
+        item
+        for item in observations
+        if cutoff is not None and item.last_seen_at >= cutoff
+        if item.admin_verdict not in {SecurityMemoryAdminVerdictV4.SAFE, SecurityMemoryAdminVerdictV4.FALSE_POSITIVE}
+        and item.risk not in {SecurityRiskV4.SAFE, SecurityRiskV4.LOW_RISK, SecurityRiskV4.INSUFFICIENT_EVIDENCE}
+    ]
+    remaining = {item.analysis_id: item for item in eligible}
+    campaigns: list[SecurityCampaignRecordV4] = []
+    while remaining:
+        seed = remaining[min(remaining, key=str)]
+        members = _security_component(seed, tuple(remaining.values()))
+        for member in members:
+            remaining.pop(member.analysis_id, None)
+        if len(members) < config.minimum_analyses:
+            continue
+        member_ids = sorted((item.analysis_id for item in members), key=str)
+        counts: dict[str, int] = {}
+        for member in members:
+            for signal in _security_signal_set(member):
+                counts[signal] = counts.get(signal, 0) + 1
+        aggregate = {key: value for key, value in sorted(counts.items()) if value >= 2}
+        explaining = [key for key, value in aggregate.items() if value == len(members)] or list(aggregate)[:5]
+        cluster_key = f"{config.clustering_version}\0" + "\0".join(map(str, member_ids))
+        refs = sorted({ref for item in members for ref in item.evidence_refs})
+        if not refs:
+            refs = ["campaign:sha256:" + sha256(cluster_key.encode()).hexdigest()]
+        campaigns.append(
+            SecurityCampaignRecordV4(
+                campaign_id=uuid5(NAMESPACE_URL, cluster_key),
+                hypothesis="Potential coordinated security campaign: " + ", ".join(explaining[:5]),
+                analysis_ids=member_ids,
+                window_started_at=min(item.first_seen_at for item in members),
+                window_ended_at=max(item.last_seen_at for item in members),
+                aggregate_signals=aggregate,
+                clustering_version=config.clustering_version,
+                evidence_refs=refs[:100],
+                created_at=max(item.last_seen_at for item in members),
+            )
+        )
+    return sorted(campaigns, key=lambda item: str(item.campaign_id))
+
+
 __all__ = [
     "CampaignConfig",
     "CampaignObservation",
@@ -321,4 +547,7 @@ __all__ = [
     "InMemoryCampaignObservationStore",
     "RepositoryCampaignObservationStore",
     "cluster_observations",
+    "SecurityCampaignConfig",
+    "build_security_memory_record",
+    "cluster_security_memory",
 ]

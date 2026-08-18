@@ -117,6 +117,7 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "RATE_LIMITED"
     PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    CONFLICT = "CONFLICT"
 
 
 class ContractModel(BaseModel):
@@ -405,7 +406,7 @@ class ErrorEnvelope(ContractModel):
 
 
 class AnalysisCreateRequestV3(AnalysisCreateRequest):
-    consent_to_capture_screenshot: bool = False
+    pass
 
 
 class AnalysisAcceptedResponseV3(ContractModel):
@@ -417,44 +418,6 @@ class AnalysisAcceptedResponseV3(ContractModel):
 
 class AnalysisResponseV3(AnalysisResponse):
     contract_version: Literal["v3"] = CONTRACT_VERSION_V3
-
-
-class ScreenshotStatus(StrEnum):
-    NOT_REQUESTED = "not_requested"
-    PENDING = "pending"
-    READY = "ready"
-    FAILED = "failed"
-    EXPIRED = "expired"
-
-
-class ScreenshotArtifactV3(ContractModel):
-    artifact_id: UUID
-    media_type: Literal["image/png", "image/jpeg", "image/webp"]
-    size_bytes: int = Field(ge=0)
-    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    created_at: datetime
-    expires_at: datetime
-    access_path: str
-    access_expires_at: datetime
-
-
-class ScreenshotStatusResponseV3(ContractModel):
-    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
-    analysis_id: UUID
-    consented: bool
-    status: ScreenshotStatus
-    artifact: ScreenshotArtifactV3 | None = None
-    failure_code: str | None = None
-
-    @model_validator(mode="after")
-    def validate_artifact_state(self) -> Self:
-        if self.status is ScreenshotStatus.READY and self.artifact is None:
-            raise ValueError("ready screenshot status requires an artifact")
-        if self.status is not ScreenshotStatus.READY and self.artifact is not None:
-            raise ValueError("only a ready screenshot status may contain an artifact")
-        if not self.consented and self.status is not ScreenshotStatus.NOT_REQUESTED:
-            raise ValueError("screenshot without consent must remain not_requested")
-        return self
 
 
 class AnalysisReportResponseV3(AnalysisReportResponse):
@@ -665,6 +628,7 @@ class AdminActionRecordV3(ContractModel):
     contract_version: Literal["v3"] = CONTRACT_VERSION_V3
     action_id: UUID
     analysis_id: UUID | None = None
+    security_analysis_id: UUID | None = None
     campaign_id: UUID | None = None
     action: ReviewedAction
     target: str | None = None
@@ -674,6 +638,8 @@ class AdminActionRecordV3(ContractModel):
     reviewer_id: str | None = None
     review_note: str | None = None
     reviewed_at: datetime | None = None
+    executed_at: datetime | None = None
+    execution_error: str | None = None
 
     @model_validator(mode="after")
     def validate_review(self) -> Self:
@@ -689,6 +655,13 @@ class AdminActionRecordV3(ContractModel):
             raise ValueError("reviewed action requires a target")
         if self.action is not ReviewedAction.NONE and not self.evidence_snapshot:
             raise ValueError("reviewed action requires an evidence snapshot")
+        if self.analysis_id is not None and self.security_analysis_id is not None:
+            raise ValueError("admin action cannot reference both legacy and security analyses")
+        execution_finished = self.status in {AdminActionStatus.EXECUTED, AdminActionStatus.FAILED}
+        if execution_finished != (self.executed_at is not None):
+            raise ValueError("executed or failed action requires executed_at")
+        if (self.status is AdminActionStatus.FAILED) != (self.execution_error is not None):
+            raise ValueError("failed action requires execution_error")
         return self
 
 
@@ -702,8 +675,29 @@ class AdminActionDecisionResponseV3(ContractModel):
     action_id: UUID
     decision_id: UUID
     action: ReviewedAction
-    status: Literal[AdminActionStatus.APPROVED, AdminActionStatus.REJECTED]
+    status: Literal[
+        AdminActionStatus.APPROVED,
+        AdminActionStatus.REJECTED,
+        AdminActionStatus.EXECUTED,
+        AdminActionStatus.FAILED,
+    ]
     reviewed_at: datetime
+    executed_at: datetime | None = None
+    execution_error: str | None = None
+
+
+class AdminActionAuditRecordV3(ContractModel):
+    contract_version: Literal["v3"] = CONTRACT_VERSION_V3
+    decision_id: UUID
+    action_id: UUID
+    reviewer_id: str
+    decision: ReviewDecision
+    action: ReviewedAction
+    execution_status: AdminActionStatus
+    evidence_snapshot: list[Evidence]
+    note: str
+    decided_at: datetime
+    execution_error: str | None = None
 
 
 class AdminActionPageV3(ContractModel):

@@ -24,7 +24,17 @@ class RedactingJsonFormatter(logging.Formatter):
             "logger": record.name,
             "event": record.getMessage(),
         }
-        for name in ("request_id", "method", "route", "status_code", "latency_ms", "job_id", "failure_code"):
+        for name in (
+            "request_id",
+            "method",
+            "route",
+            "status_code",
+            "latency_ms",
+            "job_id",
+            "failure_code",
+            "api_contract",
+            "product_profile",
+        ):
             if hasattr(record, name):
                 payload[name] = getattr(record, name)
         return json.dumps(redact(payload), separators=(",", ":"), ensure_ascii=False)

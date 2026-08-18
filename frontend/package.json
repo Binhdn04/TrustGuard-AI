@@ -5,12 +5,16 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "prepare:standalone": "node scripts/prepare-standalone.mjs",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental false",
+    "check:cutover": "node scripts/check-cutover.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "pretest:e2e": "npm run prepare:standalone",
+    "test:e2e": "node scripts/run-production-e2e.mjs",
+    "test:e2e:dev": "playwright test"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -39,5 +43,8 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "nanoid": "3.3.18"
   }
 }

@@ -3,28 +3,30 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, ChevronDown, Clock3, Loader2, RefreshCw, Scale } from "lucide-react";
 
-import { getAnalysisApi } from "@/lib/api/analysis-api";
-import type { AppealResponseV3 } from "@/types/generated/api-v3";
+import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
+import type { SecurityAppealRecordV4 } from "@/types/generated/api-v4";
 
-export function AnalysisAppealForm({ analysisId }: { analysisId: string }) {
+type AppealView = SecurityAppealRecordV4;
+
+export function AnalysisAppealForm({ analysisId, securityApi }: { analysisId: string; securityApi: SecurityAnalysisApi }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [comment, setComment] = useState("");
-  const [appeal, setAppeal] = useState<AppealResponseV3 | null>(null);
+  const [appeal, setAppeal] = useState<AppealView | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const items = await getAnalysisApi().listAnalysisAppeals(analysisId);
+      const items = await securityApi.listAnalysisAppeals(analysisId);
       setAppeal(items[0] ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Không thể tải trạng thái khiếu nại.");
     } finally {
       setLoading(false);
     }
-  }, [analysisId]);
+  }, [analysisId, securityApi]);
 
   useEffect(() => {
     void Promise.resolve().then(load);
@@ -42,11 +44,10 @@ export function AnalysisAppealForm({ analysisId }: { analysisId: string }) {
     setSubmitting(true);
     setError(null);
     try {
-      const receipt = await getAnalysisApi().createAppeal(analysisId, {
+      setAppeal(await securityApi.createAppeal(analysisId, {
         reason: reason.trim(),
         comment: comment.trim() || null,
-      });
-      setAppeal(await getAnalysisApi().getAppeal(receipt.appeal_id));
+      }));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Không thể gửi khiếu nại.");
     } finally {

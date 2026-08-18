@@ -1,141 +1,171 @@
-# Contract and Fixtures — Current State and Required Migration
+# Contract and Fixtures — Security v4 Current State
 
-## 1. Contract đang chạy
+Security product contract hiện tại chỉ là `v4` tại `/api/v4`. `/api/v2` và `/api/v3` đã được tháo khỏi
+runtime và OpenAPI.
 
-`/api/v3` dùng `AnalysisCreateRequestV3`, kế thừa v2:
+## 1. Request và conversation contract
 
-```json
-{
-  "message": "Nhận quà tại https://example.com/login",
-  "consent_to_scan_urls": true,
-  "consent_to_capture_screenshot": false
-}
-```
-
-Không có `conversation_id`, scope decision hoặc official-verification consent riêng.
-
-Response hiện dùng hai lớp classification:
-
-```text
-RiskLevel: low | medium | high | critical
-Verdict: safe | suspicious | malicious | inconclusive
-```
-
-Nó còn chứa `claims`, `fact_check_basis`, `fact_check_confidence`, `ClaimStance` và
-`CLAIM_RETRIEVER`; đây là contract cũ cần deprecate.
-
-## 2. API đã implement
-
-| API group | Trạng thái |
-|---|---|
-| `/api/v3/analyses` create/list/get | Implemented |
-| analysis events với cursor | Implemented |
-| ticketed analysis WebSocket | Implemented |
-| reports và report review queue | Implemented |
-| user/admin appeals | Implemented |
-| admin actions list/get/decision | Implemented; thiếu product-flow proposal/executor |
-| admin campaigns list/detail/decision | Implemented |
-| admin metrics | Implemented |
-| screenshot status/signed artifact | Implemented nhưng ngoài scope mới |
-| admin sources/source discoveries | Implemented nhưng deprecated |
-| `/api/v2` analysis/admin | Compatibility legacy |
-| `/api/v2/chat` | Starter legacy |
-
-## 3. Contract vNext cần có
-
-### Request
+Single-turn request:
 
 ```json
 {
   "message": "HR yêu cầu tôi đóng 500.000 đồng phí hồ sơ",
-  "conversation_id": "optional-owner-scoped-id",
   "consent": {
-    "external_url_lookup": true,
-    "official_source_lookup": true
+    "external_url_lookup": true
   }
 }
 ```
 
-### Scope decision
+Follow-up phải gửi đồng thời owner-scoped conversation ID và optimistic version:
+
+```json
+{
+  "message": "Họ còn yêu cầu tôi gửi OTP",
+  "conversation_id": "10000000-0000-4000-8000-000000000001",
+  "conversation_version": 1,
+  "consent": {
+    "external_url_lookup": false
+  }
+}
+```
+
+Thiếu một trong `conversation_id`/`conversation_version` bị reject. Stale version trả conflict; khác
+owner trả forbidden; follow-up mô tả case/entity khác bị yêu cầu mở conversation mới.
+
+## 2. Scope và structured security context
+
+Scope decision:
 
 ```text
 IN_SCOPE | NEED_MORE_INFO | OUT_OF_SCOPE_GENERAL_FACT_CHECK
 ```
 
-Out-of-scope response phải terminal trước provider routing. `NEED_MORE_INFO` chứa một câu hỏi tập
-trung và cho phép follow-up trong cùng conversation.
+- `OUT_OF_SCOPE_GENERAL_FACT_CHECK`: terminal `END`, có `boundary_message`, không resolve investigation.
+- `NEED_MORE_INFO`: terminal `END`, có đúng một focused `follow_up_question`.
+- `IN_SCOPE`: có `SecurityContextV4`; sau investigation/risk sẽ terminal với grounded result.
 
-### Structured security context
-
-```text
-claimed_entity, scenario, requested_action, amount, urgency,
-urls, credential_request, otp_request, payment_request,
-impersonation_signals, potential_threat
-```
-
-### Official verification
+`SecurityContextV4` gồm:
 
 ```text
-OFFICIAL_CONFIRMED | OFFICIAL_CONTRADICTED | NOT_FOUND | INSUFFICIENT_EVIDENCE
+claimed_entity, scenario, requested_action, amount, urgency, urls,
+credential_request, otp_request, payment_request,
+personal_information_request, impersonation_signals, potential_threat
 ```
 
-Chỉ allow purpose: official campaign, brand announcement, recruitment program, official domain và
-official contact. Enforce một claim, hai query, năm official sources; `NOT_FOUND != FALSE`.
+Scenario hiện có recruitment, promotion/prize, account verification, payment, refund và unknown.
+Potential threat gồm phishing, brand impersonation, financial/recruitment/promotion scam,
+credential theft và undetermined security threat.
 
-### Product risk
+## 3. Investigation, evidence và risk response
+
+Response v4 giữ:
+
+```text
+scope decision + reasons
+conversation ID/version
+investigation status/plan
+SecurityEvidenceV4[] + normalized tool errors
+risk + score + confidence + threat type + policy version
+recommended actions + grounded explanation + explanation evidence refs
+limitations + lifecycle timestamps
+```
+
+Product risk taxonomy:
 
 ```text
 SAFE | LOW_RISK | SUSPICIOUS | HIGH_RISK | MALICIOUS | INSUFFICIENT_EVIDENCE
 ```
 
-Contract mới không expose `TRUE/FALSE/FAKE_NEWS` hoặc claim stance như product verdict.
+Contract v4 không expose `TRUE/FALSE/FAKE_NEWS`, `ClaimStance`, claim retriever hoặc general
+fact-check confidence như product verdict.
 
-## 4. Safety invariants cần giữ và bổ sung
+## 4. API v4 đã implement
 
-Đã có:
+| API group | Routes chính | Trạng thái |
+|---|---|---|
+| Capabilities | `GET /api/v4/capabilities` | Implemented, truthful `pre_cutover` profile |
+| Analysis | `POST/GET /api/v4/analyses`, `GET /analyses/page`, `GET /analyses/{id}` | Implemented, owner-scoped + paginated/filterable |
+| Conversation | `GET /api/v4/conversations`, `GET /conversations/{id}` | Implemented, owner-scoped page + versioned resume |
+| Events/realtime | `GET /analyses/{id}/events`, `POST /ws-tickets`, WebSocket `/stream` | Implemented, cursor replay + single-use ticket |
+| Feedback | user create/list under analyses; admin pages + terminal decision under `/api/v4/admin/reports|appeals`; privacy-minimized case read tại `GET /api/v4/admin/analyses/{analysis_id}` | Implemented, owner/RBAC + immutable audit; admin detail không trả raw conversation/owner |
+| Brand registry | create/list/page/disable `/api/v4/admin/brands` | Implemented, admin-only |
+| Whitelist | create/list/page/disable `/api/v4/admin/whitelist` | Implemented, admin-only |
+| Security Memory | list/page/correct/audit `/api/v4/admin/security-memory` | Implemented, admin-only |
+| Security campaign | list/page/detail/decision/audit `/api/v4/admin/security-campaigns` | Implemented, admin-only |
+| Intelligence | `/api/v4/admin/intelligence/domains|threats` | Implemented, paginated/filterable |
+| Unified v4 audit | `GET /api/v4/admin/audit` | Implemented cho trust/memory/campaign/feedback |
 
-- LLM không có quyền trực tiếp ghi score/risk/action.
-- Provider failure/no-hit không tự tạo safe.
-- External URL/domain call cần consent.
-- Admin blacklist decision và evidence/audit được persist atomically.
+Reviewed-action API thuộc contract v4:
 
-Cần bổ sung:
+- `GET /api/v4/admin/actions`, detail và audit;
+- `POST /api/v4/admin/actions/{id}/decision`;
+- action record có `security_analysis_id`, canonical target và immutable evidence snapshot;
+- final status là `rejected`, `executed` hoặc `failed`; `approved` chỉ là execution attempt trung gian.
 
-- Out-of-scope không tạo tool/provider call.
-- Whitelist chạy trước negative scoring và có provenance/version.
-- Official `NOT_FOUND` chỉ tạo limitation.
-- Domain mismatch/age đứng riêng không đủ cho malicious.
-- Wide action không execute nếu chưa có approved decision.
+Các route page trả `{contract_version, items, total, limit, offset}`. `SecurityReportRecordV4` và `SecurityAppealRecordV4`
+chỉ có reviewer/outcome/decision fields ở terminal state; quyết định lần hai trả `409 CONFLICT`.
 
-## 5. Fixtures hiện tại
+## 5. Security Memory và campaign contracts
 
-`tests/fixtures/analyses.jsonl` có 12 scenario frozen cho contract cũ. Các case URL safety, no-consent,
-provider timeout, Unicode domain và SSRF vẫn hữu ích. Các case `suspicious_claim_001`,
-`false_claim_001`, claim retriever và stance là legacy.
+`SecurityMemoryRecordV4` lưu structured intelligence, không lưu raw message:
 
-Fixture vNext bắt buộc:
+```text
+analysis_id, canonical_domains, url_fingerprints, redirect_targets,
+claimed_brand, scenario, requested_action, security_patterns, lexical_features,
+threat_type, risk, risk_policy_version, fingerprint_version,
+first/last seen, report_count, admin_verdict, evidence_refs
+```
 
-| Fixture | Assertion chính |
-|---|---|
-| phishing credential | URL/brand/credential evidence, high risk |
-| OTP impersonation | OTP + brand + urgency, high risk |
-| financial transfer | payment/social engineering routing |
-| recruitment fee | recruitment + payment + contact/domain evidence |
-| fake promotion | promotion + unofficial domain + login |
-| safe official | whitelist precedence, safe/low risk |
-| domain mismatch only | không được malicious |
-| provider no-hit/timeout | limitation, không được safe vì no-hit |
-| official not found | không map false/malicious |
-| general news/politics/medical/sports | out-of-scope, zero provider calls |
-| missing context | need-more-info và focused question |
-| multi-turn follow-up | đúng owner/conversation, không trộn case |
-| no consent | chỉ local tools |
-| wide action | không bypass approval/audit |
+Correction yêu cầu admin verdict khác `unreviewed` và reviewer note. Audit snapshot giữ previous/current
+verdict, reviewer, note, evidence refs và policy/fingerprint version.
 
-## 6. Compatibility strategy
+`SecurityCampaignRecordV4` luôn bắt đầu `pending_review`, có ít nhất ba unique analysis IDs, time window,
+named aggregate signals, evidence refs và clustering version. Confirm/reject không tạo broad warning;
+mọi decision append campaign audit.
 
-1. Thêm vNext model/route hoặc version mới, không nhồi nullable field vào v2.
-2. Chuyển frontend sang contract mới.
-3. Giữ v2 read-only trong compatibility window nếu còn consumer.
-4. Đo usage, sau đó xóa `/api/v2/chat`, v2 write routes và legacy model/tool enums.
-5. Xóa fixture legacy sau khi scope-new evaluation suite thay thế tương đương URL/security coverage.
+## 6. Safety invariants đã enforce
+
+- Out-of-scope không gọi investigation/provider/legacy analysis service.
+- Web intake đầu gọi `POST /api/v4/analyses`. Sau khi có verdict, follow-up gọi authenticated `POST /api/v4/chat`;
+  `tools_called=[]` chỉ tạo câu trả lời hội thoại, còn `check_scam` là tín hiệu để frontend tạo analysis v4 tiếp theo.
+  Chat route không tự gọi URL/domain provider.
+- Consent external URL thuộc API v4 để integration client có thể fail closed. Web product không hỏi checkbox từng lượt:
+  thao tác gửi dưới disclosure cấp authorization cho automatic URL lookup, còn executor chỉ gọi provider khi
+  context, normalized target, SSRF guard và budget đều cho phép. Local rules/trust lookup luôn chạy an toàn.
+- Whitelist có provenance/version và precedes negative scoring.
+- Provider no-hit/error, domain age hoặc mismatch riêng lẻ không đủ tạo malicious.
+- LLM không trực tiếp ghi score/risk/admin action.
+- Wide action không execute khi chưa có approved decision, reviewer, note, evidence snapshot và target.
+- Duplicate proposal/decision/execution không tạo side effect thứ hai.
+- Memory/campaign không lưu raw conversation hoặc URL query token; Security campaign không dùng claim
+  embeddings.
+
+## 7. Test fixtures và evidence hiện có
+
+Automated tests hiện tại cover:
+
+- phishing/credential/OTP, financial, recruitment và promotion/prize context;
+- out-of-scope và need-more-info terminal transitions;
+- text, URL, consent/no-consent, DNS/redirect/RDAP/reputation errors và SSRF;
+- whitelist precedence và brand match/mismatch;
+- deterministic risk thresholds, grounded evidence refs và persistence lifecycle;
+- multi-turn owner/version/retention/conflicting-case behavior;
+- HITL auth, rejection, idempotency, execution rollback và audit;
+- repeated domain, shared redirect, same brand/different domain, scenario/action pattern, unrelated case,
+  time window, memory correction, provenance/version và SQLite reopen.
+- capabilities/OpenAPI freeze, owner-scoped pages, admin feedback RBAC/terminal conflict, unified audit và
+  domain/threat intelligence explorer.
+- frontend OOS/need-more-info/risk presentation, polling fallback, multi-turn/history resume, report/appeal,
+  admin review, Observatory, Trust/Audit và RBAC bằng typed v4 fixtures.
+
+Các fixture analysis, claim/stance và source-discovery cũ đã được xóa cùng test contract của
+deprecated product path. WP9 giữ versioned deterministic dataset/report cho threat, safe whitelist,
+false-positive, OOS, provider failure, multi-turn và wide-action.
+
+## 8. Cleanup và cutover còn lại
+
+1. Backup và restore rehearsal trước khi chạy migration cleanup trên database đã có dữ liệu.
+2. Drain legacy jobs/outbox nếu deployment từng chạy v2/v3.
+3. Áp dụng migration `0018_remove_vector_compat` ở staging trước production; migration không downgrade.
+4. Xác minh v2/v3 trả 404, OpenAPI chỉ quảng bá v4 và Railway dùng PostgreSQL thường.
+5. Chỉ tuyên bố release sau hosted PostgreSQL/Redis/OIDC/provider smoke, restore/load và các gate WP9 còn lại.

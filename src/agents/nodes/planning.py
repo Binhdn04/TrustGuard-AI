@@ -225,10 +225,6 @@ def plan_next_tool(state: WorkflowState) -> dict:
     return {"next_tool": "execute" if ready else "assess"}
 
 
-def route_planned_tool(state: WorkflowState) -> str:
-    return state.get("next_tool", "assess")
-
-
 __all__ = [
     "build_investigation_plan",
     "domain_target",

@@ -10,9 +10,7 @@ import type {
 
 export const CONTRACT_VERSION_V3 = "v3" as const;
 
-export type AnalysisCreateRequestV3 = AnalysisCreateRequest & {
-  consent_to_capture_screenshot?: boolean;
-};
+export type AnalysisCreateRequestV3 = AnalysisCreateRequest;
 
 export interface AnalysisAcceptedResponseV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
@@ -24,28 +22,6 @@ export interface AnalysisAcceptedResponseV3 {
 export type AnalysisResponseV3 = Omit<AnalysisResponse, "contract_version"> & {
   contract_version: typeof CONTRACT_VERSION_V3;
 };
-
-export type ScreenshotStatusV3 = "not_requested" | "pending" | "ready" | "failed" | "expired";
-
-export interface ScreenshotArtifactV3 {
-  artifact_id: string;
-  media_type: "image/png" | "image/jpeg" | "image/webp";
-  size_bytes: number;
-  sha256: string;
-  created_at: string;
-  expires_at: string;
-  access_path: string;
-  access_expires_at: string;
-}
-
-export interface ScreenshotStatusResponseV3 {
-  contract_version: typeof CONTRACT_VERSION_V3;
-  analysis_id: string;
-  consented: boolean;
-  status: ScreenshotStatusV3;
-  artifact: ScreenshotArtifactV3 | null;
-  failure_code: string | null;
-}
 
 export type AnalysisEventTypeV3 =
   | "analysis_status"
@@ -218,6 +194,7 @@ export interface AdminActionRecordV3 {
   contract_version: typeof CONTRACT_VERSION_V3;
   action_id: string;
   analysis_id: string | null;
+  security_analysis_id: string | null;
   campaign_id: string | null;
   action: ReviewedActionV3;
   target: string | null;
@@ -227,6 +204,8 @@ export interface AdminActionRecordV3 {
   reviewer_id: string | null;
   review_note: string | null;
   reviewed_at: string | null;
+  executed_at: string | null;
+  execution_error: string | null;
 }
 
 export interface AdminActionPageV3 {
@@ -247,8 +226,24 @@ export interface AdminActionDecisionResponseV3 {
   action_id: string;
   decision_id: string;
   action: ReviewedActionV3;
-  status: "approved" | "rejected";
+  status: "approved" | "rejected" | "executed" | "failed";
   reviewed_at: string;
+  executed_at: string | null;
+  execution_error: string | null;
+}
+
+export interface AdminActionAuditRecordV3 {
+  contract_version: typeof CONTRACT_VERSION_V3;
+  decision_id: string;
+  action_id: string;
+  reviewer_id: string;
+  decision: ReviewDecisionV3;
+  action: ReviewedActionV3;
+  execution_status: AdminActionStatusV3;
+  evidence_snapshot: import("@/types/analysis").Evidence[];
+  note: string;
+  decided_at: string;
+  execution_error: string | null;
 }
 
 export interface CampaignSummaryV3 {

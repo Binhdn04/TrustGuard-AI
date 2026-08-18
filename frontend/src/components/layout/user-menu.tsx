@@ -27,6 +27,9 @@ export function UserMenu() {
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="Mở menu tài khoản"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
         className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors border border-primary/20"
       >
         <span className="font-bold text-sm uppercase">{user.name.charAt(0)}</span>

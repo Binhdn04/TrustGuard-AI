@@ -67,7 +67,6 @@ integration, WebSocket và topology production vẫn thuộc kế hoạch triể
 ### Advanced intelligence
 
 - Trusted fact-check corpus với pgvector và citation có version.
-- Screenshot renderer sandboxed, không cookie/login, chỉ sau consent khi scan tĩnh chưa đủ.
 - Campaign clustering và dashboard xu hướng tin giả.
 - Học có kiểm duyệt từ report/appeal; không online-learn trực tiếp.
 - Dashboard latency/API cost/rate-limit và appeal lifecycle đầy đủ.

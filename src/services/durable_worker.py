@@ -5,15 +5,170 @@ import logging
 import socket
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.agents.tools.models import ToolResultStatus
 from src.agents.tools.protocols import EmbeddingProvider
+from src.core.auth import Principal, UserRole
+from src.models import AnalysisStatus, SecurityAnalysisEventKindV4, SecurityAnalysisEventV4
 from src.repositories.postgres import DurableJob, LostJobLeaseError, PostgresPlatformRepository
-from src.services.analysis import AnalysisService
+from src.security_ai.runtime import SecurityAssistantRuntime
+
+if TYPE_CHECKING:
+    from src.services.analysis import AnalysisService
 from src.services.platform_wave2 import UsageLedgerEntry
+from src.services.security_analysis import SecurityAnalysisService
+from src.services.security_memory import SecurityMemoryService
+from src.services.security_pipeline import SecurityTriagePipeline
 
 logger = logging.getLogger(__name__)
+
+
+class SecurityV4JobHandler:
+    """Execute an immutable encrypted Security v4 turn and commit it once."""
+
+    def __init__(
+        self,
+        repository: PostgresPlatformRepository,
+        analyses: SecurityAnalysisService,
+        *,
+        pipeline_factory: Callable[[SecurityAssistantRuntime], SecurityTriagePipeline],
+        runtime_factory: Callable[[], SecurityAssistantRuntime],
+        memory: SecurityMemoryService,
+        propose_actions: Callable[[object], Awaitable[object]],
+    ) -> None:
+        self._repository = repository
+        self._analyses = analyses
+        self._pipeline_factory = pipeline_factory
+        self._runtime_factory = runtime_factory
+        self._memory = memory
+        self._propose_actions = propose_actions
+
+    async def __call__(self, job: DurableJob, worker_id: str) -> None:
+        loaded = await self._repository.load_security_job_payload(job, worker_id)
+        if loaded is None:
+            raise RuntimeError("security v4 encrypted payload is unavailable")
+        owner_id, request, scoped = loaded
+        principal = Principal(owner_id, UserRole.USER)
+        runtime = self._runtime_factory()
+
+        async def progress(step: str, message: str, evidence_refs: list[str], risk_hint) -> None:
+            await self._repository.append_security_analysis_event(
+                SecurityAnalysisEventV4(
+                    analysis_id=job.analysis_id,
+                    sequence=1,
+                    status=AnalysisStatus.RUNNING,
+                    step=step,
+                    kind=SecurityAnalysisEventKindV4.PROGRESS,
+                    step_id=step,
+                    message=message,
+                    evidence_refs=evidence_refs,
+                    risk_hint=risk_hint,
+                    occurred_at=datetime.now(UTC),
+                )
+            )
+
+        await progress("running", "Worker đã nhận immutable Security v4 turn.", [], None)
+        result = await self._pipeline_factory(runtime).process(
+            request,
+            scoped.model_copy(update={"status": AnalysisStatus.RUNNING}),
+            runtime=runtime,
+            progress=progress,
+            owner_id=owner_id,
+        )
+        if result.status is not AnalysisStatus.COMPLETED:
+            result = result.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
+        if result.risk is not None:
+            await self._memory.record(result, owner_id)
+            await self._propose_actions(result)
+        final = SecurityAnalysisEventV4(
+            analysis_id=result.analysis_id,
+            sequence=1,
+            status=AnalysisStatus.COMPLETED,
+            step="completed",
+            kind=SecurityAnalysisEventKindV4.FINAL,
+            message="Security v4 analysis completed.",
+            evidence_refs=list(result.explanation_evidence_refs),
+            risk_hint=result.risk,
+            occurred_at=result.completed_at or datetime.now(UTC),
+        )
+        await self._repository.complete_security_analysis_job(job, worker_id, result, final)
+        await self._analyses.finalize_durable(result, principal)
+
+
+class SecurityV4DurableWorker:
+    """Lease worker dedicated to the isolated Security v4 job tables."""
+
+    def __init__(
+        self,
+        repository: PostgresPlatformRepository,
+        handler: SecurityV4JobHandler,
+        *,
+        lease_seconds: int = 60,
+        idle_seconds: float = 0.5,
+    ) -> None:
+        self._repository = repository
+        self._handler = handler
+        self._lease_seconds = lease_seconds
+        self._idle_seconds = idle_seconds
+        self._worker_id = f"security-v4:{socket.gethostname()}:{uuid4()}"
+        self._stopping = asyncio.Event()
+
+    async def run(self) -> None:
+        while not self._stopping.is_set():
+            try:
+                job = await self._repository.claim_security_job(self._worker_id, self._lease_seconds)
+            except Exception as exc:
+                logger.warning("security_v4_job_claim_failed", extra={"failure_code": type(exc).__name__})
+                await self._idle()
+                continue
+            if job is None:
+                await self._idle()
+                continue
+            try:
+                await self._execute(job)
+            except LostJobLeaseError:
+                logger.warning("security_v4_job_lease_lost", extra={"job_id": str(job.id)})
+            except Exception as exc:
+                logger.warning(
+                    "security_v4_job_failed",
+                    extra={"job_id": str(job.id), "failure_code": type(exc).__name__},
+                )
+                await self._repository.retry_security_job(job, type(exc).__name__, self._worker_id)
+
+    async def _execute(self, job: DurableJob) -> None:
+        processing = asyncio.create_task(self._handler(job, self._worker_id), name=f"security-v4-{job.id}")
+        heartbeat = asyncio.create_task(self._renew(job.id), name=f"security-v4-lease-{job.id}")
+        done, _ = await asyncio.wait({processing, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+        if processing in done:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            await processing
+            return
+        processing.cancel()
+        await asyncio.gather(processing, return_exceptions=True)
+        try:
+            await heartbeat
+        except Exception as exc:
+            raise LostJobLeaseError("security v4 lease renewal failed") from exc
+        raise LostJobLeaseError("security v4 lease renewal stopped")
+
+    async def _renew(self, job_id) -> None:
+        interval = max(self._lease_seconds / 3, 1)
+        while True:
+            await asyncio.sleep(interval)
+            if not await self._repository.renew_security_job(job_id, self._worker_id, self._lease_seconds):
+                raise LostJobLeaseError("security v4 job lease ownership was lost")
+
+    async def _idle(self) -> None:
+        try:
+            await asyncio.wait_for(self._stopping.wait(), timeout=self._idle_seconds)
+        except TimeoutError:
+            pass
+
+    def stop(self) -> None:
+        self._stopping.set()
 
 
 class DurableAnalysisWorker:
@@ -138,12 +293,13 @@ class OutboxPublisher:
         self._stopping = asyncio.Event()
 
     async def publish_once(self) -> int:
-        messages = await self._repository.claim_outbox(self._worker_id)
-        for message in messages:
-            # Payloads are already minimized at the transaction boundary.
+        claim_security = getattr(self._repository, "claim_security_outbox", None)
+        security_messages = await claim_security(self._worker_id) if claim_security is not None else []
+        for message in security_messages:
             await self._redis.publish(f"trustguard:analysis:{message.aggregate_id}", message.event_type)
-            await self._repository.mark_outbox_published(message.id)
-        return len(messages)
+            mark_security = getattr(self._repository, "mark_security_outbox_published")
+            await mark_security(message.id)
+        return len(security_messages)
 
     async def run(self) -> None:
         while not self._stopping.is_set():
@@ -173,28 +329,27 @@ class OutboxPublisher:
 
 
 class RetentionWorker:
-    """Delete expired artifact objects, then tombstone minimized retained input."""
+    """Tombstone minimized retained input and security payloads."""
 
     def __init__(
         self,
         repository: PostgresPlatformRepository,
         *,
-        delete_object: Callable[[str], Awaitable[None]] | None = None,
         interval_seconds: float = 3600,
     ) -> None:
         self._repository = repository
-        self._delete_object = delete_object
         self._interval_seconds = interval_seconds
         self._stopping = asyncio.Event()
 
-    async def run_once(self, now: datetime | None = None) -> tuple[int, int]:
+    async def run_once(self, now: datetime | None = None) -> int:
         cutoff = now or datetime.now(UTC)
-        storage_keys = await self._repository.expire_artifacts(cutoff)
-        if self._delete_object is not None:
-            for storage_key in storage_keys:
-                await self._delete_object(storage_key)
-        minimized = await self._repository.expire_minimized_content(cutoff)
-        return len(storage_keys), minimized
+        expire_conversations = getattr(self._repository, "expire_security_conversations", None)
+        if expire_conversations is not None:
+            await expire_conversations(cutoff)
+        expire_security_payloads = getattr(self._repository, "expire_security_job_payloads", None)
+        if expire_security_payloads is not None:
+            await expire_security_payloads(cutoff)
+        return 0
 
     async def run(self) -> None:
         while not self._stopping.is_set():

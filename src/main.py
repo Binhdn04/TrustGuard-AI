@@ -7,20 +7,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api.dependencies import (
-    close_analysis_service,
     close_event_notifier,
     close_rate_limiter,
+    close_security_analysis_service,
+    close_security_investigation_service,
+    close_security_trust_services,
     close_ticket_manager,
-    get_analysis_service,
+    get_security_analysis_service,
     start_durable_worker,
     stop_durable_worker,
 )
 from src.api.middleware import StructuredRequestLogMiddleware
-from src.api.platform_v3 import router as platform_v3_router
-from src.api.routes import router
+from src.api.security_v4 import router as security_v4_router
 from src.config import get_settings
 from src.core.errors import PlatformError
 from src.core.logging import configure_structured_logging
+from src.core.product_boundary import SECURITY_TRIAGE_API_PREFIX
 from src.models import ErrorCode
 
 
@@ -30,8 +32,6 @@ async def lifespan(app: FastAPI):
     configure_structured_logging(settings.log_level)
     if not settings.demo_auth_enabled and (not settings.oidc_issuer or not settings.oidc_audience):
         raise RuntimeError("OIDC_ISSUER and OIDC_AUDIENCE are required when demo auth is disabled")
-    if settings.app_env == "production" and settings.database_encryption_key == "development-only-change-me":
-        raise RuntimeError("DATABASE_ENCRYPTION_KEY must be changed in production")
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
     if settings.run_durable_worker:
         await start_durable_worker()
@@ -40,7 +40,9 @@ async def lifespan(app: FastAPI):
     finally:
         if settings.run_durable_worker:
             await stop_durable_worker()
-        await close_analysis_service()
+        await close_security_analysis_service()
+        await close_security_trust_services()
+        await close_security_investigation_service()
         await close_ticket_manager()
         await close_event_notifier()
         await close_rate_limiter()
@@ -64,8 +66,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api/v2")
-app.include_router(platform_v3_router, prefix="/api/v3")
+app.include_router(security_v4_router, prefix=SECURITY_TRIAGE_API_PREFIX)
 
 
 @app.exception_handler(PlatformError)
@@ -106,7 +107,7 @@ async def health():
 @app.get("/health/ready")
 async def readiness():
     checks = {"database": True, "redis": True, "providers": True}
-    service = get_analysis_service()
+    service = get_security_analysis_service()
     healthcheck = getattr(service.repository, "healthcheck", None)
     if healthcheck is not None:
         try:
@@ -125,15 +126,7 @@ async def readiness():
         except Exception:
             checks["redis"] = False
     if settings.live_providers_required:
-        checks["providers"] = all(
-            (
-                settings.openai_api_key,
-                settings.google_fact_check_api_key,
-                settings.google_web_risk_api_key,
-                settings.virustotal_api_key,
-                settings.tavily_api_key,
-            )
-        )
+        checks["providers"] = all(settings.security_live_provider_requirements().values())
     status_code = 200 if all(checks.values()) else 503
     return JSONResponse(
         status_code=status_code, content={"status": "ready" if status_code == 200 else "degraded", "checks": checks}

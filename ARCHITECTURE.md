@@ -9,22 +9,21 @@
 
 ```mermaid
 flowchart LR
-    UI[Next.js] --> API[FastAPI v3/v2]
-    API --> DB[(SQLite hoặc PostgreSQL)]
-    DB --> Worker[Durable worker]
-    Worker --> Graph[LangGraph v2]
-    Graph --> URL[URL rules/reputation/RDAP/redirect]
-    Graph --> Legacy[Deprecated general fact-check]
-    URL --> Risk[Deterministic risk-v2]
-    Legacy --> Risk
-    API --> Admin[Report/appeal/review/campaign/metrics]
-    DB --> Redis[Outbox notification]
-    Redis --> UI
+    UI[Next.js Security UI] --> API[FastAPI /api/v4]
+    API --> Scope[Security scope + context]
+    Scope --> Investigation[Policy/consent investigation]
+    Investigation --> Risk[Deterministic security-risk-v1]
+    Risk --> DB[(SQLite hoặc PostgreSQL)]
+    Risk --> Memory[Security Memory / campaign]
+    Risk --> HITL[Reviewed admin action]
+    API --> Admin[Feedback / trust / explorer / audit]
 ```
 
-Hạ tầng API, auth, persistence, durable processing, URL safety, realtime và admin workflow đã có.
-Product semantics vẫn là scope cũ: không có security scope gate, multi-turn, whitelist/brand matcher
-hay bounded OfficialClaimVerifier; frontend vẫn là “Fact-Check AI”.
+Security v4 đã có scope gate, multi-turn, brand/whitelist trust matching, deterministic
+risk, Security Memory, admin feedback, explorer và audit API. Review Room đọc privacy-minimized admin case
+detail v4 trước feedback decision; reviewed action execution đã chuyển sang `/api/v4/admin/actions`.
+Public API v2/v3, frontend compatibility surface và pgvector persistence đã được gỡ. WP9 hosted
+evaluation và backup/restore evidence vẫn còn là release gate.
 
 ## Đích
 
@@ -32,11 +31,10 @@ hay bounded OfficialClaimVerifier; frontend vẫn là “Fact-Check AI”.
 security scope gate
 → structured scam understanding
 → URL/domain + brand + whitelist/blacklist investigation
-→ bounded official verification khi thật sự cần
 → deterministic security risk
 → grounded chat warning
 → reviewed wide action
 ```
 
-Không coi module/table fact-check legacy là capability của scope mới. Việc drop schema chỉ diễn ra sau
-cutover, zero-usage observation và backup/restore verification.
+Không coi module/table fact-check legacy là capability của scope mới. Migration cleanup phải được áp dụng
+sau khi backup database hiện hữu vì không hỗ trợ downgrade.

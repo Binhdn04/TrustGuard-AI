@@ -18,8 +18,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
+    command: process.env.PLAYWRIGHT_PRODUCTION ? "node .next/standalone/server.js" : "npm run dev",
     url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: Boolean(process.env.PLAYWRIGHT_EXTERNAL_SERVER) || !process.env.CI,
   },
 });

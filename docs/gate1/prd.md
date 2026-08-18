@@ -41,7 +41,7 @@ cảnh báo inline hai pha và Human-in-the-loop cho mọi hành động ảnh h
 ### FR-02 — Consent và input privacy
 
 - Nhận URL hoặc message 1–5.000 ký tự do user chủ động gửi.
-- Consent riêng cho URL/domain lookup và screenshot; từ chối consent vẫn cho phép local analysis.
+- Consent riêng cho URL/domain lookup; từ chối consent vẫn cho phép local analysis.
 - Không đọc nền toàn bộ conversation, không phá E2E, không log raw message/OTP/secret.
 
 ### FR-03 — Extraction và plan
@@ -93,12 +93,6 @@ cảnh báo inline hai pha và Human-in-the-loop cho mọi hành động ảnh h
 - Không lưu social graph hay suy diễn sender identity.
 - Dashboard aggregate trend, false-positive, appeal, latency, cache, token/cost, quota và 429/timeout.
 
-### FR-11 — Screenshot renderer
-
-- Pha nâng cao, chỉ chạy khi consent và static evidence chưa đủ.
-- Sandbox không cookie, login, credential hoặc persistent state; có SSRF, redirect, time, body và
-  download limits.
-
 ## 5. Non-functional requirements
 
 - Provisional warning p95 ≤ 1 giây khi local/cache có signal; final p95 ≤ 10 giây khi provider bình
@@ -118,7 +112,7 @@ cảnh báo inline hai pha và Human-in-the-loop cho mọi hành động ảnh h
 - Cùng evidence/scoring version luôn cho cùng score/verdict/action.
 - User thấy provisional → progress → final qua WebSocket hoặc polling fallback.
 - Cảnh báo cá nhân hiển thị ngay; wide action không thể bypass admin approval/audit.
-- Fact-check có citation; screenshot/campaign chỉ bật khi đạt privacy/security gates.
+- Fact-check có citation; campaign chỉ bật khi đạt privacy/security gates.
 - Report/appeal có ownership, receipt và immutable review history.
 - Dashboard vận hành không lộ raw message, URL secret hoặc prompt.
 
@@ -128,7 +122,7 @@ cảnh báo inline hai pha và Human-in-the-loop cho mọi hành động ảnh h
   report/admin-decision APIs và fake adapters offline.
 - **Core workstream bắt buộc:** frontend HTTP integration, RDAP/redirect runtime wiring, production
   reputation cascade, live progress/WebSocket, PostgreSQL/Redis worker path, OIDC và Railway.
-- **Intelligence workstream bắt buộc:** pgvector corpus, screenshot renderer, campaign detection,
+- **Intelligence workstream bắt buộc:** pgvector corpus, campaign detection,
   cost/trend dashboard, appeal và calibrated learning.
 - **Contract migration:** `/api/v2` là baseline hiện tại; final frontend dùng `/api/v3`, đồng thời
   giữ v2 read-compatible trong release v3 đầu tiên.

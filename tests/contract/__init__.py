@@ -1,1 +1,1 @@
-"""Contract v2 tests."""
+"""Active Security contract and tool-envelope tests."""

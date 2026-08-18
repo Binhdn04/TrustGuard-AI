@@ -1,0 +1,47 @@
+{
+  "evaluation_version": "security-memory-v2-eval-v1",
+  "dataset_sha256": "f1e2122d344966a822ca47d9c07015d662625504adea0b9fceafe86f2c309cf4",
+  "passed": true,
+  "cases": [
+    {
+      "id": "reviewed_malicious_domain",
+      "category": "malicious_match",
+      "risk": "SUSPICIOUS",
+      "score": 50,
+      "policy_version": "security-risk-v2",
+      "passed": true
+    },
+    {
+      "id": "reviewed_false_positive_weak",
+      "category": "false_positive",
+      "risk": "INSUFFICIENT_EVIDENCE",
+      "score": 0,
+      "policy_version": "security-risk-v2",
+      "passed": true
+    },
+    {
+      "id": "false_positive_cannot_override_blacklist",
+      "category": "strong_override",
+      "risk": "MALICIOUS",
+      "score": 95,
+      "policy_version": "security-risk-v2",
+      "passed": true
+    },
+    {
+      "id": "false_positive_does_not_suppress_other_target",
+      "category": "target_isolation",
+      "risk": "LOW_RISK",
+      "score": 20,
+      "policy_version": "security-risk-v2",
+      "passed": true
+    },
+    {
+      "id": "memory_flag_off_keeps_v1",
+      "category": "v1_fallback",
+      "risk": "LOW_RISK",
+      "score": 20,
+      "policy_version": "security-risk-v1",
+      "passed": true
+    }
+  ]
+}

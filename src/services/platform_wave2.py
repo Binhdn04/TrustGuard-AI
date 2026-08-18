@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
-import hashlib
-import hmac
-import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -16,14 +11,15 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST, normalize_hostname
 from src.core.auth import Principal, UserRole
 from src.core.errors import PlatformError
 from src.models import (
+    AdminActionAuditRecordV3,
     AdminActionDecisionResponseV3,
     AdminActionPageV3,
     AdminActionRecordV3,
     AdminActionStatus,
-    AnalysisStatus,
     AppealAdminRecordV3,
     AppealCreateRequestV3,
     AppealDecisionRequestV3,
@@ -48,13 +44,11 @@ from src.models import (
     ReviewedAction,
     RiskDistributionMetricV3,
     RiskLevel,
-    ScreenshotArtifactV3,
-    ScreenshotStatus,
-    ScreenshotStatusResponseV3,
+    SecurityEvidenceTypeV4,
+    SecurityRiskV4,
+    SecurityScopeResponseV4,
     UsageMetricV3,
 )
-
-SAFE_SCREENSHOT_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 
 class PlatformInternalModel(BaseModel):
@@ -270,26 +264,18 @@ class CampaignWrite(PlatformInternalModel):
     redirect_targets: list[str] = Field(default_factory=list)
 
 
-class ArtifactRecord(PlatformInternalModel):
-    artifact_id: UUID = Field(default_factory=uuid4)
-    analysis_id: UUID
-    owner_id: str
-    storage_key: str
-    media_type: str
-    size_bytes: int = Field(ge=0)
-    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    expires_at: datetime
-    deleted_at: datetime | None = None
-
-
-class ArtifactAccess(PlatformInternalModel):
-    artifact_id: UUID
-    access_path: str
-    expires_at: datetime
-
-
 class Wave2Repository(Protocol):
+    async def propose_admin_action(
+        self,
+        *,
+        analysis_id: UUID | None,
+        security_analysis_id: UUID | None,
+        campaign_id: UUID | None,
+        action: ReviewedAction,
+        target: str | None,
+        evidence: list[Evidence],
+    ) -> AdminActionRecordV3: ...
+
     async def create_appeal(
         self, analysis_id: UUID, owner_id: str, request: AppealCreateRequestV3, evidence: list[Evidence]
     ) -> AppealReceiptV3: ...
@@ -312,6 +298,8 @@ class Wave2Repository(Protocol):
 
     async def get_admin_action(self, action_id: UUID) -> AdminActionRecordV3 | None: ...
 
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]: ...
+
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
     ) -> AdminActionDecisionResponseV3 | None: ...
@@ -323,11 +311,6 @@ class Wave2Repository(Protocol):
     async def get_campaign(self, campaign_id: UUID) -> CampaignDetailV3 | None: ...
 
     async def operations_metrics(self, started_at: datetime, ended_at: datetime) -> OperationsMetricsResponseV3: ...
-
-    async def get_artifact(self, artifact_id: UUID) -> ArtifactRecord | None: ...
-
-    async def list_artifacts_for_analysis(self, analysis_id: UUID) -> list[ArtifactRecord]: ...
-
 
 @dataclass(slots=True)
 class _MemoryAppeal:
@@ -597,9 +580,10 @@ class MemoryWave2Repository:
     fact_results: dict[UUID, FactCheckResultWrite] = field(default_factory=dict)
     corpus_records: dict[UUID, FactCheckCorpusRecordWrite] = field(default_factory=dict)
     usage: list[UsageLedgerEntry] = field(default_factory=list)
-    artifacts: dict[UUID, ArtifactRecord] = field(default_factory=dict)
     notifications: list[dict[str, Any]] = field(default_factory=list)
     audit: list[dict[str, Any]] = field(default_factory=list)
+    action_sink: Any | None = None
+    executed_blacklist: set[str] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def create_appeal(
@@ -696,17 +680,35 @@ class MemoryWave2Repository:
         self,
         *,
         analysis_id: UUID | None,
+        security_analysis_id: UUID | None = None,
         campaign_id: UUID | None,
         action: ReviewedAction,
         target: str | None,
         evidence: list[Evidence],
     ) -> AdminActionRecordV3:
+        canonical = _canonical_action_target(action, target) if target else None
+        async with self._lock:
+            existing = next(
+                (
+                    item
+                    for item in self.actions.values()
+                    if item.analysis_id == analysis_id
+                    and item.security_analysis_id == security_analysis_id
+                    and item.campaign_id == campaign_id
+                    and item.action is action
+                    and item.target == canonical
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing.model_copy(deep=True)
         record = AdminActionRecordV3(
             action_id=uuid4(),
             analysis_id=analysis_id,
+            security_analysis_id=security_analysis_id,
             campaign_id=campaign_id,
             action=action,
-            target=_canonical_target(target) if target else None,
+            target=canonical,
             status=AdminActionStatus.PENDING_REVIEW,
             evidence_snapshot=evidence,
             proposed_at=datetime.now(UTC),
@@ -726,6 +728,10 @@ class MemoryWave2Repository:
         item = self.actions.get(action_id)
         return item.model_copy(deep=True) if item else None
 
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        rows = [item for item in self.audit if item.get("action_id") == action_id]
+        return [AdminActionAuditRecordV3.model_validate(item) for item in rows]
+
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
     ) -> AdminActionDecisionResponseV3 | None:
@@ -736,13 +742,44 @@ class MemoryWave2Repository:
             if item.status is not AdminActionStatus.PENDING_REVIEW:
                 raise _conflict("The admin action has already been reviewed.")
             now, decision_id = datetime.now(UTC), uuid4()
-            status = AdminActionStatus.APPROVED if decision is ReviewDecision.APPROVED else AdminActionStatus.REJECTED
+            status = AdminActionStatus.REJECTED
+            executed_at = None
+            execution_error = None
+            if decision is ReviewDecision.APPROVED:
+                executed_at = now
+                try:
+                    if item.action is ReviewedAction.ADD_TO_BLACKLIST:
+                        if self.action_sink is not None:
+                            linked_analysis_id = item.security_analysis_id or item.analysis_id
+                            await self.action_sink.apply_decision(
+                                decision_id=str(decision_id),
+                                analysis_id=str(linked_analysis_id) if linked_analysis_id else None,
+                                reviewer_id=reviewer_id,
+                                decision=decision.value,
+                                action=item.action.value,
+                                note=note,
+                                domains=[item.target],
+                            )
+                        else:
+                            self.executed_blacklist.add(item.target)
+                        status = AdminActionStatus.EXECUTED
+                    elif item.action is ReviewedAction.DISABLE_BLACKLIST and self.action_sink is None:
+                        self.executed_blacklist.discard(item.target)
+                        status = AdminActionStatus.EXECUTED
+                    else:
+                        status = AdminActionStatus.FAILED
+                        execution_error = "ACTION_SINK_NOT_CONFIGURED"
+                except Exception:
+                    status = AdminActionStatus.FAILED
+                    execution_error = "ACTION_EXECUTION_FAILED"
             reviewed = item.model_copy(
                 update={
                     "status": status,
                     "reviewer_id": reviewer_id,
                     "review_note": note,
                     "reviewed_at": now,
+                    "executed_at": executed_at,
+                    "execution_error": execution_error,
                 }
             )
             self.actions[action_id] = reviewed
@@ -752,8 +789,12 @@ class MemoryWave2Repository:
                     "action_id": action_id,
                     "reviewer_id": reviewer_id,
                     "decision": decision.value,
+                    "action": item.action.value,
+                    "execution_status": status.value,
+                    "execution_error": execution_error,
                     "evidence_snapshot": [e.model_dump(mode="json") for e in item.evidence_snapshot],
                     "decided_at": now,
+                    "note": note,
                 }
             )
             return AdminActionDecisionResponseV3(
@@ -762,6 +803,8 @@ class MemoryWave2Repository:
                 action=item.action,
                 status=status,
                 reviewed_at=now,
+                executed_at=executed_at,
+                execution_error=execution_error,
             )
 
     async def record_campaign(self, campaign: CampaignWrite) -> CampaignDetailV3:
@@ -989,29 +1032,6 @@ class MemoryWave2Repository:
         async with self._lock:
             self.usage.append(entry)
 
-    async def register_artifact(self, artifact: ArtifactRecord) -> None:
-        async with self._lock:
-            if any(item.storage_key == artifact.storage_key for item in self.artifacts.values()):
-                raise _conflict("The artifact storage key already exists.")
-            self.artifacts[artifact.artifact_id] = artifact
-
-    async def get_artifact(self, artifact_id: UUID) -> ArtifactRecord | None:
-        item = self.artifacts.get(artifact_id)
-        return item.model_copy(deep=True) if item else None
-
-    async def list_artifacts_for_analysis(self, analysis_id: UUID) -> list[ArtifactRecord]:
-        rows = [item.model_copy(deep=True) for item in self.artifacts.values() if item.analysis_id == analysis_id]
-        return sorted(rows, key=lambda item: item.created_at, reverse=True)
-
-    async def expire_artifacts(self, now: datetime) -> list[str]:
-        keys = []
-        async with self._lock:
-            for key, item in list(self.artifacts.items()):
-                if item.deleted_at is None and item.expires_at <= now:
-                    keys.append(item.storage_key)
-                    self.artifacts[key] = item.model_copy(update={"deleted_at": now})
-        return keys
-
     async def operations_metrics(self, started_at: datetime, ended_at: datetime) -> OperationsMetricsResponseV3:
         usage = [item for item in self.usage if started_at <= item.observed_at < ended_at]
         return _aggregate_metrics(started_at, ended_at, usage, self.appeals.values())
@@ -1132,58 +1152,13 @@ class VersionedSourceRegistry:
         )
 
 
-class ArtifactSigner:
-    def __init__(self, secret: str, ttl_seconds: int = 300) -> None:
-        if len(secret) < 16:
-            raise ValueError("artifact signing secret must contain at least 16 characters")
-        self._secret = secret.encode()
-        self._ttl_seconds = ttl_seconds
-
-    def issue(self, artifact_id: UUID, owner_id: str, now: datetime | None = None) -> ArtifactAccess:
-        issued_at = now or datetime.now(UTC)
-        expires_at = issued_at + timedelta(seconds=self._ttl_seconds)
-        payload = (
-            base64.urlsafe_b64encode(
-                json.dumps(
-                    {"artifact_id": str(artifact_id), "owner_id": owner_id, "exp": int(expires_at.timestamp())},
-                    separators=(",", ":"),
-                ).encode()
-            )
-            .decode()
-            .rstrip("=")
-        )
-        signature = hmac.new(self._secret, payload.encode(), hashlib.sha256).hexdigest()
-        token = f"{payload}.{signature}"
-        return ArtifactAccess(
-            artifact_id=artifact_id,
-            access_path=f"/api/v3/artifacts/{artifact_id}?token={token}",
-            expires_at=expires_at,
-        )
-
-    def verify(self, token: str, artifact_id: UUID, owner_id: str, now: datetime | None = None) -> bool:
-        try:
-            payload, signature = token.rsplit(".", 1)
-            expected = hmac.new(self._secret, payload.encode(), hashlib.sha256).hexdigest()
-            decoded = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode())
-            return (
-                decoded["artifact_id"] == str(artifact_id)
-                and decoded["owner_id"] == owner_id
-                and hmac.compare_digest(signature, expected)
-                and int(decoded["exp"]) >= int((now or datetime.now(UTC)).timestamp())
-            )
-        except (KeyError, TypeError, ValueError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError):
-            return False
-
-
 class Wave2PlatformService:
     def __init__(
         self,
         repository: Wave2Repository,
-        artifact_signer: ArtifactSigner,
         active_source_registry: VersionedSourceRegistry | None = None,
     ) -> None:
         self.repository = repository
-        self.artifact_signer = artifact_signer
         self._active_source_registry = active_source_registry
 
     async def create_appeal(
@@ -1223,11 +1198,58 @@ class Wave2PlatformService:
         items, total = await self.repository.list_admin_actions(status, limit, offset)
         return AdminActionPageV3(items=items, total=total, limit=limit, offset=offset)
 
+    async def propose_security_admin_actions(self, response: SecurityScopeResponseV4) -> list[AdminActionRecordV3]:
+        """Produce idempotent HITL proposals from completed v4 risk evidence."""
+        if response.risk not in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
+            return []
+        context = response.security_context
+        if context is None or not context.urls:
+            return []
+        referenced = set(response.explanation_evidence_refs)
+        candidates = [item for item in response.evidence if not referenced or item.evidence_ref in referenced]
+        proposals: list[AdminActionRecordV3] = []
+        for raw_url in context.urls:
+            try:
+                target = _canonical_action_target(ReviewedAction.ADD_TO_BLACKLIST, raw_url)
+            except ValueError:
+                continue
+            if any(
+                item.type is SecurityEvidenceTypeV4.BLACKLIST
+                and item.signal == "approved_blacklist_hit"
+                and _evidence_matches_domain(item.target, target)
+                for item in response.evidence
+            ):
+                continue
+            evidence = [
+                _security_action_evidence(item, target)
+                for item in candidates
+                if item.target in {None, "message"} or _evidence_matches_domain(item.target, target)
+            ]
+            evidence = [item for item in evidence if item is not None]
+            if not evidence:
+                continue
+            proposals.append(
+                await self.repository.propose_admin_action(
+                    analysis_id=None,
+                    security_analysis_id=response.analysis_id,
+                    campaign_id=None,
+                    action=ReviewedAction.ADD_TO_BLACKLIST,
+                    target=target,
+                    evidence=evidence,
+                )
+            )
+        return proposals
+
     async def get_admin_action(self, action_id: UUID) -> AdminActionRecordV3:
         result = await self.repository.get_admin_action(action_id)
         if result is None:
             raise _not_found("Admin action was not found.")
         return result
+
+    async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        if await self.repository.get_admin_action(action_id) is None:
+            raise _not_found("Admin action was not found.")
+        return await self.repository.list_admin_action_audit(action_id)
 
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
@@ -1326,90 +1348,6 @@ class Wave2PlatformService:
         policies = await self.repository.load_source_policies(at or datetime.now(UTC))  # type: ignore[attr-defined]
         return effective_source_policies(policies)
 
-    async def issue_artifact_access(self, artifact_id: UUID, principal: Principal) -> ArtifactAccess:
-        artifact = await self.repository.get_artifact(artifact_id)  # type: ignore[attr-defined]
-        if artifact is None or artifact.deleted_at is not None or artifact.expires_at <= datetime.now(UTC):
-            raise _not_found("Artifact was not found.")
-        if artifact.owner_id != principal.user_id and principal.role is not UserRole.SECURITY_ADMIN:
-            raise _forbidden()
-        if artifact.media_type not in SAFE_SCREENSHOT_MEDIA_TYPES:
-            raise _not_found("Artifact was not found.")
-        return self.artifact_signer.issue(artifact.artifact_id, artifact.owner_id)
-
-    async def screenshot_status(
-        self,
-        analysis_id: UUID,
-        *,
-        consented: bool,
-        analysis_status: AnalysisStatus,
-        principal: Principal,
-    ) -> ScreenshotStatusResponseV3:
-        if not consented:
-            return ScreenshotStatusResponseV3(
-                analysis_id=analysis_id,
-                consented=False,
-                status=ScreenshotStatus.NOT_REQUESTED,
-            )
-        artifacts = await self.repository.list_artifacts_for_analysis(analysis_id)
-        image_artifacts = [item for item in artifacts if item.media_type in SAFE_SCREENSHOT_MEDIA_TYPES]
-        now = datetime.now(UTC)
-        active = next(
-            (item for item in image_artifacts if item.deleted_at is None and item.expires_at > now),
-            None,
-        )
-        if active is not None:
-            if active.owner_id != principal.user_id and principal.role is not UserRole.SECURITY_ADMIN:
-                raise _forbidden()
-            access = self.artifact_signer.issue(active.artifact_id, active.owner_id)
-            return ScreenshotStatusResponseV3(
-                analysis_id=analysis_id,
-                consented=True,
-                status=ScreenshotStatus.READY,
-                artifact=ScreenshotArtifactV3(
-                    artifact_id=active.artifact_id,
-                    media_type=active.media_type,
-                    size_bytes=active.size_bytes,
-                    sha256=active.sha256,
-                    created_at=active.created_at,
-                    expires_at=active.expires_at,
-                    access_path=access.access_path,
-                    access_expires_at=access.expires_at,
-                ),
-            )
-        if image_artifacts:
-            return ScreenshotStatusResponseV3(
-                analysis_id=analysis_id,
-                consented=True,
-                status=ScreenshotStatus.EXPIRED,
-                failure_code="artifact_expired",
-            )
-        if analysis_status in {AnalysisStatus.QUEUED, AnalysisStatus.RUNNING}:
-            return ScreenshotStatusResponseV3(
-                analysis_id=analysis_id,
-                consented=True,
-                status=ScreenshotStatus.PENDING,
-            )
-        return ScreenshotStatusResponseV3(
-            analysis_id=analysis_id,
-            consented=True,
-            status=ScreenshotStatus.FAILED,
-            failure_code="capture_unavailable",
-        )
-
-    async def artifact_for_download(self, artifact_id: UUID, token: str) -> ArtifactRecord:
-        artifact = await self.repository.get_artifact(artifact_id)
-        now = datetime.now(UTC)
-        if (
-            artifact is None
-            or artifact.deleted_at is not None
-            or artifact.expires_at <= now
-            or artifact.media_type not in SAFE_SCREENSHOT_MEDIA_TYPES
-            or not self.artifact_signer.verify(token, artifact_id, artifact.owner_id, now)
-        ):
-            raise _not_found("Artifact was not found.")
-        return artifact
-
-
 def _hostname_matches(hostname: str, pattern: str) -> bool:
     if pattern.startswith("*."):
         suffix = pattern[2:]
@@ -1417,11 +1355,51 @@ def _hostname_matches(hostname: str, pattern: str) -> bool:
     return hostname == pattern
 
 
-def _canonical_target(target: str) -> str:
-    value = target.strip().lower()
-    parsed = urlsplit(value if "://" in value else f"https://{value}")
-    hostname = (parsed.hostname or "").rstrip(".")
-    return hostname or value[:500]
+def _canonical_action_target(action: ReviewedAction, target: str) -> str:
+    if action is ReviewedAction.NONE:
+        raise ValueError("none action cannot have a target")
+    value = target.strip()
+    try:
+        parsed = urlsplit(value if "://" in value else f"https://{value}")
+    except ValueError as exc:
+        raise ValueError("admin action target is invalid") from exc
+    if parsed.hostname is None:
+        raise ValueError("admin action target must contain a hostname")
+    hostname = normalize_hostname(parsed.hostname)
+    if DEFAULT_PUBLIC_SUFFIX_LIST.registrable_domain(hostname) is None:
+        raise ValueError("admin action target must be a registrable domain")
+    return hostname
+
+
+def _evidence_matches_domain(value: str | None, domain: str) -> bool:
+    if value is None:
+        return False
+    try:
+        parsed = urlsplit(value if "://" in value else f"https://{value}")
+    except ValueError:
+        return False
+    return (parsed.hostname or "").casefold().rstrip(".") == domain
+
+
+def _security_action_evidence(item, domain: str) -> Evidence | None:
+    type_map = {
+        SecurityEvidenceTypeV4.BLACKLIST: "BLACKLIST",
+        SecurityEvidenceTypeV4.REDIRECT: "REDIRECT",
+        SecurityEvidenceTypeV4.RDAP: "DOMAIN_REGISTRATION",
+        SecurityEvidenceTypeV4.LOCAL_URL_RULE: "URL_RULE",
+    }
+    from src.models import EvidenceType  # noqa: PLC0415
+
+    evidence_type = EvidenceType[type_map.get(item.type, "DOMAIN_REPUTATION")]
+    return Evidence(
+        type=evidence_type,
+        source=item.source,
+        title=item.signal,
+        url=f"https://{domain}/",
+        finding=item.description,
+        observed_at=item.observed_at,
+        policy_version=item.provenance_ref,
+    )
 
 
 def _aggregate_metrics(
@@ -1513,9 +1491,6 @@ def _conflict(message: str) -> PlatformError:
 
 
 __all__ = [
-    "ArtifactAccess",
-    "ArtifactRecord",
-    "ArtifactSigner",
     "CampaignWrite",
     "EvidenceChunkWrite",
     "EvidenceSnapshotWrite",

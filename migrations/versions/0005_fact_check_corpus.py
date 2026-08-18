@@ -199,14 +199,12 @@ def upgrade() -> None:
           model text NOT NULL,
           model_version text NOT NULL,
           dimensions integer NOT NULL CHECK(dimensions = 1536),
-          embedding vector(1536) NOT NULL,
+          embedding double precision[] NOT NULL,
           embedded_at timestamptz NOT NULL,
           PRIMARY KEY(record_id,embedding_version)
         );
         CREATE INDEX ix_fact_check_embeddings_model
           ON fact_check_embeddings(model,model_version,dimensions,embedding_version);
-        CREATE INDEX ix_fact_check_embeddings_cosine
-          ON fact_check_embeddings USING hnsw(embedding vector_cosine_ops);
 
         CREATE TABLE fact_check_results (
           id uuid PRIMARY KEY,
@@ -247,12 +245,10 @@ def upgrade() -> None:
           model text NOT NULL,
           model_version text NOT NULL,
           dimensions integer NOT NULL CHECK(dimensions = 1536),
-          embedding vector(1536) NOT NULL,
+          embedding double precision[] NOT NULL,
           embedded_at timestamptz NOT NULL,
           PRIMARY KEY(result_id,embedding_version)
         );
-        CREATE INDEX ix_fact_check_result_embeddings_cosine
-          ON fact_check_result_embeddings USING hnsw(embedding vector_cosine_ops);
 
         CREATE TABLE fact_check_evidence_snapshots (
           id uuid PRIMARY KEY,

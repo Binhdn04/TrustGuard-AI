@@ -7,9 +7,9 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from src.agents.chatbot import build_chatbot_node
 from src.agents.contracts import LiveStepTransition
 from src.agents.fact_check import ExtractedClaim, FactCheckOrchestrator, registrable_domain
-from src.agents.nodes.example_node import analyze_node, respond_node
 from src.agents.nodes.explanation import explain_result, route_action
 from src.agents.nodes.extraction import classify_input, extract_indicators
 from src.agents.nodes.llm import (
@@ -622,26 +622,22 @@ def build_graph(
     return graph.compile()
 
 
-def should_continue(state: LegacyAgentState) -> str:
-    return END if state.get("error") else "respond"
-
-
 def build_legacy_graph():
+    """Build the conversational helper used by the v4 `/chat` route."""
+    return build_chatbot_graph()
+
+
+def build_chatbot_graph(*, llm: Any | None = None):
     graph = StateGraph(LegacyAgentState)
-    graph.add_node("analyze", analyze_node)
-    graph.add_node("respond", respond_node)
-    graph.set_entry_point("analyze")
-    graph.add_edge("analyze", "respond")
-    graph.add_edge("respond", END)
+    graph.add_node("chat", build_chatbot_node(llm))
+    graph.set_entry_point("chat")
+    graph.add_edge("chat", END)
     return graph.compile()
 
 
 def build_openai_graph(**kwargs):
     from src.agents.tools.integration import build_provider_adapters
-    from src.agents.tools.runtime import (
-        OpenAIEvidenceComparator,
-        PostgresHybridCorpusRetriever,
-    )
+    from src.agents.tools.runtime import OpenAIEvidenceComparator
     from src.config import get_settings
     from src.services.llm import get_llm
 
@@ -649,9 +645,6 @@ def build_openai_graph(**kwargs):
     llm = get_llm() if settings.openai_api_key else None
     source_registry = kwargs.get("source_registry")
     owned_adapters = build_provider_adapters(settings, source_registry)
-    repository = kwargs.get("blacklist")
-    if repository is not None and hasattr(repository, "search_fact_check_corpus"):
-        kwargs.setdefault("hybrid_corpus_retriever", PostgresHybridCorpusRetriever(repository))
     if llm is not None:
         kwargs.setdefault("evidence_comparator", OpenAIEvidenceComparator(llm))
     graph_adapter_names = {
@@ -692,12 +685,12 @@ async def close_graph_resources(graph) -> None:
             await close()
 
 
-analysis_agent = build_openai_graph()
 agent = build_legacy_graph()
 
 __all__ = [
     "agent",
     "build_graph",
+    "build_chatbot_graph",
     "build_legacy_graph",
     "build_openai_graph",
     "close_graph_resources",

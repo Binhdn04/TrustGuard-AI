@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from src.agents.tools import (
     CacheMetadata,
+    GoogleSafeBrowsingScanner,
     GoogleWebRiskProvider,
     GuardedHttpClient,
     GuardedRedirectResolver,
@@ -19,11 +21,33 @@ from src.agents.tools import (
     UrlReputationFinding,
     UsageMetadata,
     VersionedMemoryCache,
+    VirusTotalUrlProvider,
+    build_provider_adapters,
     canonicalize_registrable_domain,
 )
 from src.models import Verdict
 
 NOW = datetime(2026, 8, 8, tzinfo=UTC)
+
+
+def test_provider_wiring_uses_virustotal_for_reputation_and_keeps_safe_browsing_compatibility() -> None:
+    settings = SimpleNamespace(
+        provider_timeout_seconds=10.0,
+        virustotal_api_key="virus-total",
+        reputation_max_network_calls=4,
+        google_safe_browsing_api_key="safe-browsing",
+        google_fact_check_api_key="",
+        openai_api_key="",
+        tavily_api_key="",
+    )
+
+    adapters = build_provider_adapters(settings)
+
+    reputation = adapters["url_reputation"]
+    assert isinstance(reputation, ProductionUrlReputationCascade)
+    assert isinstance(reputation.primary, VirusTotalUrlProvider)
+    assert reputation.secondary is None
+    assert isinstance(adapters["url_scanner"], GoogleSafeBrowsingScanner)
 
 
 class _ChunkStream(httpx.AsyncByteStream):
@@ -57,7 +81,8 @@ async def test_guarded_client_stops_stream_without_content_length_at_byte_limit(
     async def resolver(_host: str, _port: int) -> list[str]:
         return ["93.184.216.34"]
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.extensions["sni_hostname"] == "public.example"
         return httpx.Response(200, stream=stream)
 
     policy = SsrfPolicy(max_response_bytes=5)

@@ -1,4 +1,0 @@
-{
-  "domain_not_listed_001": {"domains": []},
-  "domain_listed_001": {"domains": ["known-bad.example"]}
-}

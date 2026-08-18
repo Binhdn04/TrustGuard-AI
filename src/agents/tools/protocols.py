@@ -6,10 +6,10 @@ from typing import Any, Protocol
 from src.models import BlacklistLookupEntry, ClaimEvidence, DomainIntelligenceResult, UrlScanResult
 
 from .models import (
+    DnsResolutionEnvelope,
     FactCheckSearchResult,
     NormalizedToolResult,
     RedirectResolutionResult,
-    ScreenshotResult,
     UrlReputationCascadeResult,
     UrlReputationFinding,
 )
@@ -23,11 +23,17 @@ class UrlReputationProvider(Protocol):
 
 
 class UrlReputationCascade(Protocol):
-    async def assess(self, normalized_url: str) -> NormalizedToolResult[UrlReputationCascadeResult]: ...
+    async def assess(
+        self, normalized_url: str, *, high_risk: bool = False
+    ) -> NormalizedToolResult[UrlReputationCascadeResult]: ...
 
 
 class RedirectResolver(Protocol):
     async def resolve(self, normalized_url: str) -> NormalizedToolResult[RedirectResolutionResult]: ...
+
+
+class DnsEvidenceProvider(Protocol):
+    async def resolve(self, normalized_url: str) -> DnsResolutionEnvelope: ...
 
 
 class RdapProvider(Protocol):
@@ -36,10 +42,6 @@ class RdapProvider(Protocol):
 
 class FactCheckCorpus(Protocol):
     async def search(self, claim: str, limit: int = 5) -> NormalizedToolResult[FactCheckSearchResult]: ...
-
-
-class ScreenshotRenderer(Protocol):
-    async def render(self, normalized_url: str) -> NormalizedToolResult[ScreenshotResult]: ...
 
 
 class EmbeddingProvider(Protocol):

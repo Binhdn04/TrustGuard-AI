@@ -13,8 +13,6 @@ from src.agents.fact_check import ExtractedClaim
 from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
-    CorpusCandidate,
-    FactCheckCorpusRecord,
     NormalizedToolResult,
     ToolResultStatus,
     UsageMetadata,
@@ -41,64 +39,6 @@ def _usage(provider: str, operation: str, started: float, *, tokens: int = 0) ->
         tokens=tokens,
         observed_at=observed,
     )
-
-
-class PostgresHybridCorpusRetriever:
-    """Map the production repository query to the provider-neutral corpus protocol."""
-
-    def __init__(self, repository: Any) -> None:
-        self._repository = repository
-
-    async def search(
-        self,
-        claim: ExtractedClaim,
-        *,
-        vector: list[float] | tuple[float, ...] | None = None,
-    ) -> NormalizedToolResult[list[CorpusCandidate]]:
-        started = perf_counter()
-        rows = await self._repository.search_fact_check_corpus(
-            claim.normalized_text,
-            language=claim.language,
-            vector=list(vector) if vector is not None else None,
-            claim_date_start=_as_datetime(claim.claim_date_start),
-            claim_date_end=_as_datetime(claim.claim_date_end),
-        )
-        candidates: list[CorpusCandidate] = []
-        for row in rows:
-            candidates.append(
-                CorpusCandidate(
-                    evidence_ref=f"corpus:{row['id']}",
-                    record=FactCheckCorpusRecord(
-                        record_id=str(row["id"]),
-                        record_version=row["record_version"],
-                        publisher=row["publisher"],
-                        source_url=row["source_url"],
-                        claim=row["normalized_claim"],
-                        stance=row["stance"],
-                        language=row["language"],
-                        published_at=row["published_at"],
-                        updated_at=row["source_updated_at"],
-                        embedding_model="text-embedding-3-small",
-                        embedding_version="v1",
-                        ingestion_source=row["ingestion_provenance"],
-                    ),
-                    fts_rank=row.get("lexical_rank"),
-                    vector_rank=row.get("vector_rank"),
-                    rrf_score=float(row["rrf_score"]),
-                    source_tier=str(row.get("source_tier", "UNTRUSTED")),
-                    temporal_status="compatible",
-                )
-            )
-        return NormalizedToolResult(
-            status=ToolResultStatus.SUCCESS if candidates else ToolResultStatus.INCONCLUSIVE,
-            result=candidates,
-            cache=CacheMetadata(status=CacheStatus.MISS),
-            usage=_usage("postgresql", "hybrid_corpus_search", started),
-        )
-
-
-def _as_datetime(value: date | None) -> datetime | None:
-    return datetime.combine(value, datetime.min.time(), tzinfo=UTC) if value is not None else None
 
 
 class ComparisonLimitationCode(StrEnum):
@@ -234,5 +174,4 @@ __all__ = [
     "ComparisonLimitationCode",
     "EvidenceComparison",
     "OpenAIEvidenceComparator",
-    "PostgresHybridCorpusRetriever",
 ]

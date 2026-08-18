@@ -1,13 +1,13 @@
 from src.agents.tools.advanced import (
     GoogleClaimSearchAdapter,
     OpenAIEmbeddingProvider,
-    PlaywrightScreenshotRenderer,
     TavilyExtractAdapter,
     TavilySearchAdapter,
     canonicalize_evidence_url,
     reciprocal_rank_fusion,
 )
 from src.agents.tools.cache import CachedValue, VersionedMemoryCache
+from src.agents.tools.dns import SafeDnsEvidenceResolver
 from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import (
@@ -22,6 +22,9 @@ from src.agents.tools.models import (
     CacheMetadata,
     CacheStatus,
     CorpusCandidate,
+    DnsResolutionEnvelope,
+    DnsResolutionError,
+    DnsResolutionResult,
     EmbeddingBatch,
     EmbeddingVector,
     ExtractedWebEvidence,
@@ -33,7 +36,6 @@ from src.agents.tools.models import (
     NormalizedToolResult,
     RedirectResolutionResult,
     RedirectResolutionStatus,
-    ScreenshotResult,
     TavilyExtractBatch,
     ToolErrorCode,
     ToolName,
@@ -47,11 +49,11 @@ from src.agents.tools.network import GuardedHttpClient, SsrfGuard, SsrfPolicy
 from src.agents.tools.protocols import (
     BlacklistRepository,
     ClaimRetriever,
+    DnsEvidenceProvider,
     DomainIntelligence,
     FactCheckCorpus,
     RdapProvider,
     RedirectResolver,
-    ScreenshotRenderer,
     UrlReputationCascade,
     UrlReputationProvider,
     UrlScanner,
@@ -74,6 +76,10 @@ __all__ = [
     "CacheStatus",
     "ClaimRetriever",
     "DomainIntelligence",
+    "DnsEvidenceProvider",
+    "DnsResolutionEnvelope",
+    "DnsResolutionError",
+    "DnsResolutionResult",
     "FactCheckCorpus",
     "FactCheckCorpusMatch",
     "FactCheckCorpusRecord",
@@ -89,8 +95,6 @@ __all__ = [
     "RedirectResolutionResult",
     "RedirectResolutionStatus",
     "RedirectResolver",
-    "ScreenshotRenderer",
-    "ScreenshotResult",
     "ToolErrorCode",
     "ToolName",
     "ToolResultStatus",
@@ -119,6 +123,7 @@ __all__ = [
     "GuardedHttpClient",
     "SsrfGuard",
     "SsrfPolicy",
+    "SafeDnsEvidenceResolver",
     "ToolCallError",
     "UnsafeUrlError",
     "build_provider_adapters",
@@ -127,7 +132,6 @@ __all__ = [
     "GoogleClaimSearchAdapter",
     "TavilySearchAdapter",
     "TavilyExtractAdapter",
-    "PlaywrightScreenshotRenderer",
     "reciprocal_rank_fusion",
     "canonicalize_evidence_url",
     "EmbeddingBatch",

@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from urllib.parse import urlsplit
+
+from src.models import (
+    SECURITY_RISK_POLICY_VERSION,
+    SECURITY_RISK_POLICY_VERSION_V2,
+    ExposureStateV4,
+    PotentialThreatV4,
+    RequestedActionV4,
+    SecurityEvidenceV4,
+    SecurityRecommendedActionV4,
+    SecurityRiskV4,
+    SecurityScopeResponseV4,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _Contribution:
+    points: int
+    evidence_ref: str
+
+
+_WEAK_SIGNAL_POINTS = {
+    "punycode_domain": 12,
+    "credential_path": 18,
+    "promotion_lure_domain": 8,
+    "ssrf_blocked": 15,
+    "new_domain": 15,
+    "recent_registration": 15,
+    "domain_mismatch": 15,
+    "lookalike_domain": 20,
+}
+_MALICIOUS_REPUTATION_SIGNALS = {"malicious", "confirmed_threat", "threat_intelligence_hit"}
+_SAFE_SIGNALS = {
+    "approved_whitelist",
+    "official_match",
+    "official_contact_match",
+    "safe",
+}
+
+
+def _risk_for_score(score: int) -> SecurityRiskV4:
+    if score >= 65:
+        return SecurityRiskV4.HIGH_RISK
+    if score >= 40:
+        return SecurityRiskV4.SUSPICIOUS
+    if score >= 20:
+        return SecurityRiskV4.LOW_RISK
+    return SecurityRiskV4.INSUFFICIENT_EVIDENCE
+
+
+def _target_matches(reviewed_target: str | None, weak_target: str | None) -> bool:
+    if reviewed_target is None:
+        return True
+    if weak_target is None:
+        return False
+    hostname = urlsplit(weak_target if "://" in weak_target else f"//{weak_target}").hostname
+    candidate = (hostname or weak_target).casefold().rstrip(".")
+    reviewed = reviewed_target.casefold().rstrip(".")
+    return candidate == reviewed or candidate.endswith(f".{reviewed}")
+
+
+def _actions(scope: SecurityScopeResponseV4, risk: SecurityRiskV4) -> list[SecurityRecommendedActionV4]:
+    context = scope.security_context
+    if context is None:
+        return [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION]
+    actions: list[SecurityRecommendedActionV4] = []
+    exposure = (
+        scope.assistant_context.exposure_state if scope.assistant_context is not None else ExposureStateV4.UNKNOWN
+    )
+    incident_actions = {
+        ExposureStateV4.LINK_OPENED: [
+            SecurityRecommendedActionV4.CLOSE_PAGE_AND_DO_NOT_RETURN,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+        ExposureStateV4.CREDENTIAL_SHARED: [
+            SecurityRecommendedActionV4.CHANGE_PASSWORD_FROM_TRUSTED_DEVICE,
+            SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+        ExposureStateV4.OTP_SHARED: [
+            SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS,
+            SecurityRecommendedActionV4.CONTACT_BANK_OR_PAYMENT_PROVIDER,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+        ExposureStateV4.PAYMENT_SENT: [
+            SecurityRecommendedActionV4.CONTACT_BANK_OR_PAYMENT_PROVIDER,
+            SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING,
+        ],
+    }
+    actions.extend(incident_actions.get(exposure, []))
+    if context.urls or context.requested_action is RequestedActionV4.OPEN_LINK:
+        actions.append(SecurityRecommendedActionV4.DO_NOT_OPEN_LINK)
+    if context.credential_request:
+        actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_CREDENTIALS)
+        actions.append(SecurityRecommendedActionV4.CHANGE_PASSWORD_IF_ALREADY_SHARED)
+    if context.otp_request:
+        actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_OTP)
+    if context.payment_request:
+        actions.append(SecurityRecommendedActionV4.DO_NOT_TRANSFER_MONEY)
+        actions.append(SecurityRecommendedActionV4.CONTACT_BANK_IF_ALREADY_PAID)
+    if context.claimed_entity or context.impersonation_signals:
+        actions.append(SecurityRecommendedActionV4.VERIFY_VIA_OFFICIAL_CHANNEL)
+    if risk in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
+        actions.append(SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER)
+    if not actions:
+        actions.append(SecurityRecommendedActionV4.PROCEED_WITH_CAUTION)
+    return list(dict.fromkeys(actions))
+
+
+def _explanation(risk: SecurityRiskV4, evidence: list[SecurityEvidenceV4]) -> str:
+    descriptions = [item.description for item in evidence[:3]]
+    prefix = {
+        SecurityRiskV4.SAFE: "Bằng chứng xác thực hiện có cho thấy mục tiêu phù hợp với nguồn tin cậy.",
+        SecurityRiskV4.LOW_RISK: "Chỉ ghi nhận tín hiệu rủi ro yếu; chưa đủ để kết luận nội dung độc hại.",
+        SecurityRiskV4.SUSPICIOUS: "Có nhiều tín hiệu bảo mật đáng ngờ cần được xử lý thận trọng.",
+        SecurityRiskV4.HIGH_RISK: "Các yêu cầu và tín hiệu độc lập cho thấy nguy cơ mất tài khoản hoặc tiền cao.",
+        SecurityRiskV4.MALICIOUS: "Có bằng chứng mạnh đã được xác nhận về mục tiêu độc hại.",
+        SecurityRiskV4.INSUFFICIENT_EVIDENCE: "Chưa có đủ bằng chứng để đánh giá mục tiêu là an toàn hay độc hại.",
+    }[risk]
+    return prefix + (" Căn cứ: " + " ".join(descriptions) if descriptions else "")
+
+
+def assess_security_risk(
+    scope: SecurityScopeResponseV4,
+    *,
+    memory_enabled: bool = False,
+) -> SecurityScopeResponseV4:
+    """Apply the versioned v4 policy without claim-stance or prose inputs."""
+    context = scope.security_context
+    if context is None:
+        return scope
+    context_evidence = next((item for item in scope.evidence if item.type.value == "security_context"), None)
+    context_ref = context_evidence.evidence_ref if context_evidence else ""
+    has_whitelist = any(item.signal.casefold() == "approved_whitelist" for item in scope.evidence)
+    contributions: list[_Contribution] = []
+    if context.credential_request:
+        contributions.append(_Contribution(35, context_ref))
+    if context.otp_request:
+        contributions.append(_Contribution(40, context_ref))
+    if context.payment_request:
+        contributions.append(_Contribution(35, context_ref))
+    if context.urgency:
+        contributions.append(_Contribution(15, context_ref))
+    if context.impersonation_signals and not has_whitelist:
+        contributions.append(_Contribution(18, context_ref))
+    if context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT and (
+        context.credential_request or context.otp_request or context.payment_request
+    ):
+        contributions.append(_Contribution(20, context_ref))
+    if context.scenario.value in {"recruitment", "promotion_prize"} and (
+        context.payment_request or context.credential_request
+    ):
+        contributions.append(_Contribution(10, context_ref))
+
+    strong_refs: list[str] = []
+    safe_refs: list[str] = []
+    reviewed_risk_refs: list[str] = []
+    reviewed_suppressions: list[SecurityEvidenceV4] = []
+    weak_contributions: list[_Contribution] = []
+    for item in scope.evidence:
+        signal_parts = set(item.signal.casefold().split("+"))
+        if memory_enabled and item.type.value == "reviewed_security_memory":
+            exact_match = bool(signal_parts & {"domain", "redirect"})
+            if "reviewed_memory_malicious" in signal_parts:
+                contributions.append(_Contribution(50 if exact_match else 30, item.evidence_ref))
+                reviewed_risk_refs.append(item.evidence_ref)
+            elif "reviewed_campaign_confirmed" in signal_parts:
+                contributions.append(_Contribution(35 if exact_match else 20, item.evidence_ref))
+                reviewed_risk_refs.append(item.evidence_ref)
+            elif signal_parts & {"reviewed_memory_safe", "reviewed_memory_false_positive"}:
+                reviewed_suppressions.append(item)
+            continue
+        if item.type.value == "blacklist" and "approved_blacklist_hit" in signal_parts:
+            strong_refs.append(item.evidence_ref)
+        if item.type.value == "url_reputation" and signal_parts & _MALICIOUS_REPUTATION_SIGNALS:
+            strong_refs.append(item.evidence_ref)
+        if signal_parts & _SAFE_SIGNALS:
+            safe_refs.append(item.evidence_ref)
+        points = max((_WEAK_SIGNAL_POINTS.get(signal, 0) for signal in signal_parts), default=0)
+        if has_whitelist and item.type.value in {"local_url_rule", "rdap", "brand_match"}:
+            points = 0
+        if points:
+            weak_contributions.append(_Contribution(points, item.evidence_ref))
+
+    if reviewed_suppressions:
+        weak_types = {"local_url_rule", "rdap", "brand_match"}
+        evidence_by_ref = {item.evidence_ref: item for item in scope.evidence}
+        weak_contributions = [
+            item
+            for item in weak_contributions
+            if evidence_by_ref[item.evidence_ref].type.value not in weak_types
+            or not any(
+                _target_matches(reviewed.target, evidence_by_ref[item.evidence_ref].target)
+                for reviewed in reviewed_suppressions
+            )
+        ]
+    weak_external = sum(item.points for item in weak_contributions)
+    contributions.extend(weak_contributions)
+    if context.impersonation_signals and any(
+        "lookalike_domain" in item.signal.casefold().split("+") for item in scope.evidence
+    ):
+        # A claimed organization plus a lookalike domain is stronger than either
+        # weak signal alone, while still never being sufficient for MALICIOUS.
+        contributions.append(_Contribution(5, context_ref))
+
+    score = min(100, sum(item.points for item in contributions))
+    if strong_refs:
+        score = max(score, 95)
+        risk = SecurityRiskV4.MALICIOUS
+    elif safe_refs and score == 0 and not scope.errors:
+        risk = SecurityRiskV4.SAFE
+    else:
+        risk = _risk_for_score(score)
+    # Registration/mismatch-style evidence alone is explicitly non-malicious.
+    if contributions and sum(item.points for item in contributions) == weak_external:
+        risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS
+
+    refs = list(
+        dict.fromkeys(
+            [item.evidence_ref for item in contributions if item.evidence_ref]
+            + strong_refs
+            + safe_refs
+            + reviewed_risk_refs
+            + ([item.evidence_ref for item in reviewed_suppressions] if memory_enabled else [])
+        )
+    )
+    grounded = [item for item in scope.evidence if item.evidence_ref in refs]
+    if not grounded and scope.evidence:
+        grounded = [scope.evidence[0]]
+        refs = [scope.evidence[0].evidence_ref]
+    confidence = 0.35
+    if context.credential_request or context.otp_request or context.payment_request:
+        confidence += 0.3
+    if strong_refs or safe_refs:
+        confidence += 0.55
+    elif reviewed_risk_refs:
+        confidence += 0.15
+    elif len({item.type for item in grounded}) > 1:
+        confidence += 0.15
+    if (scope.errors or scope.limitations) and not (strong_refs or safe_refs):
+        confidence = min(confidence, 0.65)
+
+    payload = scope.model_dump()
+    payload.update(
+        status="completed",
+        completed_at=datetime.now(UTC),
+        terminal=True,
+        next_step="END",
+        risk=risk,
+        score=score,
+        confidence=round(min(confidence, 0.95), 2),
+        threat_type=context.potential_threat,
+        policy_version=(SECURITY_RISK_POLICY_VERSION_V2 if memory_enabled else SECURITY_RISK_POLICY_VERSION),
+        recommended_actions=_actions(scope, risk),
+        explanation=_explanation(risk, grounded),
+        explanation_evidence_refs=refs,
+    )
+    return SecurityScopeResponseV4.model_validate(payload)
+
+
+__all__ = ["assess_security_risk"]

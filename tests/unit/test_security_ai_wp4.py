@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+
+from src.agents.security_risk import assess_security_risk
+from src.models import (
+    AssistantGenerationModeV4,
+    SecurityEvidenceTypeV4,
+    SecurityEvidenceV4,
+    SecurityTriageCreateRequestV4,
+)
+from src.security_ai.contracts import AssistantSynthesis, ModelResponse, SynthesisReason
+from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.security_response import GroundedSecurityResponseService, grounded_ai_response
+from src.services.security_triage import SecurityTriageScopeService
+
+
+def _risk_result():
+    request = SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay")
+    scoped = SecurityTriageScopeService().assess(request)
+    evidence = SecurityEvidenceV4(
+        evidence_ref="evidence:0123456789abcdef",
+        type=SecurityEvidenceTypeV4.SECURITY_CONTEXT,
+        source="security-context-v1",
+        target="message",
+        signal="account_verification+CREDENTIAL_THEFT+otp_request",
+        description="Nội dung yêu cầu chia sẻ OTP với tính khẩn cấp.",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    return assess_security_risk(scoped.model_copy(update={"evidence": [evidence]}))
+
+
+def test_grounding_verifier_rejects_hallucinated_refs_and_urls() -> None:
+    scoped = _risk_result()
+    invented = AssistantSynthesis(
+        summary="Rủi ro cao.",
+        top_reasons=[SynthesisReason(text="Threat hit", evidence_refs=["evidence:ffffffffffffffff"])],
+    )
+    linked = AssistantSynthesis(
+        summary="Mở https://unsafe.example để kiểm tra.",
+        top_reasons=[SynthesisReason(text="OTP request", evidence_refs=["evidence:0123456789abcdef"])],
+    )
+
+    assert grounded_ai_response(scoped, invented) is None
+    assert grounded_ai_response(scoped, linked) is None
+
+
+class _ValidSynthesisModel:
+    async def synthesize(self, result):
+        ref = result["evidence"][0]["evidence_ref"]
+        return ModelResponse(
+            output=AssistantSynthesis(
+                summary="Yêu cầu OTP khẩn cấp có rủi ro cao.",
+                top_reasons=[SynthesisReason(text="Có yêu cầu OTP.", evidence_refs=[ref])],
+                uncertainties=["Invented provider uncertainty must be ignored."],
+                follow_up_offer="Invented procedural advice must be ignored.",
+            ),
+            provider="fake",
+            model="synthesis-v1",
+        )
+
+
+class _MalformedSynthesisModel:
+    async def synthesize(self, result):
+        del result
+        return ModelResponse(
+            output=AssistantSynthesis(
+                summary="Unsupported claim.",
+                top_reasons=[SynthesisReason(text="Invented signal.", evidence_refs=["evidence:ffffffffffffffff"])],
+            ),
+            provider="fake",
+            model="synthesis-v1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_ai_response_keeps_actions_and_uncertainties_deterministic() -> None:
+    scoped = _risk_result()
+    result = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_ValidSynthesisModel(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(scoped)
+
+    response = result.assistant_response
+    assert response is not None
+    assert response.generation_mode is AssistantGenerationModeV4.AI
+    assert [step.action for step in response.immediate_steps] == result.recommended_actions
+    assert {step.policy_ref for step in response.immediate_steps} == {result.policy_version}
+    assert response.uncertainties == scoped.limitations
+    assert "Invented" not in response.follow_up_offer
+
+
+@pytest.mark.asyncio
+async def test_invalid_synthesis_keeps_a_policy_grounded_answer() -> None:
+    result = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_MalformedSynthesisModel(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(_risk_result())
+
+    response = result.assistant_response
+    assert response is not None
+    assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
+    assert response.top_reasons[0].evidence_refs == ["evidence:0123456789abcdef"]
+    assert any("bằng chứng và hành động đã kiểm chứng" in item for item in result.limitations)
+    assert any("grounding_rejected" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+async def test_disabled_ai_still_returns_a_policy_grounded_answer_without_failure_limitation() -> None:
+    result = await GroundedSecurityResponseService(
+        ai_enabled=False,
+        model=None,
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(_risk_result())
+
+    assert result.assistant_response is not None
+    assert result.assistant_response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
+    assert not any("AI explanation" in item for item in result.limitations)

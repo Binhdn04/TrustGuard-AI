@@ -2,17 +2,16 @@
 
 import { useEffect, useState } from "react";
 import type { AnalysisReportResponse } from "@/types/analysis";
-import { getAnalysisApi } from "@/lib/api/analysis-api";
+import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 
-export function AnalysisReportForm({ analysisId }: { analysisId: string }) {
+export function AnalysisReportForm({ analysisId, securityApi }: { analysisId: string; securityApi: SecurityAnalysisApi }) {
   const [reason, setReason] = useState("Kết quả hoặc bằng chứng chưa phù hợp");
   const [comment, setComment] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "sent" | "error" | "loading">("loading");
   const [report, setReport] = useState<AnalysisReportResponse | null>(null);
 
   useEffect(() => {
-    getAnalysisApi()
-      .listReports(analysisId)
+    securityApi.listReports(analysisId)
       .then((reports) => {
         if (reports && reports.length > 0) {
           setReport(reports[0]);
@@ -24,14 +23,14 @@ export function AnalysisReportForm({ analysisId }: { analysisId: string }) {
       .catch(() => {
         setStatus("idle");
       });
-  }, [analysisId]);
+  }, [analysisId, securityApi]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (status === "submitting" || status === "sent") return;
     setStatus("submitting");
     try {
-      const response = await getAnalysisApi().reportAnalysis(analysisId, {
+      const response = await securityApi.reportAnalysis(analysisId, {
         reason,
         comment: comment.trim() || undefined,
       });
