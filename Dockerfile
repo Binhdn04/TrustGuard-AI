@@ -6,8 +6,7 @@ FROM python:3.11.15-slim-bookworm AS builder
 WORKDIR /app
 
 COPY requirements.txt .
-RUN --mount=type=cache,id=cacheKey-p068-pip-v2,target=/root/.cache/pip,sharing=locked \
-    python -m venv /opt/venv \
+RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install \
         --disable-pip-version-check \
         --no-compile \
