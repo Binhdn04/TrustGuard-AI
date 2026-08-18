@@ -80,6 +80,11 @@ jobs:
       # Backend runs `alembic upgrade head` through railway.backend.json.
       # Deploy sequentially so the worker never starts new code before
       # the database migration has completed successfully.
+      - name: Check Railway authentication
+        run: |
+          railway whoami
+          railway status
+                
       - name: Deploy backend
         run: railway up --service backend --message "GitHub Actions ${GITHUB_SHA}"
 
