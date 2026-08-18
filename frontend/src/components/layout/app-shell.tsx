@@ -20,9 +20,7 @@ const routeCopy: Array<{ match: (pathname: string) => boolean; eyebrow: string; 
   { match: (pathname) => pathname.startsWith("/admin/review"), eyebrow: "HUMAN REVIEW", title: "Security Review Room" },
   { match: (pathname) => pathname.startsWith("/admin/trust"), eyebrow: "SECURITY V4 TRUST", title: "Trust Control Center" },
   { match: (pathname) => pathname.startsWith("/admin/audit"), eyebrow: "SECURITY V4 AUDIT", title: "Unified Audit" },
-  { match: (pathname) => pathname.startsWith("/admin/compatibility"), eyebrow: "V3 COMPATIBILITY", title: "Compatibility Operations" },
   { match: (pathname) => pathname === "/admin", eyebrow: "HUMAN REVIEW", title: "Review room" },
-  { match: (pathname) => pathname.startsWith("/admin/platform"), eyebrow: "V3 COMPATIBILITY", title: "Compatibility Operations" },
 ];
 
 export function AppShell({

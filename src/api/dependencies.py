@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
     from src.services.durable_worker import (
-        DurableAnalysisWorker,
         OutboxPublisher,
         RetentionWorker,
         SecurityV4DurableWorker,
@@ -15,12 +13,6 @@ if TYPE_CHECKING:
 
 from fastapi import Depends, Header, Request
 
-from src.agents.campaign import (
-    ConfigurableCampaignDetector,
-    InMemoryCampaignObservationStore,
-    RepositoryCampaignObservationStore,
-)
-from src.agents.graph import build_openai_graph
 from src.agents.security_investigation import SecurityInvestigationService
 from src.agents.security_trust import SecurityTrustService
 from src.agents.tools import (
@@ -30,7 +22,6 @@ from src.agents.tools import (
     SafeDnsEvidenceResolver,
     VirusTotalUrlProvider,
 )
-from src.agents.tools.advanced import OpenAIEmbeddingProvider
 from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.config import get_settings
 from src.core.auth import ConfiguredAuthenticator, Principal, UserRole
@@ -39,15 +30,12 @@ from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
 from src.security_ai import ModelTokenPricing, OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
-from src.services.analysis import AnalysisService
 from src.services.platform_wave2 import (
     MemoryWave2Repository,
     VersionedSourceRegistry,
     Wave2PlatformService,
     default_source_policies,
-    effective_source_policies,
 )
-from src.services.processor import LangGraphAnalysisProcessor
 from src.services.realtime import (
     MemoryEventNotifier,
     MemoryTicketStore,
@@ -64,8 +52,6 @@ from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_trust import SecurityTrustAdminService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
 
-_worker: DurableAnalysisWorker | None = None
-_worker_task = None
 _outbox: OutboxPublisher | None = None
 _outbox_task = None
 _retention: RetentionWorker | None = None
@@ -342,79 +328,14 @@ async def resolve_security_investigation_service(request: Request) -> SecurityIn
     return service
 
 
-def _effective_source_policies(configured):
-    """Keep reviewed built-ins available while allowing persisted policies to override them."""
-    return effective_source_policies(list(configured or []))
-
-
-@lru_cache
-def get_analysis_service() -> AnalysisService:
-    settings = get_settings()
-    postgres = settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
-    blacklist = (
-        PostgresPlatformRepository(
-            settings.database_url,
-            settings.database_encryption_key,
-            content_retention_days=settings.content_retention_days,
-        )
-        if postgres
-        else SQLiteBlacklistRepository(settings.security_database_path)
-    )
-    _source_registry.bind_discovery_store(
-        blacklist,
-        enabled=settings.source_discovery_enabled,
-        auto_promotion_enabled=settings.source_auto_promotion_enabled,
-    )
-    processor = None
-    if not postgres or settings.run_durable_worker:
-        campaign_store = (
-            RepositoryCampaignObservationStore(blacklist) if postgres else InMemoryCampaignObservationStore()
-        )
-        graph = build_openai_graph(
-            blacklist=blacklist,
-            source_registry=_source_registry,
-            campaign_detector=ConfigurableCampaignDetector(campaign_store),
-        )
-        processor = LangGraphAnalysisProcessor(
-            graph,
-            deadline_seconds=settings.analysis_deadline_seconds,
-            max_tool_cost_usd=settings.max_provider_cost_usd,
-        )
-    return AnalysisService(
-        blacklist=blacklist,
-        processor=processor,
-        durable_jobs=postgres,
-    )
-
-
-async def resolve_analysis_service(request: Request) -> AnalysisService:
-    override = request.app.dependency_overrides.get(get_analysis_service)
-    if override is None:
-        return get_analysis_service()
-    service = override()
-    if hasattr(service, "__await__"):
-        return await service
-    return service
-
-
-async def close_analysis_service() -> None:
-    if get_analysis_service.cache_info().currsize == 0:
-        return
-    service = get_analysis_service()
-    get_analysis_service.cache_clear()
-    await service.aclose()
-
-
 async def start_durable_worker() -> None:
-    global _outbox, _outbox_task, _retention, _retention_task, _security_worker, _security_worker_task, _worker, _worker_task
-    service = get_analysis_service()
-    if not isinstance(service.repository, PostgresPlatformRepository):
+    global _outbox, _outbox_task, _retention, _retention_task, _security_worker, _security_worker_task
+    security_analyses = get_security_analysis_service()
+    if not isinstance(security_analyses.repository, PostgresPlatformRepository):
         return
     try:
         from src.services.durable_worker import (  # noqa: PLC0415
-            DurableAnalysisWorker,
             OutboxPublisher,
-            ReembeddingJobHandler,
             RetentionWorker,
             SecurityV4DurableWorker,
             SecurityV4JobHandler,
@@ -424,33 +345,7 @@ async def start_durable_worker() -> None:
             raise
         return
     settings = get_settings()
-    policies = await service.repository.load_source_policies(datetime.now(UTC))
-    _source_registry.replace(_effective_source_policies(policies))
-
-    async def refresh_source_registry() -> None:
-        active = await service.repository.load_source_policies(datetime.now(UTC))
-        _source_registry.replace(_effective_source_policies(active))
-
-    handlers = {}
-    if settings.openai_api_key:
-        embedding_provider = OpenAIEmbeddingProvider(
-            settings.openai_api_key,
-            timeout=settings.provider_timeout_seconds,
-        )
-        handlers["reembed_fact_check_result"] = ReembeddingJobHandler(service.repository, embedding_provider)
-    _worker = DurableAnalysisWorker(
-        service.repository,
-        service,
-        lease_seconds=settings.job_lease_seconds,
-        job_handlers=handlers,
-        before_analysis=refresh_source_registry,
-    )
-    _worker_task = asyncio.create_task(_worker.run(), name="durable-analysis-worker")
     if settings.security_async_execution_enabled:
-        security_analyses = get_security_analysis_service()
-        if not isinstance(security_analyses.repository, PostgresPlatformRepository):
-            raise RuntimeError("Async Security v4 requires PostgreSQL")
-
         def security_pipeline_factory(runtime: SecurityAssistantRuntime) -> SecurityTriagePipeline:
             memory_lookup = (
                 SecurityMemoryLookupTool(get_security_memory_service(), enabled=True)
@@ -487,10 +382,10 @@ async def start_durable_worker() -> None:
             lease_seconds=settings.job_lease_seconds,
         )
         _security_worker_task = asyncio.create_task(_security_worker.run(), name="security-v4-durable-worker")
-    _retention = RetentionWorker(service.repository)
+    _retention = RetentionWorker(security_analyses.repository)
     _retention_task = asyncio.create_task(_retention.run(), name="retention-worker")
     try:
-        _outbox = OutboxPublisher(service.repository, settings.redis_url)
+        _outbox = OutboxPublisher(security_analyses.repository, settings.redis_url)
         _outbox_task = asyncio.create_task(_outbox.run(), name="transactional-outbox-publisher")
     except Exception:
         import logging
@@ -501,13 +396,7 @@ async def start_durable_worker() -> None:
 
 
 async def stop_durable_worker() -> None:
-    global _outbox, _outbox_task, _retention, _retention_task, _security_worker, _security_worker_task, _worker, _worker_task
-    if _worker is not None:
-        _worker.stop()
-    if _worker_task is not None:
-        await _worker_task
-    if _worker is not None:
-        await _worker.close()
+    global _outbox, _outbox_task, _retention, _retention_task, _security_worker, _security_worker_task
     if _security_worker is not None:
         _security_worker.stop()
     if _security_worker_task is not None:
@@ -522,8 +411,6 @@ async def stop_durable_worker() -> None:
         _retention.stop()
     if _retention_task is not None:
         await _retention_task
-    _worker = None
-    _worker_task = None
     _outbox = None
     _outbox_task = None
     _retention = None
@@ -626,8 +513,7 @@ async def close_rate_limiter() -> None:
 
 @lru_cache
 def get_wave2_service() -> Wave2PlatformService:
-    analysis_service = get_analysis_service()
-    repository = analysis_service.repository
+    repository = get_security_analysis_service().repository
     if not isinstance(repository, PostgresPlatformRepository):
         _memory_wave2_repository.action_sink = repository
         repository = _memory_wave2_repository
@@ -644,7 +530,6 @@ async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
     return service
 
 
-AnalysisServiceDependency = Annotated[AnalysisService, Depends(resolve_analysis_service)]
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
 TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(resolve_ticket_manager)]
 Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]

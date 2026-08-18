@@ -7,20 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api.dependencies import (
-    close_analysis_service,
     close_event_notifier,
     close_rate_limiter,
     close_security_analysis_service,
     close_security_investigation_service,
     close_security_trust_services,
     close_ticket_manager,
-    get_analysis_service,
+    get_security_analysis_service,
     start_durable_worker,
     stop_durable_worker,
 )
 from src.api.middleware import StructuredRequestLogMiddleware
-from src.api.platform_v3 import router as platform_v3_router
-from src.api.routes import router
 from src.api.security_v4 import router as security_v4_router
 from src.config import get_settings
 from src.core.errors import PlatformError
@@ -43,7 +40,6 @@ async def lifespan(app: FastAPI):
     finally:
         if settings.run_durable_worker:
             await stop_durable_worker()
-        await close_analysis_service()
         await close_security_analysis_service()
         await close_security_trust_services()
         await close_security_investigation_service()
@@ -61,10 +57,7 @@ app = FastAPI(
 )
 
 settings = get_settings()
-app.add_middleware(
-    StructuredRequestLogMiddleware,
-    legacy_api_writes_enabled=settings.legacy_api_writes_enabled,
-)
+app.add_middleware(StructuredRequestLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins.split(","),
@@ -73,8 +66,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api/v2")
-app.include_router(platform_v3_router, prefix="/api/v3")
 app.include_router(security_v4_router, prefix=SECURITY_TRIAGE_API_PREFIX)
 
 
@@ -116,7 +107,7 @@ async def health():
 @app.get("/health/ready")
 async def readiness():
     checks = {"database": True, "redis": True, "providers": True}
-    service = get_analysis_service()
+    service = get_security_analysis_service()
     healthcheck = getattr(service.repository, "healthcheck", None)
     if healthcheck is not None:
         try:

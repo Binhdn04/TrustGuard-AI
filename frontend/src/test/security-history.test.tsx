@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CaseDetail } from "@/components/cases/case-detail";
 import { CaseLibrary } from "@/components/cases/case-library";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
-import { ApiError } from "@/lib/api/http-analysis-api";
+import { ApiError } from "@/lib/api/api-error";
 import {
   parseSecurityHistoryQuery,
   securityHistoryHref,

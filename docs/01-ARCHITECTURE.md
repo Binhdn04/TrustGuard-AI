@@ -4,17 +4,10 @@
 định nghĩa trạng thái code hiện tại; [SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md](SECURITY_TRIAGE_IMPLEMENTATION_PLAN.md)
 là nguồn theo dõi WP và release gate.
 
-## 1. Hai product profile đang tồn tại
+## 1. Một product profile Security v4
 
-Runtime hiện có hai profile tách biệt:
-
-- `/api/v4` là Security Triage product path mà frontend đang sử dụng.
-- `/api/v2` và `/api/v3` là legacy analysis compatibility path. V3 admin review/action/metrics vẫn được
-  v4 tái sử dụng ở những chỗ đã có hạ tầng đúng semantics.
-
-Middleware chỉ phân loại route theo path/method để ghi `security_*`, `legacy_*` hoặc `reviewed_action_*`;
-không đọc body, query hay token. Cutover config đã có thể chặn legacy writes; deployment thật chưa kích hoạt
-freeze hoặc hoàn tất zero-usage window.
+Runtime public chỉ mount `/api/v4`. `/api/v2` và `/api/v3` đã được tháo khỏi FastAPI và OpenAPI;
+frontend chỉ dùng Security v4. Middleware ghi contract/profile từ path mà không đọc body, query hay token.
 
 ## 2. Kiến trúc Security v4 hiện tại
 
@@ -46,7 +39,7 @@ flowchart TD
 `POST /api/v4/analyses` hiện xử lý scope, investigation, trust enrichment và deterministic risk trong
 request lifecycle, sau đó persist terminal snapshot và ba lifecycle event `queued/running/completed`
 hoặc `failed`. Polling và WebSocket cung cấp owner-scoped replay; v4 chưa được chuyển sang durable worker
-async như legacy PostgreSQL analysis path.
+async khi feature flag và worker production được bật.
 
 ## 3. Security workflow và policy boundaries
 
@@ -75,12 +68,11 @@ Các invariant đang enforce:
 ## 4. Conversation, persistence và privacy
 
 `SecurityAnalysisService` quản lý owner-scoped analysis, report, appeal và conversation. Analysis và
-conversation có additive paginated API cho frontend mới; route list cũ vẫn giữ array response trong
-compatibility window. Conversation dùng optimistic `conversation_version`, redacted structured summary
+conversation có owner-scoped paginated API. Conversation dùng optimistic `conversation_version`, redacted structured summary
 và retention interval. Raw private message không được persist trong Security v4 analysis/memory.
 
 SQLite là durable local/dev store. PostgreSQL là production source of truth và có Alembic schema đến
-`0017_security_admin_copilot`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
+`0018_remove_vector_compat`. Redis chỉ phục vụ rate limit/notification/ticket ở deployment có cấu
 hình; không phải source of truth.
 
 Security Memory chỉ giữ canonical domain, query-free URL fingerprint, redirect domain, claimed brand,
@@ -108,23 +100,21 @@ report/appeal queue, domain/threat intelligence và unified v4 audit. Bounded en
 để review feedback mà không trả owner hoặc raw conversation. Endpoint POST Copilot cùng boundary lưu
 snapshot hash/usage/audit nhưng không lưu prompt/raw completion và không đổi case/action state. Frontend đã consume history,
 conversation, explorer, feedback, trust, unified audit và case-detail contracts trong case workspace,
-Observatory, Review Room, Trust lifecycle và Audit. Reviewed-action detail/audit/decision tiếp tục dùng contract
-v3 có nhãn compatibility; metrics/source discovery v3 chỉ xuất hiện trong compatibility surface riêng.
+Observatory, Review Room, Trust lifecycle và Audit. Reviewed-action detail/audit/decision dùng
+`/api/v4/admin/actions`; metrics/source-discovery compatibility surface đã bị xóa.
 
 User conversation dùng routing hai tầng. Lượt intake đầu luôn tạo Security v4 analysis và khóa composer trong lúc
 pipeline chạy. Sau verdict, authenticated `POST /api/v4/chat` xử lý follow-up: không có tool call thì trả lời như chatbot
 bình thường; có `check_scam` thì frontend tạo analysis v4 mới. Chỉ pipeline analysis mới được quyền lập investigation
 plan và gọi DNS/redirect/RDAP/reputation provider theo context, SSRF guard và budget.
 
-## 6. Hạ tầng legacy còn được giữ
+## 6. Legacy cleanup
 
-Legacy v2/v3 vẫn có `AnalysisService`, durable PostgreSQL worker, outbox, general fact-check providers,
-claim corpus/embeddings, source discovery và claim-vector campaign path. Chúng
-không được Security v4 scope/investigation/memory path import hoặc gọi, nhưng chưa bị xóa để giữ
-compatibility và rollback an toàn.
-
-WP9 phải đo zero legacy reader/writer trong compatibility window, kiểm chứng backup/restore rồi mới
-drop schema/pgvector, provider config, frontend compatibility components và routes deprecated.
+Public v2/v3 routers, frontend clients/mocks/surfaces, legacy worker activation và vector search persistence
+đã được gỡ. Migration `0018_remove_vector_compat` xóa fact-check embeddings, source discovery,
+campaign vector observations và extension `vector`. Fresh install chạy trên PostgreSQL thường.
+Một số pure-Python general-analysis utilities vẫn còn cho authenticated v4 follow-up chat và regression tests,
+nhưng không có public v2/v3 route hoặc PostgreSQL vector consumer.
 
 ## 7. Trust boundaries cần giữ khi cutover
 

@@ -1,15 +1,15 @@
 # Railway production deployment
 
 Runbook này triển khai TrustGuard AI thành năm service trong cùng một Railway project:
-`frontend`, `backend`, `worker`, `pgvector`, `redis`. Production dùng OIDC thật; demo auth
+`frontend`, `backend`, `worker`, `postgres`, `redis`. Production dùng OIDC thật; demo auth
 và demo token không được phép xuất hiện trong frontend bundle.
 
 ## 1. Topology và thứ tự tạo service
 
 Tạo service theo thứ tự sau trong cùng environment và cùng region gần Việt Nam nhất:
 
-1. `pgvector`: dùng Railway pgvector template, không dùng PostgreSQL mặc định. Migration
-   `0001_extensions` cần cả `vector` và `pgcrypto`.
+1. `postgres`: dùng Railway managed PostgreSQL mặc định. Migration chỉ cần `pgcrypto`;
+   flow Security v4 không còn phụ thuộc pgvector hoặc vector search.
 2. `redis`: dùng Railway managed Redis.
 3. `backend`: kết nối GitHub branch `LeTrungHieu`, root directory `/`, config path
    `/railway.backend.json`.
@@ -19,7 +19,7 @@ Tạo service theo thứ tự sau trong cùng environment và cùng region gần
    `/frontend/railway.json`.
 
 Chỉ generate public domain cho `backend` và `frontend`. Không bật public networking cho
-worker, pgvector hoặc Redis. Sau khi thay đổi config/variables, review staged changes rồi
+worker, PostgreSQL hoặc Redis. Sau khi thay đổi config/variables, review staged changes rồi
 deploy database trước, backend/worker sau và frontend cuối.
 
 `railway.backend.json` là service duy nhất chạy `alembic upgrade head` ở pre-deploy.
@@ -44,7 +44,6 @@ OIDC_ROLES_CLAIM=roles
 OIDC_ADMIN_ROLE=security_admin
 CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
 SECURITY_RELEASE_PROFILE=pre_cutover
-LEGACY_API_WRITES_ENABLED=true
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 SECURITY_AI_UNDERSTANDING_ENABLED=false
 SECURITY_AI_PLANNING_ENABLED=false
@@ -57,13 +56,13 @@ LOG_LEVEL=INFO
 
 `OIDC_JWKS_URL` là optional; để trống sẽ dùng JWKS discovery từ issuer. Provider keys như
 `OPENAI_API_KEY`, `VIRUSTOTAL_API_KEY`, `GOOGLE_WEB_RISK_API_KEY`,
-`GOOGLE_SAFE_BROWSING_API_KEY`, `GOOGLE_FACT_CHECK_API_KEY` và `TAVILY_API_KEY` chỉ thêm
+`GOOGLE_SAFE_BROWSING_API_KEY` chỉ thêm
 khi capability tương ứng được duyệt bật. Seal mọi API key.
 
 ### Backend
 
 ```dotenv
-DATABASE_URL=${{pgvector.DATABASE_URL}}
+DATABASE_URL=${{postgres.DATABASE_URL}}
 REDIS_URL=${{redis.REDIS_URL}}
 RUN_DURABLE_WORKER=false
 ```
@@ -74,7 +73,7 @@ domain backend trước khi build frontend.
 ### Worker
 
 ```dotenv
-DATABASE_URL=${{pgvector.DATABASE_URL}}
+DATABASE_URL=${{postgres.DATABASE_URL}}
 REDIS_URL=${{redis.REDIS_URL}}
 RUN_DURABLE_WORKER=true
 ```
@@ -89,7 +88,6 @@ Các biến `NEXT_PUBLIC_*` được bake lúc `npm run build`; đổi biến ph
 
 ```dotenv
 NEXT_PUBLIC_API_URL=https://${{backend.RAILWAY_PUBLIC_DOMAIN}}
-NEXT_PUBLIC_USE_MOCK_API=false
 NEXT_PUBLIC_OIDC_ISSUER=https://<tenant>/
 NEXT_PUBLIC_OIDC_CLIENT_ID=<public-spa-client-id>
 NEXT_PUBLIC_OIDC_AUDIENCE=<api-audience>
@@ -136,7 +134,7 @@ Acceptance criteria:
 - Frontend tải được, gọi API không gặp CORS error và không trỏ về localhost.
 - Login/callback/logout pass với cả user và security admin; user không truy cập admin route.
 - Worker logs cho thấy startup thành công, không crash-loop và không tạo duplicate jobs.
-- Pgvector/Redis/worker không có public domain.
+- PostgreSQL/Redis/worker không có public domain.
 - Restart backend/worker không mất dữ liệu; chạy lại `alembic upgrade head` không tạo thay đổi.
 
 ## 5. Rollback và troubleshooting
@@ -144,7 +142,7 @@ Acceptance criteria:
 Rollback frontend/backend/worker về deployment/image đã duyệt trước đó; giữ nguyên database
 schema vì migrations là additive. Không chạy `alembic downgrade`, drop database hoặc restore
 production chỉ để rollback code. Nếu migration pre-deploy fail, giữ deployment cũ phục vụ,
-kiểm tra pgvector availability và `DATABASE_URL`, sửa migration rồi redeploy.
+kiểm tra `DATABASE_URL`, sửa migration rồi redeploy.
 
 - Backend không start: kiểm tra production validation cho OIDC, HTTPS CORS, PostgreSQL,
   Redis và `DATABASE_ENCRYPTION_KEY`.

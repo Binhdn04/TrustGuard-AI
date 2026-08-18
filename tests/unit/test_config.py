@@ -87,33 +87,14 @@ def test_production_rejects_insecure_runtime_dependencies(override, message) -> 
         production_settings(**override)
 
 
-def test_production_cutover_requires_frozen_legacy_and_live_providers() -> None:
-    with pytest.raises(ValidationError, match="LEGACY_API_WRITES_ENABLED"):
-        production_settings(security_release_profile="cutover")
-
-    with pytest.raises(ValidationError, match="source discovery"):
-        production_settings(
-            security_release_profile="cutover",
-            legacy_api_writes_enabled=False,
-        )
-
+def test_production_cutover_requires_live_providers() -> None:
     with pytest.raises(ValidationError, match="LIVE_PROVIDERS_REQUIRED"):
-        production_settings(
-            security_release_profile="cutover",
-            legacy_api_writes_enabled=False,
-            source_discovery_enabled=False,
-            source_provisional_enabled=False,
-            source_auto_promotion_enabled=False,
-        )
+        production_settings(security_release_profile="cutover")
 
 
 def test_production_cutover_accepts_complete_security_profile() -> None:
     settings = production_settings(
         security_release_profile="cutover",
-        legacy_api_writes_enabled=False,
-        source_discovery_enabled=False,
-        source_provisional_enabled=False,
-        source_auto_promotion_enabled=False,
         live_providers_required=True,
         google_web_risk_api_key="web-risk",
         virustotal_api_key="virus-total",

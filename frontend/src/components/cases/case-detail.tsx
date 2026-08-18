@@ -17,7 +17,7 @@ import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
-import { ApiError } from "@/lib/api/http-analysis-api";
+import { ApiError } from "@/lib/api/api-error";
 import { mapSecurityCaseViewModel, type SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
 import type { SecurityAnalysisEventV4, SecurityConversationV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 

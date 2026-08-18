@@ -2,7 +2,7 @@
 
 TrustGuard AI là trợ lý hội thoại giúp người dùng đánh giá tin nhắn và URL đáng ngờ trước khi thực hiện hành động có thể làm mất tiền, tài khoản hoặc dữ liệu. Runtime chính là **Security Triage API v4**: phân loại phạm vi, điều tra theo consent, tạo bằng chứng, tính risk bằng policy xác định và trả lời có grounding.
 
-> General fact-check không thuộc product flow hiện tại. Frontend nghiệp vụ chỉ dùng `/api/v4`; các route và module v2/v3 còn trong repository chỉ phục vụ compatibility/rollback và không được mô tả như capability trong README này.
+> Product flow hiện tại chỉ cung cấp Security v4 tại `/api/v4`; public API v2/v3 và vector-search compatibility đã được gỡ bỏ.
 
 ## Flow hiện tại
 
@@ -94,7 +94,6 @@ Trong `frontend/.env.local`, bật demo token cho local development:
 
 ```dotenv
 NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_USE_MOCK_API=false
 NEXT_PUBLIC_DEMO_USER_TOKEN=dev-user-token
 NEXT_PUBLIC_DEMO_ADMIN_TOKEN=dev-admin-token
 ```
@@ -125,7 +124,7 @@ Compose tự chạy `alembic upgrade head` trước khi khởi động backend. 
 ## Deploy production trên Railway
 
 Repo có config-as-code riêng cho frontend, backend và worker. Topology production dùng
-Railway pgvector + Redis trong cùng project, OIDC thật và chỉ public frontend/backend.
+Railway PostgreSQL + Redis trong cùng project, OIDC thật và chỉ public frontend/backend.
 Xem [Railway deployment runbook](docs/RAILWAY_DEPLOYMENT.md) để cấu hình root directory,
 config path, reference variables, domain, migration, smoke test và rollback.
 
@@ -265,7 +264,7 @@ uv run alembic current
 uv run alembic heads
 ```
 
-Không drop các bảng compatibility/legacy chỉ vì frontend không còn dùng chúng. Cleanup cần zero-usage telemetry, backup/export, restore rehearsal và rollback plan theo release runbook.
+Migration `0018_remove_vector_compat` dọn fact-check/vector/source-discovery storage đã nghỉ hưu. Hãy backup trước khi áp dụng trên database đã có dữ liệu vì migration này không hỗ trợ downgrade.
 
 ## Kiểm thử
 
@@ -331,4 +330,4 @@ Chi tiết rollout, freeze và rollback: [WP9 Release Runbook](docs/WP9_RELEASE_
 - [Implementation Status](docs/implementation-status.md) — implemented, partial, deprecated và gaps.
 - [Detailed Architecture](docs/01-ARCHITECTURE.md) — kiến trúc, persistence và cutover boundary.
 - [API Contract](docs/02-CONTRACT_AND_FIXTURES.md) — contract và fixtures.
-- [Release Runbook](docs/WP9_RELEASE_RUNBOOK.md) — hosted checks, compatibility window và rollback.
+- [Release Runbook](docs/WP9_RELEASE_RUNBOOK.md) — hosted checks, migration cleanup và rollback.

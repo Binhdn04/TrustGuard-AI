@@ -106,10 +106,9 @@ describe("Security Chat workspace", () => {
       admin_feedback_review: true,
       intelligence_explorer: true,
       unified_v4_audit: true,
-      admin_action_contract: "v3",
+      admin_action_contract: "v4",
       executable_admin_actions: ["add_to_blacklist"],
       deferred_admin_actions: [],
-      compatibility_contracts: ["v2", "v3", "v4"],
       security_async_execution: true,
     });
     render(<AnalysisWorkspace api={api} />);

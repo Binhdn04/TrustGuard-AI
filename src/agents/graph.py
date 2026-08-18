@@ -623,7 +623,7 @@ def build_graph(
 
 
 def build_legacy_graph():
-    """Build the GPT chatbot retained on the compatibility `/chat` route."""
+    """Build the conversational helper used by the v4 `/chat` route."""
     return build_chatbot_graph()
 
 
@@ -637,10 +637,7 @@ def build_chatbot_graph(*, llm: Any | None = None):
 
 def build_openai_graph(**kwargs):
     from src.agents.tools.integration import build_provider_adapters
-    from src.agents.tools.runtime import (
-        OpenAIEvidenceComparator,
-        PostgresHybridCorpusRetriever,
-    )
+    from src.agents.tools.runtime import OpenAIEvidenceComparator
     from src.config import get_settings
     from src.services.llm import get_llm
 
@@ -648,9 +645,6 @@ def build_openai_graph(**kwargs):
     llm = get_llm() if settings.openai_api_key else None
     source_registry = kwargs.get("source_registry")
     owned_adapters = build_provider_adapters(settings, source_registry)
-    repository = kwargs.get("blacklist")
-    if repository is not None and hasattr(repository, "search_fact_check_corpus"):
-        kwargs.setdefault("hybrid_corpus_retriever", PostgresHybridCorpusRetriever(repository))
     if llm is not None:
         kwargs.setdefault("evidence_comparator", OpenAIEvidenceComparator(llm))
     graph_adapter_names = {
@@ -691,7 +685,6 @@ async def close_graph_resources(graph) -> None:
             await close()
 
 
-analysis_agent = build_openai_graph()
 agent = build_legacy_graph()
 
 __all__ = [

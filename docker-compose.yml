@@ -20,7 +20,6 @@ services:
       SECURITY_MEMORY_RETRIEVAL_ENABLED: ${SECURITY_MEMORY_RETRIEVAL_ENABLED:-false}
       SECURITY_ADMIN_COPILOT_ENABLED: ${SECURITY_ADMIN_COPILOT_ENABLED:-false}
       SECURITY_RELEASE_PROFILE: ${SECURITY_RELEASE_PROFILE:-pre_cutover}
-      LEGACY_API_WRITES_ENABLED: ${LEGACY_API_WRITES_ENABLED:-true}
       RUN_DURABLE_WORKER: "false"
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]
     volumes:
@@ -51,7 +50,6 @@ services:
       SECURITY_MEMORY_RETRIEVAL_ENABLED: ${SECURITY_MEMORY_RETRIEVAL_ENABLED:-false}
       SECURITY_ADMIN_COPILOT_ENABLED: ${SECURITY_ADMIN_COPILOT_ENABLED:-false}
       SECURITY_RELEASE_PROFILE: ${SECURITY_RELEASE_PROFILE:-pre_cutover}
-      LEGACY_API_WRITES_ENABLED: ${LEGACY_API_WRITES_ENABLED:-true}
       RUN_DURABLE_WORKER: "true"
     volumes:
       - ./data:/app/data
@@ -68,7 +66,6 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-        NEXT_PUBLIC_USE_MOCK_API: ${NEXT_PUBLIC_USE_MOCK_API:-false}
         NEXT_PUBLIC_DEMO_USER_TOKEN: ${DEMO_USER_TOKEN:-}
         NEXT_PUBLIC_DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-}
         NEXT_PUBLIC_OIDC_ISSUER: ${NEXT_PUBLIC_OIDC_ISSUER:-}
@@ -90,7 +87,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: pgvector/pgvector:0.8.5-pg16-bookworm
+    image: postgres:16-bookworm
     environment:
       POSTGRES_DB: p068
       POSTGRES_USER: app

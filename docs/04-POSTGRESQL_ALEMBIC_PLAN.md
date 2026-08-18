@@ -4,7 +4,7 @@
 
 | Revision | Đã tạo |
 |---|---|
-| `0001_extensions` | PostgreSQL extensions, gồm pgvector |
+| `0001_extensions` | PostgreSQL extension `pgcrypto` |
 | `0002_analysis_core` | analyses, events, steps, evidence, reports |
 | `0003_durable_jobs` | jobs, outbox, tool usage, schema imports |
 | `0004_review_queue` | persisted report review queue |
@@ -21,9 +21,10 @@
 | `0015_security_api_readiness` | report-review status/index và immutable v4 feedback audit |
 | `0016_security_v4_durable_jobs` | isolated Security v4 job, encrypted payload, transactional outbox và per-owner idempotency |
 | `0017_security_admin_copilot` | grounded admin suggestion, usage metadata, evidence snapshot hash, reviewer timestamps và audit |
+| `0018_remove_vector_compat` | xóa fact-check/source-discovery/campaign-vector storage và extension `vector` trên database cũ |
 
 Production repository có implementation cho durable analysis, owner reads, reports/review, appeals,
-admin actions, blacklist, source/corpus, legacy campaigns, Security v4 memory/campaigns,
+admin actions, blacklist, Security v4 memory/campaigns,
 retention và operations metrics.
 
 ## 2. Schema phù hợp scope và nên giữ
@@ -45,25 +46,23 @@ retention và operations metrics.
 - `security_feedback_audit_v4` giữ append-only report/appeal decision; report/appeal status có index phục vụ
   admin page/filter.
 - Trust, action, memory, campaign và feedback đều có audit table/index riêng; unified v4 API chỉ tổng hợp,
-  không ghi đè lịch sử reviewer. Reviewed action execution vẫn thuộc contract v3 trong compatibility window.
+  không ghi đè lịch sử reviewer. Reviewed action execution thuộc contract v4.
 
-## 4. Legacy schema cần freeze rồi remove
+## 4. Legacy schema đã được remove bởi revision 0018
 
 - `fact_check_sources`, `fact_check_records`, `fact_check_embeddings`.
 - `fact_check_results`, `fact_check_result_embeddings`.
 - `fact_check_evidence_snapshots`, `fact_check_chunks`.
 - `source_discoveries`, `source_discovery_observations`, `source_discovery_decisions`.
 - `campaign_claim_features` sau khi campaign dùng security fingerprint mới.
-- pgvector extension nếu không còn bất kỳ feature mới nào cần vector.
+- extension `vector`.
 
 ## 5. Migration sequence
 
-1. **Additive:** thêm scope decision, conversations, whitelist, brand mappings và security memory.
-2. **Compatibility có giới hạn:** contract v4 đọc security schema; legacy path vẫn tách riêng.
-3. **Cutover:** frontend/API dùng v4; drain legacy worker rồi ngừng legacy writer/job/provider.
-4. **Observe:** đo zero reader/writer và hoàn tất retention/export decision.
-5. **Destructive:** drop legacy FK/index/table/extension trong revision riêng.
-6. **Verify:** upgrade từ database trống và database `0008`; backup/restore và downgrade/restore smoke.
+1. **Additive:** revisions `0009`–`0017` thêm Security v4 schema và runtime.
+2. **Cutover:** frontend/API/reviewed actions chỉ dùng v4; legacy worker/provider bị tháo.
+3. **Destructive:** revision `0018` drop legacy FK/index/table/extension.
+4. **Verify:** upgrade từ database trống; backup/restore database hiện hữu trước khi chạy `0018`.
 
 ## 6. Invariants cần enforce ở DB/service
 
@@ -76,5 +75,4 @@ retention và operations metrics.
 - Report chỉ chuyển terminal một lần sang `processed`; appeal chỉ chuyển terminal một lần sang `resolved`;
   transition lặp lại trả conflict và không append audit thứ hai.
 
-Không chạy migration destructive chỉ để làm docs khớp scope. Việc xóa schema cần telemetry, backup và
-operator approval riêng.
+Migration `0018` không hỗ trợ downgrade. Production cần verified backup, restore rehearsal và operator approval.

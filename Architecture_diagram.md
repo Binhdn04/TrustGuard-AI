@@ -6,7 +6,7 @@ Tài liệu này mô tả kiến trúc và data flow **đang được sử dụn
 
 - Bao gồm Security Triage v4 cho người dùng, luồng quản trị v4, inline/async execution, realtime và Security Memory.
 - Không biểu diễn `/api/v2`, general-analysis `/api/v3`, legacy LangGraph fact-check, source discovery/corpus, legacy campaign/worker, pgvector và frontend compatibility.
-- Reviewed-action contract v3 cũng không được đưa vào sơ đồ vì vẫn thuộc compatibility window, dù backend hiện còn gọi bước đề xuất action sau phân tích.
+- Reviewed actions dùng contract v4 và cùng Security v4 review boundary.
 - PostgreSQL là cấu hình persistence đầy đủ. SQLite/in-memory chỉ là fallback cho development/test và không phải topology production trong sơ đồ.
 
 ## Component diagram

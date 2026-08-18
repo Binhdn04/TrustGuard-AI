@@ -3,7 +3,12 @@ from __future__ import annotations
 import asyncio
 import signal
 
-from src.api.dependencies import close_analysis_service, start_durable_worker, stop_durable_worker
+from src.api.dependencies import (
+    close_security_analysis_service,
+    close_security_trust_services,
+    start_durable_worker,
+    stop_durable_worker,
+)
 from src.config import get_settings
 from src.core.logging import configure_structured_logging
 
@@ -22,7 +27,8 @@ async def run() -> None:
         await stopping.wait()
     finally:
         await stop_durable_worker()
-        await close_analysis_service()
+        await close_security_analysis_service()
+        await close_security_trust_services()
 
 
 if __name__ == "__main__":

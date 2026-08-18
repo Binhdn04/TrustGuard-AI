@@ -17,15 +17,13 @@ flowchart LR
     Risk --> Memory[Security Memory / campaign]
     Risk --> HITL[Reviewed admin action]
     API --> Admin[Feedback / trust / explorer / audit]
-    API -. compatibility .-> Legacy[v2/v3 general fact-check]
 ```
 
 Security v4 đã có scope gate, multi-turn, brand/whitelist trust matching, deterministic
 risk, Security Memory, admin feedback, explorer và audit API. Review Room đọc privacy-minimized admin case
-detail v4 trước feedback decision; reviewed action execution tạm tái sử dụng contract v3 có nhãn riêng trong
-compatibility window. Frontend đã hoàn tất workspace, Trust lifecycle và Unified Audit trên contract v4;
-metrics/source discovery v3 nằm trong compatibility surface có nhãn riêng, còn `/admin` chuyển sang Review Room.
-WP9 tổng thể và legacy cleanup vẫn chờ hosted evaluation, telemetry và backup/restore evidence.
+detail v4 trước feedback decision; reviewed action execution đã chuyển sang `/api/v4/admin/actions`.
+Public API v2/v3, frontend compatibility surface và pgvector persistence đã được gỡ. WP9 hosted
+evaluation và backup/restore evidence vẫn còn là release gate.
 
 ## Đích
 
@@ -38,5 +36,5 @@ security scope gate
 → reviewed wide action
 ```
 
-Không coi module/table fact-check legacy là capability của scope mới. Việc drop schema chỉ diễn ra sau
-cutover, zero-usage observation và backup/restore verification.
+Không coi module/table fact-check legacy là capability của scope mới. Migration cleanup phải được áp dụng
+sau khi backup database hiện hữu vì không hỗ trợ downgrade.

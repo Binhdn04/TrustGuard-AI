@@ -2,17 +2,16 @@
 
 import { useEffect, useState } from "react";
 import type { AnalysisReportResponse } from "@/types/analysis";
-import { getAnalysisApi } from "@/lib/api/analysis-api";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 
-export function AnalysisReportForm({ analysisId, securityApi }: { analysisId: string; securityApi?: SecurityAnalysisApi }) {
+export function AnalysisReportForm({ analysisId, securityApi }: { analysisId: string; securityApi: SecurityAnalysisApi }) {
   const [reason, setReason] = useState("Kết quả hoặc bằng chứng chưa phù hợp");
   const [comment, setComment] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "sent" | "error" | "loading">("loading");
   const [report, setReport] = useState<AnalysisReportResponse | null>(null);
 
   useEffect(() => {
-    (securityApi ? securityApi.listReports(analysisId) : getAnalysisApi().listReports(analysisId))
+    securityApi.listReports(analysisId)
       .then((reports) => {
         if (reports && reports.length > 0) {
           setReport(reports[0]);
@@ -31,7 +30,7 @@ export function AnalysisReportForm({ analysisId, securityApi }: { analysisId: st
     if (status === "submitting" || status === "sent") return;
     setStatus("submitting");
     try {
-      const response = await (securityApi ?? getAnalysisApi()).reportAnalysis(analysisId, {
+      const response = await securityApi.reportAnalysis(analysisId, {
         reason,
         comment: comment.trim() || undefined,
       });

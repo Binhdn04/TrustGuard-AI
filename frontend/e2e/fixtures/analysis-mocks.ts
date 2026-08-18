@@ -1,6 +1,5 @@
 import type { Page } from "@playwright/test";
 
-import type { AnalysisResponse } from "../../src/types/analysis";
 import type { AnalysisResponseV3 } from "../../src/types/generated/api-v3";
 import type {
   BrandRecordV4,
@@ -183,10 +182,8 @@ export async function installUserAnalysisFlow(page: Page) {
 }
 
 export async function installAdminReviewFlow(page: Page) {
-  let reviewed = false;
   let v4ReportReviewed = false;
   const v3 = completedAnalysis();
-  const review: AnalysisResponse = { ...v3, contract_version: "v2" };
   const campaignId = "50000000-0000-4000-8000-000000000005";
   const domainIntelligence = {
     domain: "tapdoanx-qua.example", analysis_count: 4, report_count: 1,
@@ -248,15 +245,6 @@ export async function installAdminReviewFlow(page: Page) {
     note: "Verified corporate registry", occurred_at: v3.created_at, evidence_refs: ["registry:tapdoanx"],
   };
 
-  await page.route("**/api/v2/admin/cases", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(reviewed ? [] : [review]) }));
-  await page.route("**/api/v2/admin/blacklist", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(reviewed ? [{ domain: "tapdoanx-qua.example", decision_id: "40000000-0000-4000-8000-000000000001", added_at: v3.completed_at }] : []) }));
-  await page.route("**/api/v3/admin/review-queue", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
-  await page.route(`**/api/v2/admin/cases/${ANALYSIS_ID}/decision`, async (route) => {
-    const payload = route.request().postDataJSON() as { note?: string; action?: string };
-    if (!payload.note || payload.action !== "add_to_blacklist") return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "VALIDATION_ERROR", message: "invalid decision", retryable: false, details: {} } }) });
-    reviewed = true;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decision_id: "40000000-0000-4000-8000-000000000001", analysis_id: ANALYSIS_ID, case_status: "approved", reviewed_at: v3.completed_at }) });
-  });
   await page.route("**/api/v4/admin/intelligence/domains*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", items: [domainIntelligence], total: 1, limit: 10, offset: 0 }) }));
   await page.route("**/api/v4/admin/intelligence/threats*", (route) => {
     const limit = Number(new URL(route.request().url()).searchParams.get("limit") ?? 10);
@@ -266,7 +254,7 @@ export async function installAdminReviewFlow(page: Page) {
   await page.route(`**/api/v4/admin/security-campaigns/${campaignId}/audit`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ audit_id: "60000000-0000-4000-8000-000000000006", campaign_id: campaignId, previous_status: "pending_review", status: "confirmed", reviewer_id: "admin-e2e", note: "Verified aggregate signals", occurred_at: v3.completed_at, clustering_version: "security-clustering-v1", evidence_refs: ["evidence:campaign"] }]) }));
   await page.route(`**/api/v4/admin/security-campaigns/${campaignId}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(campaign) }));
   await page.route("**/api/v4/admin/security-campaigns/page*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", items: [campaign], total: 1, limit: 10, offset: 0 }) }));
-  await page.route("**/api/v4/capabilities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", product_profile: "security_triage_vnext", release_profile: "pre_cutover", conversation_resume: true, admin_feedback_review: true, intelligence_explorer: true, unified_v4_audit: true, admin_action_contract: "v3", executable_admin_actions: ["add_to_blacklist"], deferred_admin_actions: ["block_domain", "publish_broad_warning"], compatibility_contracts: ["v2", "v3", "v4"] }) }));
+  await page.route("**/api/v4/capabilities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", product_profile: "security_triage_vnext", release_profile: "pre_cutover", conversation_resume: true, admin_feedback_review: true, intelligence_explorer: true, unified_v4_audit: true, admin_action_contract: "v4", executable_admin_actions: ["add_to_blacklist"], deferred_admin_actions: ["block_domain", "publish_broad_warning"] }) }));
   await page.route("**/api/v4/admin/reports*", async (route) => {
     const items = v4ReportReviewed ? [] : [adminReport];
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", items, total: items.length, limit: 10, offset: 0 }) });

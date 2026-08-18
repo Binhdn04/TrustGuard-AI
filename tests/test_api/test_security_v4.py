@@ -3,7 +3,6 @@ import logging
 import pytest
 
 from src.api.dependencies import (
-    get_analysis_service,
     get_security_investigation_service,
     get_security_memory_service,
     get_wave2_service,
@@ -17,38 +16,6 @@ ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 
 
 @pytest.mark.asyncio
-async def test_v4_chat_routes_authenticated_follow_up_without_opening_analysis(client, monkeypatch) -> None:
-    class FakeChatbot:
-        async def ainvoke(self, state):
-            if state == {"query": "Kiểm tra link này"}:
-                return {
-                    "response": "Tôi sẽ kiểm tra nội dung này.",
-                    "analysis": '{"model":"gpt","tools_called":["check_scam"]}',
-                }
-            assert state == {"query": "Cảm ơn bạn"}
-            return {
-                "response": "Không có gì. Bạn cứ gửi tiếp nếu cần kiểm tra.",
-                "analysis": '{"model":"gpt","tools_called":[]}',
-            }
-
-    monkeypatch.setattr("src.api.security_v4.chatbot_agent", FakeChatbot())
-
-    denied = await client.post("/api/v4/chat", json={"message": "Cảm ơn bạn"})
-    response = await client.post("/api/v4/chat", headers=USER_HEADERS, json={"message": "Cảm ơn bạn"})
-    security = await client.post("/api/v4/chat", headers=USER_HEADERS, json={"message": "Kiểm tra link này"})
-
-    assert denied.status_code == 403
-    assert response.status_code == 200
-    assert response.json() == {
-        "contract_version": "v4",
-        "route": "conversation",
-        "response": "Không có gì. Bạn cứ gửi tiếp nếu cần kiểm tra.",
-    }
-    assert security.status_code == 200
-    assert security.json()["route"] == "security_analysis"
-
-
-@pytest.mark.asyncio
 async def test_v4_requires_authentication(client) -> None:
     response = await client.post("/api/v4/analyses", json={"message": "Tôi nhận được tin nhắn lạ"})
 
@@ -57,14 +24,10 @@ async def test_v4_requires_authentication(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_service(client) -> None:
-    def legacy_service_must_not_be_resolved():
-        raise AssertionError("v4 scope route reached the legacy analysis service")
-
+async def test_v4_out_of_scope_is_terminal_without_resolving_investigation(client) -> None:
     def investigation_must_not_be_resolved():
         raise AssertionError("terminal scope route resolved the investigation service")
 
-    app.dependency_overrides[get_analysis_service] = legacy_service_must_not_be_resolved
     app.dependency_overrides[get_security_investigation_service] = investigation_must_not_be_resolved
     try:
         response = await client.post(
@@ -73,7 +36,6 @@ async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_
             json={"message": "Tây Ban Nha vô địch World Cup đúng không?"},
         )
     finally:
-        app.dependency_overrides.pop(get_analysis_service, None)
         app.dependency_overrides.pop(get_security_investigation_service, None)
 
     assert response.status_code == 200
@@ -119,7 +81,7 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     assert body["explanation_evidence_refs"] == [body["evidence"][0]["evidence_ref"]]
     record = next(item for item in caplog.records if item.getMessage() == "http_request_completed")
     assert record.api_contract == "v4"
-    assert record.compatibility_usage == "security_write"
+    assert not hasattr(record, "compatibility_usage")
 
 
 @pytest.mark.asyncio
@@ -133,7 +95,7 @@ async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
             headers=USER_HEADERS,
             json={"message": "Đăng nhập https://hitl.example/login và gửi mật khẩu ngay"},
         )
-        queue = await client.get("/api/v3/admin/actions", headers=ADMIN_HEADERS)
+        queue = await client.get("/api/v4/admin/actions", headers=ADMIN_HEADERS)
     finally:
         app.dependency_overrides.pop(get_wave2_service, None)
 

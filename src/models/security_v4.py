@@ -607,12 +607,11 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     admin_feedback_review: Literal[True] = True
     intelligence_explorer: Literal[True] = True
     unified_v4_audit: Literal[True] = True
-    admin_action_contract: Literal["v3"] = "v3"
+    admin_action_contract: Literal["v4"] = "v4"
     executable_admin_actions: list[str] = Field(default_factory=lambda: ["add_to_blacklist"])
     deferred_admin_actions: list[str] = Field(
         default_factory=lambda: ["block_domain", "publish_broad_warning", "ai_security_copilot"]
     )
-    compatibility_contracts: list[Literal["v2", "v3", "v4"]] = Field(default_factory=lambda: ["v2", "v3", "v4"])
     security_ai_understanding: Literal[True] | None = None
     security_ai_planning: Literal[True] | None = None
     security_ai_explanation: Literal[True] | None = None

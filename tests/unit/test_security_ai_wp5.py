@@ -144,11 +144,11 @@ class OutboxRepository:
         self.message = message
         self.marked = []
 
-    async def claim_outbox(self, worker_id):
+    async def claim_security_outbox(self, worker_id):
         del worker_id
         return [self.message]
 
-    async def mark_outbox_published(self, message_id):
+    async def mark_security_outbox_published(self, message_id):
         self.marked.append(message_id)
 
 

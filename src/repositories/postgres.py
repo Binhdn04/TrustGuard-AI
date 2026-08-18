@@ -2900,18 +2900,11 @@ class PostgresPlatformRepository:
         query: str,
         *,
         language: str,
-        vector: list[float] | None = None,
-        model: str = "text-embedding-3-small",
-        model_version: str = "text-embedding-3-small",
-        embedding_version: str = "v1",
         claim_date_start: datetime | None = None,
         claim_date_end: datetime | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        if vector is not None and len(vector) != 1536:
-            raise ValueError("corpus query vector must contain 1536 dimensions")
         pool = await self._get_pool()
-        vector_literal = "[" + ",".join(str(value) for value in vector) + "]" if vector is not None else None
         async with pool.acquire() as connection:
             rows = await connection.fetch(
                 """WITH eligible AS (
@@ -2920,31 +2913,16 @@ class PostgresPlatformRepository:
                      WHERE r.promotion_status='trusted' AND r.language=$2
                        AND s.active AND NOT s.explicit_deny
                        AND (r.fresh_until IS NULL OR r.fresh_until > now())
-                       AND ($7::timestamptz IS NULL OR r.published_at <= coalesce($8,$7))
-                       AND ($8::timestamptz IS NULL OR coalesce(r.effective_to,r.source_updated_at) >= $7)
-                   ), lexical AS (
-                     SELECT id,row_number() OVER(ORDER BY ts_rank_cd(search_vector,websearch_to_tsquery('simple',$1)) DESC) rank
-                     FROM eligible WHERE search_vector @@ websearch_to_tsquery('simple',$1) LIMIT 20
-                   ), semantic AS (
-                     SELECT e.record_id AS id,row_number() OVER(ORDER BY e.embedding <=> $3::vector) rank
-                     FROM fact_check_embeddings e JOIN eligible r ON r.id=e.record_id
-                     WHERE $3::text IS NOT NULL AND e.model=$4 AND e.model_version=$5
-                       AND e.dimensions=1536 AND e.embedding_version=$6
-                     ORDER BY e.embedding <=> $3::vector LIMIT 20
-                   ), fused AS (
-                     SELECT coalesce(l.id,s.id) id,l.rank lexical_rank,s.rank vector_rank,
-                            coalesce(1.0/(60+l.rank),0)+coalesce(1.0/(60+s.rank),0) rrf_score
-                     FROM lexical l FULL OUTER JOIN semantic s ON s.id=l.id
+                       AND ($3::timestamptz IS NULL OR r.published_at <= coalesce($4,$3))
+                       AND ($4::timestamptz IS NULL OR coalesce(r.effective_to,r.source_updated_at) >= $3)
                    )
-                   SELECT r.*,f.lexical_rank,f.vector_rank,f.rrf_score
-                   FROM fused f JOIN eligible r ON r.id=f.id
-                   ORDER BY f.rrf_score DESC,r.published_at DESC LIMIT $9""",
+                   SELECT r.*,
+                          ts_rank_cd(search_vector,websearch_to_tsquery('simple',$1)) AS lexical_score
+                   FROM eligible r
+                   WHERE search_vector @@ websearch_to_tsquery('simple',$1)
+                   ORDER BY lexical_score DESC,r.published_at DESC LIMIT $5""",
                 query,
                 language,
-                vector_literal,
-                model,
-                model_version,
-                embedding_version,
                 claim_date_start,
                 claim_date_end,
                 min(limit, 20),
@@ -2989,7 +2967,7 @@ class PostgresPlatformRepository:
             await connection.execute(
                 """INSERT INTO fact_check_result_embeddings(
                        result_id,embedding_version,model,model_version,dimensions,embedding,embedded_at
-                   ) VALUES($1,$2,$3,$4,1536,$5::vector,$6)
+                   ) VALUES($1,$2,$3,$4,1536,$5::double precision[],$6)
                    ON CONFLICT(result_id,embedding_version) DO NOTHING""",
                 result_id,
                 embedding_version,
@@ -3127,7 +3105,7 @@ class PostgresPlatformRepository:
                     continue
                 await connection.execute(
                     """INSERT INTO campaign_claim_features(analysis_id,feature_ref,embedding)
-                       VALUES($1,$2,$3::real[]::vector) ON CONFLICT DO NOTHING""",
+                       VALUES($1,$2,$3::double precision[]) ON CONFLICT DO NOTHING""",
                     UUID(observation.analysis_id),
                     feature.feature_ref,
                     feature.vector,
@@ -3144,14 +3122,14 @@ class PostgresPlatformRepository:
                 since,
             )
             features = await connection.fetch(
-                """SELECT f.analysis_id,f.feature_ref,f.embedding::text AS embedding
+                """SELECT f.analysis_id,f.feature_ref,f.embedding
                    FROM campaign_claim_features f JOIN campaign_observations o ON o.analysis_id=f.analysis_id
                    WHERE o.observed_at >= $1""",
                 since,
             )
         by_analysis: dict[UUID, list[ClaimFeature]] = {}
         for row in features:
-            values = tuple(float(value) for value in row["embedding"].strip("[]").split(","))
+            values = tuple(float(value) for value in row["embedding"])
             by_analysis.setdefault(row["analysis_id"], []).append(ClaimFeature(row["feature_ref"], values))
         return [
             CampaignObservation(

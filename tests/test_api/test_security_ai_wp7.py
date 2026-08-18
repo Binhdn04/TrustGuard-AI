@@ -34,7 +34,10 @@ class _Copilot:
 @pytest.mark.asyncio
 async def test_admin_copilot_endpoint_is_admin_only_and_additive(client) -> None:
     service, analysis_id = _Copilot(), uuid4()
-    app.dependency_overrides[get_security_admin_copilot_service] = lambda: service
+    async def override_copilot():
+        return service
+
+    app.dependency_overrides[get_security_admin_copilot_service] = override_copilot
     try:
         denied = await client.post(f"/api/v4/admin/analyses/{analysis_id}/copilot", headers=USER, json={"refresh": False})
         allowed = await client.post(f"/api/v4/admin/analyses/{analysis_id}/copilot", headers=ADMIN, json={"refresh": True})
@@ -62,7 +65,10 @@ async def test_admin_copilot_has_a_dedicated_refresh_rate_limit(client, monkeypa
 
     service, analysis_id = _Copilot(), uuid4()
     monkeypatch.setattr("src.api.security_v4.get_rate_limiter", lambda: _DeniedLimiter())
-    app.dependency_overrides[get_security_admin_copilot_service] = lambda: service
+    async def override_copilot():
+        return service
+
+    app.dependency_overrides[get_security_admin_copilot_service] = override_copilot
     try:
         response = await client.post(
             f"/api/v4/admin/analyses/{analysis_id}/copilot",

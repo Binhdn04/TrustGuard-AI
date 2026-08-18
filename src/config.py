@@ -64,9 +64,9 @@ class Settings(BaseSettings):
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
-    source_discovery_enabled: bool = True
-    source_provisional_enabled: bool = True
-    source_auto_promotion_enabled: bool = True
+    source_discovery_enabled: bool = False
+    source_provisional_enabled: bool = False
+    source_auto_promotion_enabled: bool = False
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
@@ -75,7 +75,6 @@ class Settings(BaseSettings):
     security_investigation_deadline_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
     security_conversation_retention_days: int = Field(default=30, ge=1, le=365)
     security_release_profile: Literal["pre_cutover", "cutover"] = "pre_cutover"
-    legacy_api_writes_enabled: bool = True
 
     # Demo auth
     demo_auth_enabled: bool = True
@@ -174,16 +173,6 @@ class Settings(BaseSettings):
             if not origins or any(origin == "*" or urlparse(origin).scheme != "https" for origin in origins):
                 raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins in production")
             if self.security_release_profile == "cutover":
-                if self.legacy_api_writes_enabled:
-                    raise ValueError("LEGACY_API_WRITES_ENABLED must be false for production cutover")
-                if any(
-                    (
-                        self.source_discovery_enabled,
-                        self.source_provisional_enabled,
-                        self.source_auto_promotion_enabled,
-                    )
-                ):
-                    raise ValueError("Legacy source discovery and promotion must be disabled for production cutover")
                 if not self.live_providers_required:
                     raise ValueError("LIVE_PROVIDERS_REQUIRED must be true for production cutover")
         if self.live_providers_required:

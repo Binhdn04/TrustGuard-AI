@@ -34,7 +34,6 @@ class RedactingJsonFormatter(logging.Formatter):
             "failure_code",
             "api_contract",
             "product_profile",
-            "compatibility_usage",
         ):
             if hasattr(record, name):
                 payload[name] = getattr(record, name)
