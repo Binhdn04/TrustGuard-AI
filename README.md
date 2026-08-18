@@ -122,6 +122,13 @@ Services:
 
 Compose tự chạy `alembic upgrade head` trước khi khởi động backend. Cấu hình mặc định vẫn chạy analysis inline vì `SECURITY_ASYNC_EXECUTION_ENABLED=false`.
 
+## Deploy production trên Railway
+
+Repo có config-as-code riêng cho frontend, backend và worker. Topology production dùng
+Railway pgvector + Redis trong cùng project, OIDC thật và chỉ public frontend/backend.
+Xem [Railway deployment runbook](docs/RAILWAY_DEPLOYMENT.md) để cấu hình root directory,
+config path, reference variables, domain, migration, smoke test và rollback.
+
 Dừng stack:
 
 ```bash
