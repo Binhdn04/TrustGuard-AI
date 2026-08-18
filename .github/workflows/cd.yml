@@ -82,7 +82,6 @@ jobs:
       # the database migration has completed successfully.
       - name: Check Railway authentication
         run: |
-          railway whoami
           railway status
                 
       - name: Deploy backend
