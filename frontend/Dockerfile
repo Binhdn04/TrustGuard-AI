@@ -5,8 +5,7 @@ ARG NODE_IMAGE=node:22.23.0-alpine3.23
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,id=cacheKey-p068-frontend-npm,target=/root/.npm,sharing=locked \
-    npm ci
+RUN npm ci
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
