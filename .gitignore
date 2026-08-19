@@ -66,3 +66,6 @@ out/
 .ai-log/codex-scan-state.json
 
 Docker Desktop_*
+
+/scripts/_pyrun.sh
+/scripts/_pyrun.cmd
