@@ -29,7 +29,7 @@ flowchart LR
 - PostgreSQL là source of truth; Redis chỉ giữ WebSocket ticket ngắn hạn và phát wake-up notification. Client có polling fallback và replay event theo cursor.
 - Chỉ Security Memory đã được admin review và campaign đã xác nhận mới có thể ảnh hưởng risk của lượt sau; lookup luôn owner-scoped và không dùng chính analysis hiện tại.
 
-Xem sơ đồ chi tiết tại [Architecture_diagram.md](Architecture_diagram.md).
+Xem [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md) để biết product boundary, contract và data flow.
 
 ## Tính năng chính
 
@@ -125,7 +125,7 @@ Compose tự chạy `alembic upgrade head` trước khi khởi động backend. 
 
 Repo có config-as-code riêng cho frontend, backend và worker. Topology production dùng
 Railway PostgreSQL + Redis trong cùng project, OIDC thật và chỉ public frontend/backend.
-Xem [Railway deployment runbook](docs/RAILWAY_DEPLOYMENT.md) để cấu hình root directory,
+Xem [Deployment and Operations](docs/DEPLOYMENT.md) để cấu hình root directory,
 config path, reference variables, domain, migration, smoke test và rollback.
 
 Dừng stack:
@@ -310,7 +310,7 @@ Offline pass không thay thế hosted OIDC/provider/PostgreSQL/Redis/load/backup
 - Xác minh `/health/ready`, `/api/v4/capabilities`, worker lease, outbox, WebSocket fallback và retention.
 - Backup/restore rehearsal trước schema cleanup hoặc cutover.
 
-Chi tiết rollout, freeze và rollback: [WP9 Release Runbook](docs/WP9_RELEASE_RUNBOOK.md).
+Chi tiết rollout, release gate và rollback: [Deployment and Operations](docs/DEPLOYMENT.md).
 
 ## Safety invariants
 
@@ -325,9 +325,7 @@ Chi tiết rollout, freeze và rollback: [WP9 Release Runbook](docs/WP9_RELEASE_
 
 ## Tài liệu
 
-- [Architecture Diagram](Architecture_diagram.md) — component và data flow hiện tại, bỏ qua deprecated path.
-- [Product Scope](docs/scope.md) — product goal và boundary.
-- [Implementation Status](docs/implementation-status.md) — implemented, partial, deprecated và gaps.
-- [Detailed Architecture](docs/01-ARCHITECTURE.md) — kiến trúc, persistence và cutover boundary.
-- [API Contract](docs/02-CONTRACT_AND_FIXTURES.md) — contract và fixtures.
-- [Release Runbook](docs/WP9_RELEASE_RUNBOOK.md) — hosted checks, migration cleanup và rollback.
+- [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md) — scope, contract, components và invariants.
+- [Current Status](docs/CURRENT_STATUS.md) — implemented, deprecated và production gaps.
+- [Deployment and Operations](docs/DEPLOYMENT.md) — Railway, migration, rollout và rollback.
+- [Testing and Verification](docs/TESTING.md) — automated checks, evaluation và manual scenarios.

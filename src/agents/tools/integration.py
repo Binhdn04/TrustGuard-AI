@@ -3,12 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.tools.advanced import (
-    GoogleClaimSearchAdapter,
     OpenAIEmbeddingProvider,
     TavilyExtractAdapter,
     TavilySearchAdapter,
 )
-from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrowsingScanner
+from src.agents.tools.providers import GoogleSafeBrowsingScanner
 from src.agents.tools.rdap import RdapDomainIntelligence
 from src.agents.tools.redirect import GuardedRedirectResolver
 from src.agents.tools.reputation import (
@@ -39,13 +38,6 @@ def build_provider_adapters(settings: Any, source_registry: Any | None = None) -
     # cascade. Google Safe Browsing remains its compatibility scanner.
     if settings.google_safe_browsing_api_key:
         adapters["url_scanner"] = GoogleSafeBrowsingScanner(settings.google_safe_browsing_api_key, timeout=timeout)
-    if settings.google_fact_check_api_key:
-        adapters["claim_retriever"] = GoogleFactCheckRetriever(settings.google_fact_check_api_key, timeout=timeout)
-        adapters["google_claim_search"] = GoogleClaimSearchAdapter(
-            settings.google_fact_check_api_key,
-            timeout=timeout,
-            classify_source=source_registry.classify if source_registry else None,
-        )
     if getattr(settings, "openai_api_key", ""):
         adapters["embedding_provider"] = OpenAIEmbeddingProvider(settings.openai_api_key, timeout=timeout)
     if getattr(settings, "tavily_api_key", ""):

@@ -671,7 +671,8 @@ def build_openai_graph(**kwargs):
             kwargs.setdefault(name, adapter)
     kwargs.setdefault("max_claim_concurrency", settings.max_claim_concurrency)
     kwargs.setdefault("provisional_tier_c_enabled", settings.source_provisional_enabled)
-    kwargs.setdefault("fact_check_timeout_seconds", settings.fact_check_timeout_seconds)
+    # Legacy fact-check orchestration is no longer environment-configurable.
+    kwargs.setdefault("fact_check_timeout_seconds", 30.0)
     kwargs.setdefault("post_processing_reserve_seconds", settings.post_processing_reserve_seconds)
     graph = build_graph(llm=llm, **kwargs)
     graph._owned_adapters = tuple(owned_adapters.values())
