@@ -300,7 +300,7 @@ async def test_external_evidence_keeps_redirect_rdap_and_reputation_no_hit_incon
             DomainIntelligenceResult(
                 provider="fixture-rdap",
                 domain="example.com",
-                registrar="Example Registrar",
+                signals=["service_unavailable"],
                 observed_at=NOW,
             ),
         )
@@ -354,6 +354,8 @@ async def test_external_evidence_keeps_redirect_rdap_and_reputation_no_hit_incon
         SecurityEvidenceTypeV4.URL_REPUTATION,
     } <= types
     assert any("no-hit" in item for item in result.limitations)
+    assert any("không công bố dịch vụ RDAP" in item for item in result.limitations)
+    assert result.errors == []
 
 
 @pytest.mark.asyncio

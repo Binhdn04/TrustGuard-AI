@@ -9,6 +9,7 @@ from src.agents.tools import (
     GuardedRedirectResolver,
     NormalizedRdapProvider,
     NormalizedToolResult,
+    RdapDomainIntelligence,
     SsrfGuard,
     ToolResultStatus,
     UrlReputationFinding,
@@ -216,3 +217,32 @@ async def test_rdap_v3_is_normalized_versioned_cached_and_rejects_ip_literal():
     assert invalid.status is ToolResultStatus.FAILED
     assert invalid.error is not None and invalid.error.code.value == "INVALID_TARGET"
     assert legacy.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_rdap_missing_bootstrap_service_is_inconclusive_and_cached():
+    async def resolver(_host: str, _port: int) -> list[str]:
+        return ["192.0.32.8"]
+
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.headers["host"] == "data.iana.org"
+        assert request.url.path == "/rdap/dns.json"
+        return httpx.Response(200, json={"services": [[["net"], ["https://rdap.example.net/"]]]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = RdapDomainIntelligence(client=client, guard=SsrfGuard(resolver=resolver))
+        provider = NormalizedRdapProvider(adapter)
+        first = await provider.lookup("example.com")
+        second = await provider.lookup("example.com")
+
+    assert first.status is ToolResultStatus.INCONCLUSIVE
+    assert first.error is None
+    assert first.result is not None and first.result.signals == ["service_unavailable"]
+    assert second.status is ToolResultStatus.INCONCLUSIVE
+    assert second.cache.status.value == "hit"
+    assert second.usage.network_calls == 0
+    assert calls == 1

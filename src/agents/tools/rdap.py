@@ -29,6 +29,7 @@ from src.models import DomainIntelligenceResult
 
 RDAP_SCHEMA_VERSION = "rdap-v1"
 IANA_DNS_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json"
+_INCONCLUSIVE_SIGNALS = {"not_found", "service_unavailable"}
 
 
 @dataclass
@@ -147,9 +148,12 @@ class RdapDomainIntelligence:
             tld = registrable.rsplit(".", 1)[-1]
             base_urls = services.get(tld)
             if not base_urls:
-                raise ToolCallError(
-                    "domain_intelligence", "PROVIDER_ERROR", "No RDAP service for domain suffix", retryable=False
-                )
+                # The IANA bootstrap does not guarantee an RDAP endpoint for
+                # every DNS suffix. This is absence of registry capability,
+                # not a provider failure and never evidence of domain safety.
+                result = self._service_unavailable(registrable, now)
+                self._store_cache(cache_key, result, now + self._not_found_ttl)
+                return result.model_copy(deep=True)
             endpoint = urljoin(base_urls[0].rstrip("/") + "/", f"domain/{quote(registrable)}")
             client = await self._http()
             try:
@@ -201,6 +205,15 @@ class RdapDomainIntelligence:
             domain=domain,
             privacy_redacted=False,
             signals=["not_found"],
+            observed_at=observed_at,
+        )
+
+    def _service_unavailable(self, domain: str, observed_at: datetime) -> DomainIntelligenceResult:
+        return DomainIntelligenceResult(
+            provider=self.provider,
+            domain=domain,
+            privacy_redacted=False,
+            signals=["service_unavailable"],
             observed_at=observed_at,
         )
 
@@ -319,7 +332,11 @@ class NormalizedRdapProvider:
         if cached is not None:
             result = cached.value.model_copy(deep=True)
             return NormalizedToolResult(
-                status=(ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS),
+                status=(
+                    ToolResultStatus.INCONCLUSIVE
+                    if set(result.signals) & _INCONCLUSIVE_SIGNALS
+                    else ToolResultStatus.SUCCESS
+                ),
                 result=result,
                 cache=cached.metadata,
                 usage=self._usage(started, attempts=0, calls=0),
@@ -339,7 +356,7 @@ class NormalizedRdapProvider:
                 attempts=1,
                 calls=1,
             )
-        ttl = self._not_found_ttl if result.signals == ["not_found"] else self._cache_ttl
+        ttl = self._not_found_ttl if set(result.signals) & _INCONCLUSIVE_SIGNALS else self._cache_ttl
         await self._cache.put(
             self.provider,
             self.provider_version,
@@ -348,7 +365,11 @@ class NormalizedRdapProvider:
             ttl,
         )
         return NormalizedToolResult(
-            status=ToolResultStatus.INCONCLUSIVE if result.signals == ["not_found"] else ToolResultStatus.SUCCESS,
+            status=(
+                ToolResultStatus.INCONCLUSIVE
+                if set(result.signals) & _INCONCLUSIVE_SIGNALS
+                else ToolResultStatus.SUCCESS
+            ),
             result=result,
             cache=self._cache.miss_metadata(self.provider, self.provider_version, registrable),
             usage=self._usage(started, attempts=1, calls=1),

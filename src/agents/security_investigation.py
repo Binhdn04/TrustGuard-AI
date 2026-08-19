@@ -287,7 +287,7 @@ def apply_plan_priority(
     plan: list[InvestigationStepV4],
     priority: PlanPriority,
 ) -> list[InvestigationStepV4] | None:
-    """Apply an AI ranking only when every reference remains inside policy."""
+    """Apply AI priority hints while policy retains dependency ordering."""
     by_id = {step.step_id: step for step in plan}
     supplied = set(priority.ordered_step_ids) | set(priority.skipped_step_ids) | set(priority.requested_step_ids)
     if not supplied <= by_id.keys():
@@ -296,18 +296,43 @@ def apply_plan_priority(
         return None
 
     skipped = set(priority.skipped_step_ids)
-    active_ids = [*priority.ordered_step_ids, *priority.requested_step_ids]
-    for step in plan:
-        if step.step_id not in skipped and step.step_id not in active_ids:
-            active_ids.append(step.step_id)
-    if len(active_ids) != len(set(active_ids)):
+    requested = set(priority.ordered_step_ids) | set(priority.requested_step_ids)
+    if skipped & requested:
         return None
 
-    position = {step_id: index for index, step_id in enumerate(active_ids)}
-    for step_id in active_ids:
-        for dependency in by_id[step_id].depends_on:
-            if dependency in skipped or dependency not in position or position[dependency] > position[step_id]:
-                return None
+    # The model supplies priority hints, not an execution graph. Dedupe a
+    # harmless repeated allowlisted candidate and let policy restore the
+    # dependency-safe order deterministically.
+    preferred_ids = list(dict.fromkeys([*priority.ordered_step_ids, *priority.requested_step_ids]))
+    for step in plan:
+        if step.step_id not in skipped and step.step_id not in preferred_ids:
+            preferred_ids.append(step.step_id)
+
+    active = set(preferred_ids)
+    if any(
+        dependency in skipped or dependency not in active
+        for step_id in active
+        for dependency in by_id[step_id].depends_on
+    ):
+        return None
+
+    active_ids: list[str] = []
+    remaining = set(preferred_ids)
+    while remaining:
+        ready = next(
+            (
+                step_id
+                for step_id in preferred_ids
+                if step_id in remaining and all(dependency in active_ids for dependency in by_id[step_id].depends_on)
+            ),
+            None,
+        )
+        if ready is None:
+            # Defensive cycle/missing-dependency guard. The deterministic
+            # candidate graph should never reach this branch.
+            return None
+        active_ids.append(ready)
+        remaining.remove(ready)
 
     prioritized = [by_id[step_id] for step_id in active_ids]
     prioritized.extend(
@@ -373,7 +398,10 @@ class SecurityInvestigationService:
         evidence = [self._context_evidence(context)]
         errors: list[SecurityToolErrorV4] = []
         limitations = list(scope.limitations)
-        if self._planning_enabled and self._assistant_model is not None:
+        # A one-step plan has nothing for AI to rank or skip. Avoid spending a
+        # provider call (and producing a misleading fallback limitation) for
+        # context-only investigations.
+        if self._planning_enabled and self._assistant_model is not None and len(plan) > 1:
             turn_runtime = runtime or self._runtime_factory()
             result = await turn_runtime.invoke(
                 AssistantOperation.PRIORITIZE_PLAN,
@@ -822,11 +850,14 @@ class SecurityInvestigationService:
             if result.registrar is not None:
                 details.append(f"registrar={result.registrar}")
             signal = "+".join(result.signals) if result.signals else "registration_metadata"
-            limitations = (
-                ["RDAP không tìm thấy registration record; kết quả này không chứng minh domain an toàn."]
-                if result.signals == ["not_found"]
-                else []
-            )
+            if "not_found" in result.signals:
+                limitations = ["RDAP không tìm thấy registration record; kết quả này không chứng minh domain an toàn."]
+            elif "service_unavailable" in result.signals:
+                limitations = [
+                    "Registry của hậu tố domain không công bố dịch vụ RDAP; thiếu dữ liệu này không chứng minh domain an toàn."
+                ]
+            else:
+                limitations = []
             return [
                 _evidence(
                     SecurityEvidenceTypeV4.RDAP,
