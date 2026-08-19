@@ -67,5 +67,5 @@ out/
 
 Docker Desktop_*
 
-/scripts/_pyrun.sh
-/scripts/_pyrun.cmd
+#/scripts/_pyrun.sh
+#/scripts/_pyrun.cmd
