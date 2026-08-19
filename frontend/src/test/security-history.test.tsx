@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CaseDetail } from "@/components/cases/case-detail";
 import { CaseLibrary } from "@/components/cases/case-library";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
-import { ApiError } from "@/lib/api/http-analysis-api";
+import { ApiError } from "@/lib/api/api-error";
 import {
   parseSecurityHistoryQuery,
   securityHistoryHref,
@@ -136,7 +136,7 @@ describe("FE5 case detail and resume", () => {
       message: "Họ vừa yêu cầu gửi OTP",
       conversation_id: analysis.conversation_id,
       conversation_version: 3,
-      consent: { external_url_lookup: false, official_source_lookup: false },
+      consent: { external_url_lookup: true },
     }));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(`/cases/${next.analysis_id}`));
   });

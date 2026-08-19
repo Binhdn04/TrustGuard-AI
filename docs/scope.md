@@ -412,8 +412,6 @@ Scenario Detection
 Organization Extraction
  ↓
 Scam Pattern Analysis
- ↓
-Official Source Verification
 ```
 
 ---
@@ -429,7 +427,6 @@ Agent có thể sử dụng:
 - Redirect Analyzer
 - URL Analyzer
 - Brand Matcher
-- Official Source Retriever
 - Internal Blacklist
 - Internal Whitelist
 
@@ -495,93 +492,14 @@ Ví dụ:
 
 ---
 
-# 8. Official Claim Verification
+# 8. Fact-check Boundary
 
-Không xây `GeneralFactCheckAgent`.
-
-Thành phần này được giới hạn thành:
-
-```text
-OfficialClaimVerifier
-```
-
-Nhiệm vụ:
-
-> Xác minh một claim chỉ khi claim đó ảnh hưởng trực tiếp đến việc đánh giá scam/phishing/impersonation.
-
-Ví dụ:
-
-```text
-"Vietcombank đang phát voucher 5 triệu."
-```
-
-Agent có thể kiểm tra nguồn chính thức của Vietcombank để xác định chương trình này có được công bố hay không.
-
-Kết quả:
-
-```text
-OFFICIAL_CONFIRMED
-OFFICIAL_CONTRADICTED
-NOT_FOUND
-INSUFFICIENT_EVIDENCE
-```
-
-Quy tắc bắt buộc:
-
-```text
-NOT_FOUND != FALSE
-```
-
-Không tìm thấy thông tin trên nguồn chính thức không đồng nghĩa thông tin chắc chắn là giả.
+Security v4 không thực hiện general fact-check. Yêu cầu tin tức, chính trị, thể thao, khoa học,
+y tế hoặc dự đoán không gắn với hành vi lừa đảo kết thúc tại scope gate mà không gọi provider.
 
 ---
 
-# 9. Fact-check Boundary
-
-Fact verification chỉ được gọi khi:
-
-```text
-Claim
-  │
-  ▼
-Does this claim directly affect
-security/scam determination?
-  │
- ┌┴──────────────┐
- │               │
-NO              YES
- │               │
- ▼               ▼
-Skip       Official Verification
-```
-
-Giới hạn:
-
-```yaml
-official_verification:
-  max_claims_per_case: 1
-  max_search_queries: 2
-  max_sources: 5
-
-  allowed_purposes:
-    - verify_official_campaign
-    - verify_brand_announcement
-    - verify_recruitment_program
-    - verify_official_domain
-    - verify_official_contact
-
-  forbidden:
-    - general_news
-    - politics
-    - sports
-    - science
-    - medical
-    - predictions
-```
-
----
-
-# 10. Risk Engine
+# 9. Risk Engine
 
 LLM không tự quyết định toàn bộ risk score.
 
@@ -618,13 +536,11 @@ Payment request
 Brand impersonation
 Urgency
 Social engineering
-
-Official verification
 ```
 
 ---
 
-# 11. Risk Classification
+# 10. Risk Classification
 
 Output chuẩn:
 
@@ -668,7 +584,7 @@ Ví dụ structured output:
 
 ---
 
-# 12. False Positive Policy
+# 11. False Positive Policy
 
 False positive là requirement quan trọng của sản phẩm.
 
@@ -702,7 +618,7 @@ Whitelist phải được ưu tiên để tránh cảnh báo nhầm.
 
 ---
 
-# 13. Human-in-the-loop
+# 12. Human-in-the-loop
 
 ## Agent được phép
 
@@ -747,7 +663,7 @@ Blacklist / Global Warning
 
 ---
 
-# 14. Memory
+# 13. Memory
 
 ## 14.1. Case Memory
 
@@ -789,7 +705,7 @@ Không cần lưu toàn bộ private conversation nếu không cần thiết.
 
 ---
 
-# 15. User-facing Product
+# 14. User-facing Product
 
 Giao diện chính là **AI Chatbot**.
 
@@ -825,7 +741,7 @@ Giao diện chính là **AI Chatbot**.
 
 ---
 
-# 16. Security Admin Product
+# 15. Security Admin Product
 
 Security Admin Dashboard bao gồm:
 
@@ -872,7 +788,7 @@ AI có quyền **recommend**, nhưng quyết định block/cảnh báo diện r�
 
 ---
 
-# 17. Product Architecture
+# 16. Product Architecture
 
 ```text
                          USER
@@ -905,10 +821,6 @@ RDAP   TI  Redirect        │                    │
        └───────────┬───────┴────────────────────┘
                    │
                    ▼
-          OfficialClaimVerifier
-             (only if needed)
-                   │
-                   ▼
               Evidence Set
                    │
                    ▼
@@ -927,7 +839,7 @@ RDAP   TI  Redirect        │                    │
 
 ---
 
-# 18. Product Boundary
+# 17. Product Boundary
 
 > **Sản phẩm không xác định một thông tin nói chung là thật hay giả. Sản phẩm đánh giá liệu một tin nhắn hoặc đường link do người dùng chủ động cung cấp có dấu hiệu phishing, scam hoặc giả mạo tổ chức/thương hiệu nhằm thúc đẩy người dùng thực hiện hành động có rủi ro hay không.**
 >
@@ -935,7 +847,7 @@ RDAP   TI  Redirect        │                    │
 
 ---
 
-# 19. Product Scope Summary
+# 18. Product Scope Summary
 
 ## IN SCOPE
 
@@ -954,7 +866,6 @@ RDAP   TI  Redirect        │                    │
 - Redirect analysis
 - Threat Intelligence
 - Blacklist / Whitelist
-- Official-source verification
 - Risk scoring
 - Confidence estimation
 - Explainable warning

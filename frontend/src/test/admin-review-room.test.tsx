@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReviewRoom } from "@/components/admin/review-room/review-room";
-import type { AnalysisApi } from "@/lib/api/analysis-api.types";
-import { ApiError } from "@/lib/api/http-analysis-api";
+import type { AdminActionApi } from "@/components/admin/review-room/action-execution-panel";
+import { ApiError } from "@/lib/api/api-error";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import type { AdminActionRecordV3 } from "@/types/generated/api-v3";
 import type { SecurityReportAdminRecordV4 } from "@/types/generated/api-v4";
@@ -61,14 +61,14 @@ function securityClient(overrides: Partial<SecurityAnalysisApi> = {}): SecurityA
   } as unknown as SecurityAnalysisApi;
 }
 
-function actionClient(overrides: Partial<AnalysisApi> = {}): AnalysisApi {
+function actionClient(overrides: Partial<AdminActionApi> = {}): AdminActionApi {
   return {
     listAdminActions: vi.fn().mockResolvedValue({ contract_version: "v3", items: [], total: 0, limit: 10, offset: 0 }),
     getAdminAction: vi.fn(),
     listAdminActionAudit: vi.fn().mockResolvedValue([]),
     decideAdminAction: vi.fn(),
     ...overrides,
-  } as unknown as AnalysisApi;
+  } as AdminActionApi;
 }
 
 describe("FE7 Security Review Room", () => {
@@ -188,7 +188,7 @@ describe("FE7 Security Review Room", () => {
     });
     render(<ReviewRoom securityApi={securityClient()} actionApi={actions} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: /Reviewed actions v3/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /Reviewed actions/i }));
     fireEvent.click(await screen.findByRole("button", { name: /add to blacklist/i }));
     expect(await screen.findByText("Known malicious host")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Reviewer note"), { target: { value: "Evidence confirmed" } });

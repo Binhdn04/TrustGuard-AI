@@ -300,7 +300,7 @@ class GoogleWebRiskProvider(_NormalizedReputationProvider):
 
 
 class VirusTotalUrlProvider(_NormalizedReputationProvider):
-    """VirusTotal v3 URL report adapter, intended as policy-gated secondary."""
+    """VirusTotal v3 URL report adapter."""
 
     endpoint = "https://www.virustotal.com/api/v3/urls"
     provider = "virustotal"
@@ -388,7 +388,7 @@ class VirusTotalUrlProvider(_NormalizedReputationProvider):
 
 
 class ProductionUrlReputationCascade:
-    """Web Risk primary with budgeted VirusTotal escalation."""
+    """Bounded URL-reputation cascade with optional high-risk escalation."""
 
     provider = "trustguard-reputation-cascade"
 

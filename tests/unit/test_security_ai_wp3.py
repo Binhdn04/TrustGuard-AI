@@ -18,25 +18,23 @@ from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.security_triage import SecurityTriageScopeService
 
 
-def _scope(message: str, *, external: bool = False, official: bool = False):
+def _scope(message: str, *, external: bool = False):
     request = SecurityTriageCreateRequestV4(
         message=message,
-        consent={"external_url_lookup": external, "official_source_lookup": official},
+        consent={"external_url_lookup": external},
     )
     return request, SecurityTriageScopeService().assess(request)
 
 
 def test_scenario_planner_routes_no_url_cases_without_fabricating_url_targets() -> None:
-    recruitment_request, recruitment = _scope("HR ACME yêu cầu đóng phí hồ sơ")
+    _recruitment_request, recruitment = _scope("HR ACME yêu cầu đóng phí hồ sơ")
     recruitment_plan = build_policy_constrained_investigation_plan(
         recruitment.security_context,
         external_url_lookup=False,
-        official_source_lookup=recruitment_request.consent.official_source_lookup,
     )
     assert [step.tool for step in recruitment_plan] == [
         SecurityInvestigationToolV4.SECURITY_CONTEXT_ANALYSIS,
         SecurityInvestigationToolV4.BRAND_MATCH,
-        SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
     ]
     assert {step.target for step in recruitment_plan} == {"message"}
 
@@ -44,17 +42,15 @@ def test_scenario_planner_routes_no_url_cases_without_fabricating_url_targets() 
     payment_plan = build_policy_constrained_investigation_plan(
         payment.security_context,
         external_url_lookup=True,
-        official_source_lookup=True,
     )
     assert [step.tool for step in payment_plan] == [SecurityInvestigationToolV4.SECURITY_CONTEXT_ANALYSIS]
 
 
 def test_url_scenario_candidate_plan_is_canonical_and_complete() -> None:
-    request, scoped = _scope("Đăng nhập https://example.com/login để xác minh", external=True, official=True)
+    request, scoped = _scope("Đăng nhập https://example.com/login để xác minh", external=True)
     plan = build_policy_constrained_investigation_plan(
         scoped.security_context,
         external_url_lookup=request.consent.external_url_lookup,
-        official_source_lookup=request.consent.official_source_lookup,
     )
 
     assert {
@@ -66,7 +62,6 @@ def test_url_scenario_candidate_plan_is_canonical_and_complete() -> None:
         SecurityInvestigationToolV4.URL_REPUTATION,
         SecurityInvestigationToolV4.BRAND_MATCH,
         SecurityInvestigationToolV4.WHITELIST_LOOKUP,
-        SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
     } <= {step.tool for step in plan}
     assert {step.target for step in plan} <= {"message", "https://example.com/login", "example.com"}
 

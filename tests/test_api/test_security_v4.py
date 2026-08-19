@@ -3,13 +3,12 @@ import logging
 import pytest
 
 from src.api.dependencies import (
-    get_analysis_service,
     get_security_investigation_service,
     get_security_memory_service,
     get_wave2_service,
 )
 from src.main import app
-from src.services.platform_wave2 import ArtifactSigner, MemoryWave2Repository, Wave2PlatformService
+from src.services.platform_wave2 import MemoryWave2Repository, Wave2PlatformService
 from src.services.security_memory import SecurityMemoryService
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
@@ -25,14 +24,10 @@ async def test_v4_requires_authentication(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_service(client) -> None:
-    def legacy_service_must_not_be_resolved():
-        raise AssertionError("v4 scope route reached the legacy analysis service")
-
+async def test_v4_out_of_scope_is_terminal_without_resolving_investigation(client) -> None:
     def investigation_must_not_be_resolved():
         raise AssertionError("terminal scope route resolved the investigation service")
 
-    app.dependency_overrides[get_analysis_service] = legacy_service_must_not_be_resolved
     app.dependency_overrides[get_security_investigation_service] = investigation_must_not_be_resolved
     try:
         response = await client.post(
@@ -41,7 +36,6 @@ async def test_v4_out_of_scope_is_terminal_and_does_not_resolve_legacy_analysis_
             json={"message": "Tây Ban Nha vô địch World Cup đúng không?"},
         )
     finally:
-        app.dependency_overrides.pop(get_analysis_service, None)
         app.dependency_overrides.pop(get_security_investigation_service, None)
 
     assert response.status_code == 200
@@ -61,7 +55,7 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
             headers=USER_HEADERS,
             json={
                 "message": "HR yêu cầu tôi đóng 500k phí hồ sơ",
-                "consent": {"external_url_lookup": True, "official_source_lookup": False},
+                "consent": {"external_url_lookup": True},
             },
         )
 
@@ -74,7 +68,6 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     assert [step["tool"] for step in body["investigation_plan"]] == [
         "security_context_analysis",
         "brand_match",
-        "official_claim_verifier",
     ]
     assert body["evidence"][0]["type"] == "security_context"
     assert body["tool_calls_used"] == 0
@@ -88,13 +81,13 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     assert body["explanation_evidence_refs"] == [body["evidence"][0]["evidence_ref"]]
     record = next(item for item in caplog.records if item.getMessage() == "http_request_completed")
     assert record.api_contract == "v4"
-    assert record.compatibility_usage == "security_write"
+    assert not hasattr(record, "compatibility_usage")
 
 
 @pytest.mark.asyncio
 async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
     repository = MemoryWave2Repository()
-    wave2 = Wave2PlatformService(repository, ArtifactSigner("security-hitl-test-key"))
+    wave2 = Wave2PlatformService(repository)
     app.dependency_overrides[get_wave2_service] = lambda: wave2
     try:
         response = await client.post(
@@ -102,7 +95,7 @@ async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
             headers=USER_HEADERS,
             json={"message": "Đăng nhập https://hitl.example/login và gửi mật khẩu ngay"},
         )
-        queue = await client.get("/api/v3/admin/actions", headers=ADMIN_HEADERS)
+        queue = await client.get("/api/v4/admin/actions", headers=ADMIN_HEADERS)
     finally:
         app.dependency_overrides.pop(get_wave2_service, None)
 
@@ -190,7 +183,7 @@ async def test_v4_rejects_legacy_or_unknown_request_fields(client) -> None:
         json={
             "message": "Kiểm tra example.com",
             "consent_to_scan_urls": True,
-            "consent_to_capture_screenshot": True,
+            "unsupported_legacy_option": True,
         },
     )
 

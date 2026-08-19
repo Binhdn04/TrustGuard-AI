@@ -42,6 +42,11 @@ function response(overrides: Partial<SecurityScopeResponseV4> = {}): SecuritySco
 function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): SecurityAnalysisApi {
   return {
     getCapabilities: vi.fn(),
+    chat: vi.fn().mockResolvedValue({
+      contract_version: "v4",
+      route: "security_analysis",
+      response: "Tôi sẽ mở một lượt kiểm tra bảo mật mới.",
+    }),
     createAnalysis,
     getAnalysis: vi.fn(),
     getAdminAnalysis: vi.fn(),
@@ -101,23 +106,29 @@ describe("Security Chat workspace", () => {
       admin_feedback_review: true,
       intelligence_explorer: true,
       unified_v4_audit: true,
-      admin_action_contract: "v3",
+      admin_action_contract: "v4",
       executable_admin_actions: ["add_to_blacklist"],
       deferred_admin_actions: [],
-      compatibility_contracts: ["v2", "v3", "v4"],
       security_async_execution: true,
     });
     render(<AnalysisWorkspace api={api} />);
 
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
+    expect(screen.queryByText("Cho phép kiểm tra URL bên ngoài")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cho phép đối chiếu nguồn chính thức")).not.toBeInTheDocument();
+    expect(screen.getByText(/tự đối chiếu URL\/domain với dịch vụ bảo mật/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({ execution_mode: "async" }));
+    expect(screen.queryByLabelText(/Dán tin nhắn đáng ngờ/i)).not.toBeInTheDocument();
+    expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({
+      execution_mode: "async",
+      consent: { external_url_lookup: true },
+    }));
     expect(create.mock.calls[0][1]).toEqual({ idempotencyKey: expect.any(String) });
   });
 
-  it("moves from intake into the three-region case workspace", async () => {
+  it("moves from intake into a simple chatbot workspace with analyst details on demand", async () => {
     const api = apiWith(vi.fn().mockResolvedValue(response()));
     render(<AnalysisWorkspace api={api} />);
 
@@ -128,14 +139,18 @@ describe("Security Chat workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("heading", { name: "Intake & follow-up" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Kết luận và hướng dẫn" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Signals & evidence" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Khu vực case" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Kết quả" }));
+    expect(screen.getByRole("tab", { name: "Kết quả" })).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
     expect(screen.getByRole("heading", { name: "Signals & evidence" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Decision & next steps" })).toBeInTheDocument();
-    expect(screen.getByRole("tablist", { name: "Khu vực case" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Action" }));
-    expect(screen.getByRole("tab", { name: "Action" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("continues NEED_MORE_INFO with the owner conversation version and fresh consent", async () => {
+  it("continues NEED_MORE_INFO with the owner conversation version and automatic lookup policy", async () => {
     const create = vi.fn()
       .mockResolvedValueOnce(response())
       .mockResolvedValueOnce(response({ conversation_version: 2, follow_up_question: "Bạn có URL không?" }));
@@ -152,8 +167,80 @@ describe("Security Chat workspace", () => {
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       conversation_id: "10000000-0000-4000-8000-000000000001",
       conversation_version: 1,
-      consent: { external_url_lookup: false, official_source_lookup: false },
+      consent: { external_url_lookup: true },
     }));
+  });
+
+  it("keeps the chatbot composer available after a completed check", async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(response({
+        scope_decision: "IN_SCOPE",
+        terminal: true,
+        next_step: "END",
+        follow_up_question: null,
+        risk: "SUSPICIOUS",
+        score: 55,
+        confidence: 0.7,
+        threat_type: "PHISHING",
+        policy_version: "security-risk-v1",
+        recommended_actions: ["PROCEED_WITH_CAUTION"],
+        explanation: "Cần thận trọng với nội dung này.",
+      }))
+      .mockResolvedValueOnce(response({ conversation_version: 2 }));
+    const api = apiWith(create);
+    render(<AnalysisWorkspace api={api} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra nội dung này" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+    expect(await screen.findByRole("heading", { name: "Đáng ngờ" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Nếu tôi đã mở link thì sao?" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(api.chat).toHaveBeenCalledWith("Nếu tôi đã mở link thì sao?");
+    expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
+      conversation_id: "10000000-0000-4000-8000-000000000001",
+      conversation_version: 1,
+      consent: { external_url_lookup: true },
+    }));
+  });
+
+  it("answers an ordinary follow-up without opening another security analysis", async () => {
+    const create = vi.fn().mockResolvedValue(response({
+      scope_decision: "IN_SCOPE",
+      terminal: true,
+      next_step: "END",
+      follow_up_question: null,
+      risk: "SUSPICIOUS",
+      score: 55,
+      confidence: 0.7,
+      threat_type: "PHISHING",
+      policy_version: "security-risk-v1",
+      recommended_actions: ["PROCEED_WITH_CAUTION"],
+      explanation: "Cần thận trọng với nội dung này.",
+    }));
+    const api = apiWith(create);
+    const chat = vi.fn().mockResolvedValue({
+      contract_version: "v4" as const,
+      route: "conversation" as const,
+      response: "Không có gì. Nếu có tin nhắn đáng ngờ khác, bạn cứ gửi tiếp nhé.",
+    });
+    api.chat = chat;
+    render(<AnalysisWorkspace api={api} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra nội dung này" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+    expect(await screen.findByRole("heading", { name: "Đáng ngờ" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Cảm ơn bạn" } });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByText(/Nếu có tin nhắn đáng ngờ khác/i)).toBeInTheDocument();
+    expect(chat).toHaveBeenCalledWith("Cảm ơn bạn");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: "Đáng ngờ" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i)).toBeInTheDocument();
   });
 
   it("renders out-of-scope separately from a security conclusion", async () => {
@@ -171,7 +258,7 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByText(/Nên làm ngay/i)).not.toBeInTheDocument();
   });
 
-  it("renders a completed security risk without claim or screenshot semantics", async () => {
+  it("renders a completed security risk without claim semantics", async () => {
     const api = apiWith(vi.fn().mockResolvedValue(response({
       scope_decision: "IN_SCOPE",
       scope_reasons: ["otp_request"],
@@ -278,6 +365,7 @@ describe("Security Chat workspace", () => {
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
+    fireEvent.click(await screen.findByText("Báo cáo hoặc yêu cầu xem xét"));
     fireEvent.click(await screen.findByRole("button", { name: "Gửi báo cáo" }));
     await waitFor(() => expect(api.reportAnalysis).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Yêu cầu xem xét lại quyết định/i }));

@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { ArrowUp, History, Loader2, ShieldCheck } from "lucide-react";
 
+import { AUTOMATIC_LOOKUP_DISCLOSURE } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityConversationV4 } from "@/types/generated/api-v4";
 
 export function ResumedContextCard({
@@ -14,23 +15,18 @@ export function ResumedContextCard({
   conversation: SecurityConversationV4;
   busy: boolean;
   issue: string | null;
-  onResume(message: string, externalLookup: boolean, officialLookup: boolean): Promise<boolean>;
+  onResume(message: string): Promise<boolean>;
 }) {
   const [message, setMessage] = useState("");
-  const [externalLookup, setExternalLookup] = useState(false);
-  const [officialLookup, setOfficialLookup] = useState(false);
   const context = conversation.summary.security_context;
-  const hasUrl = useMemo(() => /https?:\/\/[^\s]+/iu.test(message), [message]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const value = message.trim();
     if (!value || busy || conversation.status !== "active") return;
-    const accepted = await onResume(value, hasUrl && externalLookup, officialLookup);
+    const accepted = await onResume(value);
     if (accepted) {
       setMessage("");
-      setExternalLookup(false);
-      setOfficialLookup(false);
     }
   };
 
@@ -73,10 +69,7 @@ export function ResumedContextCard({
             <textarea
               id="resume-message"
               value={message}
-              onChange={(event) => {
-                setMessage(event.target.value);
-                if (!/https?:\/\/[^\s]+/iu.test(event.target.value)) setExternalLookup(false);
-              }}
+              onChange={(event) => setMessage(event.target.value)}
               disabled={busy || conversation.status !== "active"}
               maxLength={5000}
               className="min-h-24 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 pr-12 text-sm leading-6"
@@ -86,9 +79,7 @@ export function ResumedContextCard({
               {busy ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </button>
           </div>
-          {hasUrl && <label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" checked={externalLookup} onChange={(event) => setExternalLookup(event.target.checked)} className="mt-0.5 size-4 accent-[var(--primary)]" /><span><strong className="block">Cho phép kiểm tra URL bên ngoài</strong><span className="text-muted-foreground">Consent chỉ áp dụng cho follow-up này.</span></span></label>}
-          <label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" checked={officialLookup} onChange={(event) => setOfficialLookup(event.target.checked)} className="mt-0.5 size-4 accent-[var(--primary)]" /><span><strong className="block">Cho phép đối chiếu nguồn chính thức</strong><span className="text-muted-foreground">Không kế thừa consent từ lượt trước.</span></span></label>
-          <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />Follow-up gửi kèm conversation ID và version hiện tại; không gửi raw transcript cũ.</p>
+          <p className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE} Follow-up chỉ gửi context có cấu trúc, không gửi lại raw transcript cũ.</p>
         </form>
       </div>
     </section>

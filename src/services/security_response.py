@@ -14,7 +14,18 @@ from src.security_ai.contracts import AssistantOperation, AssistantSynthesis, Se
 from src.security_ai.runtime import SecurityAssistantRuntime
 
 _UNSAFE_LINK_TEXT = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
-_FALLBACK_LIMITATION = "AI explanation không khả dụng; đã dùng phản hồi mẫu được policy kiểm soát."
+_AI_SYNTHESIS_LIMITATION = (
+    "AI diễn đạt không khả dụng; phản hồi vẫn được tạo trực tiếp từ kết quả, bằng chứng và hành động đã kiểm chứng."
+)
+_AI_FAILURE_REASON_LABELS = {
+    "budget_exceeded": "vượt ngân sách lượt gọi",
+    "invalid_structured_output": "structured output không hợp lệ",
+    "provider_unconfigured": "provider AI chưa được cấu hình",
+    "provider_error": "provider trả lỗi",
+    "timeout": "provider quá thời gian chờ",
+    "turn_deadline_exceeded": "lượt phân tích vượt deadline",
+    "grounding_rejected": "phản hồi AI không vượt qua kiểm tra grounding",
+}
 _FOLLOW_UP_OFFER = "Bạn có thể gửi thêm thông tin không nhạy cảm để tiếp tục đánh giá trong case này."
 
 
@@ -25,8 +36,8 @@ def _immediate_steps(scope: SecurityScopeResponseV4) -> list[AssistantImmediateS
     ]
 
 
-def template_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
-    """Build a complete response without relying on provider prose."""
+def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
+    """Answer the user from verified case data without a canned template."""
     evidence_by_ref = {item.evidence_ref: item for item in scope.evidence}
     reasons = [
         AssistantReasonV4(text=evidence_by_ref[ref].description, evidence_refs=[ref])
@@ -34,13 +45,18 @@ def template_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResp
         if ref in evidence_by_ref
     ][:3]
     return AssistantResponseV4(
-        summary=scope.explanation or "Đã hoàn tất đánh giá bảo mật theo policy hiện hành.",
+        summary=scope.explanation or "Mình đã kiểm tra nội dung này theo các tín hiệu bảo mật hiện có.",
         top_reasons=reasons,
         uncertainties=list(scope.limitations)[:20],
         immediate_steps=_immediate_steps(scope),
         follow_up_offer=_FOLLOW_UP_OFFER,
-        generation_mode=AssistantGenerationModeV4.TEMPLATE_FALLBACK,
+        generation_mode=AssistantGenerationModeV4.POLICY_GROUNDED,
     )
+
+
+# Compatibility import for integrations that have not migrated to the new
+# name. New responses produced through it are still policy-grounded.
+template_assistant_response = policy_grounded_assistant_response
 
 
 def grounded_ai_response(
@@ -94,11 +110,11 @@ class GroundedSecurityResponseService:
     async def enrich(self, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
         if scope.risk is None or scope.policy_version is None:
             return scope
-        fallback = template_assistant_response(scope)
+        response = policy_grounded_assistant_response(scope)
         if not self._ai_enabled:
-            return scope.model_copy(update={"assistant_response": fallback})
+            return scope.model_copy(update={"assistant_response": response})
         if self._model is None:
-            return self._fallback(scope, fallback)
+            return self._with_ai_limitation(scope, response, reason="provider_unconfigured")
 
         result = await self._runtime.invoke(
             AssistantOperation.SYNTHESIZE,
@@ -107,15 +123,20 @@ class GroundedSecurityResponseService:
         )
         grounded = grounded_ai_response(scope, result.output) if result.output is not None else None
         if grounded is None:
-            return self._fallback(scope, fallback)
+            reason = result.error or "grounding_rejected"
+            return self._with_ai_limitation(scope, response, reason=reason)
         return scope.model_copy(update={"assistant_response": grounded})
 
     @staticmethod
-    def _fallback(
+    def _with_ai_limitation(
         scope: SecurityScopeResponseV4,
         response: AssistantResponseV4,
+        *,
+        reason: str,
     ) -> SecurityScopeResponseV4:
-        limitations = list(dict.fromkeys([*scope.limitations, _FALLBACK_LIMITATION]))
+        reason_label = _AI_FAILURE_REASON_LABELS.get(reason, "lỗi AI không xác định")
+        limitation = f"{_AI_SYNTHESIS_LIMITATION} Nguyên nhân: {reason_label} ({reason})."
+        limitations = list(dict.fromkeys([*scope.limitations, limitation]))
         response = response.model_copy(update={"uncertainties": limitations[:20]})
         return scope.model_copy(update={"assistant_response": response, "limitations": limitations})
 
@@ -146,5 +167,6 @@ class GroundedSecurityResponseService:
 __all__ = [
     "GroundedSecurityResponseService",
     "grounded_ai_response",
+    "policy_grounded_assistant_response",
     "template_assistant_response",
 ]

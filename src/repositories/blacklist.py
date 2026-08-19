@@ -2130,5 +2130,4 @@ class SQLiteBlacklistRepository:
 
 def _analysis_request_from_json(value: str) -> AnalysisCreateRequest:
     payload = json.loads(value)
-    model = AnalysisCreateRequestV3 if "consent_to_capture_screenshot" in payload else AnalysisCreateRequest
-    return model.model_validate(payload)
+    return AnalysisCreateRequestV3.model_validate(payload)

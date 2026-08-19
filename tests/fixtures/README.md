@@ -10,7 +10,7 @@ and `tool_policy.json`. Every provider outcome uses the same strict result/error
 All timestamps and provider payloads are synthetic. Tests must not replace these
 records with live provider calls or raw provider responses.
 
-New coverage must include phishing, OTP/payment, recruitment, fake promotion, safe official,
-official `NOT_FOUND`, no-consent, `NEED_MORE_INFO`, and general fact-check out-of-scope cases. Domain
+New coverage must include phishing, OTP/payment, recruitment, fake promotion, safe whitelist,
+no-consent, `NEED_MORE_INFO`, and general fact-check out-of-scope cases. Domain
 cases continue to cover subdomain/eTLD+1, public suffix, IDNA, IP literals, redirect loops and private
 hops.

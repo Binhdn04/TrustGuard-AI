@@ -64,20 +64,17 @@ class Settings(BaseSettings):
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
-    source_discovery_enabled: bool = True
-    source_provisional_enabled: bool = True
-    source_auto_promotion_enabled: bool = True
+    source_discovery_enabled: bool = False
+    source_provisional_enabled: bool = False
+    source_auto_promotion_enabled: bool = False
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
     security_investigation_max_external_calls: int = Field(default=8, ge=1, le=100)
     security_investigation_max_retries: int = Field(default=1, ge=0, le=3)
     security_investigation_deadline_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
-    official_verifier_api_url: str = ""
-    official_verifier_api_key: str = ""
     security_conversation_retention_days: int = Field(default=30, ge=1, le=365)
     security_release_profile: Literal["pre_cutover", "cutover"] = "pre_cutover"
-    legacy_api_writes_enabled: bool = True
 
     # Demo auth
     demo_auth_enabled: bool = True
@@ -107,24 +104,16 @@ class Settings(BaseSettings):
     job_lease_seconds: int = Field(default=60, ge=5, le=3600)
     run_durable_worker: bool = True
 
-    # Signed artifact access and retention. Access tokens are derived and are
-    # never stored in PostgreSQL.
-    artifact_signing_key: str = "development-artifact-signing-key"
-    artifact_access_ttl_seconds: int = Field(default=300, ge=30, le=3600)
-    artifact_retention_days: int = Field(default=30, ge=1, le=365)
-    artifact_storage_dir: str = "./data/artifacts"
+    # Retention for minimized analysis content and security payloads.
+    content_retention_days: int = Field(default=30, ge=1, le=365)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
 
     def security_live_provider_requirements(self) -> dict[str, str]:
         required = {
-            "GOOGLE_WEB_RISK_API_KEY": self.google_web_risk_api_key,
-            "OFFICIAL_VERIFIER_API_URL": self.official_verifier_api_url,
-            "OFFICIAL_VERIFIER_API_KEY": self.official_verifier_api_key,
+            "VIRUSTOTAL_API_KEY": self.virustotal_api_key,
         }
-        if self.reputation_secondary_enabled:
-            required["VIRUSTOTAL_API_KEY"] = self.virustotal_api_key
         return required
 
     def enabled_security_capabilities(self) -> dict[str, bool]:
@@ -180,24 +169,10 @@ class Settings(BaseSettings):
                 raise ValueError("OIDC_ISSUER must use HTTPS in production")
             if self._placeholder_or_short_secret(self.database_encryption_key):
                 raise ValueError("DATABASE_ENCRYPTION_KEY must be a non-placeholder secret of at least 32 characters")
-            if self._placeholder_or_short_secret(self.artifact_signing_key):
-                raise ValueError("ARTIFACT_SIGNING_KEY must be a non-placeholder secret of at least 32 characters")
-            if self.database_encryption_key == self.artifact_signing_key:
-                raise ValueError("DATABASE_ENCRYPTION_KEY and ARTIFACT_SIGNING_KEY must be different")
             origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
             if not origins or any(origin == "*" or urlparse(origin).scheme != "https" for origin in origins):
                 raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins in production")
             if self.security_release_profile == "cutover":
-                if self.legacy_api_writes_enabled:
-                    raise ValueError("LEGACY_API_WRITES_ENABLED must be false for production cutover")
-                if any(
-                    (
-                        self.source_discovery_enabled,
-                        self.source_provisional_enabled,
-                        self.source_auto_promotion_enabled,
-                    )
-                ):
-                    raise ValueError("Legacy source discovery and promotion must be disabled for production cutover")
                 if not self.live_providers_required:
                     raise ValueError("LIVE_PROVIDERS_REQUIRED must be true for production cutover")
         if self.live_providers_required:

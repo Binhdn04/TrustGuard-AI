@@ -22,6 +22,7 @@ import type {
   SecurityCampaignRecordV4,
   SecurityCampaignReviewerStatusV4,
   SecurityCapabilitiesResponseV4,
+  SecurityChatResponseV4,
   SecurityConversationPageV4,
   SecurityConversationV4,
   SecurityDomainIntelligencePageV4,
@@ -47,8 +48,18 @@ import type {
   WhitelistPageV4,
   WhitelistRecordV4,
 } from "@/types/generated/api-v4";
+import type {
+  AdminActionAuditRecordV3,
+  AdminActionDecisionRequestV3,
+  AdminActionDecisionResponseV3,
+  AdminActionPageV3,
+  AdminActionRecordV3,
+} from "@/types/generated/api-v3";
 
-import type { AnalysisEventQuery } from "./analysis-api.types";
+export interface AnalysisEventQuery {
+  cursor?: string | null;
+  limit?: number;
+}
 
 export interface SecurityPaginationQuery {
   limit?: number;
@@ -105,6 +116,7 @@ export interface SecurityAppealPageQuery extends SecurityPaginationQuery {
 
 export interface SecurityAnalysisApi {
   getCapabilities(): Promise<SecurityCapabilitiesResponseV4>;
+  chat?(message: string): Promise<SecurityChatResponseV4>;
   createAnalysis(
     request: SecurityTriageCreateRequestV4,
     options?: { idempotencyKey?: string },
@@ -126,6 +138,10 @@ export interface SecurityAnalysisApi {
   decideAdminReport(reportId: string, request: SecurityReportDecisionRequestV4): Promise<SecurityReportAdminRecordV4>;
   listAdminAppeals(query?: SecurityAppealPageQuery): Promise<SecurityAppealPageV4>;
   decideAdminAppeal(appealId: string, request: SecurityAppealDecisionRequestV4): Promise<SecurityAppealAdminRecordV4>;
+  listAdminActions?(query?: SecurityPaginationQuery & { status?: "pending_review" | "approved" | "rejected" | "executed" | "failed" }): Promise<AdminActionPageV3>;
+  getAdminAction?(actionId: string): Promise<AdminActionRecordV3>;
+  decideAdminAction?(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3>;
+  listAdminActionAudit?(actionId: string): Promise<AdminActionAuditRecordV3[]>;
   createBrand(request: BrandCreateRequestV4): Promise<BrandRecordV4>;
   listBrands(): Promise<BrandRecordV4[]>;
   pageBrands(query?: SecurityTrustPageQuery): Promise<BrandPageV4>;

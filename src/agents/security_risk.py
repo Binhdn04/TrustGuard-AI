@@ -38,7 +38,6 @@ _SAFE_SIGNALS = {
     "approved_whitelist",
     "official_match",
     "official_contact_match",
-    "official_confirmed",
     "safe",
 }
 
@@ -136,6 +135,7 @@ def assess_security_risk(
         return scope
     context_evidence = next((item for item in scope.evidence if item.type.value == "security_context"), None)
     context_ref = context_evidence.evidence_ref if context_evidence else ""
+    has_whitelist = any(item.signal.casefold() == "approved_whitelist" for item in scope.evidence)
     contributions: list[_Contribution] = []
     if context.credential_request:
         contributions.append(_Contribution(35, context_ref))
@@ -145,7 +145,7 @@ def assess_security_risk(
         contributions.append(_Contribution(35, context_ref))
     if context.urgency:
         contributions.append(_Contribution(15, context_ref))
-    if context.impersonation_signals:
+    if context.impersonation_signals and not has_whitelist:
         contributions.append(_Contribution(18, context_ref))
     if context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT and (
         context.credential_request or context.otp_request or context.payment_request
@@ -161,7 +161,6 @@ def assess_security_risk(
     reviewed_risk_refs: list[str] = []
     reviewed_suppressions: list[SecurityEvidenceV4] = []
     weak_contributions: list[_Contribution] = []
-    has_whitelist = any(item.signal.casefold() == "approved_whitelist" for item in scope.evidence)
     for item in scope.evidence:
         signal_parts = set(item.signal.casefold().split("+"))
         if memory_enabled and item.type.value == "reviewed_security_memory":
@@ -184,8 +183,6 @@ def assess_security_risk(
         points = max((_WEAK_SIGNAL_POINTS.get(signal, 0) for signal in signal_parts), default=0)
         if has_whitelist and item.type.value in {"local_url_rule", "rdap", "brand_match"}:
             points = 0
-        if "official_contradicted" in signal_parts:
-            points = max(points, 20)
         if points:
             weak_contributions.append(_Contribution(points, item.evidence_ref))
 
@@ -203,6 +200,12 @@ def assess_security_risk(
         ]
     weak_external = sum(item.points for item in weak_contributions)
     contributions.extend(weak_contributions)
+    if context.impersonation_signals and any(
+        "lookalike_domain" in item.signal.casefold().split("+") for item in scope.evidence
+    ):
+        # A claimed organization plus a lookalike domain is stronger than either
+        # weak signal alone, while still never being sufficient for MALICIOUS.
+        contributions.append(_Contribution(5, context_ref))
 
     score = min(100, sum(item.points for item in contributions))
     if strong_refs:
@@ -233,12 +236,12 @@ def assess_security_risk(
     if context.credential_request or context.otp_request or context.payment_request:
         confidence += 0.3
     if strong_refs or safe_refs:
-        confidence += 0.25
+        confidence += 0.55
     elif reviewed_risk_refs:
         confidence += 0.15
     elif len({item.type for item in grounded}) > 1:
         confidence += 0.15
-    if scope.errors or scope.limitations:
+    if (scope.errors or scope.limitations) and not (strong_refs or safe_refs):
         confidence = min(confidence, 0.65)
 
     payload = scope.model_dump()

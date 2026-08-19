@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 
-import type { AnalysisApi } from "@/lib/api/analysis-api.types";
-import { ApiError } from "@/lib/api/http-analysis-api";
+import { ApiError } from "@/lib/api/api-error";
 import { cn } from "@/lib/utils";
 import type {
   AdminActionAuditRecordV3,
@@ -13,13 +12,20 @@ import type {
 
 const PAGE_SIZE = 10;
 
+export interface AdminActionApi {
+  listAdminActions(query?: { status?: AdminActionStatusV3; limit?: number; offset?: number }): Promise<{ items: AdminActionRecordV3[]; total: number }>;
+  getAdminAction(actionId: string): Promise<AdminActionRecordV3>;
+  decideAdminAction(actionId: string, request: { decision: ReviewDecisionV3; note: string }): Promise<unknown>;
+  listAdminActionAudit(actionId: string): Promise<AdminActionAuditRecordV3[]>;
+}
+
 function ActionStatus({ value }: { value: AdminActionStatusV3 }) {
   const successful = value === "executed";
   const failed = value === "failed";
   return <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase", successful ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : failed || value === "rejected" ? "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300")}>{value.replaceAll("_", " ")}</span>;
 }
 
-export function ActionExecutionPanel({ api }: { api: AnalysisApi }) {
+export function ActionExecutionPanel({ api }: { api: AdminActionApi }) {
   const [status, setStatus] = useState<"all" | AdminActionStatusV3>("all");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<AdminActionRecordV3[]>([]);
@@ -93,7 +99,7 @@ export function ActionExecutionPanel({ api }: { api: AnalysisApi }) {
 
   return (
     <section aria-labelledby="action-execution-heading" className="space-y-5">
-      <header className="border-b border-border/70 pb-5"><p className="micro-label text-primary">V3 reviewed-action boundary</p><h2 id="action-execution-heading" className="mt-1 text-2xl font-bold">Action execution review</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Approve/reject dùng contract v3 hiện có. Chỉ trạng thái <strong>executed</strong> được hiển thị là thành công; failed hoặc thiếu action sink luôn là lỗi.</p></header>
+      <header className="border-b border-border/70 pb-5"><p className="micro-label text-primary">V4 reviewed-action boundary</p><h2 id="action-execution-heading" className="mt-1 text-2xl font-bold">Action execution review</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Approve/reject dùng Security v4 API. Chỉ trạng thái <strong>executed</strong> được hiển thị là thành công; failed hoặc thiếu action sink luôn là lỗi.</p></header>
       <div className="grid gap-5 xl:grid-cols-[minmax(18rem,0.65fr)_minmax(25rem,1.35fr)]">
         <section className="overflow-hidden rounded-2xl border border-border bg-card">
           <div className="flex items-center justify-between gap-3 border-b border-border p-4"><div><p className="micro-label">Action queue</p><p className="mt-1 text-xs text-muted-foreground">{total} records</p></div><select aria-label="Lọc reviewed action theo trạng thái" value={status} onChange={(event) => { setStatus(event.target.value as typeof status); setPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs"><option value="all">all</option>{["pending_review", "approved", "rejected", "executed", "failed"].map((value) => <option key={value} value={value}>{value}</option>)}</select></div>

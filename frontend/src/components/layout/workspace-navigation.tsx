@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ComponentType, SVGProps } from "react";
-import { Archive, BadgeCheck, Binoculars, Boxes, FileClock, Plus, ShieldCheck } from "lucide-react";
+import { Archive, BadgeCheck, Binoculars, FileClock, Plus, ShieldCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/auth-context";
@@ -58,7 +58,6 @@ export function workspaceNavigation(
       icon: FileClock,
     });
   }
-  adminItems.push({ label: "Compatibility", description: "V3 legacy operations", href: "/admin/compatibility", icon: Boxes });
   groups.push({ label: "Admin", items: adminItems });
   return groups;
 }

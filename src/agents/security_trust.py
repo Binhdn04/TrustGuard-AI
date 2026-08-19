@@ -3,30 +3,21 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
-
-import httpx
 
 from src.agents.nodes.planning import step_id_for
 from src.agents.nodes.rules import normalize_url
 from src.models import (
     BrandRecordV4,
     InvestigationStepV4,
-    OfficialSourceFindingV4,
-    OfficialVerificationPurposeV4,
-    OfficialVerificationResultV4,
-    OfficialVerificationVerdictV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
     SecurityInvestigationStepStatusV4,
     SecurityInvestigationToolV4,
-    SecurityScenarioV4,
     SecurityScopeResponseV4,
-    SecurityToolErrorV4,
     SecurityTriageCreateRequestV4,
     WhitelistRecordV4,
     WhitelistScopeV4,
@@ -39,51 +30,6 @@ _EMAIL_RE = re.compile(r"(?<![\w.+-])([\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![
 class SecurityTrustRepository(Protocol):
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]: ...
     async def list_active_whitelist(self, at: datetime) -> list[WhitelistRecordV4]: ...
-
-
-class OfficialSourceSearch(Protocol):
-    async def search(
-        self, query: str, *, allowed_domains: Sequence[str], max_results: int
-    ) -> list[OfficialSourceFindingV4]: ...
-
-
-class HttpOfficialSourceSearch:
-    """Adapter for a purpose-built verifier; returned URLs are still allowlist-filtered locally."""
-
-    def __init__(
-        self,
-        endpoint: str,
-        api_key: str,
-        *,
-        timeout: float = 10,
-        client: httpx.AsyncClient | None = None,
-    ) -> None:
-        self._endpoint = endpoint
-        self._api_key = api_key
-        self._client = client or httpx.AsyncClient(timeout=timeout)
-        self._owns_client = client is None
-
-    async def search(
-        self, query: str, *, allowed_domains: Sequence[str], max_results: int
-    ) -> list[OfficialSourceFindingV4]:
-        response = await self._client.post(
-            self._endpoint,
-            headers={"Authorization": f"Bearer {self._api_key}"} if self._api_key else {},
-            json={
-                "query": query,
-                "allowed_domains": list(allowed_domains),
-                "max_results": min(max_results, OfficialClaimVerifier.MAX_SOURCES),
-                "include_raw_content": False,
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
-        rows = payload.get("findings", []) if isinstance(payload, dict) else []
-        return [OfficialSourceFindingV4.model_validate(item) for item in rows[:max_results]]
-
-    async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
 
 
 def _fold(value: str) -> str:
@@ -179,7 +125,11 @@ class BrandMatcher:
                 signal, confidence = "official_match", 1.0
             elif host.startswith("xn--") or ".xn--" in host:
                 signal, confidence = "homograph_domain", 0.9
-            elif any(_distance(host.split(".")[0], official.split(".")[0]) <= 2 for official in official_domains):
+            elif any(
+                _distance(host.split(".")[0], official.split(".")[0]) <= 2
+                or host.split(".")[0].startswith(f"{official.split('.')[0]}-")
+                for official in official_domains
+            ):
                 signal, confidence = "lookalike_domain", 0.85
             else:
                 signal, confidence = "domain_mismatch", 0.7
@@ -214,86 +164,17 @@ class BrandMatcher:
         return brand, evidence
 
 
-class OfficialClaimVerifier:
-    MAX_CLAIMS_PER_CASE = 1
-    MAX_SEARCH_QUERIES = 2
-    MAX_SOURCES = 5
-
-    def __init__(self, search: OfficialSourceSearch | None = None) -> None:
-        self._search = search
-
-    async def verify(
-        self,
-        claim: str,
-        purpose: OfficialVerificationPurposeV4,
-        allowed_domains: Sequence[str],
-    ) -> tuple[OfficialVerificationResultV4, list[OfficialSourceFindingV4]]:
-        domains = tuple(dict.fromkeys(normalize_domain(item) for item in allowed_domains))
-        if not domains or self._search is None:
-            return OfficialVerificationResultV4(
-                verdict=OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE,
-                purpose=purpose,
-                sources_checked=0,
-                search_queries_used=0,
-            ), []
-        findings = await self._search.search(claim, allowed_domains=domains, max_results=self.MAX_SOURCES)
-        accepted: list[OfficialSourceFindingV4] = []
-        for finding in findings[: self.MAX_SOURCES]:
-            host = (urlsplit(finding.source_url).hostname or "").casefold()
-            if any(_is_domain_or_subdomain(host, domain) for domain in domains):
-                accepted.append(finding)
-        if any(item.finding == "contradicted" for item in accepted):
-            verdict = OfficialVerificationVerdictV4.OFFICIAL_CONTRADICTED
-        elif any(item.finding == "confirmed" for item in accepted):
-            verdict = OfficialVerificationVerdictV4.OFFICIAL_CONFIRMED
-        elif findings:
-            verdict = OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE
-        else:
-            verdict = OfficialVerificationVerdictV4.NOT_FOUND
-        refs = [_ref("official", item.source_url, item.finding) for item in accepted]
-        return OfficialVerificationResultV4(
-            verdict=verdict,
-            purpose=purpose,
-            sources_checked=len(accepted),
-            search_queries_used=1,
-            evidence_refs=refs,
-        ), accepted
-
-    async def aclose(self) -> None:
-        close = getattr(self._search, "aclose", None) or getattr(self._search, "close", None)
-        if close is not None:
-            result = close()
-            if hasattr(result, "__await__"):
-                await result
-
-
-def _purpose(scope: SecurityScopeResponseV4) -> OfficialVerificationPurposeV4:
-    context = scope.security_context
-    assert context is not None
-    if context.scenario is SecurityScenarioV4.RECRUITMENT:
-        return OfficialVerificationPurposeV4.VERIFY_RECRUITMENT_PROGRAM
-    if context.scenario is SecurityScenarioV4.PROMOTION_PRIZE:
-        return OfficialVerificationPurposeV4.VERIFY_OFFICIAL_CAMPAIGN
-    if context.urls:
-        return OfficialVerificationPurposeV4.VERIFY_OFFICIAL_DOMAIN
-    return OfficialVerificationPurposeV4.VERIFY_BRAND_ANNOUNCEMENT
-
-
 class SecurityTrustService:
     def __init__(
         self,
         repository: SecurityTrustRepository,
         *,
         matcher: BrandMatcher | None = None,
-        verifier: OfficialClaimVerifier | None = None,
-        max_external_calls: int = 8,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._repository = repository
         self._matcher = matcher or BrandMatcher()
-        self._verifier = verifier or OfficialClaimVerifier()
         self._clock = clock
-        self._max_external_calls = max_external_calls
 
     async def enrich(
         self, request: SecurityTriageCreateRequestV4, scope: SecurityScopeResponseV4
@@ -301,8 +182,6 @@ class SecurityTrustService:
         if scope.security_context is None:
             return scope
         now = self._clock()
-        limitations = list(scope.limitations)
-        errors = list(scope.errors)
         plan = list(scope.investigation_plan)
         trust_indexes = [
             index
@@ -311,7 +190,6 @@ class SecurityTrustService:
             in {
                 SecurityInvestigationToolV4.BRAND_MATCH,
                 SecurityInvestigationToolV4.WHITELIST_LOOKUP,
-                SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
             }
         ]
         # A completed planner with no trust candidates intentionally selected a
@@ -326,23 +204,6 @@ class SecurityTrustService:
             plan.append(brand_placeholder)
             for step in self._local_plan(scope, None)[1:]:
                 plan.append(step.model_copy(update={"status": SecurityInvestigationStepStatusV4.PENDING}))
-            plan.append(
-                InvestigationStepV4(
-                    step_id=step_id_for(
-                        SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER.value,
-                        "official-sources",
-                    ),
-                    tool=SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
-                    target="official-sources",
-                    reason_code="official_verification_requested",
-                    status=(
-                        SecurityInvestigationStepStatusV4.PENDING
-                        if request.consent.official_source_lookup
-                        else SecurityInvestigationStepStatusV4.SKIPPED
-                    ),
-                    status_reason=None if request.consent.official_source_lookup else "consent_required",
-                )
-            )
 
         brand_indexes = [
             index
@@ -356,14 +217,6 @@ class SecurityTrustService:
             if step.tool is SecurityInvestigationToolV4.WHITELIST_LOOKUP
             and step.status is SecurityInvestigationStepStatusV4.PENDING
         ]
-        official_index = next(
-            (
-                index
-                for index, step in enumerate(plan)
-                if step.tool is SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER
-            ),
-            None,
-        )
         brands = await self._repository.list_active_brands(now) if brand_indexes else []
         brand, evidence = self._matcher.match(request, scope, brands, now) if brand_indexes else (None, [])
         for index in brand_indexes:
@@ -384,118 +237,9 @@ class SecurityTrustService:
                     }
                 )
 
-        official_step = plan[official_index] if official_index is not None else None
-        if (
-            official_step is not None
-            and official_step.status is SecurityInvestigationStepStatusV4.SKIPPED
-            and official_step.status_reason == "consent_required"
-            and request.consent.official_source_lookup
-        ):
-            official_step = official_step.model_copy(
-                update={"status": SecurityInvestigationStepStatusV4.PENDING, "status_reason": None}
-            )
-        official_calls = 0
-        trust_partial = False
-        if official_step is not None and official_step.status is SecurityInvestigationStepStatusV4.PENDING:
-            # Consent is revalidated immediately before the provider call; a
-            # planner ranking can never grant it.
-            if not request.consent.official_source_lookup:
-                official_step = official_step.model_copy(
-                    update={
-                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
-                        "status_reason": "consent_required",
-                    }
-                )
-            elif any(
-                next((candidate.status for candidate in plan if candidate.step_id == dependency), None)
-                is not SecurityInvestigationStepStatusV4.COMPLETED
-                for dependency in official_step.depends_on
-            ):
-                official_step = official_step.model_copy(
-                    update={
-                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
-                        "status_reason": "dependency_unsatisfied",
-                    }
-                )
-            elif brand is None:
-                limitations.append("Không có brand registry phù hợp để giới hạn official-source lookup.")
-                official_step = official_step.model_copy(
-                    update={
-                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
-                        "status_reason": "brand_registry_required",
-                    }
-                )
-            elif scope.tool_calls_used >= self._max_external_calls:
-                limitations.append("Official-source lookup bị bỏ qua vì đã hết external-call budget.")
-                official_step = official_step.model_copy(
-                    update={
-                        "status": SecurityInvestigationStepStatusV4.SKIPPED,
-                        "status_reason": "budget_exhausted",
-                    }
-                )
-            else:
-                provider_failed = False
-                try:
-                    result, findings = await self._verifier.verify(
-                        request.message, _purpose(scope), brand.official_domains
-                    )
-                except Exception:
-                    provider_failed = True
-                    trust_partial = True
-                    result, findings = (
-                        OfficialVerificationResultV4(
-                            verdict=OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE,
-                            purpose=_purpose(scope),
-                            sources_checked=0,
-                            search_queries_used=0,
-                        ),
-                        [],
-                    )
-                    limitations.append("Official-source lookup không hoàn tất.")
-                    errors.append(
-                        SecurityToolErrorV4(
-                            tool=SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
-                            target="official-sources",
-                            code="PROVIDER_ERROR",
-                            message="Official-source provider failed.",
-                            retryable=True,
-                            provider="official-source-search",
-                        )
-                    )
-                official_calls = result.search_queries_used
-                official_step = official_step.model_copy(
-                    update={
-                        "status": (
-                            SecurityInvestigationStepStatusV4.FAILED
-                            if provider_failed
-                            else SecurityInvestigationStepStatusV4.COMPLETED
-                            if official_calls
-                            else SecurityInvestigationStepStatusV4.SKIPPED
-                        ),
-                        "status_reason": (
-                            "tool_failed"
-                            if provider_failed
-                            else "tool_completed"
-                            if official_calls
-                            else "not_configured"
-                        ),
-                    }
-                )
-                evidence.extend(self._official_evidence(result, findings, brand, now))
-                if result.verdict is OfficialVerificationVerdictV4.NOT_FOUND:
-                    limitations.append("Official source không tìm thấy thông tin; NOT_FOUND không phải là phủ định.")
-                elif result.verdict is OfficialVerificationVerdictV4.INSUFFICIENT_EVIDENCE:
-                    limitations.append("Official-source evidence chưa đủ để kết luận.")
-        if official_index is not None and official_step is not None:
-            plan[official_index] = official_step
         payload = scope.model_dump()
         payload["evidence"] = list({item.evidence_ref: item for item in [*scope.evidence, *evidence]}.values())
-        payload["limitations"] = list(dict.fromkeys(limitations))
-        payload["errors"] = errors
         payload["investigation_plan"] = plan
-        payload["tool_calls_used"] = scope.tool_calls_used + official_calls
-        if trust_partial:
-            payload["investigation_status"] = SecurityInvestigationStatusV4.PARTIAL
         return SecurityScopeResponseV4.model_validate(payload)
 
     def _local_plan(self, scope: SecurityScopeResponseV4, brand: BrandRecordV4 | None) -> list[InvestigationStepV4]:
@@ -563,36 +307,9 @@ class SecurityTrustService:
             )
         return evidence
 
-    def _official_evidence(
-        self,
-        result: OfficialVerificationResultV4,
-        findings: list[OfficialSourceFindingV4],
-        brand: BrandRecordV4,
-        observed_at: datetime,
-    ) -> list[SecurityEvidenceV4]:
-        target = canonical_whitelist_url(findings[0].source_url) if findings else brand.official_domains[0]
-        return [
-            _evidence(
-                SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
-                "official-claim-verifier",
-                result.verdict.value.casefold(),
-                f"Official verification cho {brand.name}: {result.verdict.value}; sources={result.sources_checked}.",
-                observed_at,
-                target=target,
-                confidence=1.0 if result.sources_checked else 0.0,
-                provenance_ref=f"brand:{brand.brand_id}:{brand.policy_version}",
-            )
-        ]
-
-    async def aclose(self) -> None:
-        await self._verifier.aclose()
-
 
 __all__ = [
     "BrandMatcher",
-    "HttpOfficialSourceSearch",
-    "OfficialClaimVerifier",
-    "OfficialSourceSearch",
     "SecurityTrustService",
     "canonical_whitelist_url",
 ]

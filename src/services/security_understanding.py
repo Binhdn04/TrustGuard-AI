@@ -45,6 +45,8 @@ _EXPLICIT_GENERAL_FACT_REASONS = {
     "general_fact_check_politics",
     "general_fact_check_medical_science",
     "general_fact_check_news",
+    "assistant_capabilities",
+    "recruitment_contact_required",
 }
 
 

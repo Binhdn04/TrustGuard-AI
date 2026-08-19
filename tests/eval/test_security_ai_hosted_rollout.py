@@ -84,7 +84,7 @@ def test_hosted_evidence_fails_closed_on_missing_infrastructure_or_hallucination
 def test_rollout_requires_sequential_flags_and_hosted_evidence() -> None:
     deterministic = {"passed": True, "dataset_version": "security-v4-eval-v1", "dataset_sha256": "a" * 64}
     ai = {"passed": True, "dataset_version": "security-ai-eval-v1", "dataset_sha256": "b" * 64}
-    hosted = {"passed": True, "evaluation_version": "security-ai-hosted-eval-v1", "rollout_stage": "planning", "evidence_sha256": "c" * 64}
+    hosted = evaluate_hosted_ai_evidence(_hosted_evidence(rollout_stage="planning"))
     settings = Settings(
         openai_api_key="configured-provider",
         security_ai_understanding_enabled=True,
@@ -100,6 +100,8 @@ def test_rollout_requires_sequential_flags_and_hosted_evidence() -> None:
         hosted_report=hosted,
     )
     assert ready["passed"] is True
+    assert ready["rollout_status"] == "stage_ready"
+    assert ready["production_rollout_complete"] is False
     assert ready["rollback"]["disable_flag"] == "SECURITY_AI_PLANNING_ENABLED"
     assert ready["rollback"]["database_action"] == "none"
 
@@ -113,11 +115,38 @@ def test_rollout_requires_sequential_flags_and_hosted_evidence() -> None:
     assert missing_hosted["gates"]["hosted_evaluation"] is False
 
 
+def test_rollout_rejects_hand_authored_hosted_pass_marker() -> None:
+    deterministic = {"passed": True, "dataset_version": "security-v4-eval-v1", "dataset_sha256": "a" * 64}
+    ai = {"passed": True, "dataset_version": "security-ai-eval-v1", "dataset_sha256": "b" * 64}
+    hosted = {
+        "passed": True,
+        "evaluation_version": "security-ai-hosted-eval-v1",
+        "rollout_stage": "understanding",
+        "evidence_sha256": "c" * 64,
+    }
+    settings = Settings(
+        openai_api_key="configured-provider",
+        security_ai_understanding_enabled=True,
+        _env_file=None,
+    )
+    result = evaluate_rollout_readiness(
+        settings,
+        SecurityAIRolloutStage.UNDERSTANDING,
+        deterministic_report=deterministic,
+        ai_report=ai,
+        hosted_report=hosted,
+    )
+    assert result["passed"] is False
+    assert result["rollout_status"] == "blocked"
+    assert result["production_rollout_complete"] is False
+    assert result["gates"]["hosted_evaluation"] is False
+
+
 def test_rollout_rejects_skipping_directly_to_admin_copilot() -> None:
     deterministic = {"passed": True, "dataset_version": "security-v4-eval-v1", "dataset_sha256": "a" * 64}
     ai = {"passed": True, "dataset_version": "security-ai-eval-v1", "dataset_sha256": "b" * 64}
     memory = {"passed": True, "evaluation_version": "security-memory-v2-eval-v1", "dataset_sha256": "c" * 64}
-    hosted = {"passed": True, "evaluation_version": "security-ai-hosted-eval-v1", "rollout_stage": "admin_copilot", "evidence_sha256": "d" * 64}
+    hosted = evaluate_hosted_ai_evidence(_hosted_evidence(rollout_stage="admin_copilot"))
     settings = Settings(
         openai_api_key="configured-provider",
         security_admin_copilot_enabled=True,

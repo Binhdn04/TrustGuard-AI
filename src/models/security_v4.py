@@ -52,6 +52,9 @@ class ScopeDecisionV4(StrEnum):
 class SecurityScenarioV4(StrEnum):
     RECRUITMENT = "recruitment"
     PROMOTION_PRIZE = "promotion_prize"
+    CHARITY = "charity"
+    INVESTMENT = "investment"
+    ONLINE_TASK = "online_task"
     ACCOUNT_VERIFICATION = "account_verification"
     PAYMENT = "payment"
     REFUND = "refund"
@@ -78,6 +81,14 @@ class PotentialThreatV4(StrEnum):
     RECRUITMENT_SCAM = "RECRUITMENT_SCAM"
     PROMOTION_PRIZE_SCAM = "PROMOTION_PRIZE_SCAM"
     CREDENTIAL_THEFT = "CREDENTIAL_THEFT"
+    IMPERSONATION_FINANCIAL_SCAM = "IMPERSONATION_FINANCIAL_SCAM"
+    CREDENTIAL_AND_OTP_PHISHING = "CREDENTIAL_AND_OTP_PHISHING"
+    RECRUITMENT_IMPERSONATION = "RECRUITMENT_IMPERSONATION"
+    CHARITY_IMPERSONATION_SCAM = "CHARITY_IMPERSONATION_SCAM"
+    INVESTMENT_IMPERSONATION_SCAM = "INVESTMENT_IMPERSONATION_SCAM"
+    ADVANCE_FEE_TASK_SCAM = "ADVANCE_FEE_TASK_SCAM"
+    PAYMENT_AND_OTP_PHISHING = "PAYMENT_AND_OTP_PHISHING"
+    ADVANCE_FEE_SCAM = "ADVANCE_FEE_SCAM"
     UNDETERMINED_SECURITY_THREAT = "UNDETERMINED_SECURITY_THREAT"
 
 
@@ -132,6 +143,9 @@ class SecurityRecommendedActionV4(StrEnum):
 
 class AssistantGenerationModeV4(StrEnum):
     AI = "ai"
+    POLICY_GROUNDED = "policy_grounded"
+    # Kept for reading responses persisted by older deployments. New turns
+    # must use POLICY_GROUNDED instead of presenting a template fallback.
     TEMPLATE_FALLBACK = "template_fallback"
 
 
@@ -174,7 +188,6 @@ class SecurityInvestigationToolV4(StrEnum):
     URL_REPUTATION = "url_reputation"
     BRAND_MATCH = "brand_match"
     WHITELIST_LOOKUP = "whitelist_lookup"
-    OFFICIAL_CLAIM_VERIFIER = "official_claim_verifier"
     SECURITY_MEMORY_LOOKUP = "security_memory_lookup"
 
 
@@ -201,7 +214,6 @@ class SecurityEvidenceTypeV4(StrEnum):
     URL_REPUTATION = "url_reputation"
     BRAND_MATCH = "brand_match"
     WHITELIST = "whitelist"
-    OFFICIAL_VERIFICATION = "official_verification"
     REVIEWED_SECURITY_MEMORY = "reviewed_security_memory"
 
 
@@ -214,21 +226,6 @@ class WhitelistScopeV4(StrEnum):
     DOMAIN = "domain"
     URL = "url"
     CONTACT = "contact"
-
-
-class OfficialVerificationPurposeV4(StrEnum):
-    VERIFY_OFFICIAL_CAMPAIGN = "verify_official_campaign"
-    VERIFY_BRAND_ANNOUNCEMENT = "verify_brand_announcement"
-    VERIFY_RECRUITMENT_PROGRAM = "verify_recruitment_program"
-    VERIFY_OFFICIAL_DOMAIN = "verify_official_domain"
-    VERIFY_OFFICIAL_CONTACT = "verify_official_contact"
-
-
-class OfficialVerificationVerdictV4(StrEnum):
-    OFFICIAL_CONFIRMED = "OFFICIAL_CONFIRMED"
-    OFFICIAL_CONTRADICTED = "OFFICIAL_CONTRADICTED"
-    NOT_FOUND = "NOT_FOUND"
-    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
 class SecurityMemoryAdminVerdictV4(StrEnum):
@@ -278,12 +275,16 @@ class SecurityToolErrorV4(SecurityContractModel):
 
 class SecurityConsentV4(SecurityContractModel):
     external_url_lookup: bool = False
-    official_source_lookup: bool = False
 
 
 class SecurityExecutionModeV4(StrEnum):
     INLINE = "inline"
     ASYNC = "async"
+
+
+class SecurityChatRouteV4(StrEnum):
+    CONVERSATION = "conversation"
+    SECURITY_ANALYSIS = "security_analysis"
 
 
 class BrandCreateRequestV4(SecurityContractModel):
@@ -348,21 +349,6 @@ class WhitelistPageV4(SecurityContractModel):
     offset: int = Field(ge=0)
 
 
-class OfficialSourceFindingV4(SecurityContractModel):
-    source_url: str
-    finding: Literal["confirmed", "contradicted"]
-    title: str
-    observed_at: datetime
-
-
-class OfficialVerificationResultV4(SecurityContractModel):
-    verdict: OfficialVerificationVerdictV4
-    purpose: OfficialVerificationPurposeV4
-    sources_checked: int = Field(ge=0, le=5)
-    search_queries_used: int = Field(default=0, ge=0, le=2)
-    evidence_refs: list[str] = Field(default_factory=list, max_length=5)
-
-
 class SecurityTriageCreateRequestV4(SecurityContractModel):
     message: str = Field(min_length=1, max_length=5000)
     consent: SecurityConsentV4 = Field(default_factory=SecurityConsentV4)
@@ -375,6 +361,16 @@ class SecurityTriageCreateRequestV4(SecurityContractModel):
         if (self.conversation_id is None) != (self.conversation_version is None):
             raise ValueError("conversation_id and conversation_version must be provided together")
         return self
+
+
+class SecurityChatRequestV4(SecurityContractModel):
+    message: str = Field(min_length=1, max_length=5000)
+
+
+class SecurityChatResponseV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    route: SecurityChatRouteV4
+    response: str
 
 
 class SecurityContextV4(SecurityContractModel):
@@ -611,12 +607,11 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     admin_feedback_review: Literal[True] = True
     intelligence_explorer: Literal[True] = True
     unified_v4_audit: Literal[True] = True
-    admin_action_contract: Literal["v3"] = "v3"
+    admin_action_contract: Literal["v4"] = "v4"
     executable_admin_actions: list[str] = Field(default_factory=lambda: ["add_to_blacklist"])
     deferred_admin_actions: list[str] = Field(
         default_factory=lambda: ["block_domain", "publish_broad_warning", "ai_security_copilot"]
     )
-    compatibility_contracts: list[Literal["v2", "v3", "v4"]] = Field(default_factory=lambda: ["v2", "v3", "v4"])
     security_ai_understanding: Literal[True] | None = None
     security_ai_planning: Literal[True] | None = None
     security_ai_explanation: Literal[True] | None = None
@@ -895,7 +890,7 @@ class SecurityAdminCopilotUsageV4(SecurityContractModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0, ge=0)
-    status: Literal["ok", "fallback"]
+    status: Literal["ok", "policy_grounded", "fallback"]
 
 
 class SecurityAdminCopilotResponseV4(SecurityContractModel):
@@ -1004,10 +999,6 @@ __all__ = [
     "InvestigationStepV4",
     "RequestedActionV4",
     "ScopeDecisionV4",
-    "OfficialSourceFindingV4",
-    "OfficialVerificationPurposeV4",
-    "OfficialVerificationResultV4",
-    "OfficialVerificationVerdictV4",
     "SecurityConsentV4",
     "SecurityConversationStatusV4",
     "SecurityConversationSummaryV4",
@@ -1029,6 +1020,9 @@ __all__ = [
     "SecurityWebSocketTicketRequestV4",
     "SecurityWebSocketTicketResponseV4",
     "SecurityCapabilitiesResponseV4",
+    "SecurityChatRequestV4",
+    "SecurityChatResponseV4",
+    "SecurityChatRouteV4",
     "TrustLifecycleV4",
     "WhitelistCreateRequestV4",
     "WhitelistRecordV4",

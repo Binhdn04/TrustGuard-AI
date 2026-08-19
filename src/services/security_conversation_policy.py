@@ -210,12 +210,22 @@ def apply_adaptive_conversation_policy(
     update["assistant_context"] = assistant_context
     effective_decision = update.get("scope_decision", scope.scope_decision)
     if effective_decision is ScopeDecisionV4.NEED_MORE_INFO:
-        selected = slots[0] if slots else MissingInformationSlotV4.AMOUNT_DEADLINE_CHANNEL
-        question = _safe_drafted_question(
-            selected,
-            drafted_slot,
-            drafted_question,
-        ) or deterministic_question(selected)
+        selected = (
+            scope.follow_up_slot
+            if scope.follow_up_slot is not None and scope.follow_up_slot in slots
+            else slots[0]
+            if slots
+            else MissingInformationSlotV4.AMOUNT_DEADLINE_CHANNEL
+        )
+        question = (
+            _safe_drafted_question(
+                selected,
+                drafted_slot,
+                drafted_question,
+            )
+            or (scope.follow_up_question if scope.follow_up_slot is selected else None)
+            or deterministic_question(selected)
+        )
         update.update(
             follow_up_slot=selected,
             follow_up_question=question,

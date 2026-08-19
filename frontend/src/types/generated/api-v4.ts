@@ -18,6 +18,14 @@ export type PotentialThreatV4 =
   | "RECRUITMENT_SCAM"
   | "PROMOTION_PRIZE_SCAM"
   | "CREDENTIAL_THEFT"
+  | "IMPERSONATION_FINANCIAL_SCAM"
+  | "CREDENTIAL_AND_OTP_PHISHING"
+  | "RECRUITMENT_IMPERSONATION"
+  | "CHARITY_IMPERSONATION_SCAM"
+  | "INVESTMENT_IMPERSONATION_SCAM"
+  | "ADVANCE_FEE_TASK_SCAM"
+  | "PAYMENT_AND_OTP_PHISHING"
+  | "ADVANCE_FEE_SCAM"
   | "UNDETERMINED_SECURITY_THREAT";
 
 export type RequestedActionV4 =
@@ -35,6 +43,9 @@ export type RequestedActionV4 =
 export type SecurityScenarioV4 =
   | "recruitment"
   | "promotion_prize"
+  | "charity"
+  | "investment"
+  | "online_task"
   | "account_verification"
   | "payment"
   | "refund"
@@ -56,7 +67,7 @@ export type SecurityRecommendedActionV4 =
   | "CONTACT_BANK_OR_PAYMENT_PROVIDER"
   | "PRESERVE_MESSAGE_FOR_REPORTING";
 
-export type AssistantGenerationModeV4 = "ai" | "template_fallback";
+export type AssistantGenerationModeV4 = "ai" | "policy_grounded" | "template_fallback";
 export type AssistantProcessingModeV4 = "hybrid" | "rules_only" | "fallback";
 export type ExposureStateV4 = "PRE_ACTION" | "LINK_OPENED" | "CREDENTIAL_SHARED" | "OTP_SHARED" | "PAYMENT_SENT" | "UNKNOWN";
 export type MissingInformationSlotV4 = "action_taken" | "requested_sensitive_action" | "url_or_contact" | "claimed_organization" | "amount_deadline_channel";
@@ -76,7 +87,6 @@ export type SecurityInvestigationToolV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist_lookup"
-  | "official_claim_verifier"
   | "security_memory_lookup";
 
 export type SecurityEvidenceTypeV4 =
@@ -89,22 +99,10 @@ export type SecurityEvidenceTypeV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist"
-  | "official_verification"
   | "reviewed_security_memory";
 
 export type TrustLifecycleV4 = "active" | "disabled";
 export type WhitelistScopeV4 = "domain" | "url" | "contact";
-export type OfficialVerificationPurposeV4 =
-  | "verify_official_campaign"
-  | "verify_brand_announcement"
-  | "verify_recruitment_program"
-  | "verify_official_domain"
-  | "verify_official_contact";
-export type OfficialVerificationVerdictV4 =
-  | "OFFICIAL_CONFIRMED"
-  | "OFFICIAL_CONTRADICTED"
-  | "NOT_FOUND"
-  | "INSUFFICIENT_EVIDENCE";
 export type SecurityReportStatusV4 = "submitted" | "reviewing" | "processed";
 export type SecurityReportReviewDecisionV4 = "approved" | "rejected" | "dismissed";
 export type SecurityAppealStatusV4 = "submitted" | "under_review" | "resolved";
@@ -116,7 +114,7 @@ export type SecurityAdminCopilotActionV4 = "add_to_blacklist" | "block_domain" |
 export interface SecurityAdminCopilotRequestV4 { refresh: boolean; }
 export interface SecurityAdminCopilotRationaleV4 { text: string; evidence_refs: string[]; }
 export interface SecurityAdminCopilotCampaignV4 { campaign_id: string; hypothesis: string; reviewed_at: string; evidence_refs: string[]; }
-export interface SecurityAdminCopilotUsageV4 { input_tokens: number; output_tokens: number; cost_usd: number; status: "ok" | "fallback"; }
+export interface SecurityAdminCopilotUsageV4 { input_tokens: number; output_tokens: number; cost_usd: number; status: "ok" | "policy_grounded" | "fallback"; }
 export interface SecurityAdminCopilotResponseV4 {
   contract_version: "v4";
   suggestion_id: string;
@@ -149,7 +147,14 @@ export interface SecurityPageV4<T> {
 
 export interface SecurityConsentV4 {
   external_url_lookup: boolean;
-  official_source_lookup: boolean;
+}
+
+export type SecurityChatRouteV4 = "conversation" | "security_analysis";
+
+export interface SecurityChatResponseV4 {
+  contract_version: "v4";
+  route: SecurityChatRouteV4;
+  response: string;
 }
 
 export interface SecurityCapabilitiesResponseV4 {
@@ -160,10 +165,9 @@ export interface SecurityCapabilitiesResponseV4 {
   admin_feedback_review: true;
   intelligence_explorer: true;
   unified_v4_audit: true;
-  admin_action_contract: "v3";
+  admin_action_contract: "v4";
   executable_admin_actions: string[];
   deferred_admin_actions: string[];
-  compatibility_contracts: Array<"v2" | "v3" | "v4">;
   security_ai_understanding?: true;
   security_ai_planning?: true;
   security_ai_explanation?: true;
@@ -223,21 +227,6 @@ export interface WhitelistRecordV4 {
 }
 
 export type WhitelistPageV4 = SecurityPageV4<WhitelistRecordV4>;
-
-export interface OfficialSourceFindingV4 {
-  source_url: string;
-  finding: "confirmed" | "contradicted";
-  title: string;
-  observed_at: string;
-}
-
-export interface OfficialVerificationResultV4 {
-  verdict: OfficialVerificationVerdictV4;
-  purpose: OfficialVerificationPurposeV4;
-  sources_checked: number;
-  search_queries_used: number;
-  evidence_refs: string[];
-}
 
 export interface SecurityTriageCreateRequestV4 {
   message: string;

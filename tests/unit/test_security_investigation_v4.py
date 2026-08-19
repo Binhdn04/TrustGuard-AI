@@ -46,7 +46,7 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 def _request(message: str, *, consent: bool = False) -> SecurityTriageCreateRequestV4:
     return SecurityTriageCreateRequestV4(
         message=message,
-        consent={"external_url_lookup": consent, "official_source_lookup": False},
+        consent={"external_url_lookup": consent},
     )
 
 
@@ -136,9 +136,11 @@ class _Reputation:
     def __init__(self, result: NormalizedToolResult[Any]) -> None:
         self.result = result
         self.calls: list[str] = []
+        self.high_risk_calls: list[bool] = []
 
-    async def assess(self, target: str) -> NormalizedToolResult[Any]:
+    async def assess(self, target: str, *, high_risk: bool = False) -> NormalizedToolResult[Any]:
         self.calls.append(target)
+        self.high_risk_calls.append(high_risk)
         return self.result
 
 
@@ -340,6 +342,7 @@ async def test_external_evidence_keeps_redirect_rdap_and_reputation_no_hit_incon
     assert redirect.calls == [url]
     assert rdap.calls == ["example.com"]
     assert reputation.calls == [url]
+    assert reputation.high_risk_calls == [True]
     assert len(ledger.tool_executions) == 4
     assert set(ledger.tool_executions.values()) == {"completed"}
     assert all(key[2].startswith("target:") and url not in key[2] for key in ledger.tool_executions)

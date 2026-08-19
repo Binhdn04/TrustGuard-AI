@@ -6,8 +6,7 @@ FROM python:3.11.15-slim-bookworm AS builder
 WORKDIR /app
 
 COPY requirements.txt .
-RUN --mount=type=cache,id=p068-pip-v2,target=/root/.cache/pip,sharing=locked \
-    python -m venv /opt/venv \
+RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install \
         --disable-pip-version-check \
         --no-compile \
@@ -30,14 +29,10 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/data \
     && chown appuser:appuser /app/data
 
-# ---- Worker (the only service that launches Chromium) ----
+# ---- Worker ----
 FROM runtime-base AS worker
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    RUN_DURABLE_WORKER=true
-RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 \
-    /opt/venv/bin/playwright install --with-deps chromium \
-    && chmod -R 755 /ms-playwright
+ENV RUN_DURABLE_WORKER=true
 
 COPY --chown=appuser:appuser src ./src
 
@@ -47,7 +42,8 @@ CMD ["python", "-m", "src.worker"]
 # ---- API ----
 FROM runtime-base AS backend
 
-ENV RUN_DURABLE_WORKER=false
+ENV RUN_DURABLE_WORKER=false \
+    PORT=8000
 
 COPY --chown=appuser:appuser src ./src
 COPY --chown=appuser:appuser migrations ./migrations
@@ -58,6 +54,6 @@ USER appuser
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ['PORT']}/health/ready\")" || exit 1
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

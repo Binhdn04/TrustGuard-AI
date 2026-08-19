@@ -19,6 +19,7 @@ import type {
   SecurityCampaignPageV4,
   SecurityCampaignRecordV4,
   SecurityCapabilitiesResponseV4,
+  SecurityChatResponseV4,
   SecurityConversationPageV4,
   SecurityConversationV4,
   SecurityDomainIntelligencePageV4,
@@ -39,10 +40,17 @@ import type {
   WhitelistPageV4,
   WhitelistRecordV4,
 } from "@/types/generated/api-v4";
-
-import { ApiError } from "./http-analysis-api";
-import type { AnalysisEventQuery } from "./analysis-api.types";
 import type {
+  AdminActionAuditRecordV3,
+  AdminActionDecisionRequestV3,
+  AdminActionDecisionResponseV3,
+  AdminActionPageV3,
+  AdminActionRecordV3,
+} from "@/types/generated/api-v3";
+
+import { ApiError } from "./api-error";
+import type {
+  AnalysisEventQuery,
   SecurityAdminAuditQuery,
   SecurityAnalysisApi,
   SecurityAnalysisPageQuery,
@@ -104,6 +112,26 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async getCapabilities(): Promise<SecurityCapabilitiesResponseV4> {
     return this.get<SecurityCapabilitiesResponseV4>("capabilities");
+  }
+
+  async chat(message: string): Promise<SecurityChatResponseV4> {
+    return this.post<SecurityChatResponseV4>("chat", { message });
+  }
+
+  async listAdminActions(query: SecurityPaginationQuery & { status?: "pending_review" | "approved" | "rejected" | "executed" | "failed" } = {}): Promise<AdminActionPageV3> {
+    return this.get<AdminActionPageV3>(withQuery("admin/actions", query));
+  }
+
+  async getAdminAction(actionId: string): Promise<AdminActionRecordV3> {
+    return this.get<AdminActionRecordV3>(`admin/actions/${encodeURIComponent(actionId)}`);
+  }
+
+  async decideAdminAction(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3> {
+    return this.post<AdminActionDecisionResponseV3>(`admin/actions/${encodeURIComponent(actionId)}/decision`, request);
+  }
+
+  async listAdminActionAudit(actionId: string): Promise<AdminActionAuditRecordV3[]> {
+    return this.get<AdminActionAuditRecordV3[]>(`admin/actions/${encodeURIComponent(actionId)}/audit`);
   }
 
   async createAnalysis(

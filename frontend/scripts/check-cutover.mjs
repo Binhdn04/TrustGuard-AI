@@ -2,16 +2,6 @@ import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 
 const sourceRoot = new URL("../src/", import.meta.url);
-const allowedCompatibilityFiles = new Set([
-  "app/(dashboard)/admin/compatibility/page.tsx",
-  "app/(dashboard)/admin/platform/page.tsx",
-  "components/admin/compatibility/compatibility-operations.tsx",
-  "components/admin/platform-operations.tsx",
-  "lib/api/analysis-api.types.ts",
-  "lib/api/analysis-api.ts",
-  "lib/api/http-analysis-api.ts",
-  "lib/api/mock-analysis-api.ts",
-]);
 const legacySecurityPatterns = [
   /listSourcePolicies/,
   /createSourcePolicy/,
@@ -19,6 +9,8 @@ const legacySecurityPatterns = [
   /decideSourceDiscovery/,
   /getOperationsMetrics/,
   /\/api\/v3\/analyses/,
+  /\/api\/v2/,
+  /\/api\/v3\/admin\/actions/,
 ];
 
 async function sourceFiles(directory) {
@@ -35,7 +27,7 @@ const rootPath = sourceRoot.pathname.replace(/^\/(.:\/)/, "$1");
 const violations = [];
 for (const path of await sourceFiles(rootPath)) {
   const localPath = relative(rootPath, path).replaceAll("\\", "/");
-  if (localPath.startsWith("test/") || allowedCompatibilityFiles.has(localPath)) continue;
+  if (localPath.startsWith("test/")) continue;
   const source = await readFile(path, "utf8");
   for (const pattern of legacySecurityPatterns) {
     if (pattern.test(source)) violations.push(`${localPath}: ${pattern}`);
@@ -43,8 +35,8 @@ for (const path of await sourceFiles(rootPath)) {
 }
 
 if (violations.length > 0) {
-  console.error("Legacy fact-check/source-discovery escaped the compatibility boundary:\n" + violations.join("\n"));
+  console.error("Legacy v2/v3 API usage remains in the frontend:\n" + violations.join("\n"));
   process.exitCode = 1;
 } else {
-  console.log("Cutover boundary OK: v3 metrics/source discovery are isolated to compatibility files.");
+  console.log("Cutover boundary OK: frontend uses only the v4 product API.");
 }

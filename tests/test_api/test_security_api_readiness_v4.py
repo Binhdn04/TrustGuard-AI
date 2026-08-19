@@ -47,14 +47,13 @@ async def test_capabilities_publish_truthful_pre_cutover_boundary(client) -> Non
         "admin_feedback_review": True,
         "intelligence_explorer": True,
         "unified_v4_audit": True,
-        "admin_action_contract": "v3",
+        "admin_action_contract": "v4",
         "executable_admin_actions": ["add_to_blacklist"],
         "deferred_admin_actions": [
             "block_domain",
             "publish_broad_warning",
             "ai_security_copilot",
         ],
-        "compatibility_contracts": ["v2", "v3", "v4"],
     }
 
 

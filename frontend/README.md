@@ -1,8 +1,7 @@
 # TrustGuard AI Frontend
 
-Next.js investigation workspace cho Security Triage. Product path dùng `/api/v4`; reviewed-action execution
-tiếp tục dùng `/api/v3` có nhãn trong compatibility window. General fact-check metrics và source discovery v3
-chỉ xuất hiện tại `/admin/compatibility`.
+Next.js investigation workspace cho Security Triage. Toàn bộ product path và reviewed-action execution dùng
+`/api/v4`; frontend không còn client, route hoặc màn hình compatibility v2/v3.
 
 ## Chạy local
 
@@ -16,7 +15,6 @@ Kết nối backend thật:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_USE_MOCK_API=false
 ```
 
 Nếu backend local bật demo auth:
@@ -49,7 +47,7 @@ có thể override bằng các biến được liệt kê trong `.env.example`.
 - OOS, need-more-info, multi-turn, WebSocket → polling fallback, report và appeal đều dùng contract v4.
 - `/history` dùng server pagination/filter; `/cases/{id}` đọc owner-scoped detail và structured conversation resume.
 - Admin gồm Observatory, Review Room, Trust lifecycle và Unified Audit.
-- `/admin` redirect sang `/admin/review`; `/admin/platform` là alias của compatibility surface.
+- `/admin` redirect sang `/admin/review`.
 - UI chỉ dựng Signal Map, Timeline, Evidence và metrics từ field API có thật.
 
 ## Kiểm tra chất lượng

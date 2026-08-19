@@ -1,6 +1,6 @@
 {
   "dataset_version": "security-v4-eval-v1",
-  "dataset_sha256": "0da17712fb7906c9a92e2e58e2ac88aa76044fb483a0956a97f28069f9be0bee",
+  "dataset_sha256": "62f86298c7183c90588643bc81fb70969dcb6dc2ee8f38ea103493884b3ed868",
   "evaluation_profile": "offline_deterministic_security_v4",
   "threshold_profile": "security-v4-release-gates-v1",
   "release_baseline": {
@@ -8,7 +8,7 @@
     "false_positive_rate": 0.0,
     "unnecessary_provider_call_rate": 0.0
   },
-  "generated_at": "2026-08-14T20:32:17.348083+00:00",
+  "generated_at": "2026-08-17T15:51:29.618667+00:00",
   "limitations": [
     "Fixture evaluation does not replace hosted OIDC, PostgreSQL, Redis, provider, load, backup/restore, or multi-turn transport evidence."
   ],
@@ -26,8 +26,8 @@
     "false_negative_rate": 0.0,
     "malicious_precision": 1.0,
     "unnecessary_provider_call_rate": 0.0,
-    "mean_latency_ms": 4.491,
-    "p95_latency_ms": 1.477,
+    "mean_latency_ms": 0.952,
+    "p95_latency_ms": 2.482,
     "p95_estimated_cost_usd": 0.0,
     "total_estimated_cost_usd": 0.0
   },
@@ -67,7 +67,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 1.477,
+      "latency_ms": 2.509,
       "estimated_cost_usd": 0.0
     },
     {
@@ -86,7 +86,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.772,
+      "latency_ms": 0.961,
       "estimated_cost_usd": 0.0
     },
     {
@@ -105,7 +105,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.49,
+      "latency_ms": 2.482,
       "estimated_cost_usd": 0.0
     },
     {
@@ -124,7 +124,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.464,
+      "latency_ms": 1.029,
       "estimated_cost_usd": 0.0
     },
     {
@@ -143,7 +143,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.32,
+      "latency_ms": 0.652,
       "estimated_cost_usd": 0.0
     },
     {
@@ -168,12 +168,12 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.634,
+      "latency_ms": 1.4,
       "estimated_cost_usd": 0.0
     },
     {
-      "id": "safe_official_source",
-      "category": "safe_official",
+      "id": "safe_whitelisted_source",
+      "category": "safe_whitelist",
       "scope_decision": "IN_SCOPE",
       "threat_type": "UNDETERMINED_SECURITY_THREAT",
       "risk": "SAFE",
@@ -193,7 +193,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.451,
+      "latency_ms": 1.046,
       "estimated_cost_usd": 0.0
     },
     {
@@ -218,7 +218,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.537,
+      "latency_ms": 0.897,
       "estimated_cost_usd": 0.0
     },
     {
@@ -243,7 +243,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.459,
+      "latency_ms": 0.814,
       "estimated_cost_usd": 0.0
     },
     {
@@ -268,7 +268,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.52,
+      "latency_ms": 0.68,
       "estimated_cost_usd": 0.0
     },
     {
@@ -293,7 +293,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.485,
+      "latency_ms": 0.642,
       "estimated_cost_usd": 0.0
     },
     {
@@ -310,7 +310,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.068,
+      "latency_ms": 0.11,
       "estimated_cost_usd": 0.0
     },
     {
@@ -327,7 +327,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.059,
+      "latency_ms": 0.136,
       "estimated_cost_usd": 0.0
     },
     {
@@ -352,7 +352,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.468,
+      "latency_ms": 0.845,
       "estimated_cost_usd": 0.0
     },
     {
@@ -377,7 +377,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.739,
+      "latency_ms": 0.666,
       "estimated_cost_usd": 0.0
     },
     {
@@ -402,7 +402,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.874,
+      "latency_ms": 0.793,
       "estimated_cost_usd": 0.0
     },
     {
@@ -421,7 +421,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.708,
+      "latency_ms": 0.726,
       "estimated_cost_usd": 0.0
     },
     {
@@ -440,7 +440,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 1.128,
+      "latency_ms": 0.719,
       "estimated_cost_usd": 0.0
     },
     {
@@ -459,7 +459,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.563,
+      "latency_ms": 0.612,
       "estimated_cost_usd": 0.0
     },
     {
@@ -478,7 +478,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.556,
+      "latency_ms": 0.875,
       "estimated_cost_usd": 0.0
     },
     {
@@ -497,7 +497,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 94.693,
+      "latency_ms": 0.985,
       "estimated_cost_usd": 0.0
     },
     {
@@ -516,7 +516,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.456,
+      "latency_ms": 1.089,
       "estimated_cost_usd": 0.0
     },
     {
@@ -535,7 +535,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.386,
+      "latency_ms": 1.214,
       "estimated_cost_usd": 0.0
     },
     {
@@ -554,7 +554,7 @@
       "risk_pass": true,
       "actions_pass": true,
       "grounding_pass": true,
-      "latency_ms": 0.472,
+      "latency_ms": 0.974,
       "estimated_cost_usd": 0.0
     }
   ]

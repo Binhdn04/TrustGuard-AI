@@ -23,11 +23,9 @@ def upgrade() -> None:
         CREATE TABLE campaign_claim_features (
           analysis_id uuid NOT NULL REFERENCES campaign_observations(analysis_id) ON DELETE CASCADE,
           feature_ref text NOT NULL,
-          embedding vector(1536) NOT NULL,
+          embedding double precision[] NOT NULL,
           PRIMARY KEY(analysis_id,feature_ref)
         );
-        CREATE INDEX ix_campaign_claim_features_cosine
-          ON campaign_claim_features USING hnsw(embedding vector_cosine_ops);
 
         INSERT INTO fact_check_sources(
           id,publisher,normalized_pattern,tier,source_type,active,explicit_deny,

@@ -135,14 +135,14 @@ async def test_copilot_is_grounded_and_never_executes_prompt_injected_action() -
 
 
 @pytest.mark.asyncio
-async def test_ungrounded_or_low_risk_output_falls_back_or_removes_high_impact_action() -> None:
+async def test_ungrounded_or_low_risk_output_stays_policy_grounded_or_removes_high_impact_action() -> None:
     case, repository = _case(SecurityRiskV4.LOW_RISK), _Repository()
     ungrounded = SecurityAdminCopilotService(
         _Analyses(case), _Memory(), repository, _Model(ref="evidence:ffffffffffffffff"),
         SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
     )
     result = await ungrounded.suggest(case.analysis_id, ADMIN)
-    assert result.generation_mode.value == "template_fallback"
+    assert result.generation_mode.value == "policy_grounded"
     assert result.proposed_admin_action is SecurityAdminCopilotActionV4.NONE
     assert "ffffffff" not in result.model_dump_json()
 
@@ -162,7 +162,7 @@ async def test_copilot_rejects_missing_rationale_or_disposition_that_conflicts_w
         SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
     )
     result = await service.suggest(case.analysis_id, ADMIN)
-    assert result.generation_mode.value == "template_fallback"
+    assert result.generation_mode.value == "policy_grounded"
     assert result.proposed_disposition.value == "confirm_malicious"
     assert result.proposed_admin_action is SecurityAdminCopilotActionV4.NONE
 

@@ -45,9 +45,9 @@ medical/science, sports, deepfake và malware sandbox vẫn ngoài scope theo `s
 - LLM có thể extract context, đề xuất ưu tiên tool và viết giải thích; LLM không quyết định final
   score/risk, whitelist/blacklist approval hoặc wide action.
 - `provider no-hit != SAFE`; `provider timeout != SAFE`.
-- `official NOT_FOUND != FALSE`.
 - Domain mismatch hoặc domain mới, nếu đứng riêng, không đủ để kết luận `MALICIOUS`.
-- External URL/domain lookup cần consent; official-source lookup có consent/purpose riêng.
+- API giữ consent URL để integration fail closed. Web product cấp authorization khi user gửi dưới disclosure cố định;
+  executor chỉ gọi tool theo context, normalized target, SSRF guard và budget.
 - Không dùng URL/target do LLM tự sinh để gọi network tool.
 - Giữ SSRF guard, redirect revalidation, ownership, RBAC, safe logging, durable job, idempotency,
   outbox và realtime lifecycle.
@@ -87,7 +87,7 @@ fact-check/security-vNext flag. Tên setting mới phải theo snake_case của 
 | WP1 | Scope gate + SecurityContext + contract | WP0 | WP0 |
 | WP2 | Security planner + evidence | WP1 | WP1 |
 | WP3 | Deterministic risk + single-turn API | WP2 | WP2 |
-| WP4 | Brand/whitelist/official verification | WP1 | WP2, WP3 |
+| WP4 | Brand/whitelist | WP1 | WP2, WP3 |
 | WP5 | Multi-turn conversation/case memory | WP1 | WP3 |
 | WP6 | Security Chat frontend | Có draft contract WP1 | WP3, WP5 |
 | WP7 | HITL/admin action | WP3 | WP4 |
@@ -203,7 +203,6 @@ NEED_MORE_INFO nếu thiếu dữ liệu thật sự cản trở triage.
 
 - `FactCheckOrchestrator`, Google Fact Check, Tavily general fact-check, corpus và claim comparator;
 - source-discovery flow;
-- screenshot capture mặc định, trừ khi scope được mở rộng riêng.
 
 Chưa xóa code/route legacy trong WP1; chỉ bảo đảm route vNext không gọi chúng.
 
@@ -228,7 +227,7 @@ path không gọi general fact-check.
 
 - Thêm `POST /api/v4/analyses` với auth/rate-limit boundary hiện có.
 - Thêm contract v4 độc lập: consent, `ScopeDecisionV4`, `SecurityContextV4` và response transition được
-  Pydantic validate; request v4 từ chối field legacy/screenshot.
+  Pydantic validate; request v4 từ chối field legacy hoặc không xác định.
 - Thêm deterministic scope gate cho security signals, URL-only, impersonation và các nhóm OOS
   sports/politics/medical-science/news.
 - Thêm taxonomy tối thiểu cho scenario, requested action và potential threat; scenario không bị đồng
@@ -272,7 +271,6 @@ contract v2/v3 vẫn đóng băng; budget, deadline, retry, consent và SSRF đ�
 - No URL: không chạy network URL/domain tools.
 - No consent: chỉ chạy normalization, local rules/SSRF classification, local blacklist và local scam
   analysis.
-- Consent URL không tự động cấp consent cho official-source lookup.
 - Blacklist hit hoặc blocked target phải short-circuit network work phù hợp.
 
 Ví dụ:
@@ -397,7 +395,7 @@ persistence/realtime, và không còn fact-check semantics trong output vNext.
 
 ---
 
-## 8. WP4 — Brand, Whitelist & Official Verification
+## 8. WP4 — Brand & Whitelist
 
 **Status:** `DONE`
 
@@ -416,36 +414,14 @@ First-class table/repository/API với canonical indicator, scope, provenance, v
 interval, lifecycle và audit. Whitelist chạy trước negative scoring nhưng không phải global
 `safe=true`: official domain không được suppress confirmed compromise signal độc lập.
 
-### OfficialClaimVerifier
-
-Capability riêng, không đổi tên/prompt của `FactCheckOrchestrator`:
-
-```yaml
-max_claims_per_case: 1
-max_search_queries: 2
-max_sources: 5
-allowed_purposes:
-  - verify_official_campaign
-  - verify_brand_announcement
-  - verify_recruitment_program
-  - verify_official_domain
-  - verify_official_contact
-```
-
-Output: `OFFICIAL_CONFIRMED`, `OFFICIAL_CONTRADICTED`, `NOT_FOUND`,
-`INSUFFICIENT_EVIDENCE`. Chỉ truy xuất official/allowed sources, có consent riêng và luôn giữ
-`NOT_FOUND != FALSE`.
-
 ### Test bắt buộc
 
 Official domain/contact, alias, lookalike, homograph, mismatch-only, whitelist precedence, whitelist
-không che malicious evidence, effective interval, unauthorized mutation, official confirmed/
-contradicted/not-found và forbidden general fact request.
+không che malicious evidence, effective interval và unauthorized mutation.
 
 ### Hoàn thành khi
 
-Brand/whitelist evidence có provenance; official verifier bị bound theo purpose/budget; risk engine
-consume trust evidence đúng false-positive policy.
+Brand/whitelist evidence có provenance; risk engine consume trust evidence đúng false-positive policy.
 
 ### Đã triển khai
 
@@ -455,11 +431,6 @@ consume trust evidence đúng false-positive policy.
 - Thêm whitelist first-class cho domain/URL/contact với canonicalization, effective interval,
   lifecycle, reviewer và immutable audit. URL/contact evidence chỉ persist target đã privacy-minimize.
 - Thêm admin API v4 create/list/disable cho brand và whitelist, bắt buộc security-admin role.
-- Thêm `OfficialClaimVerifier` riêng với đúng purpose allowlist, tối đa 1 claim, 2 query và 5 source;
-  local allowlist filter loại source ngoài official domains. Consent official-source tách khỏi URL consent.
-- Thêm HTTP adapter cấu hình bằng `OFFICIAL_VERIFIER_API_URL`/`OFFICIAL_VERIFIER_API_KEY`; khi không
-  cấu hình hoặc provider lỗi, kết quả là `INSUFFICIENT_EVIDENCE`/limitation, không suy ra phủ định.
-- Trust steps xuất hiện trong investigation plan và official query tính vào external-call budget.
 - Risk policy chạy whitelist trước weak domain/URL signals, nhưng approved whitelist/official match
   không che approved blacklist hoặc confirmed threat-intelligence hit.
 - Thêm SQLite schema và PostgreSQL migration `0010_security_trust_registry` cho brand, whitelist và
@@ -535,7 +506,7 @@ COMPLETED
 FAILED
 ```
 
-Ẩn source registry/general fact-check entry point và screenshot khỏi Security Triage product profile;
+Ẩn source registry/general fact-check entry point khỏi Security Triage product profile;
 chưa xóa component legacy trước cutover. Copy không hướng user sang news/medical/general claims.
 
 Test unit + E2E: multi-turn, owner session, OOS, NEED_MORE_INFO, no consent, realtime reconnect/cursor,
@@ -550,8 +521,8 @@ boundary realtime/auth/report/appeal không regression.
 
 - Main workspace và history dùng adapter/type v4 riêng; legacy v3 adapter/component vẫn tách biệt cho
   compatibility/admin flow, không còn claim-stance hoặc general fact-check semantics trên main flow.
-- Chat composer hỗ trợ multi-turn `conversation_id`/version, focused follow-up, consent URL và consent
-  official-source riêng từng lượt; không còn screenshot consent/panel trong Security Triage profile.
+- Chat composer hỗ trợ multi-turn `conversation_id`/version và focused follow-up; checkbox lookup từng lượt đã được thay
+  bằng automatic lookup disclosure. Simple mode là chat + verdict/giải thích gọn, Analyst mode giữ investigation detail;
 - Render riêng OOS, NEED_MORE_INFO, RUNNING, PROVISIONAL_WARNING, COMPLETED và FAILED; kết luận risk,
   recommended actions, limitations, evidence và technical detail dùng security contract.
 - Realtime v4 dùng single-use WebSocket ticket, cursor replay/reconnect và polling fallback; history
@@ -713,7 +684,7 @@ surface. Responsive, accessibility, polling/WebSocket fallback, production build
 ### Evaluation/release gate
 
 Versioned dataset tối thiểu: phishing, credential/OTP, financial, recruitment, promotion/prize, brand
-impersonation, safe official, mismatch-only, new-domain-only, provider timeout/no-hit, OOS,
+impersonation, safe whitelist, mismatch-only, new-domain-only, provider timeout/no-hit, OOS,
 NEED_MORE_INFO, multi-turn, no-consent và wide action.
 
 Đo scope/tool-routing accuracy, unnecessary-provider-call rate, precision/recall, false-positive/
@@ -762,12 +733,12 @@ Chỉ cập nhật bảng này và ghi test/deviation ngắn gọn; không lặp
 | WP1 | DONE | 22 test v4 mới; full backend 225 pass/1 skip; Ruff + frontend regression pass | Không có; planner/persistence/risk tiếp tục ở WP2/WP3 |
 | WP2 | DONE | 12 test WP2 mới; targeted 42 pass; full backend 237 pass/1 skip; Ruff + frontend 30 test/lint/typecheck pass | Không có; DNS dùng safe resolver và privacy-minimized counts; risk/persistence cấp analysis tiếp tục ở WP3 |
 | WP3 | DONE | 12 test risk/lifecycle mới; full backend 249 pass/1 skip; Ruff pass | Không có; hosted PostgreSQL/Redis/WebSocket smoke vẫn là release evidence WP9 |
-| WP4 | DONE | 17 test trust/admin mới; full backend 266 pass/1 skip; Ruff pass | Không có; hosted official-verifier/PostgreSQL/Redis smoke vẫn là release evidence WP9 |
+| WP4 | DONE | Trust/admin tests; Ruff pass | Không có; hosted PostgreSQL/Redis smoke vẫn là release evidence WP9 |
 | WP5 | DONE | 6 test conversation mới; full backend 272 pass/1 skip; Ruff pass | Không có; hosted PostgreSQL/retention-worker smoke vẫn là release evidence WP9 |
 | WP6 | DONE | Frontend 37 test/9 files + lint/typecheck; Chromium E2E 2 pass (gồm axe user flow); webpack production build pass; backend 273 pass/1 skip + Ruff | Default Turbopack build không chạy trong sandbox vì internal process không được bind port; webpack build đã verify production output |
 | WP7 | DONE | 6 test WP7 mới; full backend 279 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass | Scope deviation: BLOCK_DOMAIN, PUBLISH_BROAD_WARNING, Copilot chưa có sink; DISABLE_BLACKLIST chưa có v4 producer |
 | WP8 | DONE | 9 test WP8 mới; full backend 288 pass/1 skip; Ruff; frontend 37 test/lint/typecheck + webpack production build pass; Alembic 0014 head | Không có; legacy claim-vector compatibility path được giữ đến cleanup WP9 nhưng Security v4 không phụ thuộc embeddings |
-| WP9 | IN_PROGRESS | API/frontend readiness; `scope_decision` filter; hardened production env; versioned 24-category deterministic + 5 reviewed-memory + 9-category AI evaluation; AI roadmap WP0–WP8 repository gates; hosted evidence validator và sequential rollout checker; durable Security v4 revision 0016; Admin Copilot revision 0017; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Active suite: backend 226 pass; frontend 59 pass/12 files; Ruff/lint/typecheck/build/E2E pass; Alembic 0017 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load, durable lease-loss, reviewed-memory hoặc Admin Copilot rollout evidence, restore rehearsal, API/provider/job/DB zero-usage window hay legacy cleanup; mọi AI/async/memory/admin-copilot flag mặc định tắt nên profile đúng là `pre_cutover` |
+| WP9 | IN_PROGRESS | API/frontend readiness; automatic lookup + authenticated follow-up chatbot routing + compact user verdict/analyst detail; `scope_decision` filter; hardened production env; versioned 24-category deterministic + 5 reviewed-memory + 9-category AI evaluation; AI roadmap WP0–WP8 repository gates; hosted evidence validator và sequential rollout checker; durable Security v4 revision 0016; Admin Copilot revision 0017; v4 live-smoke; legacy freeze/cutover guard; compatibility checker và release runbook. Active suite: backend 249 pass; frontend 61 pass/12 files; Ruff/lint/typecheck/build/E2E pass; Alembic 0017 head | Chưa có hosted OIDC/PostgreSQL/Redis/provider/load, durable lease-loss, reviewed-memory hoặc Admin Copilot rollout evidence, restore rehearsal, API/provider/job/DB zero-usage window hay legacy cleanup; mọi AI/async/memory/admin-copilot flag mặc định tắt nên profile đúng là `pre_cutover` |
 
 Trạng thái hợp lệ: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
 

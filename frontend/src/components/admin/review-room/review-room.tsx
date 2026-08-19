@@ -4,9 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BadgeCheck, Gavel, LockKeyhole, Workflow } from "lucide-react";
 
-import { getAnalysisApi } from "@/lib/api/analysis-api";
-import type { AnalysisApi } from "@/lib/api/analysis-api.types";
-import { ApiError } from "@/lib/api/http-analysis-api";
+import { ApiError } from "@/lib/api/api-error";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { useAuth } from "@/lib/auth-context";
@@ -18,7 +16,7 @@ import type {
   SecurityScopeResponseV4,
 } from "@/types/generated/api-v4";
 
-import { ActionExecutionPanel } from "./action-execution-panel";
+import { ActionExecutionPanel, type AdminActionApi } from "./action-execution-panel";
 import { CaseReviewPanel } from "./case-review-panel";
 import { DecisionPanel, type FeedbackDecision } from "./decision-panel";
 import { feedbackKey, ReviewQueue, type FeedbackKind, type FeedbackReviewItem } from "./review-queue";
@@ -27,10 +25,10 @@ const PAGE_SIZE = 10;
 
 export function ReviewRoom({
   securityApi = getSecurityAnalysisApi(),
-  actionApi = getAnalysisApi(),
+  actionApi,
 }: {
   securityApi?: SecurityAnalysisApi;
-  actionApi?: AnalysisApi;
+  actionApi?: AdminActionApi;
 }) {
   const { user, isLoading: authLoading } = useAuth();
   const isAdmin = user?.role === "security_admin";
@@ -133,10 +131,10 @@ export function ReviewRoom({
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-border/70 pb-6"><p className="micro-label text-primary">ADMIN / HUMAN-IN-THE-LOOP</p><div className="mt-2 flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><Gavel className="size-5" /></span><div><h1 className="text-3xl font-bold tracking-[-0.025em]">Security Review Room</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Structured, privacy-minimized case evidence before every feedback decision; reviewed actions remain visibly isolated on v3.</p></div></div></header>
+      <header className="border-b border-border/70 pb-6"><p className="micro-label text-primary">ADMIN / HUMAN-IN-THE-LOOP</p><div className="mt-2 flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><Gavel className="size-5" /></span><div><h1 className="text-3xl font-bold tracking-[-0.025em]">Security Review Room</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Structured, privacy-minimized case evidence before every feedback decision and reviewed action.</p></div></div></header>
       <div className="inline-grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label="Review Room surface">
         <button type="button" role="tab" aria-selected={surface === "feedback"} onClick={() => setSurface("feedback")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "feedback" ? "bg-background shadow-sm" : "text-muted-foreground")}><BadgeCheck className="size-4" />Feedback decisions</button>
-        <button type="button" role="tab" aria-selected={surface === "actions"} onClick={() => setSurface("actions")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "actions" ? "bg-background shadow-sm" : "text-muted-foreground")}><Workflow className="size-4" />Reviewed actions v3</button>
+        <button type="button" role="tab" aria-selected={surface === "actions"} onClick={() => setSurface("actions")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "actions" ? "bg-background shadow-sm" : "text-muted-foreground")}><Workflow className="size-4" />Reviewed actions</button>
       </div>
 
       {surface === "feedback" ? (
@@ -145,7 +143,7 @@ export function ReviewRoom({
           <CaseReviewPanel feedback={selected} analysis={analysis} loading={caseState.loading} error={caseState.error} copilot={copilot} copilotLoading={copilotState.loading} copilotError={copilotState.error} onCopilot={(refresh) => void loadCopilot(refresh)} />
           <DecisionPanel key={selected ? feedbackKey(selected) : "empty"} feedback={selected} caseReady={analysis !== null && !caseState.loading && !caseState.error && !decisionState.blocked} busy={decisionState.busy} error={decisionState.error} onSubmit={submitFeedbackDecision} />
         </div>
-      ) : <ActionExecutionPanel api={actionApi} />}
+      ) : <ActionExecutionPanel api={actionApi ?? securityApi as AdminActionApi} />}
     </div>
   );
 }

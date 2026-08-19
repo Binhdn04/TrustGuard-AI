@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -37,6 +38,26 @@ _ROLLBACK_FLAG = {
     SecurityAIRolloutStage.ADMIN_COPILOT: "SECURITY_ADMIN_COPILOT_ENABLED",
 }
 
+_HOSTED_GATE_NAMES = {
+    "oidc_verified",
+    "postgresql_verified",
+    "redis_verified",
+    "live_provider_verified",
+    "reliability_rate",
+    "grounded_reason_rate",
+    "hallucinated_evidence_rate",
+    "hallucinated_action_rate",
+    "unnecessary_provider_call_rate",
+    "llm_fallback_success_rate",
+    "malicious_precision_no_regression",
+    "false_positive_rate_no_regression",
+    "report_appeal_overturn_rate_no_regression",
+    "p95_latency_ms",
+    "p95_tokens_per_turn",
+    "p95_cost_usd_per_turn",
+}
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
 
 def load_evaluation_report(path: str | Path | None) -> dict | None:
     return json.loads(Path(path).read_text(encoding="utf-8")) if path else None
@@ -49,6 +70,39 @@ def _report_passed(report: dict | None, version_key: str, version: str, hash_key
         and report.get(version_key) == version
         and isinstance(report.get(hash_key), str)
         and len(report[hash_key]) == 64
+    )
+
+
+def _hosted_report_passed(report: dict | None, target_stage: SecurityAIRolloutStage) -> bool:
+    """Accept only the complete output of the hosted evidence evaluator.
+
+    A small hand-authored object containing ``passed=true`` is not hosted
+    observation evidence.  The evaluator output includes the observation hash,
+    profile, metrics, baseline and every infrastructure/quality gate.
+    """
+    if not isinstance(report, dict):
+        return False
+    gates = report.get("gates")
+    metrics = report.get("metrics")
+    baseline = report.get("baseline")
+    environment = report.get("environment")
+    evidence_hash = report.get("evidence_sha256")
+    return bool(
+        report.get("passed") is True
+        and report.get("evaluation_version") == "security-ai-hosted-eval-v1"
+        and report.get("evaluation_profile") == "hosted_ai_reliability_cost_latency"
+        and report.get("rollout_stage") == target_stage.value
+        and isinstance(environment, str)
+        and environment.strip()
+        and "replace-with" not in environment.lower()
+        and isinstance(evidence_hash, str)
+        and _SHA256_PATTERN.fullmatch(evidence_hash)
+        and isinstance(metrics, dict)
+        and metrics.get("observation_count", 0) > 0
+        and isinstance(baseline, dict)
+        and isinstance(gates, dict)
+        and _HOSTED_GATE_NAMES <= gates.keys()
+        and all(gates[name] is True for name in _HOSTED_GATE_NAMES)
     )
 
 
@@ -69,9 +123,7 @@ def evaluate_rollout_readiness(
         "ai_evaluation": _report_passed(
             ai_report, "dataset_version", "security-ai-eval-v1", "dataset_sha256"
         ),
-        "hosted_evaluation": _report_passed(
-            hosted_report, "evaluation_version", "security-ai-hosted-eval-v1", "evidence_sha256"
-        ) and hosted_report.get("rollout_stage") == target_stage.value,
+        "hosted_evaluation": _hosted_report_passed(hosted_report, target_stage),
     }
     if target_stage is SecurityAIRolloutStage.OFF:
         gates.update(
@@ -96,10 +148,22 @@ def evaluate_rollout_readiness(
         gates["ai_provider_configured"] = settings.security_ai_provider_configuration_valid()
 
     rollback_flag = _ROLLBACK_FLAG.get(target_stage)
+    passed = all(gates.values())
+    production_rollout_complete = passed and target_stage is SecurityAIRolloutStage.ADMIN_COPILOT
     return {
         "target_stage": target_stage.value,
         "gates": gates,
-        "passed": all(gates.values()),
+        "passed": passed,
+        "rollout_status": (
+            "production_rollout_complete"
+            if production_rollout_complete
+            else "stage_ready"
+            if passed and target_stage is not SecurityAIRolloutStage.OFF
+            else "disabled"
+            if passed
+            else "blocked"
+        ),
+        "production_rollout_complete": production_rollout_complete,
         "rollback": {
             "disable_flag": rollback_flag,
             "database_action": "none",

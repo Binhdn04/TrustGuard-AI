@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.models.security_v4 import (
     ExposureStateV4,
@@ -63,6 +63,21 @@ class Understanding(StrictModel):
     field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(default_factory=dict, max_length=50)
     source_spans: list[UnderstandingSourceSpan] = Field(default_factory=list, max_length=50)
     understanding_version: Literal["security-understanding-v1"] = "security-understanding-v1"
+
+    @field_validator("scope_decision", "scenario", "requested_action", "follow_up_slot", mode="before")
+    @classmethod
+    def normalize_optional_unknown_enum(cls, value: Any) -> Any:
+        """Treat a model's UNKNOWN sentinel as an omitted optional candidate."""
+        if isinstance(value, str) and value.strip().casefold() == "unknown":
+            return None
+        return value
+
+    @field_validator("sender_intent", "claimed_entity", mode="before")
+    @classmethod
+    def normalize_optional_unknown_text(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip().casefold() in {"unknown", "n/a", "none"}:
+            return None
+        return value
 
 
 class PlanPriority(StrictModel):

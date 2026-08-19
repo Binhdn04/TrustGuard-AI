@@ -1,4 +1,4 @@
-"""Enable cryptographic and vector extensions."""
+"""Enable the cryptographic extension required by encrypted persistence."""
 
 from alembic import op
 
@@ -10,7 +10,6 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
 
 def downgrade() -> None:

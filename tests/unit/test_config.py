@@ -11,7 +11,6 @@ def production_settings(**overrides):
         "database_url": "postgresql://app:password@db.example/trustguard",
         "redis_url": "rediss://redis.example/0",
         "database_encryption_key": "database-encryption-secret-000001",
-        "artifact_signing_key": "artifact-signing-secret-value-0002",
         "oidc_issuer": "https://identity.example/",
         "oidc_audience": "https://api.example",
         "cors_origins": "https://app.example",
@@ -53,15 +52,24 @@ def test_post_processing_reserve_must_fit_analysis_deadline() -> None:
 def test_live_provider_profile_requires_only_security_v4_providers() -> None:
     settings = Settings(
         live_providers_required=True,
-        google_web_risk_api_key="web-risk",
         virustotal_api_key="virus-total",
-        official_verifier_api_url="https://verifier.example/check",
-        official_verifier_api_key="official-verifier",
         openai_api_key="",
         _env_file=None,
     )
 
     assert settings.openai_api_key == ""
+
+
+def test_live_provider_profile_does_not_require_google_web_risk() -> None:
+    settings = Settings(
+        live_providers_required=True,
+        google_web_risk_api_key="",
+        virustotal_api_key="virus-total",
+        _env_file=None,
+    )
+
+    assert settings.security_live_provider_requirements()["VIRUSTOTAL_API_KEY"] == "virus-total"
+    assert "GOOGLE_WEB_RISK_API_KEY" not in settings.security_live_provider_requirements()
 
 
 @pytest.mark.parametrize(
@@ -71,7 +79,6 @@ def test_live_provider_profile_requires_only_security_v4_providers() -> None:
         ({"redis_url": "memory://local"}, "Redis"),
         ({"oidc_issuer": "http://identity.example"}, "HTTPS"),
         ({"database_encryption_key": "replace-with-a-secret"}, "DATABASE_ENCRYPTION_KEY"),
-        ({"artifact_signing_key": "development-artifact-signing-key"}, "ARTIFACT_SIGNING_KEY"),
         ({"cors_origins": "http://localhost:3000"}, "CORS_ORIGINS"),
     ],
 )
@@ -80,44 +87,17 @@ def test_production_rejects_insecure_runtime_dependencies(override, message) -> 
         production_settings(**override)
 
 
-def test_production_requires_independent_encryption_and_signing_keys() -> None:
-    shared = "shared-production-secret-value-0001"
-    with pytest.raises(ValidationError, match="must be different"):
-        production_settings(database_encryption_key=shared, artifact_signing_key=shared)
-
-
-def test_production_cutover_requires_frozen_legacy_and_live_providers() -> None:
-    with pytest.raises(ValidationError, match="LEGACY_API_WRITES_ENABLED"):
-        production_settings(security_release_profile="cutover")
-
-    with pytest.raises(ValidationError, match="source discovery"):
-        production_settings(
-            security_release_profile="cutover",
-            legacy_api_writes_enabled=False,
-        )
-
+def test_production_cutover_requires_live_providers() -> None:
     with pytest.raises(ValidationError, match="LIVE_PROVIDERS_REQUIRED"):
-        production_settings(
-            security_release_profile="cutover",
-            legacy_api_writes_enabled=False,
-            source_discovery_enabled=False,
-            source_provisional_enabled=False,
-            source_auto_promotion_enabled=False,
-        )
+        production_settings(security_release_profile="cutover")
 
 
 def test_production_cutover_accepts_complete_security_profile() -> None:
     settings = production_settings(
         security_release_profile="cutover",
-        legacy_api_writes_enabled=False,
-        source_discovery_enabled=False,
-        source_provisional_enabled=False,
-        source_auto_promotion_enabled=False,
         live_providers_required=True,
         google_web_risk_api_key="web-risk",
         virustotal_api_key="virus-total",
-        official_verifier_api_url="https://verifier.example/check",
-        official_verifier_api_key="official-verifier",
     )
 
     assert settings.security_release_profile == "cutover"

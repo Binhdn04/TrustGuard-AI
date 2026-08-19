@@ -12,7 +12,6 @@ from src.agents.tools.providers import GoogleFactCheckRetriever, GoogleSafeBrows
 from src.agents.tools.rdap import RdapDomainIntelligence
 from src.agents.tools.redirect import GuardedRedirectResolver
 from src.agents.tools.reputation import (
-    GoogleWebRiskProvider,
     ProductionUrlReputationCascade,
     VirusTotalUrlProvider,
 )
@@ -28,19 +27,16 @@ def build_provider_adapters(settings: Any, source_registry: Any | None = None) -
 
     adapters: dict[str, object] = {}
     timeout = settings.provider_timeout_seconds
-    web_risk_key = getattr(settings, "google_web_risk_api_key", "")
     virus_total_key = getattr(settings, "virustotal_api_key", "")
-    if web_risk_key:
-        primary = GoogleWebRiskProvider(web_risk_key, timeout=timeout)
-        secondary = VirusTotalUrlProvider(virus_total_key, timeout=timeout) if virus_total_key else None
+    if virus_total_key:
+        primary = VirusTotalUrlProvider(virus_total_key, timeout=timeout)
         adapters["url_reputation"] = ProductionUrlReputationCascade(
             primary,
-            secondary,
-            allow_secondary=getattr(settings, "reputation_secondary_enabled", True),
+            allow_secondary=False,
             max_network_calls=getattr(settings, "reputation_max_network_calls", 4),
         )
     # Keep the v2 graph operational while it migrates to the normalized v3
-    # cascade.  Web Risk remains the production v3 primary.
+    # cascade. Google Safe Browsing remains its compatibility scanner.
     if settings.google_safe_browsing_api_key:
         adapters["url_scanner"] = GoogleSafeBrowsingScanner(settings.google_safe_browsing_api_key, timeout=timeout)
     if settings.google_fact_check_api_key:

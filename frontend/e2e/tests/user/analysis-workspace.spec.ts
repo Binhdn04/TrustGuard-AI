@@ -40,12 +40,12 @@ test("mobile keyboard flow: analyze → report/appeal → history resume", async
   await expectNoSeriousAccessibilityViolations(page, "[aria-label='Tạo case mới']");
 
   await page.getByRole("textbox").first().fill(`Nhận quà và đăng nhập tại ${DANGEROUS_URL}`);
-  await page.getByRole("checkbox", { name: /Cho phép kiểm tra URL/i }).check();
+  await expect(page.getByText(/tự đối chiếu URL\/domain với dịch vụ bảo mật/i)).toBeVisible();
   await page.getByRole("button", { name: /Gửi để đánh giá/i }).focus();
   await page.keyboard.press("Enter");
 
   await expect(page.getByText(/tín hiệu rủi ro cao tạm thời/i)).toBeVisible();
-  await page.getByRole("tab", { name: "Action" }).focus();
+  await page.getByRole("tab", { name: "Kết quả" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Nguy hiểm" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(/Không mở liên kết/i)).toBeVisible();
@@ -53,6 +53,13 @@ test("mobile keyboard flow: analyze → report/appeal → history resume", async
 
   await expectNoSeriousAccessibilityViolations(page, "[aria-labelledby='risk-heading']");
 
+  await page.getByRole("tab", { name: "Trò chuyện" }).click();
+  await page.getByRole("textbox").fill("Cảm ơn bạn");
+  await page.getByRole("button", { name: /Gửi để đánh giá/i }).click();
+  await expect(page.getByText(/Bạn có thể tiếp tục trò chuyện/i)).toBeVisible();
+  await page.getByRole("tab", { name: "Kết quả" }).click();
+
+  await page.getByText("Báo cáo hoặc yêu cầu xem xét").click();
   await page.getByRole("button", { name: "Gửi báo cáo" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText(/Bạn đã gửi báo cáo/i)).toBeVisible();

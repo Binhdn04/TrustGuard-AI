@@ -15,7 +15,7 @@ from src.models import (
     ReviewedAction,
     SecurityTriageCreateRequestV4,
 )
-from src.services.platform_wave2 import ArtifactSigner, MemoryWave2Repository, Wave2PlatformService
+from src.services.platform_wave2 import MemoryWave2Repository, Wave2PlatformService
 from src.services.security_triage import SecurityTriageScopeService
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -46,7 +46,7 @@ def _evidence() -> list[Evidence]:
 @pytest.mark.asyncio
 async def test_v4_high_risk_producer_is_idempotent_and_privacy_minimized() -> None:
     repository = MemoryWave2Repository()
-    service = Wave2PlatformService(repository, ArtifactSigner("hitl-test-signing-key"))
+    service = Wave2PlatformService(repository)
     response = await _high_risk_response()
 
     first = await service.propose_security_admin_actions(response)

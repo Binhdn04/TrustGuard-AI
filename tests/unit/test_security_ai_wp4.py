@@ -94,7 +94,7 @@ async def test_ai_response_keeps_actions_and_uncertainties_deterministic() -> No
 
 
 @pytest.mark.asyncio
-async def test_invalid_synthesis_uses_clear_template_fallback() -> None:
+async def test_invalid_synthesis_keeps_a_policy_grounded_answer() -> None:
     result = await GroundedSecurityResponseService(
         ai_enabled=True,
         model=_MalformedSynthesisModel(),
@@ -103,13 +103,14 @@ async def test_invalid_synthesis_uses_clear_template_fallback() -> None:
 
     response = result.assistant_response
     assert response is not None
-    assert response.generation_mode is AssistantGenerationModeV4.TEMPLATE_FALLBACK
+    assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
     assert response.top_reasons[0].evidence_refs == ["evidence:0123456789abcdef"]
-    assert any("phản hồi mẫu" in item for item in result.limitations)
+    assert any("bằng chứng và hành động đã kiểm chứng" in item for item in result.limitations)
+    assert any("grounding_rejected" in item for item in result.limitations)
 
 
 @pytest.mark.asyncio
-async def test_disabled_ai_still_returns_template_without_failure_limitation() -> None:
+async def test_disabled_ai_still_returns_a_policy_grounded_answer_without_failure_limitation() -> None:
     result = await GroundedSecurityResponseService(
         ai_enabled=False,
         model=None,
@@ -117,5 +118,5 @@ async def test_disabled_ai_still_returns_template_without_failure_limitation() -
     ).enrich(_risk_result())
 
     assert result.assistant_response is not None
-    assert result.assistant_response.generation_mode is AssistantGenerationModeV4.TEMPLATE_FALLBACK
+    assert result.assistant_response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
     assert not any("AI explanation" in item for item in result.limitations)

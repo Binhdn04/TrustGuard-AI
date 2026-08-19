@@ -113,8 +113,8 @@ class SecurityAdminCopilotService:
             refs = list(dict.fromkeys(draft.evidence_refs))
             mode = AssistantGenerationModeV4.AI
         else:
-            disposition, action, evidence_summary, conflicts, missing, rationale, refs = self._fallback(case)
-            mode = AssistantGenerationModeV4.TEMPLATE_FALLBACK
+            disposition, action, evidence_summary, conflicts, missing, rationale, refs = self._policy_grounded(case)
+            mode = AssistantGenerationModeV4.POLICY_GROUNDED
 
         completed_at = datetime.now(UTC)
         suggestion = SecurityAdminCopilotResponseV4(
@@ -135,7 +135,7 @@ class SecurityAdminCopilotService:
                 input_tokens=self._runtime.budget.input_tokens,
                 output_tokens=self._runtime.budget.output_tokens,
                 cost_usd=self._runtime.budget.cost_usd,
-                status="ok" if grounded else "fallback",
+                status="ok" if grounded else "policy_grounded",
             ),
             generated_at=completed_at,
         )
@@ -208,7 +208,7 @@ class SecurityAdminCopilotService:
         return disposition in allowed.get(risk, {"needs_more_information", "no_change"})
 
     @staticmethod
-    def _fallback(case):
+    def _policy_grounded(case):
         refs = [item.evidence_ref for item in case.evidence[:5]]
         if case.risk in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
             disposition = SecurityAdminCopilotDispositionV4.CONFIRM_MALICIOUS

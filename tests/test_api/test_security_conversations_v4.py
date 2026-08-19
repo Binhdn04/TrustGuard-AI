@@ -100,7 +100,7 @@ async def test_conversation_summary_redacts_url_secrets_and_does_not_inherit_con
         headers=USER_HEADERS,
         json={
             "message": "Ngân hàng yêu cầu tôi gửi OTP",
-            "consent": {"official_source_lookup": True},
+            "consent": {"external_url_lookup": True},
         },
     )
     body = first.json()

@@ -45,7 +45,7 @@ REQUIRED_CATEGORIES = frozenset(
         "recruitment",
         "promotion_prize",
         "brand_impersonation",
-        "safe_official",
+        "safe_whitelist",
         "mismatch_only",
         "new_domain_only",
         "provider_timeout",
@@ -71,7 +71,6 @@ EXTERNAL_TOOLS = frozenset(
         SecurityInvestigationToolV4.REDIRECT_RESOLVER,
         SecurityInvestigationToolV4.RDAP,
         SecurityInvestigationToolV4.URL_REPUTATION,
-        SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
     }
 )
 HIGH_RISKS = frozenset({SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS})
@@ -253,7 +252,6 @@ def evaluate_case(case: SecurityEvaluationCase) -> EvaluationCaseResult:
         message=case.message,
         consent={
             "external_url_lookup": case.consent.get("external_url_lookup", False),
-            "official_source_lookup": case.consent.get("official_source_lookup", False),
         },
     )
     scoped = SecurityTriageScopeService().assess(request)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
@@ -37,6 +38,12 @@ from src.config import get_settings
 from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
+    AdminActionAuditRecordV3,
+    AdminActionDecisionRequestV3,
+    AdminActionDecisionResponseV3,
+    AdminActionPageV3,
+    AdminActionRecordV3,
+    AdminActionStatus,
     AnalysisStatus,
     AppealStatus,
     BrandCreateRequestV4,
@@ -65,6 +72,9 @@ from src.models import (
     SecurityCampaignRecordV4,
     SecurityCampaignReviewerStatusV4,
     SecurityCapabilitiesResponseV4,
+    SecurityChatRequestV4,
+    SecurityChatResponseV4,
+    SecurityChatRouteV4,
     SecurityConversationPageV4,
     SecurityConversationV4,
     SecurityDomainIntelligencePageV4,
@@ -138,6 +148,92 @@ async def security_capabilities_v4() -> SecurityCapabilitiesResponseV4:
         release_profile=settings.security_release_profile,
         **capabilities,
     )
+
+
+@router.get("/admin/actions", response_model=AdminActionPageV3, responses=_COMMON_ERRORS)
+async def list_admin_actions_v4(
+    principal: PrincipalDependency,
+    http_request: Request,
+    action_status: AdminActionStatus | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> AdminActionPageV3:
+    require_security_admin(principal)
+    wave2 = await resolve_wave2_service(http_request)
+    return await wave2.list_admin_actions(action_status, limit, offset)
+
+
+@router.get("/admin/actions/{action_id}", response_model=AdminActionRecordV3, responses=_COMMON_ERRORS)
+async def get_admin_action_v4(
+    action_id: UUID,
+    principal: PrincipalDependency,
+    http_request: Request,
+) -> AdminActionRecordV3:
+    require_security_admin(principal)
+    wave2 = await resolve_wave2_service(http_request)
+    return await wave2.get_admin_action(action_id)
+
+
+@router.post(
+    "/admin/actions/{action_id}/decision",
+    response_model=AdminActionDecisionResponseV3,
+    responses=_COMMON_ERRORS,
+)
+async def decide_admin_action_v4(
+    action_id: UUID,
+    request: AdminActionDecisionRequestV3,
+    principal: PrincipalDependency,
+    http_request: Request,
+) -> AdminActionDecisionResponseV3:
+    require_security_admin(principal)
+    wave2 = await resolve_wave2_service(http_request)
+    return await wave2.decide_admin_action(action_id, request.decision, request.note, principal.user_id)
+
+
+@router.get(
+    "/admin/actions/{action_id}/audit",
+    response_model=list[AdminActionAuditRecordV3],
+    responses=_COMMON_ERRORS,
+)
+async def list_admin_action_audit_v4(
+    action_id: UUID,
+    principal: PrincipalDependency,
+    http_request: Request,
+) -> list[AdminActionAuditRecordV3]:
+    require_security_admin(principal)
+    wave2 = await resolve_wave2_service(http_request)
+    return await wave2.list_admin_action_audit(action_id)
+
+
+@router.post("/chat", response_model=SecurityChatResponseV4, responses=_COMMON_ERRORS)
+async def security_chat_v4(
+    request: SecurityChatRequestV4,
+    principal: PrincipalDependency,
+) -> SecurityChatResponseV4:
+    """Route a follow-up through the bounded chatbot before opening another analysis turn."""
+    del principal
+    from src.agents.graph import agent as chatbot_agent  # noqa: PLC0415
+
+    try:
+        result = await chatbot_agent.ainvoke({"query": request.message})
+    except Exception as exc:
+        raise PlatformError(
+            status_code=503,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Security assistant chat is temporarily unavailable.",
+            retryable=True,
+        ) from exc
+    try:
+        metadata = json.loads(result.get("analysis", ""))
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    tools_called = metadata.get("tools_called", []) if isinstance(metadata, dict) else []
+    route = (
+        SecurityChatRouteV4.SECURITY_ANALYSIS
+        if isinstance(tools_called, list) and "check_scam" in tools_called
+        else SecurityChatRouteV4.CONVERSATION
+    )
+    return SecurityChatResponseV4(route=route, response=result.get("response", ""))
 
 
 @router.post(

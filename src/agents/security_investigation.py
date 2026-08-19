@@ -54,8 +54,17 @@ _MANDATORY_PLANNER_TOOLS = {
 _TRUST_TOOLS = {
     SecurityInvestigationToolV4.BRAND_MATCH,
     SecurityInvestigationToolV4.WHITELIST_LOOKUP,
-    SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
 }
+
+
+def _requires_high_risk_reputation(context: SecurityContextV4) -> bool:
+    """Escalate reputation checks for requests that can lose money or access."""
+    return bool(
+        context.credential_request
+        or context.otp_request
+        or context.payment_request
+        or context.personal_information_request
+    )
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -120,7 +129,6 @@ def build_policy_constrained_investigation_plan(
     context: SecurityContextV4,
     *,
     external_url_lookup: bool,
-    official_source_lookup: bool = False,
 ) -> list[InvestigationStepV4]:
     """Create a safe plan exclusively from normalized SecurityContext targets."""
     plan: list[InvestigationStepV4] = []
@@ -222,20 +230,6 @@ def build_policy_constrained_investigation_plan(
                     depends_on=[brand.step_id],
                 )
             )
-        plan.append(
-            _step(
-                SecurityInvestigationToolV4.OFFICIAL_CLAIM_VERIFIER,
-                "message",
-                "official_verification_requested",
-                depends_on=[brand.step_id],
-                status=(
-                    SecurityInvestigationStepStatusV4.PENDING
-                    if official_source_lookup
-                    else SecurityInvestigationStepStatusV4.SKIPPED
-                ),
-                status_reason=None if official_source_lookup else "consent_required",
-            )
-        )
     return plan
 
 
@@ -375,7 +369,6 @@ class SecurityInvestigationService:
         plan = build_policy_constrained_investigation_plan(
             context,
             external_url_lookup=request.consent.external_url_lookup,
-            official_source_lookup=request.consent.official_source_lookup,
         )
         evidence = [self._context_evidence(context)]
         errors: list[SecurityToolErrorV4] = []
@@ -522,7 +515,7 @@ class SecurityInvestigationService:
                     update={"status": SecurityInvestigationStepStatusV4.SKIPPED, "status_reason": reason}
                 )
                 continue
-            call = self._external_call(item)
+            call = self._external_call(item, high_risk=_requires_high_risk_reputation(context))
             if call is None:
                 plan[index] = item.model_copy(
                     update={"status": SecurityInvestigationStepStatusV4.SKIPPED, "status_reason": "not_configured"}
@@ -664,7 +657,7 @@ class SecurityInvestigationService:
             target=target,
         )
 
-    def _external_call(self, step: InvestigationStepV4) -> ExternalCall | None:
+    def _external_call(self, step: InvestigationStepV4, *, high_risk: bool) -> ExternalCall | None:
         if step.tool is SecurityInvestigationToolV4.DNS and self._dns is not None:
             return lambda: self._dns.resolve(step.target)
         if step.tool is SecurityInvestigationToolV4.REDIRECT_RESOLVER and self._redirect is not None:
@@ -672,7 +665,7 @@ class SecurityInvestigationService:
         if step.tool is SecurityInvestigationToolV4.RDAP and self._rdap is not None:
             return lambda: self._rdap.lookup(step.target)
         if step.tool is SecurityInvestigationToolV4.URL_REPUTATION and self._reputation is not None:
-            return lambda: self._reputation.assess(step.target)
+            return lambda: self._reputation.assess(step.target, high_risk=high_risk)
         return None
 
     def _provider_name(self, step: InvestigationStepV4) -> str:

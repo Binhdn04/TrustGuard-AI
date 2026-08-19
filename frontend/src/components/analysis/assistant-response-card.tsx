@@ -10,7 +10,7 @@ export function AssistantResponseCard({
   response: AssistantResponseV4;
   mode: SecurityPresentationMode;
 }) {
-  const reasons = mode === "simple" ? response.top_reasons.slice(0, 3) : response.top_reasons;
+  const reasons = mode === "analyst" ? response.top_reasons : [];
   return (
     <section aria-label="Phản hồi của trợ lý bảo mật" className="max-w-[94%] rounded-2xl rounded-bl-sm border border-primary/20 bg-primary/5 p-4 text-sm">
       <div className="flex items-center gap-2">
@@ -18,7 +18,7 @@ export function AssistantResponseCard({
         <div>
           <p className="font-semibold">Trợ lý bảo mật</p>
           <p className="text-[10px] text-muted-foreground">
-            {response.generation_mode === "ai" ? "AI · đã kiểm tra grounding" : "Policy template fallback"}
+            {response.generation_mode === "ai" ? "AI · đã kiểm tra grounding" : "Trả lời từ policy và bằng chứng"}
           </p>
         </div>
       </div>
@@ -54,7 +54,7 @@ export function AssistantResponseCard({
       <p className="mt-3 border-t border-primary/15 pt-2 text-[10px] leading-4 text-muted-foreground">
         {response.generation_mode === "ai"
           ? "Phần diễn giải được xử lý bởi nhà cung cấp AI; verdict và hành động vẫn do policy xác định."
-          : "Phần diễn giải dùng mẫu policy vì AI không được dùng hoặc không khả dụng."}
+          : "Phản hồi được tạo trực tiếp từ verdict, bằng chứng và hành động đã kiểm chứng."}
         {mode === "analyst" && ` · ${response.response_version}`}
       </p>
     </section>

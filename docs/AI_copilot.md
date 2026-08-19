@@ -166,8 +166,8 @@
   - Executor revalidate consent, dependency, SSRF, deadline, retries, quota và cost ngay trước call.
   - Scenario routing:
       - Phishing URL: local rules, blacklist, DNS, redirect, RDAP, reputation, brand match.
-      - Recruitment: brand/career domain và official recruitment verification.
-      - Promotion/prize: official campaign verification.
+      - Recruitment: brand/career domain matching.
+      - Promotion/prize: brand/domain and reputation checks.
       - Impersonation không URL: brand/contact registry và official channel verification.
       - Payment/OTP không URL: context-based risk; không gọi URL provider.
       - Incident response: ưu tiên recovery guidance; investigation không trì hoãn warning.
@@ -186,7 +186,7 @@
 
   ### WP4 — Grounded assistant response và frontend experience
 
-  **Status:** `DONE` — grounding verifier, template fallback và simple/analyst frontend đã có test.
+  **Status:** `DONE` — grounding verifier, phản hồi hội thoại policy-grounded và simple/analyst frontend đã có test.
 
   Mục tiêu: kết quả đọc như trợ lý bảo mật, không như raw tool report.
 
@@ -198,7 +198,7 @@
   - immediate_steps[]: action enum + policy ref
   - follow_up_offer
   - response_version
-  - generation_mode: ai | template_fallback
+  - generation_mode: ai | policy_grounded (`template_fallback` chỉ được đọc để tương thích dữ liệu cũ)
 
   Validation:
 
@@ -206,16 +206,21 @@
   - Procedural advice phải tham chiếu deterministic action/policy.
   - Không cho phép citation hoặc signal không tồn tại.
   - Không render URL đáng ngờ thành clickable anchor.
-  - Synthesis failure trả template hiện tại và limitation rõ.
+  - Synthesis failure giữ câu trả lời hội thoại được dựng trực tiếp từ verdict, evidence và action đã kiểm chứng;
+    không chuyển sang template.
 
   Frontend:
 
-  - Conversation panel hiển thị assistant answer theo turn.
-  - Investigation panel tiếp tục là nguồn evidence/detail.
-  - Action panel ưu tiên “Làm ngay” theo exposure state.
-  - Simple mode dùng summary và ba hành động quan trọng nhất.
+  - Lượt intake đầu luôn chạy Security v4; trong lúc đang kiểm tra, conversation composer được ẩn và chỉ hiện lại sau
+    verdict. Các lượt sau đi qua authenticated `/api/v4/chat`: hội thoại thường được trả lời trực tiếp, còn
+    `check_scam` mở lượt Security v4 mới trong cùng `conversation_id`/version.
+  - Web product bỏ checkbox lookup từng lượt; thao tác gửi dưới disclosure cố định cấp authorization cho automatic
+    URL lookup. Executor vẫn quyết định call theo context và enforce target/SSRF/budget.
+  - Simple mode dùng layout hai vùng: chat và `Kết luận và hướng dẫn`; summary, ba lý do/hành động quan trọng nhất hiển thị
+    trước, investigation/evidence/report/appeal nằm trong disclosure mở rộng.
   - Analyst mode hiển thị plan, source, confidence, limitation và version.
-  - Disclosure chung nêu rõ nội dung được xử lý bởi AI provider; không thêm consent riêng theo lựa chọn sản phẩm.
+  - Disclosure chung nêu rõ nội dung có thể được xử lý bởi AI/security provider; không thêm checkbox consent
+    riêng trong composer theo lựa chọn sản phẩm.
 
   Gate hoàn thành:
 
@@ -424,8 +429,10 @@
     Report version/hash nằm tại `docs/evidence/security-ai-v1-report.json`.
   - Tier 3: `evaluate_security_ai_hosted.py` chỉ validate observation thật về OIDC/PostgreSQL/Redis/live provider,
     reliability, latency/token/cost và report/appeal overturn; tool không tự tạo hoặc giả lập hosted evidence.
-  - `check_security_ai_rollout.py` fail closed nếu thiếu report, provider/durable readiness hoặc bật flag vượt thứ tự;
-    rollback luôn chỉ dẫn tắt flag hiện tại và `database_action=none`.
+  - `check_security_ai_rollout.py` fail closed nếu thiếu report đầy đủ do hosted evaluator tạo ra,
+    provider/durable readiness hoặc bật flag vượt thứ tự. Kết quả local `target-stage=off` chỉ có
+    `rollout_status=disabled` và `production_rollout_complete=false`; rollback luôn chỉ dẫn tắt flag hiện tại và
+    `database_action=none`.
   - Audit WP1–WP7 trước WP8 đã siết WP7: rationale phải có evidence hợp lệ và proposed disposition không được
     xung đột với deterministic risk. Toàn bộ flag vẫn mặc định tắt.
 

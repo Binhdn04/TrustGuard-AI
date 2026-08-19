@@ -12,7 +12,7 @@ USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
 
 
 @pytest.mark.asyncio
-async def test_v4_completed_result_returns_and_persists_template_assistant_response(client) -> None:
+async def test_v4_completed_result_returns_and_persists_policy_grounded_assistant_response(client) -> None:
     created = await client.post(
         "/api/v4/analyses",
         headers=USER_HEADERS,
@@ -22,7 +22,7 @@ async def test_v4_completed_result_returns_and_persists_template_assistant_respo
     assert created.status_code == 200
     body = created.json()
     assistant = body["assistant_response"]
-    assert assistant["generation_mode"] == "template_fallback"
+    assert assistant["generation_mode"] == "policy_grounded"
     assert [item["action"] for item in assistant["immediate_steps"]] == body["recommended_actions"]
     assert {item["policy_ref"] for item in assistant["immediate_steps"]} == {body["policy_version"]}
     assert {ref for reason in assistant["top_reasons"] for ref in reason["evidence_refs"]} <= {
@@ -48,7 +48,7 @@ class _UngroundedModel:
 
 
 @pytest.mark.asyncio
-async def test_v4_ungrounded_synthesis_falls_back_without_failing_analysis(client) -> None:
+async def test_v4_ungrounded_synthesis_keeps_grounded_answer_without_failing_analysis(client) -> None:
     async def override_response_service():
         return GroundedSecurityResponseService(
             ai_enabled=True,
@@ -69,5 +69,5 @@ async def test_v4_ungrounded_synthesis_falls_back_without_failing_analysis(clien
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "completed"
-    assert body["assistant_response"]["generation_mode"] == "template_fallback"
-    assert any("phản hồi mẫu" in item for item in body["limitations"])
+    assert body["assistant_response"]["generation_mode"] == "policy_grounded"
+    assert any("bằng chứng và hành động đã kiểm chứng" in item for item in body["limitations"])

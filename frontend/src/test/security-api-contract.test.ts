@@ -67,10 +67,9 @@ describe("Security API v4 contract", () => {
       admin_feedback_review: true,
       intelligence_explorer: true,
       unified_v4_audit: true,
-      admin_action_contract: "v3",
+      admin_action_contract: "v4",
       executable_admin_actions: ["add_to_blacklist"],
       deferred_admin_actions: ["block_domain"],
-      compatibility_contracts: ["v2", "v3", "v4"],
     } satisfies SecurityCapabilitiesResponseV4;
     const report = {
       contract_version: "v4",
@@ -94,7 +93,7 @@ describe("Security API v4 contract", () => {
       offset: 0,
     } satisfies SecurityReportPageV4;
 
-    expect(capabilities.compatibility_contracts).toContain("v4");
+    expect(capabilities.contract_version).toBe("v4");
     expect(page.items[0].owner_id).toBe("owner-1");
   });
 });

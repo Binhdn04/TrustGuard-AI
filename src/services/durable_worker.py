@@ -5,6 +5,7 @@ import logging
 import socket
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.agents.tools.models import ToolResultStatus
@@ -13,7 +14,9 @@ from src.core.auth import Principal, UserRole
 from src.models import AnalysisStatus, SecurityAnalysisEventKindV4, SecurityAnalysisEventV4
 from src.repositories.postgres import DurableJob, LostJobLeaseError, PostgresPlatformRepository
 from src.security_ai.runtime import SecurityAssistantRuntime
-from src.services.analysis import AnalysisService
+
+if TYPE_CHECKING:
+    from src.services.analysis import AnalysisService
 from src.services.platform_wave2 import UsageLedgerEntry
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
@@ -290,18 +293,13 @@ class OutboxPublisher:
         self._stopping = asyncio.Event()
 
     async def publish_once(self) -> int:
-        messages = await self._repository.claim_outbox(self._worker_id)
-        for message in messages:
-            # Payloads are already minimized at the transaction boundary.
-            await self._redis.publish(f"trustguard:analysis:{message.aggregate_id}", message.event_type)
-            await self._repository.mark_outbox_published(message.id)
         claim_security = getattr(self._repository, "claim_security_outbox", None)
         security_messages = await claim_security(self._worker_id) if claim_security is not None else []
         for message in security_messages:
             await self._redis.publish(f"trustguard:analysis:{message.aggregate_id}", message.event_type)
             mark_security = getattr(self._repository, "mark_security_outbox_published")
             await mark_security(message.id)
-        return len(messages) + len(security_messages)
+        return len(security_messages)
 
     async def run(self) -> None:
         while not self._stopping.is_set():
@@ -331,34 +329,27 @@ class OutboxPublisher:
 
 
 class RetentionWorker:
-    """Delete expired artifact objects, then tombstone minimized retained input."""
+    """Tombstone minimized retained input and security payloads."""
 
     def __init__(
         self,
         repository: PostgresPlatformRepository,
         *,
-        delete_object: Callable[[str], Awaitable[None]] | None = None,
         interval_seconds: float = 3600,
     ) -> None:
         self._repository = repository
-        self._delete_object = delete_object
         self._interval_seconds = interval_seconds
         self._stopping = asyncio.Event()
 
-    async def run_once(self, now: datetime | None = None) -> tuple[int, int]:
+    async def run_once(self, now: datetime | None = None) -> int:
         cutoff = now or datetime.now(UTC)
-        storage_keys = await self._repository.expire_artifacts(cutoff)
-        if self._delete_object is not None:
-            for storage_key in storage_keys:
-                await self._delete_object(storage_key)
-        minimized = await self._repository.expire_minimized_content(cutoff)
         expire_conversations = getattr(self._repository, "expire_security_conversations", None)
         if expire_conversations is not None:
             await expire_conversations(cutoff)
         expire_security_payloads = getattr(self._repository, "expire_security_job_payloads", None)
         if expire_security_payloads is not None:
             await expire_security_payloads(cutoff)
-        return len(storage_keys), minimized
+        return 0
 
     async def run(self) -> None:
         while not self._stopping.is_set():
