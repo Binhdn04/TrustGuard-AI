@@ -2,12 +2,15 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { ShieldCheck, User, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { avatarToneClass, useAccountPreferences } from "@/lib/account-preferences-context";
+import { Archive, ShieldCheck, User, Settings, LogOut, LayoutDashboard } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export function UserMenu() {
   const { user, logout } = useAuth();
+  const { preferences } = useAccountPreferences();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -17,11 +20,20 @@ export function UserMenu() {
         setIsOpen(false);
       }
     }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsOpen(false);
+    }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, []);
 
   if (!user) return null;
+
+  const displayName = preferences.displayName || user.name;
 
   return (
     <div className="relative" ref={menuRef}>
@@ -30,9 +42,9 @@ export function UserMenu() {
         aria-label="Mở menu tài khoản"
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors border border-primary/20"
+        className={cn("flex size-10 items-center justify-center rounded-full border transition-colors hover:brightness-95", avatarToneClass[preferences.avatarTone])}
       >
-        <span className="font-bold text-sm uppercase">{user.name.charAt(0)}</span>
+        <span className="text-sm font-bold uppercase">{displayName.charAt(0)}</span>
       </button>
 
       <AnimatePresence>
@@ -42,11 +54,12 @@ export function UserMenu() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="absolute right-0 mt-2 w-64 rounded-xl border border-border bg-card shadow-xl overflow-hidden z-50 backdrop-blur-xl"
+            role="menu"
+            aria-label="Tài khoản"
+            className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-border bg-card shadow-xl backdrop-blur-xl"
           >
-            {/* Header info */}
             <div className="p-4 border-b border-border bg-muted/50">
-              <p className="font-semibold text-foreground truncate">{user.name}</p>
+              <p className="font-semibold text-foreground truncate">{displayName}</p>
               <p className="text-xs text-muted-foreground truncate">{user.email}</p>
               <div className="mt-2 inline-flex items-center px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary/20 text-primary">
                 {user.role === "security_admin" ? (
@@ -61,6 +74,7 @@ export function UserMenu() {
               {user.role === "security_admin" && (
                 <Link
                   href="/admin"
+                  role="menuitem"
                   className="flex items-center px-3 py-2 text-sm rounded-md text-foreground hover:bg-secondary transition-colors"
                   onClick={() => setIsOpen(false)}
                 >
@@ -69,23 +83,40 @@ export function UserMenu() {
                 </Link>
               )}
               
-              <button
-                className="w-full flex items-center px-3 py-2 text-sm rounded-md text-foreground hover:bg-secondary transition-colors"
+              <Link
+                href="/profile?tab=profile"
+                role="menuitem"
+                className="flex w-full items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+                onClick={() => setIsOpen(false)}
               >
                 <User className="w-4 h-4 mr-3 text-muted-foreground" />
                 Hồ sơ cá nhân
-              </button>
+              </Link>
               
-              <button
-                className="w-full flex items-center px-3 py-2 text-sm rounded-md text-foreground hover:bg-secondary transition-colors"
+              <Link
+                href="/profile?tab=preferences"
+                role="menuitem"
+                className="flex w-full items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+                onClick={() => setIsOpen(false)}
               >
                 <Settings className="w-4 h-4 mr-3 text-muted-foreground" />
                 Cài đặt
-              </button>
+              </Link>
+
+              <Link
+                href="/history"
+                role="menuitem"
+                className="flex w-full items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+                onClick={() => setIsOpen(false)}
+              >
+                <Archive className="mr-3 size-4 text-muted-foreground" />
+                Lịch sử &amp; báo cáo
+              </Link>
             </div>
 
             <div className="p-2 border-t border-border bg-muted/30">
               <button
+                role="menuitem"
                 onClick={() => {
                   setIsOpen(false);
                   logout();

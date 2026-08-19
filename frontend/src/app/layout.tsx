@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AccountPreferencesProvider } from "@/lib/account-preferences-context";
 import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
@@ -19,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-full flex flex-col">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <AuthProvider>
-            {children}
+            <AccountPreferencesProvider>{children}</AccountPreferencesProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { ArrowUp, Loader2, ShieldCheck } from "lucide-react";
 
 import { AUTOMATIC_LOOKUP_DISCLOSURE } from "@/lib/security/automatic-lookup-policy";
@@ -29,6 +29,13 @@ export function SecurityChatComposer({
     setMessage("");
   };
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (!message.trim() || busy) return;
+    event.currentTarget.form?.requestSubmit();
+  };
+
   return (
     <form
       onSubmit={submit}
@@ -45,6 +52,7 @@ export function SecurityChatComposer({
             id="security-message"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
+            onKeyDown={handleKeyDown}
             disabled={busy}
             maxLength={5000}
             placeholder="Ví dụ: Người tự xưng là ngân hàng yêu cầu tôi mở link và gửi OTP…"
@@ -66,7 +74,9 @@ export function SecurityChatComposer({
 
       <div className="flex items-start justify-between gap-4 text-[11px] leading-5 text-muted-foreground">
         <p className="flex items-start gap-1.5"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE}</p>
-        <span className="shrink-0 font-mono">{message.length}/5000</span>
+        <span className="shrink-0 text-right">
+          <span className="font-mono">{message.length}/5000</span>
+        </span>
       </div>
     </form>
   );

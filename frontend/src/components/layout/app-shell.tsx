@@ -16,6 +16,7 @@ import { Hexagon, LoaderCircle, PanelLeftClose } from "lucide-react";
 const routeCopy: Array<{ match: (pathname: string) => boolean; eyebrow: string; title: string }> = [
   { match: (pathname) => pathname === "/", eyebrow: "SECURITY INTAKE", title: "New investigation" },
   { match: (pathname) => pathname.startsWith("/history"), eyebrow: "CASE ARCHIVE", title: "Cases" },
+  { match: (pathname) => pathname.startsWith("/profile"), eyebrow: "ACCOUNT", title: "Tài khoản và cài đặt" },
   { match: (pathname) => pathname.startsWith("/admin/observatory"), eyebrow: "THREAT INTELLIGENCE", title: "Observatory" },
   { match: (pathname) => pathname.startsWith("/admin/review"), eyebrow: "HUMAN REVIEW", title: "Security Review Room" },
   { match: (pathname) => pathname.startsWith("/admin/trust"), eyebrow: "SECURITY V4 TRUST", title: "Trust Control Center" },

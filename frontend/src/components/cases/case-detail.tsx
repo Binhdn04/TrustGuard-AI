@@ -14,6 +14,7 @@ import { EvidenceDeck } from "@/components/analysis/evidence-deck";
 import { InvestigationTimelineV4 } from "@/components/analysis/investigation-timeline-v4";
 import { SimpleAnalystToggle } from "@/components/analysis/simple-analyst-toggle";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
+import { useAccountPreferences } from "@/lib/account-preferences-context";
 import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
@@ -44,6 +45,7 @@ export function CaseDetail({
   api?: SecurityAnalysisApi;
 }) {
   const router = useRouter();
+  const { preferences } = useAccountPreferences();
   const [result, setResult] = useState<SecurityScopeResponseV4 | null>(null);
   const [conversation, setConversation] = useState<SecurityConversationV4 | null>(null);
   const [events, setEvents] = useState<SecurityAnalysisEventV4[]>([]);
@@ -54,6 +56,12 @@ export function CaseDetail({
   const [resumeIssue, setResumeIssue] = useState<string | null>(null);
   const generation = useRef(0);
   const subscription = useRef<{ stop(): void } | null>(null);
+
+  useEffect(() => {
+    // This is a display-only preference and does not rerun the investigation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(preferences.defaultPresentation);
+  }, [preferences.defaultPresentation]);
 
   const stopRuntime = useCallback(() => {
     subscription.current?.stop();

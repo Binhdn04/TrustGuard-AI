@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Activity, Bot, ChevronDown, CircleHelp, FileSearch, RotateCcw, ShieldCheck } from "lucide-react";
 
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
+import { useAccountPreferences } from "@/lib/account-preferences-context";
 import type { SecurityCaseState, SecurityCaseTurn } from "@/lib/hooks/use-security-case";
 import {
   mapSecurityCaseViewModel,
@@ -214,8 +215,14 @@ export function CaseWorkspace({
   onRetry(): void;
   onReset(): void;
 }) {
+  const { preferences } = useAccountPreferences();
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("conversation");
   const [mode, setMode] = useState<SecurityPresentationMode>("simple");
+  useEffect(() => {
+    // Presentation preference never changes the analysis request or result.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(preferences.defaultPresentation);
+  }, [preferences.defaultPresentation]);
   const analysisLabel = latest?.analysis_id ? latest.analysis_id.slice(0, 8) : "pending";
   const viewModel = useMemo(
     () => latest ? mapSecurityCaseViewModel(latest, lifecycleEvents) : null,
