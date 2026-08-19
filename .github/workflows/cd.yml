@@ -4,6 +4,32 @@ on:
   push:
     branches:
       - main
+    # Run only when a production build input changes. Documentation and test
+    # files are intentionally excluded by this allowlist.
+    paths:
+      - "src/**"
+      - "migrations/**"
+      - "Dockerfile"
+      - "railway.backend.json"
+      - "railway.worker.json"
+      - "requirements.txt"
+      - "alembic.ini"
+      - ".dockerignore"
+      - "frontend/src/**"
+      - "frontend/public/**"
+      - "frontend/Dockerfile"
+      - "frontend/railway.json"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/next.config.ts"
+      - "frontend/postcss.config.mjs"
+      - "frontend/tsconfig.json"
+      - "frontend/.dockerignore"
+      - "!**/*.md"
+      - "!tests/**"
+      - "!**/tests/**"
+      - "!frontend/e2e/**"
+      - "!frontend/src/test/**"
   workflow_dispatch:
 
 permissions:
@@ -14,39 +40,108 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # lint-and-test:
-  #   name: Lint and test
-  #   runs-on: self-hosted
-  #   timeout-minutes: 20
+  changes:
+    name: Detect affected services
+    runs-on: self-hosted
+    outputs:
+      backend: ${{ steps.services.outputs.backend }}
+      worker: ${{ steps.services.outputs.worker }}
+      frontend: ${{ steps.services.outputs.frontend }}
 
-  #   steps:
-  #     - name: Check out repository
-  #       uses: actions/checkout@v5
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-  #     - name: Set up Python
-  #       uses: actions/setup-python@v6
-  #       with:
-  #         python-version: "3.11"
-  #         cache: pip
-  #         cache-dependency-path: |
-  #           requirements.txt
-  #           requirements-dev.txt
+      - name: Detect production build changes
+        id: services
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          backend=false
+          worker=false
+          frontend=false
 
-  #     - name: Install dependencies
-  #       run: pip install -r requirements-dev.txt
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]] \
+            || [[ -z "${BEFORE_SHA}" ]] \
+            || [[ "${BEFORE_SHA}" =~ ^0+$ ]] \
+            || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            backend=true
+            worker=true
+            frontend=true
+          else
+            while IFS= read -r changed_path; do
+              case "${changed_path}" in
+                *.md|tests/*|*/tests/*|frontend/e2e/*|frontend/src/test/*)
+                  continue
+                  ;;
+              esac
 
-  #     - name: Lint with ruff
-  #       run: ruff check src/ tests/
+              case "${changed_path}" in
+                src/*|Dockerfile|requirements.txt|.dockerignore)
+                  backend=true
+                  worker=true
+                  ;;
+                migrations/*|alembic.ini|railway.backend.json)
+                  backend=true
+                  ;;
+                railway.worker.json)
+                  worker=true
+                  ;;
+                frontend/src/*|frontend/public/*|frontend/Dockerfile|frontend/railway.json|frontend/package.json|frontend/package-lock.json|frontend/next.config.ts|frontend/postcss.config.mjs|frontend/tsconfig.json|frontend/.dockerignore)
+                  frontend=true
+                  ;;
+              esac
+            done < <(git diff --name-only "${BEFORE_SHA}" "${CURRENT_SHA}")
+          fi
 
-  #     - name: Run tests
-  #       run: pytest tests/ -v --tb=short
-  #       env:
-  #         APP_ENV: test
-  #         OPENAI_API_KEY: test-key
+          echo "backend=${backend}" >> "${GITHUB_OUTPUT}"
+          echo "worker=${worker}" >> "${GITHUB_OUTPUT}"
+          echo "frontend=${frontend}" >> "${GITHUB_OUTPUT}"
+
+  lint-and-test:
+    name: Lint and test
+    runs-on: self-hosted
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+        env:
+          APP_ENV: test
+          OPENAI_API_KEY: test-key
 
   deploy:
     name: Deploy production services
-    #needs: lint-and-test
+    needs:
+      - changes
+      - lint-and-test
+    if: >-
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.worker == 'true' ||
+      needs.changes.outputs.frontend == 'true'
     runs-on: self-hosted
     timeout-minutes: 60
     environment: production
@@ -85,21 +180,31 @@ jobs:
       #     railway status
                 
       - name: Deploy backend
+        if: needs.changes.outputs.backend == 'true'
         run: railway up --service backend --message "GitHub Actions ${GITHUB_SHA}"
 
       - name: Deploy worker
+        if: needs.changes.outputs.worker == 'true'
         run: railway up --service worker --message "GitHub Actions ${GITHUB_SHA}"
 
       - name: Deploy frontend
+        if: needs.changes.outputs.frontend == 'true'
         run: railway up --service frontend --message "GitHub Actions ${GITHUB_SHA}"
 
       - name: Write deployment summary
         if: success()
+        env:
+          DEPLOY_BACKEND: ${{ needs.changes.outputs.backend }}
+          DEPLOY_WORKER: ${{ needs.changes.outputs.worker }}
+          DEPLOY_FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: |
           {
             echo "## Railway deployment"
             echo ""
-            echo "Successfully deployed \`backend\`, \`worker\`, and \`frontend\`."
+            echo "Successfully deployed:"
+            [[ "${DEPLOY_BACKEND}" == "true" ]] && echo "- \`backend\`"
+            [[ "${DEPLOY_WORKER}" == "true" ]] && echo "- \`worker\`"
+            [[ "${DEPLOY_FRONTEND}" == "true" ]] && echo "- \`frontend\`"
             echo ""
             echo "Commit: \`${GITHUB_SHA}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
