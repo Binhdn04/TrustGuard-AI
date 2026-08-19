@@ -50,14 +50,17 @@ class Settings(BaseSettings):
 
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    google_web_risk_api_key: str = ""
     virustotal_api_key: str = ""
     reputation_secondary_enabled: bool = True
     reputation_max_network_calls: int = Field(default=4, ge=1, le=20)
     google_safe_browsing_api_key: str = ""
+    google_fact_check_api_key: str = ""
     tavily_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     live_providers_required: bool = False
     analysis_deadline_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
+    fact_check_timeout_seconds: float = Field(default=30.0, gt=0.0, le=90.0)
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
@@ -103,6 +106,9 @@ class Settings(BaseSettings):
 
     # Retention for minimized analysis content and security payloads.
     content_retention_days: int = Field(default=30, ge=1, le=365)
+
+    # Vector Store
+    chroma_persist_dir: str = "./data/chroma"
 
     def security_live_provider_requirements(self) -> dict[str, str]:
         required = {
