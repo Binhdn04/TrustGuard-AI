@@ -36,7 +36,6 @@ def test_provider_wiring_uses_virustotal_for_reputation_and_keeps_safe_browsing_
         virustotal_api_key="virus-total",
         reputation_max_network_calls=4,
         google_safe_browsing_api_key="safe-browsing",
-        google_fact_check_api_key="",
         openai_api_key="",
         tavily_api_key="",
     )
