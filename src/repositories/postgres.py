@@ -208,7 +208,7 @@ class PostgresPlatformRepository:
                 event.occurred_at,
             )
 
-    async def create_brand(self, record: BrandRecordV4) -> None:
+    async def create_brand(self, record: BrandRecordV4, *, audit_action: str = "created") -> None:
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
             await connection.execute(
@@ -231,7 +231,12 @@ class PostgresPlatformRepository:
                 record.model_dump_json(),
             )
             await self._insert_trust_audit(
-                connection, "brand", record.brand_id, "created", record.reviewer_id, record.created_at
+                connection,
+                "brand",
+                record.brand_id,
+                audit_action,
+                record.reviewer_id,
+                record.created_at,
             )
 
     async def list_brands(self) -> list[BrandRecordV4]:
@@ -241,12 +246,17 @@ class PostgresPlatformRepository:
         return [BrandRecordV4.model_validate(_json_value(row["record"])) for row in rows]
 
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
-        return [
+        effective = [
             item
             for item in await self.list_brands()
-            if item.lifecycle is TrustLifecycleV4.ACTIVE
-            and item.effective_from <= at
+            if item.effective_from <= at
             and (item.effective_until is None or at < item.effective_until)
+        ]
+        superseded = {item.supersedes for item in effective if item.supersedes is not None}
+        return [
+            item
+            for item in effective
+            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
         ]
 
     async def disable_brand(self, brand_id: str, reviewer_id: str, at: datetime) -> BrandRecordV4 | None:
@@ -255,16 +265,52 @@ class PostgresPlatformRepository:
             row = await connection.fetchrow("SELECT record FROM security_brands WHERE id=$1 FOR UPDATE", UUID(brand_id))
             if row is None:
                 return None
-            record = BrandRecordV4.model_validate(_json_value(row["record"])).model_copy(
-                update={"lifecycle": TrustLifecycleV4.DISABLED, "reviewer_id": reviewer_id}
+            already_superseded = await connection.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM security_brands WHERE record->>'supersedes'=$1)",
+                brand_id,
+            )
+            if already_superseded:
+                return None
+            previous = BrandRecordV4.model_validate(_json_value(row["record"]))
+            record = BrandRecordV4.model_validate(
+                {
+                    **previous.model_dump(),
+                    "brand_id": uuid4(),
+                    "supersedes": previous.brand_id,
+                    "lifecycle": TrustLifecycleV4.DISABLED,
+                    "effective_from": at,
+                    "effective_until": None,
+                    "reviewer_id": reviewer_id,
+                    "created_at": at,
+                }
             )
             await connection.execute(
-                "UPDATE security_brands SET lifecycle='disabled', reviewer_id=$2, record=$3::jsonb WHERE id=$1",
-                UUID(brand_id),
-                reviewer_id,
+                """INSERT INTO security_brands(
+                       id,name,aliases,official_domains,official_contacts,provenance,policy_version,
+                       lifecycle,effective_from,effective_until,reviewer_id,created_at,record
+                   ) VALUES($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)""",
+                record.brand_id,
+                record.name,
+                json.dumps(record.aliases),
+                json.dumps(record.official_domains),
+                json.dumps(record.official_contacts),
+                record.provenance,
+                record.policy_version,
+                record.lifecycle.value,
+                record.effective_from,
+                record.effective_until,
+                record.reviewer_id,
+                record.created_at,
                 record.model_dump_json(),
             )
-            await self._insert_trust_audit(connection, "brand", UUID(brand_id), "disabled", reviewer_id, at)
+            await self._insert_trust_audit(
+                connection,
+                "brand",
+                record.brand_id,
+                "disabled",
+                reviewer_id,
+                at,
+            )
         return record
 
     async def create_whitelist(self, record: WhitelistRecordV4) -> None:

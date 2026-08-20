@@ -406,7 +406,7 @@ class SQLiteBlacklistRepository:
             (analysis_id, type(exc).__name__, int(hidden), datetime.now(UTC).isoformat()),
         )
 
-    async def create_brand(self, record: BrandRecordV4) -> None:
+    async def create_brand(self, record: BrandRecordV4, *, audit_action: str = "created") -> None:
         async with self._lock:
             self._connection.execute(
                 """INSERT INTO security_brands(
@@ -421,7 +421,13 @@ class SQLiteBlacklistRepository:
                     record.created_at.isoformat(),
                 ),
             )
-            self._trust_audit("brand", str(record.brand_id), "created", record.reviewer_id, record.created_at)
+            self._trust_audit(
+                "brand",
+                str(record.brand_id),
+                audit_action,
+                record.reviewer_id,
+                record.created_at,
+            )
             self._connection.commit()
 
     async def list_brands(self) -> list[BrandRecordV4]:
@@ -430,12 +436,17 @@ class SQLiteBlacklistRepository:
         return [BrandRecordV4.model_validate_json(row[0]) for row in rows]
 
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
-        return [
+        effective = [
             item
             for item in await self.list_brands()
-            if item.lifecycle is TrustLifecycleV4.ACTIVE
-            and item.effective_from <= at
+            if item.effective_from <= at
             and (item.effective_until is None or at < item.effective_until)
+        ]
+        superseded = {item.supersedes for item in effective if item.supersedes is not None}
+        return [
+            item
+            for item in effective
+            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
         ]
 
     async def disable_brand(self, brand_id: str, reviewer_id: str, at: datetime) -> BrandRecordV4 | None:
@@ -445,14 +456,41 @@ class SQLiteBlacklistRepository:
             ).fetchone()
             if row is None:
                 return None
-            record = BrandRecordV4.model_validate_json(row[0]).model_copy(
-                update={"lifecycle": TrustLifecycleV4.DISABLED, "reviewer_id": reviewer_id}
+            superseding_rows = self._connection.execute(
+                "SELECT record_json FROM security_brands"
+            ).fetchall()
+            if any(
+                item.supersedes is not None and str(item.supersedes) == brand_id
+                for item in (BrandRecordV4.model_validate_json(value[0]) for value in superseding_rows)
+            ):
+                return None
+            previous = BrandRecordV4.model_validate_json(row[0])
+            record = BrandRecordV4.model_validate(
+                {
+                    **previous.model_dump(),
+                    "brand_id": uuid4(),
+                    "supersedes": previous.brand_id,
+                    "lifecycle": TrustLifecycleV4.DISABLED,
+                    "effective_from": at,
+                    "effective_until": None,
+                    "reviewer_id": reviewer_id,
+                    "created_at": at,
+                }
             )
             self._connection.execute(
-                "UPDATE security_brands SET record_json=?, lifecycle=? WHERE brand_id=?",
-                (record.model_dump_json(), record.lifecycle.value, brand_id),
+                """INSERT INTO security_brands(
+                       brand_id,record_json,lifecycle,effective_from,effective_until,created_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (
+                    str(record.brand_id),
+                    record.model_dump_json(),
+                    record.lifecycle.value,
+                    record.effective_from.isoformat(),
+                    None,
+                    record.created_at.isoformat(),
+                ),
             )
-            self._trust_audit("brand", brand_id, "disabled", reviewer_id, at)
+            self._trust_audit("brand", str(record.brand_id), "disabled", reviewer_id, at)
             self._connection.commit()
         return record
 

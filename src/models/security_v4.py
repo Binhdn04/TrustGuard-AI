@@ -121,10 +121,18 @@ class VerificationStatusV4(StrEnum):
 
 
 class OfficialIdentityTypeV4(StrEnum):
+    PRIMARY_WEBSITE = "primary_website"
     WEBSITE = "website"
     DOMAIN = "domain"
+    CAREERS_PAGE = "careers_page"
     SOCIAL_PROFILE = "social_profile"
     SUB_ORGANIZATION = "sub_organization"
+
+
+class OfficialIdentityMatchScopeV4(StrEnum):
+    EXACT = "exact"
+    HOST_AND_SUBDOMAINS = "host_and_subdomains"
+    BOUNDED_PHRASE = "bounded_phrase"
 
 
 class ResourceTypeV4(StrEnum):
@@ -369,13 +377,28 @@ class VerificationIntentV4(SecurityContractModel):
 
 
 class OfficialIdentityV4(SecurityContractModel):
+    identity_id: UUID = Field(default_factory=uuid4)
     identity_type: OfficialIdentityTypeV4
     canonical_value: str = Field(min_length=1, max_length=2048)
     display_value: str = Field(min_length=1, max_length=2048)
     entity_name: str = Field(min_length=1, max_length=200)
+    match_scope: OfficialIdentityMatchScopeV4 = OfficialIdentityMatchScopeV4.EXACT
     relationship: str = Field(default="primary", pattern=r"^[a-z0-9_]+$")
+    provenance: str = Field(default="unversioned_contract", min_length=1, max_length=1000)
+    policy_version: str = Field(default="official-identity-v1", pattern=r"^[a-z0-9._-]+$")
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    supersedes: UUID | None = None
+    lifecycle: TrustLifecycleV4 = TrustLifecycleV4.ACTIVE
     reviewed: bool = False
     source_ref: str | None = Field(default=None, pattern=r"^source:[a-f0-9]{16}$")
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> Self:
+        if self.effective_until is not None:
+            if self.effective_from is None or self.effective_until <= self.effective_from:
+                raise ValueError("identity effective_until must be after effective_from")
+        return self
 
 
 class ResourceIdentityV4(SecurityContractModel):
@@ -463,7 +486,8 @@ class SecurityChatRouteV4(StrEnum):
 class BrandCreateRequestV4(SecurityContractModel):
     name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=50)
-    official_domains: list[str] = Field(default_factory=list, min_length=1, max_length=50)
+    official_domains: list[str] = Field(default_factory=list, max_length=50)
+    official_identities: list[OfficialIdentityV4] = Field(default_factory=list, max_length=100)
     official_contacts: list[str] = Field(default_factory=list, max_length=50)
     provenance: str = Field(min_length=1, max_length=1000)
     policy_version: str = Field(default="brand-registry-v1", pattern=r"^[a-z0-9._-]+$")
@@ -474,14 +498,31 @@ class BrandCreateRequestV4(SecurityContractModel):
     def validate_interval(self) -> Self:
         if self.effective_until is not None and self.effective_until <= self.effective_from:
             raise ValueError("effective_until must be after effective_from")
+        if not self.official_domains and not any(
+            item.lifecycle is TrustLifecycleV4.ACTIVE
+            and (item.effective_until is None or item.effective_until > self.effective_from)
+            and (
+                self.effective_until is None
+                or (item.effective_from or self.effective_from) < self.effective_until
+            )
+            for item in self.official_identities
+        ):
+            raise ValueError("a brand requires an official domain or an active official identity")
         return self
 
 
 class BrandRecordV4(BrandCreateRequestV4):
     brand_id: UUID = Field(default_factory=uuid4)
+    supersedes: UUID | None = None
     lifecycle: TrustLifecycleV4 = TrustLifecycleV4.ACTIVE
     reviewer_id: str
     created_at: datetime
+
+    @model_validator(mode="after")
+    def require_reviewed_identities(self) -> Self:
+        if any(not item.reviewed for item in self.official_identities):
+            raise ValueError("persisted official identities must be reviewer-approved")
+        return self
 
 
 class WhitelistCreateRequestV4(SecurityContractModel):
@@ -1191,6 +1232,7 @@ __all__ = [
     "DerivedQueryProvenanceV4",
     "InvestigationStepV4",
     "LinkRoleV4",
+    "OfficialIdentityMatchScopeV4",
     "OfficialIdentityTypeV4",
     "OfficialIdentityV4",
     "OfficialLinkReferenceV4",

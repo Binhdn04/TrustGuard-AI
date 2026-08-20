@@ -587,9 +587,30 @@ async def page_brands_v4(
             if needle in item.name.casefold()
             or any(needle in alias.casefold() for alias in item.aliases)
             or any(needle in domain.casefold() for domain in item.official_domains)
+            or any(
+                needle in identity.canonical_value.casefold()
+                or needle in identity.display_value.casefold()
+                or needle in identity.entity_name.casefold()
+                for identity in item.official_identities
+            )
         ]
     items, total = _page(records, limit, offset)
     return BrandPageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/admin/brands/{brand_id}/versions",
+    response_model=BrandRecordV4,
+    status_code=201,
+    responses=_COMMON_ERRORS,
+)
+async def create_brand_version_v4(
+    brand_id: UUID,
+    request: BrandCreateRequestV4,
+    admin: SecurityTrustAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> BrandRecordV4:
+    return await admin.create_brand_version(str(brand_id), request, principal)
 
 
 @router.post("/admin/brands/{brand_id}/disable", response_model=BrandRecordV4, responses=_COMMON_ERRORS)

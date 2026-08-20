@@ -12,6 +12,7 @@ from src.agents.nodes.rules import normalize_url
 from src.models import (
     BrandRecordV4,
     InvestigationStepV4,
+    OfficialIdentityMatchScopeV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
@@ -22,7 +23,11 @@ from src.models import (
     WhitelistRecordV4,
     WhitelistScopeV4,
 )
-from src.repositories.blacklist import normalize_domain
+from src.services.official_identity_registry import (
+    BrandResolutionStatus,
+    OfficialIdentityRegistry,
+    runtime_official_identities,
+)
 
 _EMAIL_RE = re.compile(r"(?<![\w.+-])([\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w.-])")
 
@@ -90,16 +95,21 @@ def _distance(left: str, right: str) -> int:
     return previous[-1]
 
 
-def _brand_for_message(message: str, claimed_entity: str | None, brands: list[BrandRecordV4]) -> BrandRecordV4 | None:
-    folded_message = _fold(message)
-    folded_entity = _fold(claimed_entity) if claimed_entity else None
-    for brand in brands:
-        names = {_fold(brand.name), *(_fold(alias) for alias in brand.aliases)}
-        if folded_entity in names or any(
-            re.search(rf"(?<!\w){re.escape(name)}(?!\w)", folded_message) for name in names
-        ):
-            return brand
-    return None
+def _brand_for_message(
+    message: str,
+    claimed_entity: str | None,
+    brands: list[BrandRecordV4],
+    observed_at: datetime,
+) -> BrandRecordV4 | None:
+    registry = OfficialIdentityRegistry()
+    if claimed_entity:
+        resolution = registry.resolve(claimed_entity, brands, observed_at)
+        if resolution.status is BrandResolutionStatus.RESOLVED:
+            return resolution.brand
+        if resolution.status is BrandResolutionStatus.AMBIGUOUS:
+            return None
+    resolution = registry.resolve(message, brands, observed_at)
+    return resolution.brand if resolution.status is BrandResolutionStatus.RESOLVED else None
 
 
 class BrandMatcher:
@@ -113,15 +123,29 @@ class BrandMatcher:
         context = scope.security_context
         if context is None:
             return None, []
-        brand = _brand_for_message(request.message, context.claimed_entity, brands)
+        brand = _brand_for_message(request.message, context.claimed_entity, brands, observed_at)
         if brand is None:
             return None, []
         evidence: list[SecurityEvidenceV4] = []
         provenance = f"brand:{brand.brand_id}:{brand.policy_version}"
-        official_domains = {normalize_domain(item) for item in brand.official_domains}
+        identities = runtime_official_identities(brand, observed_at)
+        official_domains = {
+            item.canonical_value
+            for item in identities
+            if item.match_scope is OfficialIdentityMatchScopeV4.HOST_AND_SUBDOMAINS
+        }
+        exact_urls = {
+            canonical_whitelist_url(item.canonical_value)
+            for item in identities
+            if item.match_scope is OfficialIdentityMatchScopeV4.EXACT
+            and "://" in item.canonical_value
+        }
         for url in context.urls:
             host = (urlsplit(url).hostname or "").casefold()
-            if any(_is_domain_or_subdomain(host, official) for official in official_domains):
+            exact_url = canonical_whitelist_url(url)
+            if exact_url in exact_urls or any(
+                _is_domain_or_subdomain(host, official) for official in official_domains
+            ):
                 signal, confidence = "official_match", 1.0
             elif host.startswith("xn--") or ".xn--" in host:
                 signal, confidence = "homograph_domain", 0.9
