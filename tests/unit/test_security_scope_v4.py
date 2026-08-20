@@ -43,6 +43,36 @@ def test_explicit_impersonation_is_in_scope() -> None:
     assert "impersonation_signal" in result.reason_codes
 
 
+@pytest.mark.parametrize("message", ["Xin chào", "Chào bạn!", "Hello", "Hi TrustGuard"])
+def test_basic_greeting_gets_a_local_conversational_response(message: str) -> None:
+    response = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+
+    assert response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+    assert response.scope_reasons == ["assistant_greeting"]
+    assert response.boundary_message is not None
+    assert response.boundary_message.startswith("Chào bạn!")
+    assert response.risk is None
+    assert response.tool_calls_used == 0
+
+
+@pytest.mark.parametrize("message", ["Bạn là ai?", "TrustGuard là gì?", "Hướng dẫn sử dụng"])
+def test_basic_capability_questions_explain_the_security_assistant(message: str) -> None:
+    response = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+
+    assert response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+    assert response.scope_reasons == ["assistant_capabilities"]
+    assert response.boundary_message is not None
+    assert "TrustGuard" in response.boundary_message
+    assert "hỏi lại" in response.boundary_message
+
+
+def test_security_content_takes_precedence_over_a_greeting() -> None:
+    result = classify_security_scope("Xin chào, ngân hàng yêu cầu tôi gửi OTP ngay")
+
+    assert result.decision is ScopeDecisionV4.IN_SCOPE
+    assert "otp_request" in result.reason_codes
+
+
 def test_vague_phishing_question_needs_context() -> None:
     result = classify_security_scope("Đây có phải phishing không?")
 

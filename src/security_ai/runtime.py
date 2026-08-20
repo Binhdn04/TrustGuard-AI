@@ -50,6 +50,51 @@ class BudgetExceededError(RuntimeError):
 
 
 @dataclass(slots=True)
+class TurnExecutionContext:
+    """Request-scoped deadline and provider budgets shared by every pipeline stage."""
+
+    deadline_seconds: float = 30.0
+    max_network_units: int = 16
+    max_estimated_cost_usd: float = 0.05
+    ai_budget: TurnBudget = field(default_factory=TurnBudget)
+    started_at: float = field(default_factory=perf_counter)
+    network_units: int = 0
+    external_cost_usd: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.deadline_seconds <= 0:
+            raise ValueError("turn deadline must be positive")
+        if self.max_network_units < 0:
+            raise ValueError("network unit budget must be non-negative")
+        if self.max_estimated_cost_usd <= 0:
+            raise ValueError("estimated cost budget must be positive")
+
+    @property
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.deadline_seconds - (perf_counter() - self.started_at))
+
+    @property
+    def estimated_cost_usd(self) -> float:
+        return self.ai_budget.cost_usd + self.external_cost_usd
+
+    def reserve_network_units(self, units: int = 1) -> None:
+        if units < 1:
+            raise ValueError("network units must be positive")
+        if self.network_units + units > self.max_network_units:
+            raise BudgetExceededError("turn_network_budget_exhausted")
+        self.network_units += units
+
+    def record_external_cost(self, cost_usd: float) -> None:
+        if cost_usd < 0:
+            raise ValueError("external cost must be non-negative")
+        self.external_cost_usd += cost_usd
+
+    @property
+    def cost_budget_exhausted(self) -> bool:
+        return self.estimated_cost_usd >= self.max_estimated_cost_usd
+
+
+@dataclass(slots=True)
 class RuntimeResult(Generic[OutputT]):
     output: OutputT | None
     status: str
@@ -66,6 +111,17 @@ class SecurityAssistantRuntime:
     budget: TurnBudget = field(default_factory=TurnBudget)
     metrics: list[InvocationMetric] = field(default_factory=list)
     turn_started_at: float = field(default_factory=perf_counter)
+    execution_context: TurnExecutionContext | None = None
+
+    def __post_init__(self) -> None:
+        if self.execution_context is None:
+            self.execution_context = TurnExecutionContext(
+                deadline_seconds=self.turn_deadline_seconds,
+                ai_budget=self.budget,
+                started_at=self.turn_started_at,
+            )
+            return
+        self.budget = self.execution_context.ai_budget
 
     async def invoke(
         self,
@@ -78,7 +134,11 @@ class SecurityAssistantRuntime:
         Metrics deliberately contain no prompt, raw response, or reasoning text.
         """
         for attempt in range(self.max_retries + 1):
-            remaining_seconds = self.turn_deadline_seconds - (perf_counter() - self.turn_started_at)
+            ai_remaining_seconds = self.turn_deadline_seconds - (perf_counter() - self.turn_started_at)
+            execution_remaining_seconds = (
+                self.execution_context.remaining_seconds if self.execution_context is not None else ai_remaining_seconds
+            )
+            remaining_seconds = min(ai_remaining_seconds, execution_remaining_seconds)
             if remaining_seconds <= 0:
                 self._metric(operation, 0, "turn_deadline_exceeded", error="turn_deadline_exceeded")
                 return RuntimeResult(None, "fallback", "turn_deadline_exceeded")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from src.agents.security_risk import assess_security_risk
@@ -7,6 +9,7 @@ from src.agents.security_scope import extract_security_context
 from src.models import (
     AssistantProcessingModeV4,
     ExposureStateV4,
+    MissingInformationSlotV4,
     RequestedActionV4,
     ScopeDecisionV4,
     SecurityConversationSummaryV4,
@@ -14,7 +17,7 @@ from src.models import (
     SecurityScenarioV4,
     SecurityTriageCreateRequestV4,
 )
-from src.security_ai.contracts import SemanticSecuritySignal, Understanding, UnderstandingSourceSpan
+from src.security_ai.contracts import ModelResponse, SemanticSecuritySignal, Understanding, UnderstandingSourceSpan
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import (
@@ -164,6 +167,66 @@ async def test_explicit_general_fact_check_is_terminal_without_model_call() -> N
 
     assert result.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
     assert result.assistant_context.processing_mode is AssistantProcessingModeV4.RULES_ONLY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Xin chào", "Bạn có thể làm gì?"])
+async def test_local_conversation_intents_are_terminal_without_model_call(message: str) -> None:
+    class MustNotRun:
+        async def understand(self, message, conversation_summary):
+            raise AssertionError("local conversation intent invoked AI")
+
+    service = SecuritySemanticUnderstandingService(
+        enabled=True,
+        model=MustNotRun(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    )
+    result = await service.enrich(SecurityTriageCreateRequestV4(message=message), _scope(message))
+
+    assert result.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+    assert result.assistant_context.processing_mode is AssistantProcessingModeV4.RULES_ONLY
+    assert result.boundary_message is not None
+    assert result.risk is None
+
+
+@pytest.mark.asyncio
+async def test_first_vague_security_turn_gives_llm_the_policy_selected_follow_up_slot() -> None:
+    message = "Tôi nhận được tin nhắn lạ"
+
+    class FollowUpModel:
+        received_summary: dict | None = None
+
+        async def understand(self, message: str, conversation_summary: str | None):
+            assert conversation_summary is not None
+            self.received_summary = json.loads(conversation_summary)
+            return ModelResponse(
+                output=_understanding(
+                    message,
+                    scope_decision=ScopeDecisionV4.NEED_MORE_INFO,
+                    follow_up_slot=MissingInformationSlotV4.ACTION_TAKEN,
+                    follow_up_question="Bạn đã thực hiện hành động nào theo tin nhắn đó chưa?",
+                ),
+                provider="fake",
+                model="understanding-v1",
+            )
+
+    model = FollowUpModel()
+    service = SecuritySemanticUnderstandingService(
+        enabled=True,
+        model=model,
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    )
+
+    result = await service.enrich(SecurityTriageCreateRequestV4(message=message), _scope(message))
+
+    assert model.received_summary == {
+        "security_context": None,
+        "exposure_state": "UNKNOWN",
+        "policy_selected_follow_up_slot": "action_taken",
+    }
+    assert result.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
+    assert result.follow_up_slot is MissingInformationSlotV4.ACTION_TAKEN
+    assert result.follow_up_question == "Bạn đã thực hiện hành động nào theo tin nhắn đó chưa?"
 
 
 @pytest.mark.asyncio

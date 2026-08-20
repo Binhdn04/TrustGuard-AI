@@ -206,7 +206,22 @@ _ASSISTANT_CAPABILITY_TERMS = (
     "ban co the lam gi",
     "bạn làm được gì",
     "ban lam duoc gi",
+    "bạn là ai",
+    "ban la ai",
+    "trustguard là gì",
+    "trustguard la gi",
+    "cách sử dụng trustguard",
+    "cach su dung trustguard",
+    "hướng dẫn sử dụng",
+    "huong dan su dung",
     "what can you do",
+    "who are you",
+    "how do i use trustguard",
+)
+_BASIC_GREETING_RE = re.compile(
+    r"^(?:(?:xin\s+)?chào|hello|hi|hey|alo|good\s+(?:morning|afternoon|evening))"
+    r"(?:\s+(?:bạn|trustguard))?[\s!,.?]*$",
+    re.IGNORECASE,
 )
 _VAGUE_SECURITY_TERMS = (
     "tin nhắn lạ",
@@ -264,9 +279,6 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     urls = extract_urls(message)
     reasons: list[str] = []
 
-    if _contains_any(text, _ASSISTANT_CAPABILITY_TERMS):
-        return ScopeAssessment(ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK, ("assistant_capabilities",))
-
     security_groups = (
         ("credential_request", _CREDENTIAL_TERMS),
         ("otp_request", _OTP_TERMS),
@@ -292,6 +304,9 @@ def classify_security_scope(message: str) -> ScopeAssessment:
             reasons.append("url_present")
         return ScopeAssessment(ScopeDecisionV4.IN_SCOPE, tuple(dict.fromkeys(reasons)))
 
+    if _contains_any(text, _ASSISTANT_CAPABILITY_TERMS):
+        return ScopeAssessment(ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK, ("assistant_capabilities",))
+
     out_of_scope_groups = (
         ("general_fact_check_sports", _SPORTS_TERMS),
         ("general_fact_check_politics", _POLITICS_TERMS),
@@ -306,6 +321,8 @@ def classify_security_scope(message: str) -> ScopeAssessment:
         return ScopeAssessment(ScopeDecisionV4.IN_SCOPE, ("url_present",))
     if _contains_any(text, _VAGUE_SECURITY_TERMS):
         return ScopeAssessment(ScopeDecisionV4.NEED_MORE_INFO, ("security_concern_missing_context",))
+    if _BASIC_GREETING_RE.fullmatch(text):
+        return ScopeAssessment(ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK, ("assistant_greeting",))
     return ScopeAssessment(ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK, ("no_security_signal",))
 
 

@@ -492,7 +492,12 @@ class SecurityInvestigationService:
         if context.urls and not request.consent.external_url_lookup:
             limitations.append("External URL/domain lookup bị bỏ qua vì chưa có consent.")
 
-        deadline_at = monotonic() + self._deadline_seconds
+        turn_remaining = (
+            runtime.execution_context.remaining_seconds
+            if runtime is not None and runtime.execution_context is not None
+            else self._deadline_seconds
+        )
+        deadline_at = monotonic() + min(self._deadline_seconds, turn_remaining)
         calls_used = 0
         for index, item in enumerate(plan):
             if item.status is not SecurityInvestigationStepStatusV4.PENDING:

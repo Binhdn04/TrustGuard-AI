@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from src.agents.security_investigation import SecurityInvestigationService
 from src.agents.security_risk import assess_security_risk
 from src.agents.security_trust import SecurityTrustService
 from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.models import (
+    AnalysisStatus,
     ExposureStateV4,
     ScopeDecisionV4,
     SecurityRiskV4,
@@ -22,6 +24,8 @@ ProgressCallback = Callable[
     [str, str, list[str], SecurityRiskV4 | None],
     Awaitable[None],
 ]
+InvestigationResolver = Callable[[], Awaitable[SecurityInvestigationService]]
+MemoryLookupResolver = Callable[[], Awaitable[SecurityMemoryLookupTool]]
 
 
 class SecurityTriagePipeline:
@@ -31,16 +35,24 @@ class SecurityTriagePipeline:
         self,
         *,
         understanding: SecuritySemanticUnderstandingService,
-        investigation: SecurityInvestigationService,
+        investigation: SecurityInvestigationService | None = None,
+        investigation_resolver: InvestigationResolver | None = None,
         trust: SecurityTrustService,
         responses: GroundedSecurityResponseService,
         memory_lookup: SecurityMemoryLookupTool | None = None,
+        memory_lookup_resolver: MemoryLookupResolver | None = None,
     ) -> None:
+        if (investigation is None) == (investigation_resolver is None):
+            raise ValueError("provide exactly one investigation service or resolver")
+        if memory_lookup is not None and memory_lookup_resolver is not None:
+            raise ValueError("provide at most one memory lookup service or resolver")
         self._understanding = understanding
         self._investigation = investigation
+        self._investigation_resolver = investigation_resolver
         self._trust = trust
         self._responses = responses
         self._memory_lookup = memory_lookup
+        self._memory_lookup_resolver = memory_lookup_resolver
 
     async def process(
         self,
@@ -55,7 +67,7 @@ class SecurityTriagePipeline:
         if progress is not None:
             await progress("understanding", "Đã hợp nhất ngữ cảnh rule và AI.", [], None)
         if scoped.scope_decision is not ScopeDecisionV4.IN_SCOPE:
-            return scoped
+            return self._complete(scoped)
 
         exposure = (
             scoped.assistant_context.exposure_state
@@ -63,16 +75,18 @@ class SecurityTriagePipeline:
             else ExposureStateV4.UNKNOWN
         )
         if is_incident_exposure(exposure):
-            if self._memory_lookup is not None and owner_id is not None:
-                scoped = await self._memory_lookup.enrich(scoped, owner_id=owner_id)
+            memory_lookup = await self._resolve_memory_lookup()
+            if memory_lookup is not None and owner_id is not None:
+                scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
             scoped = assess_security_risk(
                 scoped,
-                memory_enabled=bool(self._memory_lookup and self._memory_lookup.enabled and owner_id),
+                memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
             )
             if progress is not None:
                 await progress("incident_response", "Đã ưu tiên hướng dẫn khôi phục tức thời.", [], scoped.risk)
         else:
-            scoped = await self._investigation.investigate(request, scoped, runtime=runtime)
+            investigation = await self._resolve_investigation()
+            scoped = await investigation.investigate(request, scoped, runtime=runtime)
             if progress is not None:
                 await progress(
                     "investigation",
@@ -81,8 +95,9 @@ class SecurityTriagePipeline:
                     None,
                 )
             scoped = await self._trust.enrich(request, scoped)
-            if self._memory_lookup is not None and owner_id is not None:
-                scoped = await self._memory_lookup.enrich(scoped, owner_id=owner_id)
+            memory_lookup = await self._resolve_memory_lookup()
+            if memory_lookup is not None and owner_id is not None:
+                scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
                 if progress is not None:
                     refs = [
                         item.evidence_ref for item in scoped.evidence if item.type.value == "reviewed_security_memory"
@@ -95,7 +110,7 @@ class SecurityTriagePipeline:
                     )
             scoped = assess_security_risk(
                 scoped,
-                memory_enabled=bool(self._memory_lookup and self._memory_lookup.enabled and owner_id),
+                memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
             )
             if progress is not None:
                 await progress(
@@ -112,7 +127,32 @@ class SecurityTriagePipeline:
                 list(scoped.explanation_evidence_refs),
                 scoped.risk,
             )
-        return scoped
+        return self._complete(scoped)
+
+    async def _resolve_investigation(self) -> SecurityInvestigationService:
+        if self._investigation is not None:
+            return self._investigation
+        if self._investigation_resolver is None:  # pragma: no cover - constructor invariant
+            raise RuntimeError("investigation resolver is unavailable")
+        return await self._investigation_resolver()
+
+    async def _resolve_memory_lookup(self) -> SecurityMemoryLookupTool | None:
+        if self._memory_lookup is not None:
+            return self._memory_lookup
+        if self._memory_lookup_resolver is None:
+            return None
+        return await self._memory_lookup_resolver()
+
+    @staticmethod
+    def _complete(scoped: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
+        if scoped.status is AnalysisStatus.COMPLETED and scoped.completed_at is not None:
+            return scoped
+        return scoped.model_copy(
+            update={
+                "status": AnalysisStatus.COMPLETED,
+                "completed_at": datetime.now(UTC),
+            }
+        )
 
 
 __all__ = ["SecurityTriagePipeline"]

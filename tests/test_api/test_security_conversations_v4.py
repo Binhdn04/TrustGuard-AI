@@ -118,3 +118,37 @@ async def test_conversation_summary_redacts_url_secrets_and_does_not_inherit_con
 
     assert retained_url == "https://example.com/login"
     assert any("consent" in item for item in second.json()["limitations"])
+
+
+@pytest.mark.asyncio
+async def test_greeting_inside_active_case_is_answered_without_losing_security_context(client) -> None:
+    first = await client.post(
+        "/api/v4/analyses",
+        headers=USER_HEADERS,
+        json={"message": "Ngân hàng yêu cầu tôi gửi OTP ngay"},
+    )
+    first_body = first.json()
+    greeting = await client.post(
+        "/api/v4/analyses",
+        headers=USER_HEADERS,
+        json={
+            "message": "Xin chào",
+            "conversation_id": first_body["conversation_id"],
+            "conversation_version": first_body["conversation_version"],
+        },
+    )
+    conversation = await client.get(
+        f"/api/v4/conversations/{first_body['conversation_id']}",
+        headers=USER_HEADERS,
+    )
+
+    assert first.status_code == 200
+    assert greeting.status_code == 200
+    assert greeting.json()["scope_decision"] == "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+    assert greeting.json()["scope_reasons"] == ["assistant_greeting"]
+    assert greeting.json()["boundary_message"].startswith("Chào bạn!")
+    assert greeting.json()["security_context"] is None
+    assert greeting.json()["risk"] is None
+    assert greeting.json()["tool_calls_used"] == 0
+    assert greeting.json()["conversation_version"] == first_body["conversation_version"] + 1
+    assert conversation.json()["summary"]["security_context"]["otp_request"] is True

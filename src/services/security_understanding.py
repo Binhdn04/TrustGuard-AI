@@ -46,8 +46,10 @@ _EXPLICIT_GENERAL_FACT_REASONS = {
     "general_fact_check_medical_science",
     "general_fact_check_news",
     "assistant_capabilities",
+    "assistant_greeting",
     "recruitment_contact_required",
 }
+_LOCAL_CONVERSATION_REASONS = {"assistant_capabilities", "assistant_greeting"}
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -277,6 +279,8 @@ class SecuritySemanticUnderstandingService:
                     )
                 }
             )
+            if set(scope.scope_reasons) & _LOCAL_CONVERSATION_REASONS:
+                return rules_only
             return apply_adaptive_conversation_policy(request.message, rules_only)
         if self._model is None:
             return self._fallback(request.message, scope)
@@ -285,21 +289,22 @@ class SecuritySemanticUnderstandingService:
             detect_local_exposure(request.message),
         )
         selected_slot = select_missing_slot(scope.security_context, preview_exposure)
-        conversation_summary = None
-        if scope.security_context is not None or preview_exposure is not ExposureStateV4.UNKNOWN:
-            conversation_summary = json.dumps(
-                {
-                    "security_context": (
-                        scope.security_context.model_dump(mode="json", exclude_none=True)
-                        if scope.security_context is not None
-                        else None
-                    ),
-                    "exposure_state": preview_exposure.value,
-                    "policy_selected_follow_up_slot": selected_slot.value if selected_slot else None,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+        # Always provide the policy-selected slot, including on the first vague
+        # security turn where no structured context exists yet. This lets the
+        # model phrase the one permitted question without choosing policy.
+        conversation_summary = json.dumps(
+            {
+                "security_context": (
+                    scope.security_context.model_dump(mode="json", exclude_none=True)
+                    if scope.security_context is not None
+                    else None
+                ),
+                "exposure_state": preview_exposure.value,
+                "policy_selected_follow_up_slot": selected_slot.value if selected_slot else None,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         result = await self._runtime.invoke(
             AssistantOperation.UNDERSTAND,
             lambda: self._model.understand(request.message, conversation_summary),

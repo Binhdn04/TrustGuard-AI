@@ -12,7 +12,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
-from src.agents.security_risk import assess_security_risk
 from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.api.dependencies import (
     PrincipalDependency,
@@ -100,7 +99,7 @@ from src.models import (
     WhitelistPageV4,
     WhitelistRecordV4,
 )
-from src.services.security_conversation_policy import is_incident_exposure
+from src.services.security_pipeline import SecurityTriagePipeline
 
 router = APIRouter(tags=["security-triage-v4"])
 
@@ -209,9 +208,16 @@ async def list_admin_action_audit_v4(
 async def security_chat_v4(
     request: SecurityChatRequestV4,
     principal: PrincipalDependency,
+    service: SecurityTriageScopeServiceDependency,
 ) -> SecurityChatResponseV4:
     """Route a follow-up through the bounded chatbot before opening another analysis turn."""
     del principal
+    local = service.assess(SecurityTriageCreateRequestV4(message=request.message))
+    if set(local.scope_reasons) & {"assistant_capabilities", "assistant_greeting"}:
+        return SecurityChatResponseV4(
+            route=SecurityChatRouteV4.CONVERSATION,
+            response=local.boundary_message or "Tôi có thể hỗ trợ bạn kiểm tra rủi ro bảo mật.",
+        )
     from src.agents.graph import agent as chatbot_agent  # noqa: PLC0415
 
     try:
@@ -276,38 +282,29 @@ async def create_security_analysis_v4(
     scoped = await analyses.begin_turn(request, scoped, principal)
     settings = get_settings()
     memory = None
+
+    async def resolve_investigation():
+        return await resolve_security_investigation_service(http_request)
+
+    async def resolve_memory_lookup() -> SecurityMemoryLookupTool:
+        nonlocal memory
+        memory = memory or await resolve_security_memory_service(http_request)
+        return SecurityMemoryLookupTool(memory, enabled=True)
+
+    pipeline = SecurityTriagePipeline(
+        understanding=understanding,
+        investigation_resolver=resolve_investigation,
+        trust=trust,
+        responses=responses,
+        memory_lookup_resolver=resolve_memory_lookup if settings.security_memory_retrieval_enabled else None,
+    )
     try:
-        scoped = await understanding.enrich(request, scoped)
-        if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE:
-            exposure = scoped.assistant_context.exposure_state if scoped.assistant_context else None
-            if exposure is not None and is_incident_exposure(exposure):
-                if settings.security_memory_retrieval_enabled:
-                    memory = await resolve_security_memory_service(http_request)
-                    scoped = await SecurityMemoryLookupTool(memory, enabled=True).enrich(
-                        scoped,
-                        owner_id=principal.user_id,
-                    )
-                scoped = assess_security_risk(
-                    scoped,
-                    memory_enabled=settings.security_memory_retrieval_enabled,
-                )
-            else:
-                investigation = await resolve_security_investigation_service(http_request)
-                scoped = await investigation.investigate(request, scoped, runtime=ai_runtime)
-                scoped = await trust.enrich(request, scoped)
-                if settings.security_memory_retrieval_enabled:
-                    memory = await resolve_security_memory_service(http_request)
-                    scoped = await SecurityMemoryLookupTool(memory, enabled=True).enrich(
-                        scoped,
-                        owner_id=principal.user_id,
-                    )
-                scoped = assess_security_risk(
-                    scoped,
-                    memory_enabled=settings.security_memory_retrieval_enabled,
-                )
-            scoped = await responses.enrich(scoped)
-        else:
-            scoped = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
+        scoped = await pipeline.process(
+            request,
+            scoped,
+            runtime=ai_runtime,
+            owner_id=principal.user_id,
+        )
     except Exception as exc:
         failed = scoped.model_copy(update={"status": AnalysisStatus.FAILED, "completed_at": datetime.now(UTC)})
         await analyses.persist_failed(failed, principal)

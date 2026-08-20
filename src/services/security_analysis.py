@@ -47,6 +47,7 @@ _EXPLICIT_GENERAL_FACT_REASONS = {
     "general_fact_check_medical_science",
     "general_fact_check_news",
 }
+_LOCAL_CONVERSATION_REASONS = {"assistant_capabilities", "assistant_greeting"}
 _SENSITIVE_SUMMARY_VALUE = re.compile(
     r"(?:otp|one[- ]time|pass(?:word|code)?|mật khẩu|mat khau|pin|secret|token|credential)"
     r"|\b\d{4,8}\b|[\w.+-]+@[\w.-]+",
@@ -212,7 +213,12 @@ class SecurityAnalysisService:
                 )
 
         previous_assistant = existing.summary.assistant_context if existing else None
-        if existing is not None and response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
+        local_conversation = bool(set(response.scope_reasons) & _LOCAL_CONVERSATION_REASONS)
+        if (
+            existing is not None
+            and response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+            and not local_conversation
+        ):
             response = response.model_copy(
                 update={
                     "scope_decision": ScopeDecisionV4.NEED_MORE_INFO,
@@ -249,7 +255,15 @@ class SecurityAnalysisService:
             update={
                 "conversation_id": conversation_id,
                 "conversation_version": version,
-                "security_context": merged,
+                # Greeting/help responses may occur inside an active case. They
+                # must not expose the retained case context on an out-of-scope
+                # response, while the conversation summary below keeps it for
+                # the next genuine security turn.
+                "security_context": (
+                    None
+                    if response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+                    else merged
+                ),
                 "assistant_context": assistant_context,
             }
         )
@@ -499,20 +513,32 @@ class SecurityAnalysisService:
         record = await self._load_conversation(response.conversation_id, principal)
         if record.context_version != response.conversation_version or record.active_analysis_id != response.analysis_id:
             return
+        local_conversation = bool(set(response.scope_reasons) & _LOCAL_CONVERSATION_REASONS)
+        summary_context = (
+            record.summary.security_context if local_conversation else _redact_context(response.security_context)
+        )
+        summary_assistant = (
+            record.summary.assistant_context
+            if local_conversation
+            else _redact_assistant_context(response.assistant_context)
+        )
+        unresolved = (
+            record.summary.unresolved_slots
+            if local_conversation
+            else [
+                MissingInformationSlotV4(value)
+                for value in (response.assistant_context.missing_information if response.assistant_context else [])
+                if value in {slot.value for slot in MissingInformationSlotV4}
+            ]
+        )
         refs = list(dict.fromkeys([*record.summary.evidence_refs, *(item.evidence_ref for item in response.evidence)]))
         updated = record.model_copy(
             update={
                 "summary": record.summary.model_copy(
                     update={
-                        "security_context": _redact_context(response.security_context),
-                        "assistant_context": _redact_assistant_context(response.assistant_context),
-                        "unresolved_slots": [
-                            MissingInformationSlotV4(value)
-                            for value in (
-                                response.assistant_context.missing_information if response.assistant_context else []
-                            )
-                            if value in {slot.value for slot in MissingInformationSlotV4}
-                        ],
+                        "security_context": summary_context,
+                        "assistant_context": summary_assistant,
+                        "unresolved_slots": unresolved,
                         "evidence_refs": refs[:100],
                     }
                 ),

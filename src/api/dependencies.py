@@ -29,7 +29,13 @@ from src.core.errors import PlatformError
 from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
-from src.security_ai import ModelTokenPricing, OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
+from src.security_ai import (
+    ModelTokenPricing,
+    OpenAISecurityAssistant,
+    SecurityAssistantRuntime,
+    TurnBudget,
+    TurnExecutionContext,
+)
 from src.services.platform_wave2 import (
     MemoryWave2Repository,
     VersionedSourceRegistry,
@@ -92,25 +98,52 @@ def get_security_assistant_model():
     )
 
 
-def new_security_assistant_runtime() -> SecurityAssistantRuntime:
+def new_security_turn_execution_context() -> TurnExecutionContext:
+    settings = get_settings()
+    return TurnExecutionContext(
+        deadline_seconds=settings.analysis_deadline_seconds,
+        max_estimated_cost_usd=settings.max_provider_cost_usd,
+        ai_budget=TurnBudget(max_calls=settings.security_ai_max_calls_per_turn),
+    )
+
+
+def new_security_assistant_runtime(
+    execution_context: TurnExecutionContext | None = None,
+) -> SecurityAssistantRuntime:
     """Budgets are per turn, so this dependency must never be cached."""
     settings = get_settings()
+    context = execution_context or new_security_turn_execution_context()
     return SecurityAssistantRuntime(
         timeout_seconds=settings.security_ai_timeout_seconds,
         turn_deadline_seconds=settings.security_ai_turn_deadline_seconds,
         max_retries=settings.security_ai_max_retries,
-        budget=TurnBudget(max_calls=settings.security_ai_max_calls_per_turn),
+        budget=context.ai_budget,
+        turn_started_at=context.started_at,
+        execution_context=context,
     )
 
 
-async def get_security_turn_runtime() -> SecurityAssistantRuntime:
+async def get_security_turn_execution_context() -> TurnExecutionContext:
+    """Create the end-to-end execution boundary once for this request."""
+    return new_security_turn_execution_context()
+
+
+SecurityTurnExecutionContextDependency = Annotated[
+    TurnExecutionContext,
+    Depends(get_security_turn_execution_context),
+]
+
+
+async def get_security_turn_runtime(
+    execution_context: SecurityTurnExecutionContextDependency,
+) -> SecurityAssistantRuntime:
     """One shared AI budget/deadline for the complete v4 turn.
 
     FastAPI caches dependency results for the lifetime of a request, so every
     AI stage receives this exact instance while different turns remain
     isolated.
     """
-    return new_security_assistant_runtime()
+    return new_security_assistant_runtime(execution_context)
 
 
 SecurityAssistantRuntimeDependency = Annotated[
