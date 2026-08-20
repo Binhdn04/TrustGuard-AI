@@ -41,15 +41,6 @@ _FALLBACK_LIMITATION = "AI semantic understanding không khả dụng; kết qu�
 _UNGROUNDED_LIMITATION = "AI semantic field thiếu confidence hoặc source span hợp lệ đã bị loại."
 _CONFLICT_LIMITATION = "AI semantic understanding xung đột với rule signal; rule được giữ nguyên."
 _BOUNDARY_CONFLICT_LIMITATION = "AI và rule xung đột về phạm vi; cần thêm thông tin trước khi điều tra."
-_EXPLICIT_GENERAL_FACT_REASONS = {
-    "general_fact_check_sports",
-    "general_fact_check_politics",
-    "general_fact_check_medical_science",
-    "general_fact_check_news",
-    "assistant_capabilities",
-    "assistant_greeting",
-    "recruitment_contact_required",
-}
 _LOCAL_CONVERSATION_REASONS = {"assistant_capabilities", "assistant_greeting"}
 
 
@@ -272,7 +263,7 @@ class SecuritySemanticUnderstandingService:
     ) -> SecurityScopeResponseV4:
         if not self._enabled:
             return scope
-        if set(scope.scope_reasons) & _EXPLICIT_GENERAL_FACT_REASONS:
+        if scope.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
             rules_only = scope.model_copy(
                 update={
                     "assistant_context": _rules_only_context(

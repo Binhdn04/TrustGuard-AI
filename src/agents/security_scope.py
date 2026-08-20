@@ -11,11 +11,12 @@ from src.models import (
     ScopeDecisionV4,
     SecurityContextV4,
     SecurityScenarioV4,
+    VerificationTopicV4,
 )
 
 _SPACE_RE = re.compile(r"\s+")
 _AMOUNT_RE = re.compile(
-    r"(?<!\w)(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*(?:k|tr(?:iệu)?|triệu|đ|đồng|vnd|usd|\$)(?!\w)",
+    r"(?<!\w)(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*(?:k|củ|cu|tr(?:iệu)?|triệu|đ|đồng|vnd|usd|\$)(?!\w)",
     re.IGNORECASE,
 )
 _DEADLINE_RE = re.compile(r"\b(?:trước|truoc)\s+\d{1,2}\s*h\b", re.IGNORECASE)
@@ -29,9 +30,18 @@ _CREDENTIAL_TERMS = (
     "mat khau",
     "password",
     "thông tin đăng nhập",
+    "thong tin dang nhap",
     "credentials",
 )
-_OTP_TERMS = ("otp", "mã xác thực", "ma xac thuc", "mã xác minh", "verification code")
+_OTP_TERMS = (
+    "otp",
+    "mã xác thực",
+    "ma xac thuc",
+    "ma xac thcc",
+    "mã xác minh",
+    "ma xac minh",
+    "verification code",
+)
 _PAYMENT_TERMS = (
     "chuyển tiền",
     "chuyen tien",
@@ -93,6 +103,10 @@ _ACCOUNT_TERMS = (
     "khoa tai khoan",
     "account verification",
     "account locked",
+    "tài khoản sắp khóa",
+    "tai khoan sap khoa",
+    "tài khoản sắp bị khóa",
+    "tai khoan sap bi khoa",
 )
 _REFUND_TERMS = ("hoàn tiền", "hoan tien", "refund")
 _CHARITY_TERMS = ("quỹ cứu trợ", "quy cuu tro", "từ thiện", "tu thien", "quyên góp", "quyen gop")
@@ -114,7 +128,10 @@ _PERSONAL_INFO_TERMS = (
     "căn cước",
     "can cuoc",
     "thông tin cá nhân",
+    "thong tin ca nhan",
     "personal information",
+    "thông tin thẻ",
+    "thong tin the",
     "số thẻ",
     "so the",
 )
@@ -134,6 +151,8 @@ _URGENCY_TERMS = (
     "trong 24h",
     "immediately",
     "urgent",
+    " lẹ",
+    "le ",
 )
 _IMPERSONATION_ENTITIES = (
     ("tập đoàn vingroup", "Vingroup"),
@@ -240,6 +259,128 @@ _VAGUE_SECURITY_TERMS = (
     "scam",
     "suspicious message",
 )
+_AMBIGUOUS_SENSITIVE_ACTION_TERMS = (
+    "ck ",
+    "chốt đơn",
+    "chot don",
+    "giữ suất",
+    "giu suat",
+    "nhập mã bí mật",
+    "nhap ma bi mat",
+)
+
+_OPEN_LINK_TERMS = (
+    "mở link",
+    "mo link",
+    "mở liên kết",
+    "bấm link",
+    "bam link",
+    "nhấp link",
+    "click link",
+    "open link",
+)
+_INSTALL_APP_TERMS = (
+    "cài ứng dụng",
+    "cai ung dung",
+    "cài app",
+    "cai app",
+    "cài anydesk",
+    "cai anydesk",
+    "cài teamviewer",
+    "cai teamviewer",
+    "install app",
+)
+_SHARE_SCREEN_TERMS = (
+    "chia sẻ màn hình",
+    "chia se man hinh",
+    "bật chia sẻ màn hình",
+    "bat chia se man hinh",
+    "share screen",
+)
+_SCAN_QR_TERMS = ("quét mã qr", "quet ma qr", "quét qr", "quet qr", "scan qr")
+_SUBMIT_FORM_TERMS = (
+    "điền biểu mẫu",
+    "dien bieu mau",
+    "điền form",
+    "dien form",
+    "gửi form",
+    "gui form",
+    "nộp form",
+    "nop form",
+    "submit form",
+)
+_REGISTER_APPLY_TERMS = (
+    "đăng ký",
+    "dang ky",
+    "ứng tuyển",
+    "ung tuyen",
+    "nộp hồ sơ",
+    "nop ho so",
+    "register",
+    "apply",
+)
+_DOWNLOAD_FILE_TERMS = (
+    "tải tệp",
+    "tai tep",
+    "tải file",
+    "tai file",
+    "tải xuống",
+    "tai xuong",
+    "download file",
+    "download attachment",
+)
+
+_FORM_CONTEXT_TERMS = (
+    *_SUBMIT_FORM_TERMS,
+    "biểu mẫu",
+    "bieu mau",
+    "google form",
+    "microsoft form",
+    "form đăng ký",
+    "form dang ky",
+    "form ứng tuyển",
+    "form ung tuyen",
+)
+_EVENT_CONTEXT_TERMS = ("sự kiện", "su kien", "event", "hội thảo", "hoi thao", "workshop")
+_COURSE_CONTEXT_TERMS = ("khóa học", "khoa hoc", "course", "lớp học", "lop hoc")
+_SURVEY_CONTEXT_TERMS = ("khảo sát", "khao sat", "survey")
+
+_NEUTRAL_CONTEXT_GROUPS = (
+    ("neutral_recruitment_context", _RECRUITMENT_TERMS),
+    ("neutral_promotion_context", _PROMOTION_TERMS),
+    ("neutral_form_context", _FORM_CONTEXT_TERMS),
+    ("neutral_event_context", _EVENT_CONTEXT_TERMS),
+    ("neutral_course_context", _COURSE_CONTEXT_TERMS),
+    ("neutral_survey_context", _SURVEY_CONTEXT_TERMS),
+)
+
+_ACTION_SOURCE_TERMS = {
+    RequestedActionV4.LOGIN: ("đăng nhập", "dang nhap", "login", "sign in"),
+    RequestedActionV4.SHARE_OTP: _OTP_TERMS,
+    RequestedActionV4.SHARE_CREDENTIALS: _CREDENTIAL_TERMS,
+    RequestedActionV4.TRANSFER_MONEY: _PAYMENT_TERMS,
+    RequestedActionV4.PAY_FEE: (*_FEE_TERMS, "đóng phí", "dong phi", "nộp phí", "nop phi", "pay fee"),
+    RequestedActionV4.PROVIDE_PERSONAL_INFORMATION: _PERSONAL_INFO_TERMS,
+    RequestedActionV4.OPEN_LINK: _OPEN_LINK_TERMS,
+    RequestedActionV4.INSTALL_APP: _INSTALL_APP_TERMS,
+    RequestedActionV4.SHARE_SCREEN: _SHARE_SCREEN_TERMS,
+    RequestedActionV4.SCAN_QR: _SCAN_QR_TERMS,
+    RequestedActionV4.SUBMIT_FORM: _SUBMIT_FORM_TERMS,
+    RequestedActionV4.REGISTER_OR_APPLY: _REGISTER_APPLY_TERMS,
+    RequestedActionV4.DOWNLOAD_FILE: _DOWNLOAD_FILE_TERMS,
+}
+
+_TOPIC_SOURCE_TERMS = (
+    (VerificationTopicV4.RECRUITMENT, _RECRUITMENT_TERMS),
+    (VerificationTopicV4.PROMOTION, _PROMOTION_TERMS),
+    (VerificationTopicV4.EVENT, _EVENT_CONTEXT_TERMS),
+    (VerificationTopicV4.COURSE, _COURSE_CONTEXT_TERMS),
+    (VerificationTopicV4.SURVEY, _SURVEY_CONTEXT_TERMS),
+    (VerificationTopicV4.ACCOUNT, _ACCOUNT_TERMS),
+    (VerificationTopicV4.PAYMENT, _PAYMENT_TERMS),
+    (VerificationTopicV4.CHARITY, _CHARITY_TERMS),
+    (VerificationTopicV4.INVESTMENT, _INVESTMENT_TERMS),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +395,39 @@ def _fold(message: str) -> str:
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
+
+
+def _first_term_span(message: str, terms: tuple[str, ...]) -> tuple[int, int] | None:
+    folded = message.casefold()
+    matches: list[tuple[int, int]] = []
+    for term in terms:
+        candidate = term.strip().casefold()
+        if not candidate:
+            continue
+        start = folded.find(candidate)
+        if start >= 0:
+            matches.append((start, start + len(candidate)))
+    return min(matches, default=None)
+
+
+def requested_action_source_span(message: str, action: RequestedActionV4) -> tuple[int, int] | None:
+    """Return only a literal user-message span for a rule-supported action."""
+    return _first_term_span(message, _ACTION_SOURCE_TERMS[action])
+
+
+def verification_topic_source(
+    message: str,
+) -> tuple[VerificationTopicV4, str, tuple[int, int]] | None:
+    """Return the first deterministic topic and its literal source text."""
+    matches: list[tuple[int, VerificationTopicV4, tuple[int, int]]] = []
+    for topic, terms in _TOPIC_SOURCE_TERMS:
+        span = _first_term_span(message, terms)
+        if span is not None:
+            matches.append((span[0], topic, span))
+    if not matches:
+        return None
+    _, topic, span = min(matches, key=lambda item: item[0])
+    return topic, message[span[0] : span[1]], span
 
 
 def _is_payment_request(text: str, message: str) -> bool:
@@ -274,6 +448,28 @@ def _is_refund_context(text: str, message: str) -> bool:
     )
 
 
+def _neutral_context_reasons(text: str) -> list[str]:
+    return [reason for reason, terms in _NEUTRAL_CONTEXT_GROUPS if _contains_any(text, terms)]
+
+
+def _explicit_requested_action(text: str) -> RequestedActionV4 | None:
+    if _contains_any(text, _INSTALL_APP_TERMS):
+        return RequestedActionV4.INSTALL_APP
+    if _contains_any(text, _SHARE_SCREEN_TERMS):
+        return RequestedActionV4.SHARE_SCREEN
+    if _contains_any(text, _SCAN_QR_TERMS):
+        return RequestedActionV4.SCAN_QR
+    if _contains_any(text, _DOWNLOAD_FILE_TERMS):
+        return RequestedActionV4.DOWNLOAD_FILE
+    if _contains_any(text, _SUBMIT_FORM_TERMS):
+        return RequestedActionV4.SUBMIT_FORM
+    if _contains_any(text, _REGISTER_APPLY_TERMS):
+        return RequestedActionV4.REGISTER_OR_APPLY
+    if _contains_any(text, _OPEN_LINK_TERMS):
+        return RequestedActionV4.OPEN_LINK
+    return None
+
+
 def classify_security_scope(message: str) -> ScopeAssessment:
     text = _fold(message)
     urls = extract_urls(message)
@@ -282,8 +478,6 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     security_groups = (
         ("credential_request", _CREDENTIAL_TERMS),
         ("otp_request", _OTP_TERMS),
-        ("recruitment_context", _RECRUITMENT_TERMS),
-        ("promotion_prize_context", _PROMOTION_TERMS),
         ("account_verification_context", _ACCOUNT_TERMS),
         ("charity_context", _CHARITY_TERMS),
         ("investment_context", _INVESTMENT_TERMS),
@@ -299,7 +493,26 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     if _is_payment_request(text, message):
         reasons.append("payment_request")
 
+    neutral_reasons = _neutral_context_reasons(text)
+    explicit_action = _explicit_requested_action(text)
+    high_sensitivity_actions = {
+        RequestedActionV4.OPEN_LINK,
+        RequestedActionV4.INSTALL_APP,
+        RequestedActionV4.SHARE_SCREEN,
+        RequestedActionV4.SCAN_QR,
+        RequestedActionV4.DOWNLOAD_FILE,
+    }
+    if explicit_action in high_sensitivity_actions:
+        reasons.append(f"{explicit_action.value}_request")
+    elif explicit_action in {RequestedActionV4.SUBMIT_FORM, RequestedActionV4.REGISTER_OR_APPLY} and (
+        _contains_any(text, _VAGUE_SECURITY_TERMS)
+        or _contains_any(text, _IMPERSONATION_TERMS)
+        or _contains_any(text, _URGENCY_TERMS)
+    ):
+        reasons.append(f"{explicit_action.value}_security_context")
+
     if reasons:
+        reasons.extend(neutral_reasons)
         if urls:
             reasons.append("url_present")
         return ScopeAssessment(ScopeDecisionV4.IN_SCOPE, tuple(dict.fromkeys(reasons)))
@@ -319,6 +532,15 @@ def classify_security_scope(message: str) -> ScopeAssessment:
 
     if urls:
         return ScopeAssessment(ScopeDecisionV4.IN_SCOPE, ("url_present",))
+    if neutral_reasons:
+        if _contains_any(text, _VAGUE_SECURITY_TERMS):
+            return ScopeAssessment(
+                ScopeDecisionV4.IN_SCOPE,
+                tuple(dict.fromkeys(["security_verification_request", *neutral_reasons])),
+            )
+        return ScopeAssessment(ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK, tuple(neutral_reasons))
+    if _contains_any(text, _AMBIGUOUS_SENSITIVE_ACTION_TERMS):
+        return ScopeAssessment(ScopeDecisionV4.NEED_MORE_INFO, ("ambiguous_sensitive_action",))
     if _contains_any(text, _VAGUE_SECURITY_TERMS):
         return ScopeAssessment(ScopeDecisionV4.NEED_MORE_INFO, ("security_concern_missing_context",))
     if _BASIC_GREETING_RE.fullmatch(text):
@@ -368,6 +590,9 @@ def _requested_action(
         )
     if personal_information_request:
         return RequestedActionV4.PROVIDE_PERSONAL_INFORMATION
+    explicit_action = _explicit_requested_action(text)
+    if explicit_action is not None:
+        return explicit_action
     return RequestedActionV4.OPEN_LINK if urls else None
 
 
@@ -501,4 +726,6 @@ __all__ = [
     "derive_potential_threat",
     "extract_security_context",
     "partial_security_context",
+    "requested_action_source_span",
+    "verification_topic_source",
 ]

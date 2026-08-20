@@ -379,7 +379,15 @@ async def evaluate_ai_case(case: SecurityAIEvaluationCase) -> SecurityAICaseResu
     follow_up_pass = (
         follow_up_before_verdict and turns_pass if case.expected.follow_up_completed else True
     )
-    fallback_pass = fallback_seen if case.expected.fallback_expected else True
+    safe_out_of_scope_short_circuit = (
+        final.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+        and provider_calls == 0
+    )
+    fallback_pass = (
+        fallback_seen or safe_out_of_scope_short_circuit
+        if case.expected.fallback_expected
+        else True
+    )
     return SecurityAICaseResult(
         id=case.id,
         category=case.category,
