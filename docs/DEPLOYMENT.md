@@ -75,3 +75,28 @@ database downgrade. Với incident khác: tắt flag mới bật, rollback appli
 database để rollback code. Provider failure không được suy diễn thành `SAFE`; worker failure phải cho phép
 quay về inline/polling path và giữ audit evidence.
 
+## Official-link CP10 hosted evidence
+
+Run the Vietnamese hard-case smoke at every applicable observation stage using a reviewed message and a real OIDC
+user token. The script emits only a minimized summary; store the protected raw deployment logs outside the repo.
+
+```bash
+LIVE_SMOKE_TOKEN=<oidc-user-token> TRUSTGUARD_BASE_URL=https://<backend-domain> \
+  uv run python scripts/smoke_official_link_verification.py \
+  "<reviewed Vietnamese recruitment message with the submitted third-party form URL>" \
+  --output <stage-hard-case-summary.json>
+```
+
+The final hosted evidence must identify the deployed 40-character commit SHA and include reviewed checks named
+`hosted_smoke`, `postgres_persistence`, `redis_worker`, `oidc_user`, `oidc_admin_rbac`, `backup_restore`, `ssrf`,
+`prompt_injection`, `provider_failure`, `load` and `rollback`. Record positive-duration observation windows in the
+exact sequence `shadow -> visible -> enforced -> visible -> off`. Each window records sample count, p95 latency,
+maximum estimated provider cost, error rate and an evidence reference. The hard case records Vietnamese input,
+English derived query, an actual official social source, short URL, third-party form, exact resource match, reference
+closure and zero fabrication.
+
+Pass the collected JSON through the hosted validator documented in `TESTING.md`. CP10 remains unapproved until the
+generated hosted report passes and the tech lead and security lead review the referenced evidence. Offline fakes,
+local SQLite tests and manually authored `passed` claims cannot substitute for PostgreSQL/Redis/worker, OIDC/RBAC,
+backup/restore, live provider/failure, load or rollback observations.
+

@@ -23,9 +23,27 @@ uv run python scripts/evaluate_security_v4.py
 uv run python scripts/evaluate_security_memory_v2.py
 uv run python scripts/evaluate_security_ai.py
 uv run python scripts/check_security_ai_rollout.py --target-stage off
+uv run python scripts/evaluate_official_link_verification.py
 ```
 
 Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-restore evidence.
+
+The official-link evaluator writes `eval/results/security-v4-v2-report.json` from the immutable
+`tests/eval/security_v4_v2.jsonl` release dataset. It uses deterministic transports while executing the production
+scope, intent, coordinator, fusion and risk paths. A passing offline report is necessary, but it is not CP10 release
+approval.
+
+Validate separately collected and reviewed hosted evidence with:
+
+```bash
+uv run python scripts/evaluate_official_link_verification_hosted.py \
+  --evidence <reviewed-hosted-evidence.json> \
+  --expected-commit <40-character-candidate-commit> \
+  --output <hosted-report.json>
+```
+
+The validator intentionally rejects `pending`, unreviewed, missing or out-of-order rollout observations. Never
+populate a passing evidence file from offline fixtures or unit-test output.
 
 ## Required coverage
 
