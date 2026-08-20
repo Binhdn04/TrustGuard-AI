@@ -1,0 +1,81 @@
+{
+  "schema_version": "official-link-verification-cp9-evidence-v1",
+  "checkpoint": "CP9",
+  "captured_at": "2026-08-20T22:47:41+07:00",
+  "base_commit_sha": "885ceb41dbf833fdfe83740dc632c8c3cca0b491",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP8",
+    "commit_sha": "885ceb41dbf833fdfe83740dc632c8c3cca0b491",
+    "evidence": "eval/results/official-link-verification-cp8-evidence.json",
+    "independent_review_evidence_provided": false
+  },
+  "frontend_contract": {
+    "generated_v4_types_updated": true,
+    "official_report_schema_version": "official-link-verification-v1",
+    "security_context_versions": ["security-context-v1", "security-context-v2"],
+    "public_api_prefix": "/api/v4",
+    "legacy_public_api_added": false
+  },
+  "user_presentation": {
+    "simple_overall_conclusion": "pass",
+    "simple_safe_next_actions_from_api": "pass",
+    "analyst_publisher_claim_resource_identity": "pass",
+    "analyst_source_and_outbound_refs": "pass",
+    "analyst_resource_canonical_chain": "pass",
+    "analyst_strength_and_limitations": "pass",
+    "all_verification_statuses": "pass",
+    "non_applicable_state": "pass",
+    "suspicious_url_anchor_count": 0,
+    "copy_safe_plain_text": "pass"
+  },
+  "signal_graph": {
+    "decision_edges_source": "explanation_evidence_refs",
+    "unknown_or_unused_evidence_connected_to_risk": false,
+    "regression_test": "pass"
+  },
+  "admin_trust": {
+    "mutation": "POST /api/v4/admin/brands/{brand_id}/versions",
+    "supersedes_visible": true,
+    "existing_record_in_place_edit": false,
+    "official_identity_add_remove_review": "pass",
+    "explicit_confirmation": "pass"
+  },
+  "rollback_visibility": {
+    "off": "pass",
+    "local_sources": "implemented",
+    "web_ready": "pass",
+    "source": "GET /api/v4/capabilities"
+  },
+  "verification": {
+    "frontend_focused": "28 passed",
+    "frontend_unit": "75 passed",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_build": "pass",
+    "frontend_e2e_production": "2 passed",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked",
+    "backend_pytest": "381 passed",
+    "backend_ruff": "pass",
+    "alembic_head": "0018_remove_vector_compat"
+  },
+  "review": {
+    "implementation_status": "verified_with_documented_environment_exception",
+    "required_reviewer_role": "Backend contract reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the canonical check:cutover script; the equivalent exact-pattern source scan found zero violations.",
+    "Vitest, Next production build and Playwright required execution outside the restricted sandbox because child-process spawn returned EPERM.",
+    "Python 3.13 temporary-directory ACLs require the existing process-local full-test harness with pre-created directories.",
+    "The default uv cache is not writable; backend verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl",
+    "frontend/test-results/.last-run.json"
+  ]
+}

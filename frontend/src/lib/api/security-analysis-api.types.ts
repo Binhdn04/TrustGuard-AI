@@ -143,6 +143,7 @@ export interface SecurityAnalysisApi {
   decideAdminAction?(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3>;
   listAdminActionAudit?(actionId: string): Promise<AdminActionAuditRecordV3[]>;
   createBrand(request: BrandCreateRequestV4): Promise<BrandRecordV4>;
+  createBrandVersion(brandId: string, request: BrandCreateRequestV4): Promise<BrandRecordV4>;
   listBrands(): Promise<BrandRecordV4[]>;
   pageBrands(query?: SecurityTrustPageQuery): Promise<BrandPageV4>;
   disableBrand(brandId: string): Promise<BrandRecordV4>;

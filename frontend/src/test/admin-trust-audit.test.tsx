@@ -26,6 +26,7 @@ vi.mock("@/lib/auth-context", () => ({
 const brand: BrandRecordV4 = {
   brand_id: "10000000-0000-4000-8000-000000000001", name: "ACME Bank",
   aliases: ["ACME"], official_domains: ["acme.example"], official_contacts: ["1900-0000"],
+  official_identities: [], supersedes: null,
   provenance: "Verified corporate registry", policy_version: "brand-registry-v1",
   effective_from: "2026-08-13T08:00:00Z", effective_until: null, lifecycle: "active",
   reviewer_id: "admin-1", created_at: "2026-08-13T08:00:00Z",
@@ -84,6 +85,7 @@ function securityClient(overrides: Partial<SecurityAnalysisApi> = {}): SecurityA
   return {
     pageBrands: vi.fn().mockResolvedValue({ contract_version: "v4", items: [brand], total: 1, limit: 10, offset: 0 }),
     createBrand: vi.fn().mockResolvedValue(brand),
+    createBrandVersion: vi.fn().mockResolvedValue({ ...brand, supersedes: brand.brand_id }),
     disableBrand: vi.fn().mockResolvedValue({ ...brand, lifecycle: "disabled" }),
     pageWhitelist: vi.fn().mockResolvedValue({ contract_version: "v4", items: [whitelist], total: 1, limit: 10, offset: 0 }),
     createWhitelist: vi.fn().mockResolvedValue(whitelist),
@@ -136,6 +138,21 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     expect(disableBrand).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm disable" }));
     await waitFor(() => expect(disableBrand).toHaveBeenCalledWith(brand.brand_id));
+  });
+
+  it("creates an immutable brand version through the supersede endpoint", async () => {
+    const createBrandVersion = vi.fn().mockResolvedValue({ ...brand, brand_id: "new-version", supersedes: brand.brand_id });
+    render(<TrustWorkspace api={securityClient({ createBrandVersion })} />);
+    expect(await screen.findByText("ACME Bank")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create new version" }));
+    expect(screen.getByText(/existing record is not edited/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Brand provenance"), { target: { value: "Reviewed registry update" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review new version" }));
+    expect(createBrandVersion).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm new version" }));
+    await waitFor(() => expect(createBrandVersion).toHaveBeenCalledWith(brand.brand_id, expect.objectContaining({
+      name: brand.name, provenance: "Reviewed registry update", official_domains: brand.official_domains,
+    })));
   });
 
   it("creates and disables whitelist entries with scope and lifecycle confirmation", async () => {

@@ -39,6 +39,13 @@ test("admin keyboard review → Observatory → Trust → Unified Audit", async 
   await page.goto("/admin/trust");
   await expect(page.getByRole("heading", { name: "Trust Control Center" })).toBeVisible();
   await expect(page.getByText("Verified corporate registry")).toBeVisible();
+  await expect(page.getByTestId("official-verification-capability")).toHaveText("Official verification: off");
+  await page.getByRole("button", { name: "Create new version" }).click();
+  await expect(page.getByText(/existing record is not edited/i)).toBeVisible();
+  await page.getByLabel("Brand provenance").fill("Reviewed E2E identity version");
+  await page.getByRole("button", { name: "Review new version" }).click();
+  await page.getByRole("button", { name: "Confirm new version" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 
   await page.goto("/admin/audit");
   await expect(page.getByRole("heading", { name: "Unified Audit", exact: true })).toBeVisible();

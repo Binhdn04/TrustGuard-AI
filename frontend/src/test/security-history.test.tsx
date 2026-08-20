@@ -44,7 +44,7 @@ function api(overrides: Partial<SecurityAnalysisApi>): SecurityAnalysisApi {
     pageAnalyses: vi.fn(), getConversation: vi.fn(), listConversations: vi.fn(), getAnalysisEvents: vi.fn(),
     createWebSocketTicket: vi.fn(), reportAnalysis: vi.fn(), listReports: vi.fn().mockResolvedValue([]),
     createAppeal: vi.fn(), listAnalysisAppeals: vi.fn().mockResolvedValue([]), listAdminReports: vi.fn(),
-    decideAdminReport: vi.fn(), listAdminAppeals: vi.fn(), decideAdminAppeal: vi.fn(), createBrand: vi.fn(),
+    decideAdminReport: vi.fn(), listAdminAppeals: vi.fn(), decideAdminAppeal: vi.fn(), createBrand: vi.fn(), createBrandVersion: vi.fn(),
     listBrands: vi.fn(), pageBrands: vi.fn(), disableBrand: vi.fn(), createWhitelist: vi.fn(),
     listWhitelist: vi.fn(), pageWhitelist: vi.fn(), disableWhitelist: vi.fn(), listSecurityMemory: vi.fn(),
     pageSecurityMemory: vi.fn(), correctSecurityMemory: vi.fn(), listSecurityMemoryAudit: vi.fn(),

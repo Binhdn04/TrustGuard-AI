@@ -58,6 +58,13 @@ export function AppShell({
     },
     [pathname],
   );
+  const officialVerificationState = capabilities === null
+    ? "Official verification: unavailable"
+    : capabilities.official_link_verification
+      ? capabilities.official_web_search_ready
+        ? "Official verification: web ready"
+        : "Official verification: local sources"
+      : "Official verification: off";
 
   if (isLoading || !user) {
     return (
@@ -117,6 +124,9 @@ export function AppShell({
               <p className="truncate text-sm font-semibold sm:text-base">{currentRoute.title}</p>
             </div>
             <div className="flex items-center gap-2">
+              <span data-testid="official-verification-capability" className="hidden rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-semibold text-muted-foreground sm:inline">
+                {officialVerificationState}
+              </span>
               <ThemeToggle />
               <UserMenu />
             </div>

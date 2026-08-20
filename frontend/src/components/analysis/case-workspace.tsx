@@ -23,6 +23,7 @@ import { CaseSignalMap } from "./case-signal-map";
 import { ConversationPanel } from "./conversation-panel";
 import { EvidenceDeck } from "./evidence-deck";
 import { InvestigationTimelineV4 } from "./investigation-timeline-v4";
+import { OfficialVerificationPanel } from "./official-verification-panel";
 import { SimpleAnalystToggle } from "./simple-analyst-toggle";
 
 type MobilePanel = "conversation" | "investigation" | "action";
@@ -121,6 +122,7 @@ function ActionPanel({
         {completed ? (
           <>
             <ActionRiskPanel viewModel={completed} mode={mode} />
+            <OfficialVerificationPanel viewModel={completed} mode={mode} />
             {mode === "simple" && reasons.length > 0 && (
               <section aria-labelledby="agent-reasons-heading" className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
                 <div className="flex items-center gap-2">

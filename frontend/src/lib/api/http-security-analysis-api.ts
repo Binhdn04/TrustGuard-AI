@@ -246,6 +246,13 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     return this.post<BrandRecordV4>("admin/brands", request);
   }
 
+  async createBrandVersion(brandId: string, request: BrandCreateRequestV4): Promise<BrandRecordV4> {
+    return this.post<BrandRecordV4>(
+      `admin/brands/${encodeURIComponent(brandId)}/versions`,
+      request,
+    );
+  }
+
   async listBrands(): Promise<BrandRecordV4[]> {
     return this.get<BrandRecordV4[]>("admin/brands");
   }

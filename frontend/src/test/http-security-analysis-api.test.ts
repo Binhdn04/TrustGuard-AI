@@ -103,6 +103,12 @@ describe("HttpSecurityAnalysisApi", () => {
       provenance: "Verified registry",
       effective_from: "2026-08-13T00:00:00Z",
     });
+    await api.createBrandVersion("brand/id", {
+      name: "ACME v2",
+      official_domains: ["acme.test"],
+      provenance: "Reviewed update",
+      effective_from: "2026-08-14T00:00:00Z",
+    });
     await api.disableBrand("brand/id");
     await api.correctSecurityMemory("memory/id", { verdict: "false_positive", note: "Reviewed" });
     await api.reviewSecurityCampaign("campaign/id", { decision: "confirmed", note: "Correlated" });
@@ -111,6 +117,7 @@ describe("HttpSecurityAnalysisApi", () => {
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "http://backend.test/api/v4/admin/brands",
+      "http://backend.test/api/v4/admin/brands/brand%2Fid/versions",
       "http://backend.test/api/v4/admin/brands/brand%2Fid/disable",
       "http://backend.test/api/v4/admin/security-memory/memory%2Fid/corrections",
       "http://backend.test/api/v4/admin/security-campaigns/campaign%2Fid/decision",
@@ -131,7 +138,11 @@ describe("HttpSecurityAnalysisApi", () => {
         effective_from: "2026-08-13T00:00:00Z",
       }),
     }));
-    expect(fetchMock.mock.calls[1][1]).not.toHaveProperty("body");
+    expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ name: "ACME v2", official_domains: ["acme.test"], provenance: "Reviewed update", effective_from: "2026-08-14T00:00:00Z" }),
+    }));
+    expect(fetchMock.mock.calls[2][1]).not.toHaveProperty("body");
   });
 
   it("preserves the v4 error envelope", async () => {

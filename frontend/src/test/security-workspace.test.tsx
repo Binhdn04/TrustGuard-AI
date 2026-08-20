@@ -65,6 +65,7 @@ function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): Securit
     listAdminAppeals: vi.fn(),
     decideAdminAppeal: vi.fn(),
     createBrand: vi.fn(),
+    createBrandVersion: vi.fn(),
     listBrands: vi.fn().mockResolvedValue([]),
     pageBrands: vi.fn(),
     disableBrand: vi.fn(),

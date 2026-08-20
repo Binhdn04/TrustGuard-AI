@@ -66,6 +66,7 @@ export interface SecurityCaseViewModel {
   steps: SecurityScopeResponseV4["investigation_plan"];
   errors: SecurityScopeResponseV4["errors"];
   context: SecurityScopeResponseV4["security_context"];
+  officialVerification: SecurityScopeResponseV4["official_verification"];
   policyVersion: string | null;
 }
 
@@ -301,6 +302,7 @@ export function mapSecurityCaseViewModel(
     steps: result.investigation_plan,
     errors: result.errors,
     context,
+    officialVerification: result.official_verification ?? null,
     policyVersion: result.policy_version,
   };
 }
