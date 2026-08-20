@@ -1,0 +1,106 @@
+{
+  "schema_version": "official-link-verification-cp6-evidence-v1",
+  "checkpoint": "CP6",
+  "captured_at": "2026-08-20T21:19:42+07:00",
+  "base_commit_sha": "0eefeca0b2d1033b9f37e2fdabcbb9d7de790cc6",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP5",
+    "commit_sha": "0eefeca0b2d1033b9f37e2fdabcbb9d7de790cc6",
+    "evidence": "eval/results/official-link-verification-cp5-evidence.json"
+  },
+  "html_extraction": {
+    "dependency": "beautifulsoup4>=4.12,<5",
+    "resolved_version": "4.15.0",
+    "parser": "html.parser",
+    "browser_runtime_added": false,
+    "first_valid_base": "pass",
+    "relative_url": "pass",
+    "protocol_relative_url": "pass",
+    "malformed_html": "pass",
+    "maximum_unique_links": 50,
+    "maximum_anchor_characters": 200,
+    "maximum_context_characters": 500,
+    "raw_html_serialized": false
+  },
+  "url_representations": {
+    "fetch_url_preserves_path_and_query_order": "pass",
+    "fetch_url_serialized": false,
+    "display_url_redacts_sensitive_and_tracking_query": "pass",
+    "canonical_url_sorts_query_and_preserves_duplicates": "pass",
+    "percent_encoding_normalized_for_matching": "pass",
+    "signed_fetch_url_rewritten": false,
+    "javascript_data_mailto_rejected": "pass",
+    "credential_url_rejected": "pass"
+  },
+  "final_page_identity": {
+    "redirect_final_url_reclassified": "pass",
+    "unreviewed_identity_trusted": false,
+    "redirect_outside_reviewed_identity_yields_links": false
+  },
+  "resource_identity": {
+    "schema_version": "resource-identity-v1",
+    "google_forms_provider_id": "pass",
+    "microsoft_forms_provider_id_and_aliases": "pass",
+    "bitly_is_redirect_only": "pass",
+    "forms_gle_is_redirect_only": "pass",
+    "generic_provider_exact_canonical_only": "pass",
+    "same_domain_different_path_matches": false,
+    "different_form_matches": false,
+    "statuses": [
+      "EXACT_RESOURCE",
+      "EXACT_CANONICAL_URL",
+      "DIFFERENT_RESOURCE",
+      "UNRESOLVED"
+    ]
+  },
+  "provider_fallback": {
+    "requires_eligible_direct_fetch_failure": "pass",
+    "requires_explicit_candidate_url_in_extract": "pass",
+    "ssrf_block_allows_fallback": false,
+    "maximum_status": "PARTIALLY_VERIFIED",
+    "substitute_citation_created": false
+  },
+  "persistence_safety": {
+    "raw_html": false,
+    "fetch_url": false,
+    "url_credentials": false,
+    "sensitive_query": false,
+    "bounded_refs_and_hashes": "pass"
+  },
+  "verification": {
+    "cp5_cp6_focused_regression": "pass",
+    "backend_pytest": "pass",
+    "backend_ruff": "pass",
+    "dependency_lock": "pass",
+    "alembic_head": "0018_remove_vector_compat",
+    "frontend_unit": "pass",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "runtime_boundary": {
+    "public_api_prefix": "/api/v4",
+    "official_verification_coordinator_enabled": false,
+    "resource_matching_auto_invoked": false,
+    "risk_behavior_changed": false,
+    "migration_added": false
+  },
+  "review": {
+    "implementation_status": "verified",
+    "required_reviewer_role": "Network security reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "The current .venv uses Python 3.13.13 while CP0 used Python 3.11.15; Python 3.13 temporary-directory ACLs require a process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the current cutover script, so the canonical script cannot scan this workspace path; the equivalent source-pattern scan passes.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl"
+  ]
+}
