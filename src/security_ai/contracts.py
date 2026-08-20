@@ -6,6 +6,8 @@ from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.models.security_v4 import (
+    SECURITY_UNDERSTANDING_VERSION,
+    DerivedQueryProvenanceV4,
     ExposureStateV4,
     MissingInformationSlotV4,
     RequestedActionV4,
@@ -62,7 +64,10 @@ class Understanding(StrictModel):
     follow_up_question: str | None = Field(default=None, max_length=500)
     field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(default_factory=dict, max_length=50)
     source_spans: list[UnderstandingSourceSpan] = Field(default_factory=list, max_length=50)
-    understanding_version: Literal["security-understanding-v1"] = "security-understanding-v1"
+    derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
+    understanding_version: Literal[
+        "security-understanding-v1", "security-understanding-v2"
+    ] = SECURITY_UNDERSTANDING_VERSION
 
     @field_validator("scope_decision", "scenario", "requested_action", "follow_up_slot", mode="before")
     @classmethod

@@ -4,6 +4,7 @@ import json
 
 from src.agents.security_scope import derive_potential_threat, partial_security_context
 from src.models import (
+    SECURITY_UNDERSTANDING_VERSION,
     AssistantContextV4,
     AssistantProcessingModeV4,
     AssistantSourceSpanV4,
@@ -196,7 +197,8 @@ def merge_semantic_understanding(
         missing_information=_unique(output.missing_information)[:20],
         field_confidences={field_name: output.field_confidences[field_name] for field_name in accepted_fields},
         source_spans=accepted_spans,
-        understanding_version=output.understanding_version,
+        derived_query_provenance=output.derived_query_provenance,
+        understanding_version=SECURITY_UNDERSTANDING_VERSION,
         model_version=model_version,
     )
     limitations = list(scope.limitations)

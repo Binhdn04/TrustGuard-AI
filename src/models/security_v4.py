@@ -17,11 +17,19 @@ from src.models.schemas import (
 )
 
 CONTRACT_VERSION_V4 = SECURITY_TRIAGE_CONTRACT_VERSION
-SECURITY_CONTEXT_VERSION = "security-context-v1"
+SECURITY_CONTEXT_VERSION_V1 = "security-context-v1"
+SECURITY_CONTEXT_VERSION_V2 = "security-context-v2"
+SECURITY_CONTEXT_VERSION = SECURITY_CONTEXT_VERSION_V2
 SECURITY_RISK_POLICY_VERSION = "security-risk-v1"
 SECURITY_RISK_POLICY_VERSION_V2 = "security-risk-v2"
-SECURITY_UNDERSTANDING_VERSION = "security-understanding-v1"
+SECURITY_RISK_POLICY_VERSION_V3 = "security-risk-v3"
+SECURITY_UNDERSTANDING_VERSION_V1 = "security-understanding-v1"
+SECURITY_UNDERSTANDING_VERSION_V2 = "security-understanding-v2"
+SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
 SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
+OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v1"
+RESOURCE_IDENTITY_VERSION = "resource-identity-v1"
+VERIFICATION_INTENT_VERSION = "verification-intent-v1"
 
 
 class SecurityContractModel(BaseModel):
@@ -72,6 +80,66 @@ class RequestedActionV4(StrEnum):
     INSTALL_APP = "install_app"
     SHARE_SCREEN = "share_screen"
     SCAN_QR = "scan_qr"
+    SUBMIT_FORM = "submit_form"
+    REGISTER_OR_APPLY = "register_or_apply"
+    DOWNLOAD_FILE = "download_file"
+
+
+class VerificationTopicV4(StrEnum):
+    RECRUITMENT = "recruitment"
+    PROMOTION = "promotion"
+    EVENT = "event"
+    COURSE = "course"
+    SURVEY = "survey"
+    ACCOUNT = "account"
+    PAYMENT = "payment"
+    CHARITY = "charity"
+    INVESTMENT = "investment"
+    GENERAL_NOTICE = "general_notice"
+    UNKNOWN = "unknown"
+
+
+class LinkRoleV4(StrEnum):
+    OFFICIAL_WEBSITE = "official_website"
+    OFFICIAL_ANNOUNCEMENT = "official_announcement"
+    SOCIAL_PROFILE = "social_profile"
+    APPLICATION = "application"
+    REGISTRATION = "registration"
+    FORM = "form"
+    DOWNLOAD = "download"
+    LOGIN = "login"
+    PAYMENT = "payment"
+    CONTACT = "contact"
+    OTHER = "other"
+
+
+class VerificationStatusV4(StrEnum):
+    VERIFIED = "VERIFIED"
+    PARTIALLY_VERIFIED = "PARTIALLY_VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    CONFLICTING = "CONFLICTING"
+
+
+class OfficialIdentityTypeV4(StrEnum):
+    WEBSITE = "website"
+    DOMAIN = "domain"
+    SOCIAL_PROFILE = "social_profile"
+    SUB_ORGANIZATION = "sub_organization"
+
+
+class ResourceTypeV4(StrEnum):
+    URL = "url"
+    GOOGLE_FORM = "google_form"
+    MICROSOFT_FORM = "microsoft_form"
+    FILE = "file"
+    OTHER = "other"
+
+
+class ResourceMatchStatusV4(StrEnum):
+    EXACT_RESOURCE = "EXACT_RESOURCE"
+    EXACT_CANONICAL_URL = "EXACT_CANONICAL_URL"
+    DIFFERENT_RESOURCE = "DIFFERENT_RESOURCE"
+    UNRESOLVED = "UNRESOLVED"
 
 
 class PotentialThreatV4(StrEnum):
@@ -275,6 +343,111 @@ class SecurityToolErrorV4(SecurityContractModel):
 
 class SecurityConsentV4(SecurityContractModel):
     external_url_lookup: bool = False
+    official_source_lookup: bool = False
+
+
+class DerivedQueryProvenanceV4(SecurityContractModel):
+    query_id: str = Field(pattern=r"^query:[a-f0-9]{16}$")
+    derived_from_fields: list[str] = Field(min_length=1, max_length=20)
+    transformations: list[str] = Field(default_factory=list, max_length=20)
+
+
+class VerificationIntentV4(SecurityContractModel):
+    schema_version: Literal["verification-intent-v1"] = VERIFICATION_INTENT_VERSION
+    organization_name: str | None = Field(default=None, max_length=200)
+    derived_organization_names: list[str] = Field(default_factory=list, max_length=10)
+    claim_summary: str | None = Field(default=None, max_length=1000)
+    topic: VerificationTopicV4 | None = None
+    requested_action: RequestedActionV4 | None = None
+    action_url_indices: list[Annotated[int, Field(ge=0, lt=10)]] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def require_verifiable_dimension(self) -> Self:
+        if not (self.organization_name or self.claim_summary or self.requested_action):
+            raise ValueError("verification intent requires an organization, claim, or requested action")
+        return self
+
+
+class OfficialIdentityV4(SecurityContractModel):
+    identity_type: OfficialIdentityTypeV4
+    canonical_value: str = Field(min_length=1, max_length=2048)
+    display_value: str = Field(min_length=1, max_length=2048)
+    entity_name: str = Field(min_length=1, max_length=200)
+    relationship: str = Field(default="primary", pattern=r"^[a-z0-9_]+$")
+    reviewed: bool = False
+    source_ref: str | None = Field(default=None, pattern=r"^source:[a-f0-9]{16}$")
+
+
+class ResourceIdentityV4(SecurityContractModel):
+    schema_version: Literal["resource-identity-v1"] = RESOURCE_IDENTITY_VERSION
+    resource_type: ResourceTypeV4
+    provider: str | None = Field(default=None, max_length=100)
+    resource_id: str | None = Field(default=None, max_length=500)
+    canonical_url: str | None = Field(default=None, max_length=2048)
+    match_key: str = Field(min_length=1, max_length=2048)
+
+
+class ResourceMatchV4(SecurityContractModel):
+    status: ResourceMatchStatusV4
+    user_resource: ResourceIdentityV4 | None = None
+    official_resource: ResourceIdentityV4 | None = None
+    reason_code: str = Field(pattern=r"^[a-z0-9_]+$")
+
+
+class OfficialSourceReferenceV4(SecurityContractModel):
+    source_ref: str = Field(pattern=r"^source:[a-f0-9]{16}$")
+    identity: OfficialIdentityV4 | None = None
+    display_url: str = Field(min_length=1, max_length=2048)
+    canonical_url: str = Field(min_length=1, max_length=2048)
+    content_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class OfficialLinkReferenceV4(SecurityContractModel):
+    link_ref: str = Field(pattern=r"^link:[a-f0-9]{16}$")
+    source_ref: str = Field(pattern=r"^source:[a-f0-9]{16}$")
+    role: LinkRoleV4
+    display_url: str = Field(min_length=1, max_length=2048)
+    canonical_url: str = Field(min_length=1, max_length=2048)
+    resource: ResourceIdentityV4 | None = None
+
+
+class OfficialVerificationComponentV4(SecurityContractModel):
+    applicable: bool
+    status: VerificationStatusV4 | None = None
+    reason_code: str = Field(pattern=r"^[a-z0-9_]+$")
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_applicability(self) -> Self:
+        if self.applicable != (self.status is not None):
+            raise ValueError("applicable verification components require a status; non-applicable ones must omit it")
+        return self
+
+
+class PublisherVerificationV4(OfficialVerificationComponentV4):
+    identity: OfficialIdentityV4 | None = None
+
+
+class ClaimVerificationV4(OfficialVerificationComponentV4):
+    topic: VerificationTopicV4 | None = None
+
+
+class ResourceVerificationV4(OfficialVerificationComponentV4):
+    match: ResourceMatchV4 | None = None
+
+
+class OfficialLinkVerificationReportV4(SecurityContractModel):
+    schema_version: Literal["official-link-verification-v1"] = OFFICIAL_LINK_VERIFICATION_VERSION
+    intent: VerificationIntentV4
+    publisher_verification: PublisherVerificationV4
+    claim_verification: ClaimVerificationV4
+    resource_verification: ResourceVerificationV4
+    overall_status: VerificationStatusV4
+    reason_code: str = Field(pattern=r"^[a-z0-9_]+$")
+    source_refs: list[OfficialSourceReferenceV4] = Field(default_factory=list, max_length=20)
+    link_refs: list[OfficialLinkReferenceV4] = Field(default_factory=list, max_length=50)
+    limitations: list[str] = Field(default_factory=list, max_length=50)
+    policy_version: Literal["official-link-verification-v1"] = OFFICIAL_LINK_VERIFICATION_VERSION
 
 
 class SecurityExecutionModeV4(StrEnum):
@@ -374,7 +547,7 @@ class SecurityChatResponseV4(SecurityContractModel):
 
 
 class SecurityContextV4(SecurityContractModel):
-    schema_version: Literal["security-context-v1"] = SECURITY_CONTEXT_VERSION
+    schema_version: Literal["security-context-v1", "security-context-v2"] = SECURITY_CONTEXT_VERSION
     claimed_entity: str | None = None
     scenario: SecurityScenarioV4
     requested_action: RequestedActionV4 | None = None
@@ -412,7 +585,10 @@ class AssistantContextV4(SecurityContractModel):
         max_length=50,
     )
     source_spans: list[AssistantSourceSpanV4] = Field(default_factory=list, max_length=50)
-    understanding_version: Literal["security-understanding-v1"] = SECURITY_UNDERSTANDING_VERSION
+    derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
+    understanding_version: Literal[
+        "security-understanding-v1", "security-understanding-v2"
+    ] = SECURITY_UNDERSTANDING_VERSION
     model_version: str = Field(min_length=1, max_length=200)
 
 
@@ -462,6 +638,10 @@ class SecurityScopeResponseV4(SecurityContractModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    official_verification: OfficialLinkVerificationReportV4 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     follow_up_question: str | None = None
     follow_up_slot: MissingInformationSlotV4 | None = Field(
         default=None,
@@ -478,7 +658,7 @@ class SecurityScopeResponseV4(SecurityContractModel):
     score: int | None = Field(default=None, ge=0, le=100)
     confidence: float | None = Field(default=None, ge=0, le=1)
     threat_type: PotentialThreatV4 | None = None
-    policy_version: Literal["security-risk-v1", "security-risk-v2"] | None = None
+    policy_version: Literal["security-risk-v1", "security-risk-v2", "security-risk-v3"] | None = None
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -618,6 +798,8 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     security_async_execution: Literal[True] | None = None
     security_memory_retrieval: Literal[True] | None = None
     security_admin_copilot: Literal[True] | None = None
+    official_link_verification: Literal[True] | None = None
+    official_web_search_ready: Literal[True] | None = None
 
 
 class SecurityWebSocketTicketRequestV4(SecurityContractModel):
@@ -984,10 +1166,19 @@ class SecurityAdminAuditPageV4(SecurityContractModel):
 
 __all__ = [
     "CONTRACT_VERSION_V4",
+    "OFFICIAL_LINK_VERIFICATION_VERSION",
+    "RESOURCE_IDENTITY_VERSION",
+    "VERIFICATION_INTENT_VERSION",
     "SECURITY_ASSISTANT_RESPONSE_VERSION",
     "SECURITY_CONTEXT_VERSION",
+    "SECURITY_CONTEXT_VERSION_V1",
+    "SECURITY_CONTEXT_VERSION_V2",
     "SECURITY_RISK_POLICY_VERSION",
     "SECURITY_RISK_POLICY_VERSION_V2",
+    "SECURITY_RISK_POLICY_VERSION_V3",
+    "SECURITY_UNDERSTANDING_VERSION",
+    "SECURITY_UNDERSTANDING_VERSION_V1",
+    "SECURITY_UNDERSTANDING_VERSION_V2",
     "AssistantGenerationModeV4",
     "AssistantImmediateStepV4",
     "AssistantReasonV4",
@@ -996,8 +1187,23 @@ __all__ = [
     "BrandCreateRequestV4",
     "BrandRecordV4",
     "BrandPageV4",
+    "ClaimVerificationV4",
+    "DerivedQueryProvenanceV4",
     "InvestigationStepV4",
+    "LinkRoleV4",
+    "OfficialIdentityTypeV4",
+    "OfficialIdentityV4",
+    "OfficialLinkReferenceV4",
+    "OfficialLinkVerificationReportV4",
+    "OfficialSourceReferenceV4",
+    "OfficialVerificationComponentV4",
+    "PublisherVerificationV4",
     "RequestedActionV4",
+    "ResourceIdentityV4",
+    "ResourceMatchStatusV4",
+    "ResourceMatchV4",
+    "ResourceTypeV4",
+    "ResourceVerificationV4",
     "ScopeDecisionV4",
     "SecurityConsentV4",
     "SecurityConversationStatusV4",
@@ -1031,6 +1237,9 @@ __all__ = [
     "SecurityScopeResponseV4",
     "SecurityTriageCreateRequestV4",
     "SecurityToolErrorV4",
+    "VerificationIntentV4",
+    "VerificationStatusV4",
+    "VerificationTopicV4",
     "SecurityReportCreateRequestV4",
     "SecurityReportRecordV4",
     "SecurityReportDecisionRequestV4",
