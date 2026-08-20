@@ -1085,6 +1085,30 @@ class VersionedSourceRegistry:
             )
         )
 
+    def matching_entries(self, url: str, at: datetime) -> tuple[SourceRegistryEntry, ...]:
+        """Return reviewed matches so identity policy can distinguish exact from wildcard entries."""
+        hostname = (urlsplit(url).hostname or "").lower().rstrip(".")
+        matches = [
+            policy
+            for policy in self._policies
+            if policy.active
+            and policy.effective_from <= at
+            and (policy.effective_to is None or policy.effective_to > at)
+            and _hostname_matches(hostname, policy.normalized_pattern)
+        ]
+        return tuple(
+            sorted(
+                matches,
+                key=lambda item: (
+                    item.explicit_deny,
+                    not item.normalized_pattern.startswith("*."),
+                    len(item.normalized_pattern),
+                    item.reviewed_at,
+                ),
+                reverse=True,
+            )
+        )
+
     async def observe_discovery(
         self,
         *,

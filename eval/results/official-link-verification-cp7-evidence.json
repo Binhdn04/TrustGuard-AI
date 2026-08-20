@@ -1,0 +1,105 @@
+{
+  "schema_version": "official-link-verification-cp7-evidence-v1",
+  "checkpoint": "CP7",
+  "captured_at": "2026-08-20T21:44:41+07:00",
+  "base_commit_sha": "05753f7ff61574b0076036cb4fc5dfe025d55466",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP6",
+    "commit_sha": "05753f7ff61574b0076036cb4fc5dfe025d55466",
+    "evidence": "eval/results/official-link-verification-cp6-evidence.json",
+    "independent_review_evidence_provided": false
+  },
+  "coordinator_policy": {
+    "policy_version": "official-link-verification-v1",
+    "maximum_search_attempts": 4,
+    "maximum_results_per_attempt": 5,
+    "maximum_deduped_candidates": 8,
+    "maximum_official_fetches": 3,
+    "maximum_fetch_concurrency": 2,
+    "maximum_outbound_resolutions": 3,
+    "early_stop_exact_resource": "pass",
+    "early_stop_strong_contradiction": "pass"
+  },
+  "consent_matrix": {
+    "brand_registry_without_external_consent": "pass",
+    "source_registry_without_external_consent": "pass",
+    "search_extract_official_fetch_requires_official_source_lookup": "pass",
+    "user_url_and_third_party_redirect_requires_external_url_lookup": "pass",
+    "missing_consent_skips_only_affected_operation": "pass"
+  },
+  "identity_policy": {
+    "reviewed_exact_brand_identity": "pass",
+    "exact_entity_bound_source_entry": "pass",
+    "source_type_required": "pass",
+    "wildcard_source_only_corroborates": "pass",
+    "direct_official_social_cross_link_report_scoped": "pass",
+    "online_identity_auto_persisted": false
+  },
+  "deterministic_fusion": {
+    "publisher_status": "pass",
+    "claim_organization_topic_action": "pass",
+    "claim_time_audience_when_supplied": "pass",
+    "resource_exact_provider_id": "pass",
+    "provider_fallback_cap": "PARTIALLY_VERIFIED",
+    "strong_official_contradiction": "CONFLICTING",
+    "no_hit_error_timeout": "UNVERIFIED",
+    "not_applicable_distinct_from_unverified": "pass",
+    "all_four_statuses": "pass"
+  },
+  "grounding": {
+    "evidence_reference_closure_percent": 100,
+    "fabricated_source_ids": 0,
+    "fabricated_link_ids": 0,
+    "fabricated_url_ids": 0,
+    "comparison_output_accepts_urls": false,
+    "unknown_comparison_ids_rejected": "pass",
+    "raw_html_serialized": false,
+    "sensitive_query_serialized": false
+  },
+  "pipeline": {
+    "stage_order": "trust_enrichment -> official_link_verification -> memory -> deterministic_risk -> response",
+    "recovery_first_invokes_coordinator": false,
+    "out_of_scope_invokes_coordinator": false,
+    "bare_url_without_grounded_intent_report": null,
+    "risk_v1_v2_changed_by_no_hit_error_timeout": false,
+    "inline_worker_shared_hook": "pass"
+  },
+  "verification": {
+    "cp7_focused": "pass",
+    "backend_pytest": "pass",
+    "backend_ruff": "pass",
+    "dependency_lock": "pass",
+    "alembic_head": "0018_remove_vector_compat",
+    "frontend_unit": "pass",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "runtime_boundary": {
+    "public_api_prefix": "/api/v4",
+    "pipeline_hook_available": true,
+    "production_coordinator_injected": false,
+    "rollout_modes_added": false,
+    "risk_v3_enabled": false,
+    "legacy_fact_check_used": false,
+    "migration_added": false
+  },
+  "review": {
+    "implementation_status": "verified",
+    "required_reviewer_role": "Risk policy reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "The current .venv uses Python 3.13.13 while CP0 used Python 3.11.15; Python 3.13 temporary-directory ACLs require a process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the current cutover script, so the canonical script cannot scan this workspace path; the equivalent source-pattern scan passes.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl"
+  ]
+}

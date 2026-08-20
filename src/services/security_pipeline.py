@@ -16,6 +16,7 @@ from src.models import (
     SecurityTriageCreateRequestV4,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
 from src.services.security_conversation_policy import is_incident_exposure
 from src.services.security_response import GroundedSecurityResponseService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
@@ -39,6 +40,7 @@ class SecurityTriagePipeline:
         investigation_resolver: InvestigationResolver | None = None,
         trust: SecurityTrustService,
         responses: GroundedSecurityResponseService,
+        official_verification: OfficialLinkVerificationCoordinator | None = None,
         memory_lookup: SecurityMemoryLookupTool | None = None,
         memory_lookup_resolver: MemoryLookupResolver | None = None,
     ) -> None:
@@ -51,6 +53,7 @@ class SecurityTriagePipeline:
         self._investigation_resolver = investigation_resolver
         self._trust = trust
         self._responses = responses
+        self._official_verification = official_verification
         self._memory_lookup = memory_lookup
         self._memory_lookup_resolver = memory_lookup_resolver
 
@@ -70,9 +73,7 @@ class SecurityTriagePipeline:
             return self._complete(scoped)
 
         exposure = (
-            scoped.assistant_context.exposure_state
-            if scoped.assistant_context is not None
-            else ExposureStateV4.UNKNOWN
+            scoped.assistant_context.exposure_state if scoped.assistant_context is not None else ExposureStateV4.UNKNOWN
         )
         if is_incident_exposure(exposure):
             memory_lookup = await self._resolve_memory_lookup()
@@ -95,6 +96,22 @@ class SecurityTriagePipeline:
                     None,
                 )
             scoped = await self._trust.enrich(request, scoped)
+            if self._official_verification is not None:
+                assert runtime.execution_context is not None
+                scoped = await self._official_verification.verify(
+                    request,
+                    scoped,
+                    execution_context=runtime.execution_context,
+                )
+                if progress is not None and scoped.official_verification is not None:
+                    refs = [item.source_ref for item in scoped.official_verification.source_refs]
+                    refs.extend(item.link_ref for item in scoped.official_verification.link_refs)
+                    await progress(
+                        "official_link_verification",
+                        "Đã đối chiếu publisher, claim và resource với nguồn chính thức.",
+                        refs,
+                        None,
+                    )
             memory_lookup = await self._resolve_memory_lookup()
             if memory_lookup is not None and owner_id is not None:
                 scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
