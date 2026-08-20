@@ -1,12 +1,24 @@
 # Official Source and Third-party Link Verification
 
-**Status:** Proposed implementation plan  
+**Status:** WP0–WP10 implementation complete; CP10 hosted release approval pending
 **Target runtime:** Security Triage `/api/v4`  
 **Delivery model:** Sequential work packages with mandatory checkpoints
 
 Tài liệu này mô tả phần mở rộng xác minh nguồn chính thức và liên kết bên thứ ba cho TrustGuard AI.
-Đây không phải trạng thái đã triển khai. `PRODUCT_ARCHITECTURE.md`, `CURRENT_STATUS.md`, `DEPLOYMENT.md`
-và `TESTING.md` vẫn là tài liệu canonical cho runtime hiện tại.
+Implementation của WP0–WP10 đã hoàn thành trong repository; trạng thái runtime/release canonical vẫn nằm trong
+`PRODUCT_ARCHITECTURE.md`, `CURRENT_STATUS.md`, `DEPLOYMENT.md` và `TESTING.md`.
+
+## Execution status
+
+| Scope | Status | Evidence |
+|---|---|---|
+| WP0–WP9 / CP0–CP9 | Implementation complete; automated gates recorded | `../eval/results/official-link-verification-cp0-handoff.md` through `official-link-verification-cp9-handoff.md` |
+| WP10 implementation and offline CP10 gates | Complete | `../eval/results/official-link-verification-cp10-handoff.md`, `../eval/results/security-v4-v2-report.json` |
+| CP10 hosted release gate | Pending; release not approved | `../eval/results/official-link-verification-cp10-evidence.json` |
+
+CP10 chỉ được approved sau khi có reviewed hosted evidence cho PostgreSQL/Redis/worker, OIDC/RBAC,
+backup/restore, SSRF, prompt injection, provider failure, load và rollout/rollback. Offline fakes không thay thế
+các observation này.
 
 ## 1. Mục tiêu và ranh giới
 

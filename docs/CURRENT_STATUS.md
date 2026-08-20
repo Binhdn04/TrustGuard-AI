@@ -1,6 +1,6 @@
 # Current Status
 
-**Updated:** 2026-08-19
+**Updated:** 2026-08-20
 
 `Implemented` nghĩa là có code và automated coverage trong repository, không đồng nghĩa đã verify trên
 hosted production với OIDC, PostgreSQL, Redis và provider thật.
@@ -8,8 +8,8 @@ hosted production với OIDC, PostgreSQL, Redis và provider thật.
 ## Summary
 
 Security Triage v4 và frontend investigation workspace đã implement end-to-end trong repository. Runtime
-public chỉ còn `/api/v4`. WP0–WP8 và phần code/local của WP9 đã hoàn thành; các implementation plan cũ đã
-được hợp nhất vào đây và deprecated. Production release chưa hoàn tất vì thiếu hosted evidence,
+public chỉ còn `/api/v4`. Toàn bộ implementation của Official Link Verification WP0–WP10 đã hoàn thành và có
+automated/offline evidence. Production release chưa hoàn tất vì CP10 chưa có reviewed hosted evidence,
 backup/restore rehearsal, load/failure testing và live-provider smoke.
 
 ## Implemented
@@ -24,7 +24,8 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |
-| Evaluation | versioned offline security, memory and AI datasets/reports with rollout guard |
+| Official verification | publisher/claim/resource verification, reviewed identities, consented search/fetch, resource matching, rollout `off|shadow|visible|enforced` |
+| Evaluation | versioned offline security, memory, AI and immutable `security-v4-v2` official-link datasets/reports with rollout guard |
 | Frontend | Security Chat, Simple/Analyst views, Observatory, Review Room, Trust/Audit |
 | Schema | Alembic through `0018_remove_vector_compat` |
 
@@ -32,6 +33,7 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 
 - `BLOCK_DOMAIN` và `PUBLISH_BROAD_WARNING` chưa có execution sink.
 - Async, reviewed-memory và AI flags mặc định tắt, chỉ bật tuần tự sau gate tương ứng.
+- Official Link Verification implementation WP0–WP10 đã hoàn thành; CP10 release approval vẫn pending hosted evidence và Tech Lead/Security Lead review.
 - Chưa có hosted OIDC/PostgreSQL/Redis/VirusTotal evidence với credential thật.
 - Chưa có production backup/restore, load, lease-loss và Redis-outage rehearsal.
 - `0018_remove_vector_compat` cần backup và staging rehearsal trên database cũ.
@@ -54,7 +56,9 @@ public capability.
 2. Chạy backup/restore rehearsal và migration `0018` trên bản sao dữ liệu.
 3. Chạy hosted provider, RBAC, SSRF/redirect, prompt-injection, retention và failure smoke.
 4. Chạy load/lease/idempotency/outbox/WebSocket fallback checks.
-5. Lưu evidence, bật capability tuần tự và kiểm tra rollback sau mỗi stage.
+5. Chạy Official Link Verification theo `shadow -> visible -> enforced -> visible -> off`, lưu observation window
+   và rollback evidence cho từng stage.
+6. Validate reviewed CP10 evidence bằng tooling trong [TESTING.md](TESTING.md), sau đó Tech Lead và Security Lead review.
 
 Không giữ test count cũ trong status. Lấy kết quả mới từ CI hoặc chạy lệnh trong [TESTING.md](TESTING.md).
 
