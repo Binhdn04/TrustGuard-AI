@@ -64,10 +64,14 @@ Redis và worker không public; restart không mất dữ liệu.
 ## Rollout and rollback
 
 Bật riêng từng capability: understanding → planning → explanation → reviewed memory → admin copilot →
-async. Kiểm tra evaluation, capabilities, latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang
-`cutover` sau hosted smoke, backup/restore và load rehearsal.
+async. Official-link verification dùng `SECURITY_OFFICIAL_VERIFICATION_MODE=off|shadow|visible|enforced` và
+phải đi theo thứ tự `off → shadow → visible → enforced`; Tavily/OpenAI không phải điều kiện startup cho stage
+này. Kiểm tra riêng capabilities `official_link_verification`, `official_web_search_ready`, evaluation,
+latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang `cutover` sau hosted smoke, backup/restore và
+load rehearsal.
 
-Khi incident: tắt flag mới bật, rollback application image, giữ schema. Không tự động downgrade/drop/restore
+Khi official-link verification có incident, rollback `enforced → visible → off`; thay đổi này không yêu cầu
+database downgrade. Với incident khác: tắt flag mới bật, rollback application image, giữ schema. Không tự động downgrade/drop/restore
 database để rollback code. Provider failure không được suy diễn thành `SAFE`; worker failure phải cho phép
 quay về inline/polling path và giữ audit evidence.
 

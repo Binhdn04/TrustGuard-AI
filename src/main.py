@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from src.api.dependencies import (
     close_event_notifier,
+    close_official_verification_rollout_stage,
     close_rate_limiter,
     close_security_analysis_service,
     close_security_investigation_service,
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI):
         await close_security_analysis_service()
         await close_security_trust_services()
         await close_security_investigation_service()
+        await close_official_verification_rollout_stage()
         await close_ticket_manager()
         await close_event_notifier()
         await close_rate_limiter()

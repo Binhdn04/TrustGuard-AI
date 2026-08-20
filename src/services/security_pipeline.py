@@ -17,6 +17,7 @@ from src.models import (
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
+from src.services.official_verification_rollout import OfficialVerificationRolloutStage
 from src.services.security_conversation_policy import is_incident_exposure
 from src.services.security_response import GroundedSecurityResponseService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
@@ -41,6 +42,7 @@ class SecurityTriagePipeline:
         trust: SecurityTrustService,
         responses: GroundedSecurityResponseService,
         official_verification: OfficialLinkVerificationCoordinator | None = None,
+        official_verification_rollout: OfficialVerificationRolloutStage | None = None,
         memory_lookup: SecurityMemoryLookupTool | None = None,
         memory_lookup_resolver: MemoryLookupResolver | None = None,
     ) -> None:
@@ -48,12 +50,15 @@ class SecurityTriagePipeline:
             raise ValueError("provide exactly one investigation service or resolver")
         if memory_lookup is not None and memory_lookup_resolver is not None:
             raise ValueError("provide at most one memory lookup service or resolver")
+        if official_verification is not None and official_verification_rollout is not None:
+            raise ValueError("provide either the CP7 coordinator or the rollout stage, not both")
         self._understanding = understanding
         self._investigation = investigation
         self._investigation_resolver = investigation_resolver
         self._trust = trust
         self._responses = responses
         self._official_verification = official_verification
+        self._official_verification_rollout = official_verification_rollout
         self._memory_lookup = memory_lookup
         self._memory_lookup_resolver = memory_lookup_resolver
 
@@ -82,6 +87,7 @@ class SecurityTriagePipeline:
             scoped = assess_security_risk(
                 scoped,
                 memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
+                official_verification_enforced=self._risk_v3_enforced,
             )
             if progress is not None:
                 await progress("incident_response", "Đã ưu tiên hướng dẫn khôi phục tức thời.", [], scoped.risk)
@@ -96,22 +102,29 @@ class SecurityTriagePipeline:
                     None,
                 )
             scoped = await self._trust.enrich(request, scoped)
-            if self._official_verification is not None:
+            if self._official_verification_rollout is not None:
+                assert runtime.execution_context is not None
+                scoped = await self._official_verification_rollout.run(
+                    request,
+                    scoped,
+                    execution_context=runtime.execution_context,
+                )
+            elif self._official_verification is not None:
                 assert runtime.execution_context is not None
                 scoped = await self._official_verification.verify(
                     request,
                     scoped,
                     execution_context=runtime.execution_context,
                 )
-                if progress is not None and scoped.official_verification is not None:
-                    refs = [item.source_ref for item in scoped.official_verification.source_refs]
-                    refs.extend(item.link_ref for item in scoped.official_verification.link_refs)
-                    await progress(
-                        "official_link_verification",
-                        "Đã đối chiếu publisher, claim và resource với nguồn chính thức.",
-                        refs,
-                        None,
-                    )
+            if progress is not None and scoped.official_verification is not None:
+                refs = [item.source_ref for item in scoped.official_verification.source_refs]
+                refs.extend(item.link_ref for item in scoped.official_verification.link_refs)
+                await progress(
+                    "official_link_verification",
+                    "Đã đối chiếu publisher, claim và resource với nguồn chính thức.",
+                    refs,
+                    None,
+                )
             memory_lookup = await self._resolve_memory_lookup()
             if memory_lookup is not None and owner_id is not None:
                 scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
@@ -128,6 +141,7 @@ class SecurityTriagePipeline:
             scoped = assess_security_risk(
                 scoped,
                 memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
+                official_verification_enforced=self._risk_v3_enforced,
             )
             if progress is not None:
                 await progress(
@@ -145,6 +159,13 @@ class SecurityTriagePipeline:
                 scoped.risk,
             )
         return self._complete(scoped)
+
+    @property
+    def _risk_v3_enforced(self) -> bool:
+        return bool(
+            self._official_verification_rollout is not None
+            and self._official_verification_rollout.risk_v3_enforced
+        )
 
     async def _resolve_investigation(self) -> SecurityInvestigationService:
         if self._investigation is not None:

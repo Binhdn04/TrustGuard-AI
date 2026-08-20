@@ -27,6 +27,7 @@ for _flag in (
     "SECURITY_ADMIN_COPILOT_ENABLED",
 ):
     os.environ[_flag] = "false"
+os.environ["SECURITY_OFFICIAL_VERIFICATION_MODE"] = "off"
 
 from src.main import app  # noqa: E402 - test environment must precede application import
 

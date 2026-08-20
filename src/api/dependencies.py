@@ -36,6 +36,15 @@ from src.security_ai import (
     TurnBudget,
     TurnExecutionContext,
 )
+from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
+from src.services.official_verification_rollout import (
+    OfficialVerificationMode,
+    OfficialVerificationRolloutStage,
+)
+from src.services.official_verification_transport import (
+    GuardedHtmlFetcher,
+    build_official_verification_providers,
+)
 from src.services.platform_wave2 import (
     MemoryWave2Repository,
     VersionedSourceRegistry,
@@ -66,6 +75,37 @@ _security_worker: SecurityV4DurableWorker | None = None
 _security_worker_task = None
 _memory_wave2_repository = MemoryWave2Repository()
 _source_registry = VersionedSourceRegistry(default_source_policies())
+
+
+@lru_cache
+def get_official_verification_rollout_stage() -> OfficialVerificationRolloutStage | None:
+    settings = get_settings()
+    mode = OfficialVerificationMode(settings.security_official_verification_mode)
+    if mode is OfficialVerificationMode.OFF:
+        return None
+    providers = build_official_verification_providers(settings)
+    fetcher = GuardedHtmlFetcher(timeout=settings.provider_timeout_seconds)
+    coordinator = OfficialLinkVerificationCoordinator(
+        get_security_trust_repository(),
+        search=providers.search,
+        extract=providers.extract,
+        fetcher=fetcher,
+        source_registry=_source_registry,
+    )
+    closers = [item for item in (providers.search, providers.extract, fetcher) if item is not None]
+    return OfficialVerificationRolloutStage(
+        coordinator,
+        mode=mode,
+        closers=closers,
+    )
+
+
+async def close_official_verification_rollout_stage() -> None:
+    if get_official_verification_rollout_stage.cache_info().currsize:
+        stage = get_official_verification_rollout_stage()
+        get_official_verification_rollout_stage.cache_clear()
+        if stage is not None:
+            await stage.aclose()
 
 
 @lru_cache
@@ -398,6 +438,7 @@ async def start_durable_worker() -> None:
                     model=get_security_assistant_model(),
                     runtime=runtime,
                 ),
+                official_verification_rollout=get_official_verification_rollout_stage(),
                 memory_lookup=memory_lookup,
             )
 

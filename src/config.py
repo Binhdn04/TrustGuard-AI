@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     security_async_execution_enabled: bool = False
     security_memory_retrieval_enabled: bool = False
     security_admin_copilot_enabled: bool = False
+    security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "off"
     security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
     security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
@@ -124,6 +125,10 @@ class Settings(BaseSettings):
             "security_async_execution": durable_ready,
             "security_memory_retrieval": self.security_memory_retrieval_enabled,
             "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
+            "official_link_verification": self.security_official_verification_mode != "off",
+            "official_web_search_ready": (
+                self.security_official_verification_mode != "off" and bool(self.tavily_api_key.strip())
+            ),
         }
 
     def security_ai_provider_configuration_valid(self) -> bool:

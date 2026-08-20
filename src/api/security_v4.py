@@ -26,6 +26,7 @@ from src.api.dependencies import (
     SecurityUnderstandingServiceDependency,
     TicketManagerDependency,
     get_event_notifier,
+    get_official_verification_rollout_stage,
     get_rate_limiter,
     get_security_analysis_service,
     get_ticket_manager,
@@ -296,6 +297,7 @@ async def create_security_analysis_v4(
         investigation_resolver=resolve_investigation,
         trust=trust,
         responses=responses,
+        official_verification_rollout=get_official_verification_rollout_stage(),
         memory_lookup_resolver=resolve_memory_lookup if settings.security_memory_retrieval_enabled else None,
     )
     try:
