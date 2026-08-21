@@ -72,6 +72,8 @@ validate request/version → scope/context → boundary hoặc investigation
 - Chat follow-up gửi conversation ID/version và chỉ nhận owner-scoped structured summary đã làm sạch cùng assessment
   hiện tại. Context được đưa cho model dưới dạng untrusted JSON, không gồm raw chat, score/confidence hay evidence ID;
   stale version bị từ chối và chat thường không làm tăng version hoặc persist nội dung mới.
+- Frontend chỉ render Markdown giới hạn trong phản hồi chatbot (nhấn mạnh, danh sách, inline code và HTTP(S) link)
+  thành React element; không dùng raw HTML. Nội dung người dùng không được diễn giải như Markdown.
 - External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
 - SSRF guard chặn private/local/metadata target và revalidate từng redirect.
 - Page capture tự chạy ở frontend cho URL cuối cùng (URL mới nhất) sau khi case có kết quả, owner-scoped theo URL

@@ -55,7 +55,8 @@ populate a passing evidence file from offline fixtures or unit-test output.
 - admin RBAC, report/appeal conflict, action idempotency và audit;
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
 - AI grounding/fallback/prompt injection/budget/deadline;
-- frontend risk/follow-up presentation, polling, history và admin workflow.
+- frontend risk/follow-up presentation, polling, history/filter, safe assistant Markdown, latest-URL page capture lifecycle
+  và admin workflow;
 - identity discovery query hygiene, literal-title queries, consent/SSRF/budget, non-terminal discovered-cache
   revalidation, guarded short-link chains, neutral-anchor exact-resource links, 7-day stale revalidation,
   one-source exact-resource endorsement, self-endorsement rejection, relationship evidence anchors,

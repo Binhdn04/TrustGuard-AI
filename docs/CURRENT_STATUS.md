@@ -26,7 +26,7 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 | AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |
 | Official verification | publisher/claim/resource verification plus identity discovery v2, literal-title search, one-source exact-resource endorsement, guarded redirects, 7-day terminal-aware cache, typed ownership evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
-| Frontend | Security Chat, Simple/Analyst views, Observatory, Review Room, Trust candidate queue/Audit |
+| Frontend | Security Chat với case-context follow-up, Markdown giới hạn an toàn, tự chụp URL mới nhất trong RAM; Simple/Analyst views, history, Observatory, Review Room, Trust candidate queue/Audit |
 | Schema | Alembic through `0019_security_identity_discovery` (one head) |
 
 ## Partial and pending
