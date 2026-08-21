@@ -23,7 +23,7 @@ export interface MessageTextPart {
   href?: string;
 }
 
-function safeHttpHref(value: string): string | null {
+export function safeHttpHref(value: string): string | null {
   const candidate = value.trim();
   try {
     const parsed = new URL(candidate);

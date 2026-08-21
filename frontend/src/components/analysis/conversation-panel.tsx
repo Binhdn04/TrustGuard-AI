@@ -8,6 +8,7 @@ import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
 
 import { AssistantResponseCard } from "./assistant-response-card";
+import { AssistantMarkdownMessage } from "./assistant-markdown-message";
 import { LinkedMessage } from "./linked-message";
 import { SecurityChatComposer } from "./security-chat-composer";
 
@@ -68,7 +69,7 @@ export function ConversationPanel({
             </div>
             {turn.chatResponse && (
               <div className="max-w-[94%] rounded-2xl rounded-bl-sm border border-border bg-muted/40 p-4 text-sm leading-6">
-                <LinkedMessage value={turn.chatResponse} />
+                <AssistantMarkdownMessage value={turn.chatResponse} />
               </div>
             )}
             {turn.result?.scope_decision === "OUT_OF_SCOPE_GENERAL_FACT_CHECK" && (
