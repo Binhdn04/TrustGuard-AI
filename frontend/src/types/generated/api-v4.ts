@@ -171,6 +171,12 @@ export interface SecurityConsentV4 {
 
 export type SecurityChatRouteV4 = "conversation" | "security_analysis";
 
+export interface SecurityChatRequestV4 {
+  message: string;
+  conversation_id?: string | null;
+  conversation_version?: number | null;
+}
+
 export interface SecurityChatResponseV4 {
   contract_version: "v4";
   route: SecurityChatRouteV4;
@@ -196,6 +202,7 @@ export interface SecurityCapabilitiesResponseV4 {
   security_admin_copilot?: true;
   official_link_verification?: true;
   official_web_search_ready?: true;
+  security_page_capture?: true;
 }
 
 export interface DerivedQueryProvenanceV4 {
@@ -373,6 +380,11 @@ export interface SecurityTriageCreateRequestV4 {
   execution_mode?: "inline" | "async";
   conversation_id?: string;
   conversation_version?: number;
+}
+
+export interface SecurityPageCaptureRequestV4 {
+  url_index: number;
+  external_url_lookup: true;
 }
 
 export interface SecurityContextV4 {

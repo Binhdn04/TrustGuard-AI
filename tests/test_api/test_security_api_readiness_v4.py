@@ -153,6 +153,21 @@ async def test_paginated_history_and_conversations_are_owner_scoped(client) -> N
             headers=USER_HEADERS,
             params={"scope_decision": "NEED_MORE_INFO"},
         )
+        matching_risk = await client.get(
+            "/api/v4/analyses/page",
+            headers=USER_HEADERS,
+            params={"risk": created.json()["risk"]},
+        )
+        matching_search = await client.get(
+            "/api/v4/analyses/page",
+            headers=USER_HEADERS,
+            params={"q": "chia se ma otp"},
+        )
+        missing_search = await client.get(
+            "/api/v4/analyses/page",
+            headers=USER_HEADERS,
+            params={"q": "khong-ton-tai"},
+        )
         conversations = await client.get("/api/v4/conversations", headers=USER_HEADERS, params={"limit": 1})
         other_owner = await client.get("/api/v4/conversations", headers=ADMIN_HEADERS)
     finally:
@@ -164,6 +179,9 @@ async def test_paginated_history_and_conversations_are_owner_scoped(client) -> N
     assert history.json()["items"][0]["analysis_id"] == created.json()["analysis_id"]
     assert in_scope.json()["total"] == 1
     assert need_more_info.json()["total"] == 0
+    assert matching_risk.json()["total"] == 1
+    assert matching_search.json()["total"] == 1
+    assert missing_search.json()["total"] == 0
     assert conversations.json()["total"] == 1
     assert conversations.json()["items"][0]["conversation_id"] == created.json()["conversation_id"]
     assert other_owner.json()["total"] == 0

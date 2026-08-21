@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     security_async_execution_enabled: bool = False
     security_memory_retrieval_enabled: bool = False
     security_admin_copilot_enabled: bool = True
+    security_page_capture_enabled: bool = False
+    security_page_capture_timeout_seconds: float = Field(default=12.0, gt=0.0, le=30.0)
+    security_page_capture_max_image_bytes: int = Field(default=2_000_000, ge=100_000, le=5_000_000)
+    security_page_capture_max_concurrency: int = Field(default=2, ge=1, le=4)
+    security_page_capture_viewport_width: int = Field(default=1280, ge=640, le=1920)
+    security_page_capture_viewport_height: int = Field(default=720, ge=480, le=1080)
+    security_page_capture_jpeg_quality: int = Field(default=72, ge=40, le=90)
     security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "visible"
     security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
@@ -125,6 +132,7 @@ class Settings(BaseSettings):
             "security_async_execution": durable_ready,
             "security_memory_retrieval": self.security_memory_retrieval_enabled,
             "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
+            "security_page_capture": self.security_page_capture_enabled,
             "official_link_verification": self.security_official_verification_mode != "off",
             "official_web_search_ready": (
                 self.security_official_verification_mode != "off" and bool(self.tavily_api_key.strip())

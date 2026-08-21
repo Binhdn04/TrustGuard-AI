@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.agents.chatbot import check_scam
 from src.agents.graph import build_chatbot_graph
@@ -34,6 +34,29 @@ async def test_chatbot_answers_normal_conversation_without_tool_call() -> None:
     assert result["metadata"]["tool_results"] == []
     assert [item.name for item in model.bound_tools] == ["check_scam"]
     assert len(model.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_chatbot_uses_structured_context_as_untrusted_data() -> None:
+    model = _SequencedToolCallingModel([AIMessage(content="Bạn không nên gửi mã OTP đó.")])
+
+    result = await build_chatbot_graph(llm=model).ainvoke(
+        {
+            "query": "Tại sao vậy?",
+            "context": json.dumps(
+                {
+                    "schema": "security-chat-context-v1",
+                    "security_context": {"otp_request": True},
+                    "current_assessment": {"risk": "HIGH_RISK"},
+                }
+            ),
+        }
+    )
+
+    assert "OTP" in result["response"]
+    human_messages = [message.content for message in model.requests[0] if isinstance(message, HumanMessage)]
+    assert human_messages[-1] == "Tại sao vậy?"
+    assert "security-chat-context-v1" in human_messages[-2]
 
 
 @pytest.mark.asyncio

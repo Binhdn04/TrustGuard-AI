@@ -57,6 +57,20 @@ describe("FE4 security case presentation", () => {
     expect(screen.getByText("Tự liên hệ qua kênh chính thức")).toBeInTheDocument();
   });
 
+  it("keeps user-facing risk metrics behind an expandable technical detail", () => {
+    render(<ActionRiskPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase())} mode="simple" />);
+
+    const detailLabel = screen.getByText("Xem điểm số và chi tiết kỹ thuật");
+    const details = detailLabel.closest("details");
+    expect(details).not.toHaveAttribute("open");
+
+    fireEvent.click(detailLabel);
+
+    expect(details).toHaveAttribute("open");
+    expect(screen.getByText("91/100")).toBeInTheDocument();
+    expect(screen.getByText("88%")).toBeInTheDocument();
+  });
+
   it("keeps all evidence and marks only exact explanation references", () => {
     render(<Presentation />);
 

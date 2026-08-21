@@ -36,11 +36,11 @@ export function CaseListFilters({
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <input
-          aria-label="Tìm theo thực thể hoặc URL"
+        aria-label="Tìm theo tổ chức hoặc website"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           maxLength={200}
-          placeholder="Thực thể hoặc URL…"
+          placeholder="Tổ chức hoặc website…"
           className="w-full rounded-xl border border-input bg-background py-2.5 pl-9 pr-4 text-sm"
         />
       </div>
@@ -82,7 +82,7 @@ export function CaseListFilters({
         disabled={disabled}
         className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
       >
-        Tìm case
+        Tìm
       </button>
     </form>
   );

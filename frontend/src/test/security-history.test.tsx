@@ -73,16 +73,27 @@ describe("FE5 case library", () => {
 
   it("loads, filters and paginates through the server API while updating the URL", async () => {
     const analysis = completedSecurityCase();
-    const pageAnalyses = vi.fn().mockResolvedValue(page([analysis], 21));
+    const pageAnalyses = vi.fn().mockResolvedValue(page([analysis], 451));
     render(<CaseLibrary initialQuery={{ q: "", scopeDecision: null, risk: null, page: 1 }} api={api({ pageAnalyses })} />);
 
-    expect(await screen.findByText("21 case")).toBeInTheDocument();
+    expect(await screen.findByText("451 cuộc trò chuyện")).toBeInTheDocument();
     expect(pageAnalyses).toHaveBeenCalledWith({ limit: 10, offset: 0 });
-    expect(screen.getByRole("link", { name: /Mở case/i })).toHaveAttribute("href", `/cases/${analysis.analysis_id}`);
+    expect(screen.getByRole("link", { name: /Mở cuộc trò chuyện/i })).toHaveAttribute("href", `/cases/${analysis.analysis_id}`);
+    expect(screen.getByText("Kiểm tra một liên kết liên quan đến ACME Bank")).toBeInTheDocument();
+    expect(screen.queryByText(analysis.analysis_id.slice(0, 8))).not.toBeInTheDocument();
+    expect(screen.queryByText(/evidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(analysis.explanation!)).not.toBeInTheDocument();
+    expect(screen.queryByText(analysis.security_context!.urls[0])).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Trang 1" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Trang 46" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Trang sau" }));
     await waitFor(() => expect(pageAnalyses).toHaveBeenLastCalledWith({ limit: 10, offset: 10 }));
     expect(replace).toHaveBeenLastCalledWith("/history?page=2", { scroll: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "Trang 3" }));
+    await waitFor(() => expect(pageAnalyses).toHaveBeenLastCalledWith({ limit: 10, offset: 20 }));
+    expect(replace).toHaveBeenLastCalledWith("/history?page=3", { scroll: false });
 
     fireEvent.change(screen.getByLabelText("Lọc theo quyết định phạm vi"), { target: { value: "IN_SCOPE" } });
     await waitFor(() => expect(pageAnalyses).toHaveBeenLastCalledWith({ limit: 10, offset: 0, scope_decision: "IN_SCOPE" }));
@@ -90,8 +101,8 @@ describe("FE5 case library", () => {
     fireEvent.change(screen.getByLabelText("Lọc theo mức rủi ro"), { target: { value: "MALICIOUS" } });
     await waitFor(() => expect(pageAnalyses).toHaveBeenLastCalledWith({ limit: 10, offset: 0, scope_decision: "IN_SCOPE", risk: "MALICIOUS" }));
 
-    fireEvent.change(screen.getByLabelText("Tìm theo thực thể hoặc URL"), { target: { value: "bank.example" } });
-    fireEvent.click(screen.getByRole("button", { name: "Tìm case" }));
+    fireEvent.change(screen.getByLabelText("Tìm theo tổ chức hoặc website"), { target: { value: "bank.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Tìm" }));
     await waitFor(() => expect(pageAnalyses).toHaveBeenLastCalledWith({ limit: 10, offset: 0, q: "bank.example", scope_decision: "IN_SCOPE", risk: "MALICIOUS" }));
     expect(replace).toHaveBeenLastCalledWith("/history?q=bank.example&scope=IN_SCOPE&risk=MALICIOUS", { scroll: false });
   });
@@ -104,8 +115,55 @@ describe("FE5 case library", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
     fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
-    expect(await screen.findByText("Chưa có case phù hợp")).toBeInTheDocument();
+    expect(await screen.findByText("Chưa có cuộc trò chuyện phù hợp")).toBeInTheDocument();
     expect(pageAnalyses).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces the visible history when search and filters change", async () => {
+    const acme = completedSecurityCase();
+    const communitySite = completedSecurityCase({
+      analysis_id: "20000000-0000-4000-8000-000000000002",
+      risk: "SAFE",
+      security_context: {
+        ...completedSecurityCase().security_context!,
+        claimed_entity: "Chống Lừa Đảo",
+        urls: ["https://chongluadao.vn/"],
+      },
+    });
+    const records = [acme, communitySite];
+    const pageAnalyses = vi.fn().mockImplementation(async (query: {
+      q?: string;
+      scope_decision?: SecurityScopeResponseV4["scope_decision"];
+      risk?: SecurityScopeResponseV4["risk"];
+      limit?: number;
+      offset?: number;
+    }) => {
+      const needle = query.q?.toLocaleLowerCase("vi-VN");
+      const items = records.filter((item) => (
+        (!query.scope_decision || item.scope_decision === query.scope_decision)
+        && (!query.risk || item.risk === query.risk)
+        && (!needle || [item.security_context?.claimed_entity, ...(item.security_context?.urls ?? [])]
+          .some((value) => value?.toLocaleLowerCase("vi-VN").includes(needle)))
+      ));
+      return page(items, items.length, query.offset ?? 0);
+    });
+    render(<CaseLibrary initialQuery={{ q: "", scopeDecision: null, risk: null, page: 1 }} api={api({ pageAnalyses })} />);
+
+    expect(await screen.findAllByRole("link", { name: /Mở cuộc trò chuyện/i })).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("Lọc theo mức rủi ro"), { target: { value: "SAFE" } });
+    await waitFor(() => expect(screen.getAllByRole("link", { name: /Mở cuộc trò chuyện/i })).toHaveLength(1));
+    expect(screen.getByText(/Chống Lừa Đảo/)).toBeInTheDocument();
+    expect(screen.queryByText(/ACME Bank/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Lọc theo mức rủi ro"), { target: { value: "" } });
+    await waitFor(() => expect(screen.getAllByRole("link", { name: /Mở cuộc trò chuyện/i })).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText("Tìm theo tổ chức hoặc website"), { target: { value: "ACME" } });
+    fireEvent.click(screen.getByRole("button", { name: "Tìm" }));
+
+    await waitFor(() => expect(screen.getAllByRole("link", { name: /Mở cuộc trò chuyện/i })).toHaveLength(1));
+    expect(screen.getByText(/ACME Bank/)).toBeInTheDocument();
+    expect(screen.queryByText(/Chống Lừa Đảo/)).not.toBeInTheDocument();
   });
 });
 
@@ -125,7 +183,10 @@ describe("FE5 case detail and resume", () => {
     });
     render(<CaseDetail analysisId={analysis.analysis_id} api={client} />);
 
-    expect(await screen.findByRole("heading", { name: "Structured context retained" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Tiếp tục cuộc trò chuyện" })).toBeInTheDocument();
+    screen.getAllByText("account_verification").forEach((item) => expect(item).not.toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
+    expect(screen.getByRole("heading", { name: "Structured context retained" })).toBeInTheDocument();
     expect(screen.getAllByText("account_verification").length).toBeGreaterThan(0);
     expect(screen.getByText(/Context v3/)).toBeInTheDocument();
     expect(screen.queryByText("Nội dung chat riêng tư không thuộc contract")).not.toBeInTheDocument();
@@ -158,6 +219,7 @@ describe("FE5 case detail and resume", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Context version mới đã được tải");
     expect(input).toHaveValue("Thông tin cần gửi lại");
+    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
     expect(screen.getByText(/Context v4/)).toBeInTheDocument();
   });
 

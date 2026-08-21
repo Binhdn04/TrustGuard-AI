@@ -46,6 +46,7 @@ from src.services.official_verification_transport import (
     GuardedHtmlFetcher,
     build_official_verification_providers,
 )
+from src.services.page_capture import PageCaptureService
 from src.services.platform_wave2 import (
     MemoryWave2Repository,
     VersionedSourceRegistry,
@@ -107,6 +108,26 @@ async def close_official_verification_rollout_stage() -> None:
         get_official_verification_rollout_stage.cache_clear()
         if stage is not None:
             await stage.aclose()
+
+
+@lru_cache
+def get_page_capture_service() -> PageCaptureService:
+    settings = get_settings()
+    return PageCaptureService(
+        timeout_seconds=settings.security_page_capture_timeout_seconds,
+        max_image_bytes=settings.security_page_capture_max_image_bytes,
+        max_concurrency=settings.security_page_capture_max_concurrency,
+        viewport_width=settings.security_page_capture_viewport_width,
+        viewport_height=settings.security_page_capture_viewport_height,
+        jpeg_quality=settings.security_page_capture_jpeg_quality,
+    )
+
+
+async def close_page_capture_service() -> None:
+    if get_page_capture_service.cache_info().currsize:
+        service = get_page_capture_service()
+        get_page_capture_service.cache_clear()
+        await service.aclose()
 
 
 @lru_cache
@@ -616,6 +637,7 @@ async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
 
 
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
+PageCaptureServiceDependency = Annotated[PageCaptureService, Depends(get_page_capture_service)]
 TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(resolve_ticket_manager)]
 Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]
 SecurityTriageScopeServiceDependency = Annotated[

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisWorkspace } from "@/components/analysis/analysis-workspace";
@@ -89,6 +89,30 @@ function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): Securit
 }
 
 describe("Security Chat workspace", () => {
+  it("keeps a rich-pasted link in the submitted and rendered conversation turn", async () => {
+    const create = vi.fn().mockResolvedValue(response());
+    render(<AnalysisWorkspace api={apiWith(create)} />);
+    const composer = screen.getByLabelText(/Dán tin nhắn đáng ngờ/i);
+
+    fireEvent.paste(composer, {
+      clipboardData: {
+        getData: (type: string) => type === "text/html"
+          ? '<p>Đăng ký tại <a href="https://forms.example.test/recruitment?id=42">biểu mẫu tuyển dụng</a></p>'
+          : "Đăng ký tại biểu mẫu tuyển dụng",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Đăng ký tại biểu mẫu tuyển dụng (https://forms.example.test/recruitment?id=42)",
+      }),
+      undefined,
+    ));
+    const link = await screen.findByRole("link", { name: "https://forms.example.test/recruitment?id=42" });
+    expect(link).toHaveAttribute("href", "https://forms.example.test/recruitment?id=42");
+  });
+
   it("submits an idempotent async turn only when the backend capability is enabled", async () => {
     const create = vi.fn().mockResolvedValue({
       contract_version: "v4",
@@ -117,7 +141,7 @@ describe("Security Chat workspace", () => {
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
     expect(screen.queryByText("Cho phép kiểm tra URL bên ngoài")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Cho phép đối chiếu nguồn chính thức/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/tự đối chiếu URL\/domain với dịch vụ bảo mật/i)).toBeInTheDocument();
+    expect(screen.getByText(/kiểm tra liên kết bằng dịch vụ bảo mật/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -133,13 +157,13 @@ describe("Security Chat workspace", () => {
     const api = apiWith(vi.fn().mockResolvedValue(response()));
     render(<AnalysisWorkspace api={api} />);
 
-    expect(screen.getByRole("heading", { name: /Biến tín hiệu đáng ngờ/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bạn muốn kiểm tra điều gì?" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Intake & follow-up" })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn cần kiểm tra" } });
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
-    expect(await screen.findByRole("heading", { name: "Intake & follow-up" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Trò chuyện với trợ lý" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Kết luận và hướng dẫn" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Signals & evidence" })).not.toBeInTheDocument();
     expect(screen.getByRole("tablist", { name: "Khu vực case" })).toBeInTheDocument();
@@ -199,7 +223,10 @@ describe("Security Chat workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
-    expect(api.chat).toHaveBeenCalledWith("Nếu tôi đã mở link thì sao?");
+    expect(api.chat).toHaveBeenCalledWith("Nếu tôi đã mở link thì sao?", {
+      conversationId: "10000000-0000-4000-8000-000000000001",
+      conversationVersion: 1,
+    });
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       conversation_id: "10000000-0000-4000-8000-000000000001",
       conversation_version: 1,
@@ -238,7 +265,10 @@ describe("Security Chat workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByText(/Nếu có tin nhắn đáng ngờ khác/i)).toBeInTheDocument();
-    expect(chat).toHaveBeenCalledWith("Cảm ơn bạn");
+    expect(chat).toHaveBeenCalledWith("Cảm ơn bạn", {
+      conversationId: "10000000-0000-4000-8000-000000000001",
+      conversationVersion: 1,
+    });
     expect(create).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("heading", { name: "Đáng ngờ" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i)).toBeInTheDocument();
@@ -325,11 +355,52 @@ describe("Security Chat workspace", () => {
         generation_mode: "ai",
       },
     })));
+    api.capturePage = vi.fn().mockRejectedValue(new Error("blocked by destination"));
+    vi.mocked(api.getCapabilities).mockResolvedValue({
+      contract_version: "v4",
+      product_profile: "security_triage_vnext",
+      release_profile: "pre_cutover",
+      conversation_resume: true,
+      admin_feedback_review: true,
+      intelligence_explorer: true,
+      unified_v4_audit: true,
+      admin_action_contract: "v4",
+      executable_admin_actions: ["add_to_blacklist"],
+      deferred_admin_actions: [],
+      security_page_capture: true,
+    });
     render(<AnalysisWorkspace api={api} />);
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra link" } });
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
-    expect(await screen.findByRole("region", { name: "Phản hồi của trợ lý bảo mật" })).toHaveTextContent("Liên kết này có rủi ro cao");
+    const assistant = await screen.findByRole("region", { name: "Phản hồi của trợ lý bảo mật" });
+    expect(assistant).toHaveTextContent("Liên kết này có rủi ro cao");
+    await waitFor(() => expect(api.capturePage).toHaveBeenCalledWith(expect.any(String), 0));
+    expect(screen.queryByRole("button", { name: "Chụp ảnh web" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Chụp lại" })).not.toBeInTheDocument();
+    const resultDetailLabel = screen.getByText("Xem kết quả chi tiết");
+    const resultDetails = resultDetailLabel.closest("details");
+    const mainSignals = screen.getByRole("heading", { name: "Các dấu hiệu chính" });
+    expect(resultDetails).not.toHaveAttribute("open");
+    expect(mainSignals).not.toBeVisible();
+
+    fireEvent.click(resultDetailLabel);
+
+    expect(resultDetails).toHaveAttribute("open");
+    expect(mainSignals).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Điểm số và thông tin kỹ thuật" })).toBeVisible();
+
+    const detailLabel = within(assistant).getByText("Xem lý do và hướng dẫn chi tiết");
+    const details = detailLabel.closest("details");
+    const primaryAction = within(assistant).getByText("Không mở liên kết");
+    expect(details).not.toHaveAttribute("open");
+    expect(primaryAction).not.toBeVisible();
+
+    fireEvent.click(detailLabel);
+
+    expect(details).toHaveAttribute("open");
+    expect(primaryAction).toBeVisible();
+    expect(within(assistant).getByText(/Đường dẫn yêu cầu đăng nhập\./)).toBeVisible();
     expect(screen.queryByRole("link", { name: /danger\.example/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Lưu lại tin nhắn để báo cáo")).not.toBeInTheDocument();
 
@@ -366,6 +437,7 @@ describe("Security Chat workspace", () => {
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
+    fireEvent.click(await screen.findByText("Xem kết quả chi tiết"));
     fireEvent.click(await screen.findByText("Báo cáo hoặc yêu cầu xem xét"));
     fireEvent.click(await screen.findByRole("button", { name: "Gửi báo cáo" }));
     await waitFor(() => expect(api.reportAnalysis).toHaveBeenCalled());
@@ -399,7 +471,7 @@ describe("Security Chat workspace", () => {
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Case provider lỗi" } });
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("trạng thái failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Chưa thể hoàn tất kiểm tra");
     expect(screen.queryByRole("heading", { name: /Nguy hiểm|Rủi ro cao|Đáng ngờ/i })).not.toBeInTheDocument();
   });
 
@@ -415,7 +487,7 @@ describe("Security Chat workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Bắt đầu trường hợp mới" }));
     resolveCreate(response());
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: /Biến tín hiệu đáng ngờ/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Bạn muốn kiểm tra điều gì?" })).toBeInTheDocument());
     expect(screen.queryByRole("heading", { name: "Security investigation workspace" })).not.toBeInTheDocument();
   });
 });

@@ -8,6 +8,7 @@ import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
 
 import { AssistantResponseCard } from "./assistant-response-card";
+import { LinkedMessage } from "./linked-message";
 import { SecurityChatComposer } from "./security-chat-composer";
 
 function transportLabel(transport: AnalysisTransportState): string {
@@ -45,8 +46,10 @@ export function ConversationPanel({
     <section aria-labelledby="conversation-heading" className="case-panel flex min-h-[36rem] flex-col overflow-hidden">
       <header className="flex items-center justify-between border-b border-border/70 px-4 py-3.5">
         <div>
-          <p className="micro-label">01 / Conversation</p>
-          <h2 id="conversation-heading" className="mt-1 text-sm font-semibold">Intake & follow-up</h2>
+          {mode === "analyst" && <p className="micro-label">01 / Conversation</p>}
+          <h2 id="conversation-heading" className={mode === "simple" ? "text-sm font-semibold" : "mt-1 text-sm font-semibold"}>
+            {mode === "simple" ? "Trò chuyện với trợ lý" : "Intake & follow-up"}
+          </h2>
         </div>
         {busy && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold text-primary">
@@ -60,12 +63,12 @@ export function ConversationPanel({
         {turns.map((turn, index) => (
           <article key={turn.id} className="space-y-3">
             <div className="ml-auto max-w-[92%] rounded-2xl rounded-br-sm bg-foreground px-4 py-3 text-sm leading-6 text-background">
-              <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">Input {index + 1}</p>
-              <p className="whitespace-pre-wrap break-words">{turn.message}</p>
+              {mode === "analyst" && <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">Input {index + 1}</p>}
+              <LinkedMessage value={turn.message} />
             </div>
             {turn.chatResponse && (
               <div className="max-w-[94%] rounded-2xl rounded-bl-sm border border-border bg-muted/40 p-4 text-sm leading-6">
-                <p className="whitespace-pre-wrap break-words">{turn.chatResponse}</p>
+                <LinkedMessage value={turn.chatResponse} />
               </div>
             )}
             {turn.result?.scope_decision === "OUT_OF_SCOPE_GENERAL_FACT_CHECK" && (
@@ -97,11 +100,13 @@ export function ConversationPanel({
                 <p className="text-sm font-semibold">
                   {state === "CHATTING" ? "Trợ lý đang trả lời" : "Trợ lý đang kiểm tra nội dung"}
                 </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {state === "CHATTING"
-                    ? "Nếu phát hiện yêu cầu kiểm tra an toàn, trợ lý sẽ mở lượt phân tích mới."
-                    : `Tự chọn công cụ cần thiết · ${transportLabel(transport)}`}
-                </p>
+                {mode === "analyst" && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {state === "CHATTING"
+                      ? "Nếu phát hiện yêu cầu kiểm tra an toàn, trợ lý sẽ mở lượt phân tích mới."
+                      : `Tự chọn công cụ cần thiết · ${transportLabel(transport)}`}
+                  </p>
+                )}
               </div>
             </div>
             {state === "PROVISIONAL_WARNING" && (
@@ -124,10 +129,9 @@ export function ConversationPanel({
 
         {state === "FAILED" && !error && (
           <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/8 p-3 text-sm text-rose-700 dark:text-rose-300">
-            <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4" />Analysis đã kết thúc với trạng thái failed</p>
-            <p className="mt-1 text-xs leading-5">Không có verdict cuối để hiển thị. Bạn có thể thử chạy lại case này.</p>
+            <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4" />Chưa thể hoàn tất kiểm tra</p>
             <button type="button" onClick={onRetry} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-4">
-              <RotateCcw className="size-3.5" />Thử lại case này
+              <RotateCcw className="size-3.5" />Thử lại
             </button>
           </div>
         )}

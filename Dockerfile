@@ -43,7 +43,11 @@ CMD ["python", "-m", "src.worker"]
 FROM runtime-base AS backend
 
 ENV RUN_DURABLE_WORKER=false \
-    PORT=8000
+    PORT=8000 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+
+RUN playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/playwright-browsers
 
 COPY --chown=appuser:appuser src ./src
 COPY --chown=appuser:appuser migrations ./migrations

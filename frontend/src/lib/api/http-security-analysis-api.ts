@@ -60,6 +60,7 @@ import type {
   SecurityAnalysisPageQuery,
   SecurityAppealPageQuery,
   SecurityCampaignPageQuery,
+  SecurityChatContext,
   SecurityDomainIntelligenceQuery,
   SecurityMemoryPageQuery,
   SecurityPaginationQuery,
@@ -118,8 +119,16 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
     return this.get<SecurityCapabilitiesResponseV4>("capabilities");
   }
 
-  async chat(message: string): Promise<SecurityChatResponseV4> {
-    return this.post<SecurityChatResponseV4>("chat", { message });
+  async chat(message: string, context?: SecurityChatContext): Promise<SecurityChatResponseV4> {
+    return this.post<SecurityChatResponseV4>("chat", {
+      message,
+      ...(context
+        ? {
+            conversation_id: context.conversationId,
+            conversation_version: context.conversationVersion,
+          }
+        : {}),
+    });
   }
 
   async listAdminActions(query: SecurityPaginationQuery & { status?: "pending_review" | "approved" | "rejected" | "executed" | "failed" } = {}): Promise<AdminActionPageV3> {
@@ -151,6 +160,20 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async getAnalysis(analysisId: string): Promise<SecurityScopeResponseV4> {
     return this.get<SecurityScopeResponseV4>(`analyses/${encodeURIComponent(analysisId)}`);
+  }
+
+  async capturePage(analysisId: string, urlIndex: number): Promise<Blob> {
+    const response = await fetch(
+      `${this.baseUrl}/api/v4/analyses/${encodeURIComponent(analysisId)}/page-capture`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: this.headers(true),
+        body: JSON.stringify({ url_index: urlIndex, external_url_lookup: true }),
+      },
+    );
+    if (!response.ok) await readJson<never>(response);
+    return response.blob();
   }
 
   async getAdminAnalysis(analysisId: string): Promise<SecurityScopeResponseV4> {

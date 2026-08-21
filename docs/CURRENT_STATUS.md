@@ -20,7 +20,7 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 | Scope | structured context, focused follow-up, recovery-first incident path |
 | Investigation | rules, blacklist, DNS, redirects, RDAP, VirusTotal, consent/budget/deadline/SSRF |
 | Trust/risk | versioned brand/whitelist, target-owner resolution, deterministic risk v1-v4, false-positive policy |
-| User flow | conversations, history/resume, reports, appeals, owner isolation, event replay |
+| User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |

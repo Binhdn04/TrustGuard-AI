@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from src.core.product_boundary import SECURITY_TRIAGE_CONTRACT_VERSION
 from src.models.schemas import (
@@ -696,6 +696,14 @@ class SecurityTriageCreateRequestV4(SecurityContractModel):
 
 class SecurityChatRequestV4(SecurityContractModel):
     message: str = Field(min_length=1, max_length=5000)
+    conversation_id: UUID | None = None
+    conversation_version: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_conversation_reference(self) -> Self:
+        if (self.conversation_id is None) != (self.conversation_version is None):
+            raise ValueError("conversation_id and conversation_version must be provided together")
+        return self
 
 
 class SecurityChatResponseV4(SecurityContractModel):
@@ -830,6 +838,45 @@ class SecurityScopeResponseV4(SecurityContractModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
+    @classmethod
+    def model_validate_stored(cls, value: Any) -> Self:
+        """Validate persisted v4 data with narrowly scoped legacy read compatibility."""
+        return cls.model_validate(value, context={"stored_security_scope": True})
+
+    @classmethod
+    def model_validate_stored_json(cls, value: str | bytes | bytearray) -> Self:
+        """Validate persisted JSON without weakening the public v4 contract."""
+        return cls.model_validate_json(value, context={"stored_security_scope": True})
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_retired_stored_investigation_steps(cls, value: Any, info: ValidationInfo) -> Any:
+        if not info.context or not info.context.get("stored_security_scope") or not isinstance(value, dict):
+            return value
+        raw_plan = value.get("investigation_plan")
+        if not isinstance(raw_plan, list):
+            return value
+
+        retired_step_ids = {
+            step.get("step_id")
+            for step in raw_plan
+            if isinstance(step, dict) and step.get("tool") == "official_claim_verifier"
+        }
+        if not retired_step_ids:
+            return value
+
+        normalized_plan: list[Any] = []
+        for step in raw_plan:
+            if isinstance(step, dict) and step.get("tool") == "official_claim_verifier":
+                continue
+            if isinstance(step, dict) and isinstance(step.get("depends_on"), list):
+                step = {
+                    **step,
+                    "depends_on": [dependency for dependency in step["depends_on"] if dependency not in retired_step_ids],
+                }
+            normalized_plan.append(step)
+        return {**value, "investigation_plan": normalized_plan}
+
     @model_validator(mode="after")
     def validate_scope_transition(self) -> Self:
         if self.scope_decision is ScopeDecisionV4.IN_SCOPE:
@@ -961,6 +1008,12 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     security_admin_copilot: Literal[True] | None = None
     official_link_verification: Literal[True] | None = None
     official_web_search_ready: Literal[True] | None = None
+    security_page_capture: Literal[True] | None = None
+
+
+class SecurityPageCaptureRequestV4(SecurityContractModel):
+    url_index: int = Field(ge=0, le=9)
+    external_url_lookup: Literal[True]
 
 
 class SecurityWebSocketTicketRequestV4(SecurityContractModel):
@@ -1400,6 +1453,7 @@ __all__ = [
     "SecurityScenarioV4",
     "SecurityRecommendedActionV4",
     "SecurityRiskV4",
+    "SecurityPageCaptureRequestV4",
     "SecurityWebSocketTicketRequestV4",
     "SecurityWebSocketTicketResponseV4",
     "SecurityCapabilitiesResponseV4",

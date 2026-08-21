@@ -29,11 +29,18 @@ CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
 SECURITY_RELEASE_PROFILE=pre_cutover
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 LIVE_PROVIDERS_REQUIRED=false
+SECURITY_PAGE_CAPTURE_ENABLED=false
 ```
 
 Backend đặt `RUN_DURABLE_WORKER=false`; worker đặt `RUN_DURABLE_WORKER=true`. Frontend cần API URL và
 OIDC Authorization Code + PKCE. Không đưa demo token vào hosted build. Chỉ thêm AI/provider secrets khi
 capability được duyệt. Google Web Risk, Google Fact Check, Jina, flash model và ChromaDB không thuộc setup.
+
+Page capture mặc định tắt. Chỉ bật `SECURITY_PAGE_CAPTURE_ENABLED=true` khi backend Chromium đã được giới hạn
+egress khỏi private/metadata/service network; Docker image cài Chromium cho API target. Frontend tự yêu cầu ảnh
+của URL mới nhất sau khi case có kết quả; chỉ Blob mới nhất nằm trong RAM của tab, Blob trước được thu hồi, không
+lưu bền và response dùng `no-store`. Chromium không vượt CAPTCHA/access denial và chặn download, popup cùng
+active stream. Tắt flag là rollback tức thời, không cần migration.
 
 ## Preflight and migration
 

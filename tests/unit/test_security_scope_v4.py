@@ -165,3 +165,39 @@ def test_scope_response_rejects_non_terminal_out_of_scope_state() -> None:
             scope_reasons=["general_fact_check_sports"],
             boundary_message="Out of scope.",
         )
+
+
+def test_stored_scope_response_removes_retired_investigation_tool_only_in_storage_mode() -> None:
+    response = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(message="Kiểm tra https://example.com")
+    )
+    payload = response.model_dump(mode="json")
+    retired_step_id = "step-111111111111"
+    payload["investigation_plan"] = [
+        {
+            "step_id": retired_step_id,
+            "tool": "official_claim_verifier",
+            "target": "example.com",
+            "reason_code": "legacy_official_claim",
+            "depends_on": [],
+            "status": "skipped",
+            "status_reason": "retired_tool",
+        },
+        {
+            "step_id": "step-222222222222",
+            "tool": "security_context_analysis",
+            "target": "message",
+            "reason_code": "security_context_required",
+            "depends_on": [retired_step_id],
+            "status": "pending",
+            "status_reason": None,
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="official_claim_verifier"):
+        SecurityScopeResponseV4.model_validate(payload)
+
+    restored = SecurityScopeResponseV4.model_validate_stored(payload)
+
+    assert [step.tool.value for step in restored.investigation_plan] == ["security_context_analysis"]
+    assert restored.investigation_plan[0].depends_on == []

@@ -176,7 +176,12 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     setTransport("disconnected");
 
     try {
-      const reply = await api.chat!(submission.message);
+      const reply = await api.chat!(
+        submission.message,
+        conversation
+          ? { conversationId: conversation.id, conversationVersion: conversation.version }
+          : undefined,
+      );
       if (!mounted.current || activeGeneration !== generation.current) return;
       if (reply.route === "security_analysis") {
         await execute(turnId, submission);
@@ -192,7 +197,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
       setError(messageForError(chatError));
       setState("FAILED");
     }
-  }, [api, execute, stopRuntime]);
+  }, [api, conversation, execute, stopRuntime]);
 
   const submit = useCallback((message: string) => {
     const submission = { message };

@@ -3,17 +3,19 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import unicodedata
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request, WebSocket
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.websockets import WebSocketDisconnect
 
 from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.api.dependencies import (
+    PageCaptureServiceDependency,
     PrincipalDependency,
     SecurityAdminCopilotServiceDependency,
     SecurityAnalysisServiceDependency,
@@ -89,6 +91,7 @@ from src.models import (
     SecurityMemoryCorrectionRequestV4,
     SecurityMemoryPageV4,
     SecurityMemoryRecordV4,
+    SecurityPageCaptureRequestV4,
     SecurityReportAdminRecordV4,
     SecurityReportCreateRequestV4,
     SecurityReportDecisionRequestV4,
@@ -105,6 +108,7 @@ from src.models import (
     WhitelistPageV4,
     WhitelistRecordV4,
 )
+from src.services.page_capture import PageCaptureError
 from src.services.security_pipeline import SecurityTriagePipeline
 
 router = APIRouter(tags=["security-triage-v4"])
@@ -138,6 +142,126 @@ def _decode_cursor(cursor: str | None) -> int:
 
 def _page(items: list, limit: int, offset: int) -> tuple[list, int]:
     return items[offset : offset + limit], len(items)
+
+
+_HISTORY_ACTION_SEARCH_ALIASES = {
+    "login": "đăng nhập liên kết",
+    "share_otp": "chia sẻ mã otp",
+    "share_credentials": "cung cấp thông tin đăng nhập mật khẩu",
+    "transfer_money": "chuyển tiền",
+    "pay_fee": "thanh toán phí",
+    "provide_personal_information": "cung cấp thông tin cá nhân",
+    "open_link": "kiểm tra mở liên kết website",
+    "install_app": "cài đặt ứng dụng",
+    "share_screen": "chia sẻ màn hình",
+    "scan_qr": "quét mã qr",
+    "submit_form": "điền biểu mẫu",
+    "register_or_apply": "đăng ký nộp đơn trực tuyến",
+    "download_file": "tải xuống tệp",
+}
+
+_HISTORY_SCENARIO_SEARCH_ALIASES = {
+    "recruitment": "tuyển dụng việc làm",
+    "promotion_prize": "khuyến mãi trúng thưởng",
+    "charity": "từ thiện",
+    "investment": "đầu tư",
+    "online_task": "nhiệm vụ trực tuyến",
+    "account_verification": "xác minh tài khoản",
+    "payment": "thanh toán",
+    "refund": "hoàn tiền",
+}
+
+
+def _fold_history_search(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    folded = "".join(character for character in decomposed if not unicodedata.combining(character))
+    return " ".join(folded.replace("đ", "d").replace("_", " ").replace("-", " ").split())
+
+
+def _history_search_document(item: SecurityScopeResponseV4) -> str:
+    values: list[str] = []
+    context = item.security_context
+    if context is not None:
+        action = context.requested_action.value if context.requested_action is not None else None
+        scenario = context.scenario.value
+        values.extend(
+            value
+            for value in (
+                context.claimed_entity,
+                *context.urls,
+                action,
+                _HISTORY_ACTION_SEARCH_ALIASES.get(action or ""),
+                scenario,
+                _HISTORY_SCENARIO_SEARCH_ALIASES.get(scenario),
+                context.potential_threat.value,
+            )
+            if value
+        )
+    verification = item.official_verification
+    if verification is not None:
+        intent = verification.intent
+        values.extend(
+            value
+            for value in (
+                intent.organization_name,
+                *intent.derived_organization_names,
+                intent.claim_summary,
+                intent.topic.value if intent.topic is not None else None,
+                intent.requested_action.value if intent.requested_action is not None else None,
+            )
+            if value
+        )
+    if item.assistant_response is not None:
+        values.append(item.assistant_response.summary)
+    return _fold_history_search(" ".join(values))
+
+
+def _chat_context_document(
+    conversation: SecurityConversationV4,
+    active: SecurityScopeResponseV4,
+) -> str:
+    context = conversation.summary.security_context
+    assistant = conversation.summary.assistant_context
+    structured_context = None
+    if context is not None:
+        structured_context = {
+            "claimed_entity": context.claimed_entity,
+            "scenario": context.scenario.value,
+            "requested_action": context.requested_action.value if context.requested_action is not None else None,
+            "amount": context.amount,
+            "urgency": context.urgency,
+            "urls": context.urls,
+            "credential_request": context.credential_request,
+            "otp_request": context.otp_request,
+            "payment_request": context.payment_request,
+            "personal_information_request": context.personal_information_request,
+            "impersonation_signals": context.impersonation_signals,
+            "potential_threat": context.potential_threat.value,
+        }
+    assistant_context = None
+    if assistant is not None:
+        assistant_context = {
+            "sender_intent": assistant.sender_intent,
+            "exposure_state": assistant.exposure_state.value,
+            "missing_information": assistant.missing_information,
+        }
+    assessment = {
+        "risk": active.risk.value if active.risk is not None else None,
+        "threat_type": active.threat_type.value if active.threat_type is not None else None,
+        "recommended_actions": [item.value for item in active.recommended_actions],
+        "assistant_summary": active.assistant_response.summary if active.assistant_response is not None else None,
+    }
+    return json.dumps(
+        {
+            "schema": "security-chat-context-v1",
+            "conversation_version": conversation.context_version,
+            "security_context": structured_context,
+            "assistant_context": assistant_context,
+            "current_assessment": assessment,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 @router.get(
@@ -215,9 +339,22 @@ async def security_chat_v4(
     request: SecurityChatRequestV4,
     principal: PrincipalDependency,
     service: SecurityTriageScopeServiceDependency,
+    analyses: SecurityAnalysisServiceDependency,
 ) -> SecurityChatResponseV4:
     """Route a follow-up through the bounded chatbot before opening another analysis turn."""
-    del principal
+    retained_context = ""
+    if request.conversation_id is not None:
+        conversation = await analyses.get_conversation_for(request.conversation_id, principal)
+        if conversation.context_version != request.conversation_version:
+            raise PlatformError(
+                status_code=409,
+                code=ErrorCode.CONFLICT,
+                message="The security conversation version is stale.",
+                retryable=True,
+                details={"current_version": conversation.context_version},
+            )
+        active = await analyses.get_for(conversation.active_analysis_id, principal)
+        retained_context = _chat_context_document(conversation, active)
     local = service.assess(SecurityTriageCreateRequestV4(message=request.message))
     if set(local.scope_reasons) & {"assistant_capabilities", "assistant_greeting"}:
         return SecurityChatResponseV4(
@@ -227,7 +364,7 @@ async def security_chat_v4(
     from src.agents.graph import agent as chatbot_agent  # noqa: PLC0415
 
     try:
-        result = await chatbot_agent.ainvoke({"query": request.message})
+        result = await chatbot_agent.ainvoke({"query": request.message, "context": retained_context})
     except Exception as exc:
         raise PlatformError(
             status_code=503,
@@ -732,16 +869,9 @@ async def page_security_analyses_v4(
     if threat_type is not None:
         records = [item for item in records if item.threat_type is threat_type]
     if q:
-        needle = q.casefold()
-        records = [
-            item
-            for item in records
-            if item.security_context is not None
-            and (
-                needle in (item.security_context.claimed_entity or "").casefold()
-                or any(needle in url.casefold() for url in item.security_context.urls)
-            )
-        ]
+        needle = _fold_history_search(q)
+        if needle:
+            records = [item for item in records if needle in _history_search_document(item)]
     items, total = _page(records, limit, offset)
     return SecurityAnalysisPageV4(items=items, total=total, limit=limit, offset=offset)
 
@@ -868,6 +998,75 @@ async def get_security_analysis_v4(
     principal: PrincipalDependency,
 ) -> SecurityScopeResponseV4:
     return await analyses.get_for(analysis_id, principal)
+
+
+@router.post(
+    "/analyses/{analysis_id}/page-capture",
+    response_class=Response,
+    responses={
+        200: {"content": {"image/jpeg": {}}},
+        **_COMMON_ERRORS,
+    },
+)
+async def capture_security_analysis_page_v4(
+    analysis_id: UUID,
+    request: SecurityPageCaptureRequestV4,
+    analyses: SecurityAnalysisServiceDependency,
+    capture: PageCaptureServiceDependency,
+    principal: PrincipalDependency,
+) -> Response:
+    settings = get_settings()
+    if not settings.security_page_capture_enabled:
+        raise PlatformError(
+            status_code=409,
+            code=ErrorCode.CONFLICT,
+            message="Page capture is not enabled.",
+            retryable=False,
+        )
+    analysis = await analyses.get_for(analysis_id, principal)
+    context = analysis.security_context
+    if context is None or request.url_index >= len(context.urls):
+        raise PlatformError(
+            status_code=422,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="The requested URL does not belong to this analysis.",
+            retryable=False,
+        )
+    try:
+        result = await capture.capture(context.urls[request.url_index])
+    except PageCaptureError as exc:
+        blocked = exc.code in {"SSRF_BLOCKED", "INVALID_TARGET", "RESPONSE_TOO_LARGE"}
+        timeout = exc.code == "PROVIDER_TIMEOUT"
+        raise PlatformError(
+            status_code=422 if blocked else 504 if timeout else 503,
+            code=(
+                ErrorCode.VALIDATION_ERROR
+                if blocked
+                else ErrorCode.PROVIDER_TIMEOUT
+                if timeout
+                else ErrorCode.INTERNAL_ERROR
+            ),
+            message=exc.message,
+            retryable=exc.retryable,
+            details={"capture_code": exc.code},
+        ) from exc
+    except Exception as exc:
+        raise PlatformError(
+            status_code=503,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Page capture is temporarily unavailable.",
+            retryable=True,
+            details={"capture_code": "CAPTURE_FAILED"},
+        ) from exc
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "Content-Disposition": 'inline; filename="page-capture.jpg"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/analyses", response_model=list[SecurityScopeResponseV4], responses=_COMMON_ERRORS)

@@ -69,8 +69,16 @@ validate request/version → scope/context → boundary hoặc investigation
 - Rule tạo scope candidate; grounded AI understanding được chạy trước quyết định scope cuối cùng (trừ greeting/capability cục bộ). AI không được hạ một deterministic security-positive signal xuống out-of-scope.
 - AI chỉ liên kết entity với URL bằng index của URL đã trích xuất cục bộ. Reviewed target owner được đối chiếu riêng; whitelist không chứng minh URL thuộc entity đang được claim.
 - AI planner chỉ sắp thứ tự candidate đang runnable; policy quyết định coverage và AI không được skip evidence step.
+- Chat follow-up gửi conversation ID/version và chỉ nhận owner-scoped structured summary đã làm sạch cùng assessment
+  hiện tại. Context được đưa cho model dưới dạng untrusted JSON, không gồm raw chat, score/confidence hay evidence ID;
+  stale version bị từ chối và chat thường không làm tăng version hoặc persist nội dung mới.
 - External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
 - SSRF guard chặn private/local/metadata target và revalidate từng redirect.
+- Page capture tự chạy ở frontend cho URL cuối cùng (URL mới nhất) sau khi case có kết quả, owner-scoped theo URL
+  index và gửi consent mới cho từng request. Chromium dùng context tạm không cookie/download/service worker,
+  không vượt CAPTCHA hoặc access denial, chặn private/local target, popup, active stream và URL tải tệp phổ biến.
+  API chỉ trả ảnh viewport với `Cache-Control: no-store`; frontend chỉ giữ Blob mới nhất trong RAM, thu hồi Blob
+  trước đó và ảnh không đi vào evidence, conversation hay database.
 - Whitelist có provenance và chạy trước negative scoring.
 - Provider no-hit/error/timeout, domain age hoặc mismatch riêng lẻ không đủ tạo `MALICIOUS`.
 - User reads luôn owner-scoped; admin routes yêu cầu `security_admin`.

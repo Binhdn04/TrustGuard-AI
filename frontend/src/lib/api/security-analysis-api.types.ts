@@ -125,14 +125,20 @@ export interface SecurityAppealPageQuery extends SecurityPaginationQuery {
   q?: string;
 }
 
+export interface SecurityChatContext {
+  conversationId: string;
+  conversationVersion: number;
+}
+
 export interface SecurityAnalysisApi {
   getCapabilities(): Promise<SecurityCapabilitiesResponseV4>;
-  chat?(message: string): Promise<SecurityChatResponseV4>;
+  chat?(message: string, context?: SecurityChatContext): Promise<SecurityChatResponseV4>;
   createAnalysis(
     request: SecurityTriageCreateRequestV4,
     options?: { idempotencyKey?: string },
   ): Promise<SecurityScopeResponseV4 | SecurityAnalysisAcceptedResponseV4>;
   getAnalysis(analysisId: string): Promise<SecurityScopeResponseV4>;
+  capturePage?(analysisId: string, urlIndex: number): Promise<Blob>;
   getAdminAnalysis(analysisId: string): Promise<SecurityScopeResponseV4>;
   draftAdminCopilot?(analysisId: string, request: SecurityAdminCopilotRequestV4): Promise<SecurityAdminCopilotResponseV4>;
   listAnalyses(): Promise<SecurityScopeResponseV4[]>;

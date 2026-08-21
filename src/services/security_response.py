@@ -8,12 +8,19 @@ from src.models import (
     AssistantImmediateStepV4,
     AssistantReasonV4,
     AssistantResponseV4,
+    SecurityEvidenceV4,
+    SecurityRecommendedActionV4,
+    SecurityRiskV4,
     SecurityScopeResponseV4,
 )
 from src.security_ai.contracts import AssistantOperation, AssistantSynthesis, SecurityAssistantModel
 from src.security_ai.runtime import SecurityAssistantRuntime
 
 _UNSAFE_LINK_TEXT = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
+_TECHNICAL_SUMMARY_TEXT = re.compile(
+    r"(?:\b(?:risk score|confidence|policy|evidence_ref)\b|điểm(?: số)?|độ tin cậy|\b\d+(?:[.,]\d+)?\s*(?:%|/100))",
+    re.IGNORECASE,
+)
 _AI_SYNTHESIS_LIMITATION = (
     "AI diễn đạt không khả dụng; phản hồi vẫn được tạo trực tiếp từ kết quả, bằng chứng và hành động đã kiểm chứng."
 )
@@ -26,7 +33,90 @@ _AI_FAILURE_REASON_LABELS = {
     "turn_deadline_exceeded": "lượt phân tích vượt deadline",
     "grounding_rejected": "phản hồi AI không vượt qua kiểm tra grounding",
 }
-_FOLLOW_UP_OFFER = "Bạn có thể gửi thêm thông tin không nhạy cảm để tiếp tục đánh giá trong case này."
+_FOLLOW_UP_OFFER = (
+    "Nếu bạn đã mở liên kết, nhập mật khẩu, gửi OTP hoặc chuyển tiền, hãy nói cho mình biết loại hành động "
+    "đã thực hiện — không gửi giá trị mật khẩu hay mã OTP — để mình hướng dẫn bước tiếp theo."
+)
+
+_RISK_GUIDANCE: dict[SecurityRiskV4, str] = {
+    SecurityRiskV4.SAFE: (
+        "Các kiểm tra hiện có chưa phát hiện dấu hiệu nguy hiểm rõ ràng. "
+        "Dù vậy, bạn vẫn nên kiểm tra đúng kênh chính thức trước khi cung cấp thông tin nhạy cảm."
+    ),
+    SecurityRiskV4.LOW_RISK: (
+        "Mình chưa thấy bằng chứng mạnh cho thấy đây là lừa đảo, nhưng vẫn có dấu hiệu cần thận trọng."
+    ),
+    SecurityRiskV4.SUSPICIOUS: (
+        "Nội dung này có một số dấu hiệu đáng ngờ. Bạn nên tạm dừng và xác minh lại trước khi làm theo yêu cầu."
+    ),
+    SecurityRiskV4.HIGH_RISK: (
+        "Nội dung này có nguy cơ cao khiến bạn mất tài khoản, thông tin cá nhân hoặc tiền. "
+        "Bạn nên dừng lại và chưa làm theo yêu cầu của người gửi."
+    ),
+    SecurityRiskV4.MALICIOUS: (
+        "Mình phát hiện bằng chứng mạnh cho thấy mục tiêu này nguy hiểm. Đừng tiếp tục tương tác với nó."
+    ),
+    SecurityRiskV4.INSUFFICIENT_EVIDENCE: (
+        "Mình chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm. "
+        "Trong lúc chưa rõ, bạn nên coi đây là tình huống cần thận trọng."
+    ),
+}
+
+_ACTION_GUIDANCE: dict[SecurityRecommendedActionV4, str] = {
+    SecurityRecommendedActionV4.DO_NOT_OPEN_LINK: "Đừng mở hoặc quay lại liên kết này.",
+    SecurityRecommendedActionV4.DO_NOT_SHARE_CREDENTIALS: "Đừng cung cấp tên đăng nhập hoặc mật khẩu.",
+    SecurityRecommendedActionV4.DO_NOT_SHARE_OTP: "Không chia sẻ mã OTP với bất kỳ ai.",
+    SecurityRecommendedActionV4.DO_NOT_TRANSFER_MONEY: "Chưa chuyển tiền hoặc thanh toán theo yêu cầu này.",
+    SecurityRecommendedActionV4.VERIFY_VIA_OFFICIAL_CHANNEL: (
+        "Hãy tự liên hệ tổ chức qua ứng dụng, website hoặc số điện thoại chính thức."
+    ),
+    SecurityRecommendedActionV4.CHANGE_PASSWORD_IF_ALREADY_SHARED: (
+        "Nếu đã cung cấp mật khẩu, hãy đổi ngay trên một thiết bị đáng tin cậy."
+    ),
+    SecurityRecommendedActionV4.CONTACT_BANK_IF_ALREADY_PAID: (
+        "Nếu đã chuyển tiền, hãy liên hệ ngân hàng hoặc đơn vị thanh toán ngay."
+    ),
+    SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER: "Báo cáo và chặn người gửi.",
+    SecurityRecommendedActionV4.PROCEED_WITH_CAUTION: "Chỉ tiếp tục sau khi đã xác minh bằng kênh chính thức.",
+    SecurityRecommendedActionV4.CLOSE_PAGE_AND_DO_NOT_RETURN: "Đóng trang và không quay lại liên kết đó.",
+    SecurityRecommendedActionV4.CHANGE_PASSWORD_FROM_TRUSTED_DEVICE: (
+        "Đổi mật khẩu từ một thiết bị đáng tin cậy."
+    ),
+    SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS: "Đăng xuất các phiên đang hoạt động trên tài khoản.",
+    SecurityRecommendedActionV4.CONTACT_BANK_OR_PAYMENT_PROVIDER: (
+        "Liên hệ ngay ngân hàng hoặc đơn vị thanh toán để được hỗ trợ."
+    ),
+    SecurityRecommendedActionV4.PRESERVE_MESSAGE_FOR_REPORTING: "Giữ lại tin nhắn để làm bằng chứng báo cáo.",
+}
+
+_SIGNAL_GUIDANCE: tuple[tuple[frozenset[str], str], ...] = (
+    (frozenset({"otp_request", "share_otp"}), "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."),
+    (
+        frozenset({"credential_request", "credential_path", "share_credentials", "login"}),
+        "Nội dung yêu cầu thông tin đăng nhập hoặc dẫn bạn tới bước đăng nhập.",
+    ),
+    (
+        frozenset({"payment_request", "transfer_money", "pay_fee"}),
+        "Người gửi yêu cầu bạn chuyển tiền hoặc thanh toán.",
+    ),
+    (
+        frozenset({"approved_blacklist_hit", "malicious", "confirmed_threat", "threat_intelligence_hit"}),
+        "Địa chỉ này đã được một nguồn kiểm tra bảo mật ghi nhận là nguy hiểm.",
+    ),
+    (
+        frozenset({"lookalike_domain", "domain_mismatch", "claimed_identity_unverified"}),
+        "Địa chỉ quan sát được không khớp rõ ràng với tổ chức được nhắc tới.",
+    ),
+    (
+        frozenset({"approved_whitelist", "official_match", "official_contact_match", "safe"}),
+        "Địa chỉ này khớp với một nguồn đã được kiểm duyệt.",
+    ),
+    (
+        frozenset({"new_domain", "recent_registration"}),
+        "Tên miền còn mới, nên chưa có nhiều lịch sử để đối chiếu.",
+    ),
+    (frozenset({"punycode_domain", "promotion_lure_domain"}), "Tên miền có đặc điểm thường cần kiểm tra kỹ."),
+)
 
 
 def _immediate_steps(scope: SecurityScopeResponseV4) -> list[AssistantImmediateStepV4]:
@@ -36,17 +126,43 @@ def _immediate_steps(scope: SecurityScopeResponseV4) -> list[AssistantImmediateS
     ]
 
 
-def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
-    """Answer the user from verified case data without a canned template."""
+def _plain_reason(evidence: SecurityEvidenceV4) -> str:
+    signals = set(evidence.signal.casefold().split("+"))
+    for expected, guidance in _SIGNAL_GUIDANCE:
+        if signals & expected:
+            return guidance
+    return {
+        "redirect": "Liên kết có chuyển hướng; điểm đến cuối cần được xem xét thận trọng.",
+        "rdap": "Thông tin đăng ký tên miền chưa đủ để chứng minh địa chỉ này an toàn.",
+        "dns": "Tên miền có thể truy cập được, nhưng điều đó không đồng nghĩa với việc nó an toàn.",
+        "url_reputation": "Dịch vụ kiểm tra uy tín chưa cung cấp kết luận đủ mạnh về địa chỉ này.",
+        "brand_match": "Mối liên hệ giữa địa chỉ và thương hiệu được nhắc tới chưa được xác nhận rõ ràng.",
+        "security_context": "Nội dung có yêu cầu hoặc tình huống cần được xử lý thận trọng.",
+    }.get(evidence.type.value, "Có một tín hiệu bảo mật cần được xem xét thêm.")
+
+
+def _grounded_plain_reasons(scope: SecurityScopeResponseV4) -> list[AssistantReasonV4]:
     evidence_by_ref = {item.evidence_ref: item for item in scope.evidence}
-    reasons = [
-        AssistantReasonV4(text=evidence_by_ref[ref].description, evidence_refs=[ref])
+    return [
+        AssistantReasonV4(text=_plain_reason(evidence_by_ref[ref]), evidence_refs=[ref])
         for ref in scope.explanation_evidence_refs
         if ref in evidence_by_ref
     ][:3]
+
+
+def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
+    assert scope.risk is not None
+    summary = _RISK_GUIDANCE[scope.risk]
+    if scope.recommended_actions:
+        summary = f"{summary} {_ACTION_GUIDANCE[scope.recommended_actions[0]]}"
+    return summary
+
+
+def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
+    """Answer the user in plain language while staying grounded in verified case data."""
     return AssistantResponseV4(
-        summary=scope.explanation or "Mình đã kiểm tra nội dung này theo các tín hiệu bảo mật hiện có.",
-        top_reasons=reasons,
+        summary=_friendly_summary(scope),
+        top_reasons=_grounded_plain_reasons(scope),
         uncertainties=list(scope.limitations)[:20],
         immediate_steps=_immediate_steps(scope),
         follow_up_offer=_FOLLOW_UP_OFFER,
@@ -72,7 +188,14 @@ def grounded_ai_response(
         *synthesis.uncertainties,
         *([synthesis.follow_up_offer] if synthesis.follow_up_offer else []),
     ]
-    if cited_refs - available_refs or any(_UNSAFE_LINK_TEXT.search(text) for text in texts):
+    if (
+        cited_refs - available_refs
+        or any(_UNSAFE_LINK_TEXT.search(text) for text in texts)
+        or any(
+            _TECHNICAL_SUMMARY_TEXT.search(text)
+            for text in [synthesis.summary, *(reason.text for reason in synthesis.top_reasons)]
+        )
+    ):
         return None
     if available_refs and not synthesis.top_reasons:
         return None
@@ -149,6 +272,9 @@ class GroundedSecurityResponseService:
             "threat_type": scope.threat_type.value if scope.threat_type else None,
             "policy_version": scope.policy_version,
             "recommended_actions": [action.value for action in scope.recommended_actions],
+            "recommended_action_guidance": [
+                _ACTION_GUIDANCE[action] for action in scope.recommended_actions
+            ],
             "explanation": scope.explanation,
             "evidence": [
                 {

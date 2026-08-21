@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -10,6 +11,7 @@ from src.models import (
     ReportReviewDecision,
     SecurityAppealCreateRequestV4,
     SecurityReportCreateRequestV4,
+    SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
 )
 from src.repositories.blacklist import SQLiteBlacklistRepository
@@ -49,6 +51,59 @@ def test_sqlite_adds_report_status_to_existing_wp8_database(tmp_path) -> None:
 
     assert "status" in columns
     assert "ix_security_reports_v4_status_created" in indexes
+
+
+def test_sqlite_migrates_retired_official_claim_investigation_steps(tmp_path) -> None:
+    database = tmp_path / "legacy-security-tool.db"
+    repository = SQLiteBlacklistRepository(database)
+    response = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(message="Kiểm tra https://example.com")
+    )
+    payload = response.model_dump(mode="json")
+    payload["investigation_plan"] = [
+        {
+            "step_id": "step-111111111111",
+            "tool": "official_claim_verifier",
+            "target": "example.com",
+            "reason_code": "legacy_official_claim",
+            "depends_on": [],
+            "status": "skipped",
+            "status_reason": "retired_tool",
+        }
+    ]
+    repository._connection.execute(  # noqa: SLF001 - seed a pre-migration database
+        "DELETE FROM schema_migrations WHERE version=4"
+    )
+    repository._connection.execute(  # noqa: SLF001 - seed a pre-migration database
+        """INSERT INTO security_analyses(
+               analysis_id,owner_id,response_json,status,policy_version,created_at,completed_at
+           ) VALUES(?,?,?,?,?,?,?)""",
+        (
+            str(response.analysis_id),
+            USER.user_id,
+            json.dumps(payload),
+            response.status.value,
+            response.policy_version,
+            response.created_at.isoformat(),
+            None,
+        ),
+    )
+    repository._connection.commit()  # noqa: SLF001 - seed a pre-migration database
+    repository._connection.close()  # noqa: SLF001 - reopen to exercise startup migration
+
+    migrated = SQLiteBlacklistRepository(database)
+    stored_json = migrated._connection.execute(  # noqa: SLF001 - migration contract assertion
+        "SELECT response_json FROM security_analyses WHERE analysis_id=?",
+        (str(response.analysis_id),),
+    ).fetchone()[0]
+    migration_version = migrated._connection.execute(  # noqa: SLF001 - migration contract assertion
+        "SELECT version FROM schema_migrations WHERE version=4"
+    ).fetchone()
+    migrated._connection.close()  # noqa: SLF001 - synchronous fixture cleanup
+
+    restored = SecurityScopeResponseV4.model_validate_json(stored_json)
+    assert restored.investigation_plan == []
+    assert migration_version == (4,)
 
 
 @pytest.mark.asyncio

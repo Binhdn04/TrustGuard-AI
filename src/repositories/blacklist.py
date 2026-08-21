@@ -327,6 +327,8 @@ class SQLiteBlacklistRepository:
             self._apply_v2_migration()
         if 3 not in applied:
             self._apply_review_queue_migration()
+        if 4 not in applied:
+            self._apply_retired_security_tool_migration()
 
     def _apply_v2_migration(self) -> None:
         statements = (
@@ -402,6 +404,29 @@ class SQLiteBlacklistRepository:
                     self._connection.execute(f"ALTER TABLE review_queue_items ADD COLUMN {column} {definition}")
             self._connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _apply_retired_security_tool_migration(self) -> None:
+        """Remove investigation steps produced by the retired official-claim tool."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            rows = self._connection.execute(
+                """SELECT analysis_id,response_json FROM security_analyses
+                   WHERE instr(response_json, 'official_claim_verifier') > 0"""
+            ).fetchall()
+            for analysis_id, response_json in rows:
+                response = SecurityScopeResponseV4.model_validate_stored_json(response_json)
+                self._connection.execute(
+                    "UPDATE security_analyses SET response_json=? WHERE analysis_id=?",
+                    (response.model_dump_json(), analysis_id),
+                )
+            self._connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (4, ?)",
                 (datetime.now(UTC).isoformat(),),
             )
             self._connection.commit()
@@ -855,7 +880,7 @@ class SQLiteBlacklistRepository:
             ).fetchall()
         return (
             row[0],
-            SecurityScopeResponseV4.model_validate_json(row[1]),
+            SecurityScopeResponseV4.model_validate_stored_json(row[1]),
             [SecurityAnalysisEventV4.model_validate_json(item[0]) for item in event_rows],
         )
 
@@ -866,7 +891,7 @@ class SQLiteBlacklistRepository:
                    WHERE owner_id=? ORDER BY created_at DESC""",
                 (owner_id,),
             ).fetchall()
-        return [SecurityScopeResponseV4.model_validate_json(row[0]) for row in rows]
+        return [SecurityScopeResponseV4.model_validate_stored_json(row[0]) for row in rows]
 
     async def upsert_security_memory(self, record: SecurityMemoryRecordV4) -> SecurityMemoryRecordV4:
         async with self._lock:

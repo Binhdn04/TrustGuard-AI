@@ -48,6 +48,55 @@ describe("HttpSecurityAnalysisApi", () => {
     ]);
   });
 
+  it("sends the active conversation reference for contextual chat", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({
+      contract_version: "v4",
+      route: "conversation",
+      response: "Hướng dẫn tiếp nối.",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new HttpSecurityAnalysisApi("http://backend.test", () => "owner-token");
+
+    await api.chat("Nếu tôi đã mở link thì sao?", {
+      conversationId: "conversation-1",
+      conversationVersion: 3,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("http://backend.test/api/v4/chat", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        message: "Nếu tôi đã mở link thì sao?",
+        conversation_id: "conversation-1",
+        conversation_version: 3,
+      }),
+    }));
+  });
+
+  it("requests a non-persistent page capture with fresh URL consent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(["jpeg"]), {
+      status: 200,
+      headers: { "Content-Type": "image/jpeg" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new HttpSecurityAnalysisApi("http://backend.test", () => "owner-token");
+
+    const image = await api.capturePage("analysis/id", 2);
+
+    expect(image.type).toBe("image/jpeg");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://backend.test/api/v4/analyses/analysis%2Fid/page-capture",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: expect.objectContaining({
+          Authorization: "Bearer owner-token",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ url_index: 2, external_url_lookup: true }),
+      }),
+    );
+  });
+
   it("uses the bounded admin analysis-detail endpoint", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(ok()));
     vi.stubGlobal("fetch", fetchMock);

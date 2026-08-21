@@ -575,7 +575,7 @@ class PostgresPlatformRepository:
                         message="Idempotency-Key was already used with a different Security v4 turn.",
                         retryable=False,
                     )
-                return SecurityScopeResponseV4.model_validate(_json_value(existing["response"]))
+                return SecurityScopeResponseV4.model_validate_stored(_json_value(existing["response"]))
 
             await connection.execute(
                 """INSERT INTO security_analyses(
@@ -715,7 +715,7 @@ class PostgresPlatformRepository:
                 message="Idempotency-Key was already used with a different Security v4 turn.",
                 retryable=False,
             )
-        return SecurityScopeResponseV4.model_validate(_json_value(row["response"]))
+        return SecurityScopeResponseV4.model_validate_stored(_json_value(row["response"]))
 
     async def load_security_job_payload(
         self,
@@ -741,7 +741,7 @@ class PostgresPlatformRepository:
         return (
             row["owner_id"],
             SecurityTriageCreateRequestV4.model_validate_json(row["request_json"]),
-            SecurityScopeResponseV4.model_validate(_json_value(row["context_snapshot"])),
+            SecurityScopeResponseV4.model_validate_stored(_json_value(row["context_snapshot"])),
         )
 
     async def append_security_analysis_event(self, event: SecurityAnalysisEventV4) -> SecurityAnalysisEventV4:
@@ -957,7 +957,7 @@ class PostgresPlatformRepository:
             )
         return (
             row["owner_id"],
-            SecurityScopeResponseV4.model_validate(_json_value(row["response"])),
+            SecurityScopeResponseV4.model_validate_stored(_json_value(row["response"])),
             [SecurityAnalysisEventV4.model_validate(_json_value(item["payload"])) for item in events],
         )
 
@@ -968,7 +968,7 @@ class PostgresPlatformRepository:
                 "SELECT response FROM security_analyses WHERE owner_id=$1 ORDER BY created_at DESC",
                 owner_id,
             )
-        return [SecurityScopeResponseV4.model_validate(_json_value(row["response"])) for row in rows]
+        return [SecurityScopeResponseV4.model_validate_stored(_json_value(row["response"])) for row in rows]
 
     async def upsert_security_memory(self, record: SecurityMemoryRecordV4) -> SecurityMemoryRecordV4:
         pool = await self._get_pool()
@@ -1862,7 +1862,7 @@ class PostgresPlatformRepository:
             )
             if row is None:
                 return False
-            response = SecurityScopeResponseV4.model_validate(_json_value(row["response"])).model_copy(
+            response = SecurityScopeResponseV4.model_validate_stored(_json_value(row["response"])).model_copy(
                 update={"status": "failed", "completed_at": now}
             )
             sequence = await connection.fetchval(
@@ -3448,7 +3448,7 @@ class PostgresPlatformRepository:
                     )
                     if stored is None:
                         continue
-                    response = SecurityScopeResponseV4.model_validate(_json_value(stored["response"])).model_copy(
+                    response = SecurityScopeResponseV4.model_validate_stored(_json_value(stored["response"])).model_copy(
                         update={"status": "failed", "completed_at": now}
                     )
                     sequence = await connection.fetchval(
