@@ -184,6 +184,22 @@ class OfficialVerificationRolloutStage:
                     "candidates": outcome.candidate_count,
                     "official_fetches": outcome.official_fetches,
                     "outbound_resolutions": outcome.outbound_resolutions,
+                    "identity_candidates": outcome.identity_candidate_count,
+                    "identity_verified": outcome.identity_verified_count,
+                    "identity_conflicting": outcome.identity_conflicting_count,
+                    "identity_cache_hits": outcome.identity_cache_hits,
+                    "identity_official_controlled": sum(
+                        item.relationship.value == "official_controlled"
+                        for item in (report.identity_associations if report is not None else [])
+                    ),
+                    "identity_parent_organization": sum(
+                        item.relationship.value == "parent_organization"
+                        for item in (report.identity_associations if report is not None else [])
+                    ),
+                    "identity_endorsed_service": sum(
+                        item.relationship.value == "endorsed_third_party_service"
+                        for item in (report.identity_associations if report is not None else [])
+                    ),
                 },
                 latency_ms=max(0, round((perf_counter() - started) * 1000)),
                 cost_usd=round(cost_usd, 8),

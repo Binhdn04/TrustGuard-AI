@@ -9,7 +9,6 @@ from src.agents.security_investigation import (
 )
 from src.agents.tools import FakeBlacklistRepository
 from src.models import (
-    SecurityInvestigationStepStatusV4,
     SecurityInvestigationToolV4,
     SecurityTriageCreateRequestV4,
 )
@@ -128,7 +127,7 @@ class _MustNotRunPlanner:
 
 
 @pytest.mark.asyncio
-async def test_ai_can_skip_only_an_allowlisted_optional_candidate() -> None:
+async def test_ai_cannot_skip_a_runnable_investigation_candidate() -> None:
     request, scoped = _scope("Đăng nhập https://example.com/login", external=True)
     service = SecurityInvestigationService(
         blacklist=FakeBlacklistRepository(),
@@ -139,12 +138,10 @@ async def test_ai_can_skip_only_an_allowlisted_optional_candidate() -> None:
 
     result = await service.investigate(request, scoped)
 
-    reputation = next(
-        step for step in result.investigation_plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION
-    )
-    assert reputation.status is SecurityInvestigationStepStatusV4.SKIPPED
-    assert reputation.status_reason == "ai_priority_skip"
-    assert all(step.status_reason != "ai_priority_skip" for step in result.investigation_plan if step != reputation)
+    reputation = next(step for step in result.investigation_plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION)
+    assert reputation.status_reason == "not_configured"
+    assert all(step.status_reason != "ai_priority_skip" for step in result.investigation_plan)
+    assert any("deterministic plan" in limitation for limitation in result.limitations)
 
 
 @pytest.mark.asyncio

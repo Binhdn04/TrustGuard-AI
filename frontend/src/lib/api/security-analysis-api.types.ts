@@ -2,6 +2,11 @@ import type {
   BrandCreateRequestV4,
   BrandPageV4,
   BrandRecordV4,
+  IdentityAssociationAssuranceV4,
+  IdentityCandidateDecisionRequestV4,
+  IdentityCandidatePageV4,
+  IdentityCandidateV4,
+  IdentityRelationshipV4,
   PotentialThreatV4,
   SecurityAdminAuditPageV4,
   SecurityAdminCopilotRequestV4,
@@ -78,6 +83,12 @@ export interface SecurityTrustPageQuery extends SecurityPaginationQuery {
   q?: string;
 }
 
+export interface IdentityCandidatePageQuery extends SecurityPaginationQuery {
+  status?: IdentityAssociationAssuranceV4;
+  relationship?: IdentityRelationshipV4;
+  entity?: string;
+}
+
 export interface SecurityMemoryPageQuery extends SecurityPaginationQuery {
   q?: string;
   risk?: SecurityRiskV4;
@@ -147,6 +158,8 @@ export interface SecurityAnalysisApi {
   listBrands(): Promise<BrandRecordV4[]>;
   pageBrands(query?: SecurityTrustPageQuery): Promise<BrandPageV4>;
   disableBrand(brandId: string): Promise<BrandRecordV4>;
+  pageIdentityCandidates?(query?: IdentityCandidatePageQuery): Promise<IdentityCandidatePageV4>;
+  decideIdentityCandidate?(candidateId: string, request: IdentityCandidateDecisionRequestV4): Promise<IdentityCandidateV4>;
   createWhitelist(request: WhitelistCreateRequestV4): Promise<WhitelistRecordV4>;
   listWhitelist(): Promise<WhitelistRecordV4[]>;
   pageWhitelist(query?: SecurityTrustPageQuery): Promise<WhitelistPageV4>;

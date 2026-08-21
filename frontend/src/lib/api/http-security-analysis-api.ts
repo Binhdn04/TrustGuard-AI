@@ -3,6 +3,9 @@ import type {
   BrandCreateRequestV4,
   BrandPageV4,
   BrandRecordV4,
+  IdentityCandidateDecisionRequestV4,
+  IdentityCandidatePageV4,
+  IdentityCandidateV4,
   SecurityAdminAuditPageV4,
   SecurityAdminCopilotRequestV4,
   SecurityAdminCopilotResponseV4,
@@ -51,6 +54,7 @@ import type {
 import { ApiError } from "./api-error";
 import type {
   AnalysisEventQuery,
+  IdentityCandidatePageQuery,
   SecurityAdminAuditQuery,
   SecurityAnalysisApi,
   SecurityAnalysisPageQuery,
@@ -263,6 +267,20 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async disableBrand(brandId: string): Promise<BrandRecordV4> {
     return this.post<BrandRecordV4>(`admin/brands/${encodeURIComponent(brandId)}/disable`);
+  }
+
+  async pageIdentityCandidates(query: IdentityCandidatePageQuery = {}): Promise<IdentityCandidatePageV4> {
+    return this.get<IdentityCandidatePageV4>(withQuery("admin/identity-candidates/page", query));
+  }
+
+  async decideIdentityCandidate(
+    candidateId: string,
+    request: IdentityCandidateDecisionRequestV4,
+  ): Promise<IdentityCandidateV4> {
+    return this.post<IdentityCandidateV4>(
+      `admin/identity-candidates/${encodeURIComponent(candidateId)}/decisions`,
+      request,
+    );
   }
 
   async createWhitelist(request: WhitelistCreateRequestV4): Promise<WhitelistRecordV4> {

@@ -27,7 +27,8 @@ SECURITY_UNDERSTANDING_VERSION_V1 = "security-understanding-v1"
 SECURITY_UNDERSTANDING_VERSION_V2 = "security-understanding-v2"
 SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
 SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
-OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v1"
+OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v2"
+OFFICIAL_LINK_VERIFICATION_VERSION_V1 = "official-link-verification-v1"
 RESOURCE_IDENTITY_VERSION = "resource-identity-v1"
 VERIFICATION_INTENT_VERSION = "verification-intent-v1"
 
@@ -133,6 +134,31 @@ class OfficialIdentityMatchScopeV4(StrEnum):
     EXACT = "exact"
     HOST_AND_SUBDOMAINS = "host_and_subdomains"
     BOUNDED_PHRASE = "bounded_phrase"
+
+
+class IdentityRelationshipV4(StrEnum):
+    OFFICIAL_CONTROLLED = "official_controlled"
+    PARENT_ORGANIZATION = "parent_organization"
+    ENDORSED_THIRD_PARTY_SERVICE = "endorsed_third_party_service"
+
+
+class IdentityAssociationAssuranceV4(StrEnum):
+    DISCOVERED = "discovered"
+    VERIFIED = "verified"
+    CONFLICTING = "conflicting"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+    CONFIRMED_MISMATCH = "confirmed_mismatch"
+
+
+class IdentityEvidenceFamilyV4(StrEnum):
+    ENTITY_SELF_IDENTIFICATION = "entity_self_identification"
+    INDEPENDENT_ENTITY_LINK = "independent_entity_link"
+    PARENT_DECLARATION = "parent_declaration"
+    CANDIDATE_CORROBORATION = "candidate_corroboration"
+    EXACT_RESOURCE_ENDORSEMENT = "exact_resource_endorsement"
+    TARGET_RESOURCE_MATCH = "target_resource_match"
+    EXPLICIT_OWNERSHIP_CONFLICT = "explicit_ownership_conflict"
 
 
 class ResourceTypeV4(StrEnum):
@@ -434,6 +460,38 @@ class OfficialLinkReferenceV4(SecurityContractModel):
     resource: ResourceIdentityV4 | None = None
 
 
+class IdentityEvidenceObservationV4(SecurityContractModel):
+    evidence_ref: str = Field(pattern=r"^identity-evidence:[a-f0-9]{16}$")
+    family: IdentityEvidenceFamilyV4
+    source_host: str = Field(min_length=1, max_length=253)
+    canonical_url: str = Field(min_length=1, max_length=2048)
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    observed_at: datetime
+
+
+class IdentityAssociationV4(SecurityContractModel):
+    association_id: UUID = Field(default_factory=uuid4)
+    entity_name: str = Field(min_length=1, max_length=200)
+    canonical_url: str = Field(min_length=1, max_length=2048)
+    canonical_domain: str = Field(min_length=1, max_length=253)
+    relationship: IdentityRelationshipV4
+    assurance: IdentityAssociationAssuranceV4
+    confidence: Annotated[float, Field(ge=0, le=1)]
+    evidence_refs: list[str] = Field(default_factory=list, max_length=20)
+    discovered_at: datetime
+    verified_at: datetime | None = None
+    expires_at: datetime | None = None
+    policy_version: Literal["identity-discovery-v2"] = "identity-discovery-v2"
+
+    @model_validator(mode="after")
+    def validate_ttl(self) -> Self:
+        if self.expires_at is not None and self.expires_at <= self.discovered_at:
+            raise ValueError("association expiry must be after discovery")
+        if self.assurance is IdentityAssociationAssuranceV4.VERIFIED and self.verified_at is None:
+            raise ValueError("verified associations require verified_at")
+        return self
+
+
 class OfficialVerificationComponentV4(SecurityContractModel):
     applicable: bool
     status: VerificationStatusV4 | None = None
@@ -460,7 +518,7 @@ class ResourceVerificationV4(OfficialVerificationComponentV4):
 
 
 class OfficialLinkVerificationReportV4(SecurityContractModel):
-    schema_version: Literal["official-link-verification-v1"] = OFFICIAL_LINK_VERIFICATION_VERSION
+    schema_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
     intent: VerificationIntentV4
     publisher_verification: PublisherVerificationV4
     claim_verification: ClaimVerificationV4
@@ -470,7 +528,51 @@ class OfficialLinkVerificationReportV4(SecurityContractModel):
     source_refs: list[OfficialSourceReferenceV4] = Field(default_factory=list, max_length=20)
     link_refs: list[OfficialLinkReferenceV4] = Field(default_factory=list, max_length=50)
     limitations: list[str] = Field(default_factory=list, max_length=50)
-    policy_version: Literal["official-link-verification-v1"] = OFFICIAL_LINK_VERIFICATION_VERSION
+    identity_associations: list[IdentityAssociationV4] = Field(default_factory=list, max_length=20)
+    identity_evidence: list[IdentityEvidenceObservationV4] = Field(default_factory=list, max_length=50)
+    policy_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
+
+
+class IdentityCandidateV4(IdentityAssociationV4):
+    version: int = Field(default=1, ge=1)
+    observations: list[IdentityEvidenceObservationV4] = Field(default_factory=list, max_length=50)
+    supersedes: UUID | None = None
+    terminal_decision_id: UUID | None = None
+
+
+class IdentityCandidateDecisionActionV4(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    CONFIRM_MISMATCH = "confirm_mismatch"
+
+
+class IdentityCandidateDecisionRequestV4(SecurityContractModel):
+    action: IdentityCandidateDecisionActionV4
+    note: str = Field(min_length=1, max_length=5000)
+    target_brand_id: UUID | None = None
+    relationship: IdentityRelationshipV4 | None = None
+    identity_type: OfficialIdentityTypeV4 | None = None
+
+
+class IdentityCandidateDecisionV4(SecurityContractModel):
+    decision_id: UUID = Field(default_factory=uuid4)
+    candidate_id: UUID
+    action: IdentityCandidateDecisionActionV4
+    reviewer_id: str
+    note: str = Field(min_length=1, max_length=5000)
+    target_brand_id: UUID | None = None
+    relationship: IdentityRelationshipV4 | None = None
+    identity_type: OfficialIdentityTypeV4 | None = None
+    evidence_refs: list[str] = Field(default_factory=list, max_length=50)
+    decided_at: datetime
+
+
+class IdentityCandidatePageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[IdentityCandidateV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
 
 
 class SecurityExecutionModeV4(StrEnum):
@@ -1184,6 +1286,7 @@ class SecurityAuditResourceV4(StrEnum):
     REPORT = "report"
     APPEAL = "appeal"
     COPILOT = "copilot"
+    IDENTITY_CANDIDATE = "identity_candidate"
 
 
 class SecurityAdminAuditEventV4(SecurityContractModel):
@@ -1208,6 +1311,7 @@ class SecurityAdminAuditPageV4(SecurityContractModel):
 __all__ = [
     "CONTRACT_VERSION_V4",
     "OFFICIAL_LINK_VERIFICATION_VERSION",
+    "OFFICIAL_LINK_VERIFICATION_VERSION_V1",
     "RESOURCE_IDENTITY_VERSION",
     "VERIFICATION_INTENT_VERSION",
     "SECURITY_ASSISTANT_RESPONSE_VERSION",
@@ -1233,6 +1337,16 @@ __all__ = [
     "InvestigationStepV4",
     "LinkRoleV4",
     "OfficialIdentityMatchScopeV4",
+    "IdentityRelationshipV4",
+    "IdentityAssociationAssuranceV4",
+    "IdentityEvidenceFamilyV4",
+    "IdentityEvidenceObservationV4",
+    "IdentityAssociationV4",
+    "IdentityCandidateV4",
+    "IdentityCandidateDecisionActionV4",
+    "IdentityCandidateDecisionRequestV4",
+    "IdentityCandidateDecisionV4",
+    "IdentityCandidatePageV4",
     "OfficialIdentityTypeV4",
     "OfficialIdentityV4",
     "OfficialLinkReferenceV4",

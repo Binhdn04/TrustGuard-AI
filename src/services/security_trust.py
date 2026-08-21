@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from src.agents.security_trust import canonical_whitelist_url
@@ -10,6 +12,14 @@ from src.models import (
     BrandCreateRequestV4,
     BrandRecordV4,
     ErrorCode,
+    IdentityAssociationAssuranceV4,
+    IdentityCandidateDecisionActionV4,
+    IdentityCandidateDecisionRequestV4,
+    IdentityCandidateDecisionV4,
+    IdentityCandidateV4,
+    OfficialIdentityMatchScopeV4,
+    OfficialIdentityTypeV4,
+    OfficialIdentityV4,
     TrustLifecycleV4,
     WhitelistCreateRequestV4,
     WhitelistRecordV4,
@@ -28,6 +38,128 @@ class SecurityTrustAdminService:
         record = self._brand_record(request, principal, datetime.now(UTC))
         await self._repository.create_brand(record)
         return record
+
+    async def list_identity_candidates(self, principal: Principal) -> list[IdentityCandidateV4]:
+        require_security_admin(principal)
+        return await self._repository.list_identity_candidates()
+
+    async def decide_identity_candidate(
+        self,
+        candidate_id: str,
+        request: IdentityCandidateDecisionRequestV4,
+        principal: Principal,
+    ) -> IdentityCandidateV4:
+        require_security_admin(principal)
+        candidates = await self._repository.list_identity_candidates()
+        candidate = next((item for item in candidates if str(item.association_id) == candidate_id), None)
+        if candidate is None:
+            raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Identity candidate was not found.", retryable=False)
+        if candidate.terminal_decision_id is not None:
+            raise PlatformError(status_code=409, code=ErrorCode.CONFLICT, message="Identity candidate already has a terminal decision.", retryable=False)
+
+        now = datetime.now(UTC)
+        decision = IdentityCandidateDecisionV4(
+            candidate_id=candidate.association_id,
+            action=request.action,
+            reviewer_id=principal.user_id,
+            note=request.note,
+            target_brand_id=request.target_brand_id,
+            relationship=request.relationship,
+            identity_type=request.identity_type,
+            evidence_refs=candidate.evidence_refs,
+            decided_at=now,
+        )
+        assurance = {
+            IdentityCandidateDecisionActionV4.APPROVE: IdentityAssociationAssuranceV4.PROMOTED,
+            IdentityCandidateDecisionActionV4.REJECT: IdentityAssociationAssuranceV4.REJECTED,
+            IdentityCandidateDecisionActionV4.CONFIRM_MISMATCH: IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH,
+        }[request.action]
+        updated = candidate.model_copy(
+            update={
+                "assurance": assurance,
+                "relationship": request.relationship or candidate.relationship,
+                "terminal_decision_id": decision.decision_id,
+                "expires_at": None,
+            }
+        )
+        if request.action is IdentityCandidateDecisionActionV4.APPROVE:
+            await self._promote_identity_candidate(candidate, request, principal, now)
+        try:
+            await self._repository.create_identity_decision(decision, updated)
+        except ValueError as exc:
+            raise PlatformError(status_code=409, code=ErrorCode.CONFLICT, message=str(exc), retryable=False) from exc
+        logging.getLogger("trustguard.identity_discovery").info(
+            "identity_reviewer_decision",
+            extra={
+                "identity_reviewer_decision": {
+                    "action": decision.action.value,
+                    "relationship": updated.relationship.value,
+                    "assurance": updated.assurance.value,
+                    "evidence_count": len(updated.evidence_refs),
+                }
+            },
+        )
+        return updated
+
+    async def _promote_identity_candidate(
+        self,
+        candidate: IdentityCandidateV4,
+        request: IdentityCandidateDecisionRequestV4,
+        principal: Principal,
+        now: datetime,
+    ) -> BrandRecordV4:
+        records = await self._repository.list_active_brands(now)
+        if request.target_brand_id is not None:
+            matches = [item for item in records if item.brand_id == request.target_brand_id]
+            if not matches:
+                raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Target brand was not found.", retryable=False)
+        else:
+            entity = candidate.entity_name.casefold()
+            matches = [
+                item for item in records
+                if entity in {item.name.casefold(), *(alias.casefold() for alias in item.aliases)}
+            ]
+            if len(matches) > 1:
+                raise PlatformError(
+                    status_code=409, code=ErrorCode.CONFLICT,
+                    message="Identity candidate is ambiguous; target_brand_id is required.", retryable=False,
+                )
+        identity = OfficialIdentityV4(
+            identity_type=request.identity_type or OfficialIdentityTypeV4.WEBSITE,
+            canonical_value=candidate.canonical_url,
+            display_value=candidate.canonical_url,
+            entity_name=candidate.entity_name,
+            match_scope=OfficialIdentityMatchScopeV4.EXACT,
+            relationship=(request.relationship or candidate.relationship).value,
+            provenance=f"identity-candidate:{candidate.association_id}",
+            policy_version="reviewed-identity-promotion-v1",
+            effective_from=now,
+            reviewed=True,
+        )
+        host = (urlsplit(candidate.canonical_url).hostname or candidate.canonical_domain).casefold()
+        provenance = f"identity-candidate:{candidate.association_id};evidence:{','.join(candidate.evidence_refs)}"
+        if not matches:
+            create = BrandCreateRequestV4(
+                name=candidate.entity_name,
+                official_domains=[host],
+                official_identities=[identity],
+                provenance=provenance,
+                policy_version="brand-registry-identity-promotion-v1",
+                effective_from=now,
+            )
+            return await self.create_brand(create, principal)
+        previous = matches[0]
+        create = BrandCreateRequestV4(
+            name=previous.name,
+            aliases=previous.aliases,
+            official_domains=list(dict.fromkeys([*previous.official_domains, host])),
+            official_identities=[*previous.official_identities, identity],
+            official_contacts=previous.official_contacts,
+            provenance=provenance,
+            policy_version="brand-registry-identity-promotion-v1",
+            effective_from=now,
+        )
+        return await self.create_brand_version(str(previous.brand_id), create, principal)
 
     async def create_brand_version(
         self,

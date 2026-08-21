@@ -38,10 +38,27 @@ _BOUNDARY_MESSAGE = (
     "hoặc tiền; hệ thống không xác minh tin tức hay kiến thức phổ thông."
 )
 _FALLBACK_LIMITATION = "AI semantic understanding không khả dụng; kết quả chỉ dùng rule cục bộ."
-_UNGROUNDED_LIMITATION = "AI semantic field thiếu confidence hoặc source span hợp lệ đã bị loại."
+_UNGROUNDED_LIMITATION = "AI semantic field thiếu confidence hoặc source span hợp lệ đã bị loại"
 _CONFLICT_LIMITATION = "AI semantic understanding xung đột với rule signal; rule được giữ nguyên."
 _BOUNDARY_CONFLICT_LIMITATION = "AI và rule xung đột về phạm vi; cần thêm thông tin trước khi điều tra."
 _LOCAL_CONVERSATION_REASONS = {"assistant_capabilities", "assistant_greeting"}
+_LITERAL_ORGANIZATION_PREFIXES = (
+    "bệnh viện ",
+    "benh vien ",
+    "đại học ",
+    "dai hoc ",
+    "trường ",
+    "truong ",
+    "ngân hàng ",
+    "ngan hang ",
+    "công ty ",
+    "cong ty ",
+    "tập đoàn ",
+    "tap doan ",
+    "university ",
+    "hospital ",
+    "bank ",
+)
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -60,6 +77,41 @@ def _valid_spans(message: str, output: Understanding) -> dict[str, list[Assistan
         )
         valid.setdefault(span.field_name, []).append(converted)
     return valid
+
+
+def _add_literal_claimed_entity_grounding(
+    message: str,
+    output: Understanding,
+    spans: dict[str, list[AssistantSourceSpanV4]],
+) -> Understanding:
+    """Ground a bounded entity candidate that occurs verbatim in the request.
+
+    Model-provided offsets and confidence remain required for inferred or
+    normalized entities. A literal value with a deterministic organization
+    prefix is independently verifiable, so missing model metadata must not
+    erase it or let arbitrary model-selected text become an entity.
+    """
+    entity = output.claimed_entity
+    if (
+        not entity
+        or len(entity) > 200
+        or spans.get("claimed_entity")
+        or not entity.casefold().startswith(_LITERAL_ORGANIZATION_PREFIXES)
+    ):
+        return output
+    start = message.casefold().find(entity.casefold())
+    if start < 0:
+        return output
+    spans["claimed_entity"] = [
+        AssistantSourceSpanV4(
+            field_name="claimed_entity",
+            start=start,
+            end=start + len(entity),
+        )
+    ]
+    confidences = dict(output.field_confidences)
+    confidences["claimed_entity"] = max(confidences.get("claimed_entity", 0), 1.0)
+    return output.model_copy(update={"field_confidences": confidences})
 
 
 def _grounded(
@@ -105,17 +157,17 @@ def merge_semantic_understanding(
 ) -> SecurityScopeResponseV4:
     """Ground and merge AI candidates without weakening deterministic signals."""
     spans = _valid_spans(message, output)
+    output = _add_literal_claimed_entity_grounding(message, output, spans)
     accepted_fields: set[str] = set()
-    rejected_impact_field = False
+    rejected_impact_fields: set[str] = set()
 
     def accept(field_name: str, present: bool) -> bool:
-        nonlocal rejected_impact_field
         if not present:
             return False
         if _grounded(field_name, output, spans):
             accepted_fields.add(field_name)
             return True
-        rejected_impact_field = True
+        rejected_impact_fields.add(field_name)
         return False
 
     accepted_scope = output.scope_decision if accept("scope_decision", output.scope_decision is not None) else None
@@ -193,8 +245,8 @@ def merge_semantic_understanding(
         model_version=model_version,
     )
     limitations = list(scope.limitations)
-    if rejected_impact_field:
-        limitations.append(_UNGROUNDED_LIMITATION)
+    if rejected_impact_fields:
+        limitations.append(f"{_UNGROUNDED_LIMITATION}: {', '.join(sorted(rejected_impact_fields))}.")
     if conflicts:
         limitations.append(_CONFLICT_LIMITATION)
 

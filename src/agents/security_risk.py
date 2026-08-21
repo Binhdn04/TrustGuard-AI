@@ -9,6 +9,7 @@ from src.models import (
     SECURITY_RISK_POLICY_VERSION_V2,
     SECURITY_RISK_POLICY_VERSION_V3,
     ExposureStateV4,
+    IdentityAssociationAssuranceV4,
     PotentialThreatV4,
     RequestedActionV4,
     SecurityEvidenceV4,
@@ -34,6 +35,7 @@ _WEAK_SIGNAL_POINTS = {
     "recent_registration": 15,
     "domain_mismatch": 15,
     "lookalike_domain": 20,
+    "claimed_identity_unverified": 10,
 }
 _MALICIOUS_REPUTATION_SIGNALS = {"malicious", "confirmed_threat", "threat_intelligence_hit"}
 _SAFE_SIGNALS = {
@@ -104,7 +106,15 @@ def _official_can_suppress(scope: SecurityScopeResponseV4, evidence: SecurityEvi
     if evidence.type.value != "brand_match" or len(provenance_parts) != 3 or provenance_parts[0] != "brand":
         return False
     report = scope.official_verification
-    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED:
+    if report is None:
+        return False
+    if any(
+        association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+        and _target_matches(association.canonical_url, evidence.target)
+        for association in report.identity_associations
+    ):
+        return True
+    if report.overall_status is not VerificationStatusV4.VERIFIED:
         return False
     brand_policy_version = provenance_parts[2]
     matching_sources = {
@@ -130,9 +140,25 @@ def _official_can_suppress(scope: SecurityScopeResponseV4, evidence: SecurityEvi
     )
 
 
+def _association_is_unverified_target(scope: SecurityScopeResponseV4, evidence: SecurityEvidenceV4) -> bool:
+    report = scope.official_verification
+    return bool(
+        report
+        and any(
+            item.assurance is IdentityAssociationAssuranceV4.DISCOVERED
+            and _target_matches(item.canonical_url, evidence.target)
+            for item in report.identity_associations
+        )
+    )
+
+
 def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     report = scope.official_verification
-    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED:
+    if (
+        report is None
+        or report.overall_status is not VerificationStatusV4.VERIFIED
+        or report.identity_associations
+    ):
         return False
     applicable = [
         component
@@ -290,6 +316,8 @@ def assess_security_risk(
         if points and official_verification_enforced:
             if _official_can_suppress(scope, item):
                 points = 0
+            elif signal_parts & _OFFICIAL_SUPPRESSIBLE_SIGNALS and _association_is_unverified_target(scope, item):
+                points = 0
             elif signal_parts & _OFFICIAL_SUPPRESSIBLE_SIGNALS:
                 residual_official_mismatch = True
         if points:
@@ -314,6 +342,21 @@ def assess_security_risk(
         and scope.official_verification is not None
         and scope.official_verification.overall_status is VerificationStatusV4.CONFLICTING
     )
+    identity_conflicting = False
+    identity_confirmed_mismatch = False
+    if official_verification_enforced and scope.official_verification is not None:
+        identity_conflicting = any(
+            item.assurance is IdentityAssociationAssuranceV4.CONFLICTING
+            for item in scope.official_verification.identity_associations
+        )
+        identity_confirmed_mismatch = any(
+            item.assurance is IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH
+            for item in scope.official_verification.identity_associations
+        )
+    if identity_confirmed_mismatch:
+        contributions.append(_Contribution(40, context_ref))
+    elif identity_conflicting:
+        contributions.append(_Contribution(20, context_ref))
     if official_conflicting:
         # The bounded conflict contribution can raise caution, but it is never
         # itself a malicious verdict and never exceeds 25 points.
@@ -343,6 +386,13 @@ def assess_security_risk(
         risk = SecurityRiskV4.SAFE
     else:
         risk = _risk_for_score(score)
+    if identity_confirmed_mismatch and risk in {
+        SecurityRiskV4.INSUFFICIENT_EVIDENCE,
+        SecurityRiskV4.LOW_RISK,
+    }:
+        risk = SecurityRiskV4.SUSPICIOUS
+    elif identity_conflicting and risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE:
+        risk = SecurityRiskV4.LOW_RISK
     # Registration/mismatch-style evidence alone is explicitly non-malicious.
     if contributions and not official_conflicting and sum(item.points for item in contributions) == weak_external:
         risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS

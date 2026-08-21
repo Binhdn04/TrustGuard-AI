@@ -46,11 +46,6 @@ _LOCAL_SIGNAL_BY_TITLE = {
     "Tên miền có mẫu mạo danh khuyến mãi": "promotion_lure_domain",
 }
 
-_MANDATORY_PLANNER_TOOLS = {
-    SecurityInvestigationToolV4.SECURITY_CONTEXT_ANALYSIS,
-    SecurityInvestigationToolV4.LOCAL_URL_RULES,
-    SecurityInvestigationToolV4.BLACKLIST_LOOKUP,
-}
 _TRUST_TOOLS = {
     SecurityInvestigationToolV4.BRAND_MATCH,
     SecurityInvestigationToolV4.WHITELIST_LOOKUP,
@@ -277,9 +272,12 @@ def _candidate_payload(plan: list[InvestigationStepV4]) -> list[dict[str, Any]]:
             "target": step.target,
             "reason_code": step.reason_code,
             "depends_on": step.depends_on,
-            "mandatory": step.tool in _MANDATORY_PLANNER_TOOLS,
+            "mandatory": True,
         }
         for step in plan
+        # Policy owns non-applicability and consent skips. The AI only sees
+        # runnable candidates and therefore cannot rewrite those decisions.
+        if step.status is not SecurityInvestigationStepStatusV4.SKIPPED
     ]
 
 
@@ -292,12 +290,7 @@ def apply_plan_priority(
     supplied = set(priority.ordered_step_ids) | set(priority.skipped_step_ids) | set(priority.requested_step_ids)
     if not supplied <= by_id.keys():
         return None
-    if any(by_id[step_id].tool in _MANDATORY_PLANNER_TOOLS for step_id in priority.skipped_step_ids):
-        return None
-
-    skipped = set(priority.skipped_step_ids)
-    requested = set(priority.ordered_step_ids) | set(priority.requested_step_ids)
-    if skipped & requested:
+    if priority.skipped_step_ids:
         return None
 
     # The model supplies priority hints, not an execution graph. Dedupe a
@@ -305,12 +298,12 @@ def apply_plan_priority(
     # dependency-safe order deterministically.
     preferred_ids = list(dict.fromkeys([*priority.ordered_step_ids, *priority.requested_step_ids]))
     for step in plan:
-        if step.step_id not in skipped and step.step_id not in preferred_ids:
+        if step.step_id not in preferred_ids:
             preferred_ids.append(step.step_id)
 
     active = set(preferred_ids)
     if any(
-        dependency in skipped or dependency not in active
+        dependency not in active
         for step_id in active
         for dependency in by_id[step_id].depends_on
     ):
@@ -334,17 +327,7 @@ def apply_plan_priority(
         active_ids.append(ready)
         remaining.remove(ready)
 
-    prioritized = [by_id[step_id] for step_id in active_ids]
-    prioritized.extend(
-        by_id[step_id].model_copy(
-            update={
-                "status": SecurityInvestigationStepStatusV4.SKIPPED,
-                "status_reason": "ai_priority_skip",
-            }
-        )
-        for step_id in priority.skipped_step_ids
-    )
-    return prioritized
+    return [by_id[step_id] for step_id in active_ids]
 
 
 class SecurityInvestigationService:

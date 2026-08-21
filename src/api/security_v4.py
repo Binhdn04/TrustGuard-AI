@@ -51,6 +51,11 @@ from src.models import (
     BrandRecordV4,
     ErrorCode,
     ErrorEnvelope,
+    IdentityAssociationAssuranceV4,
+    IdentityCandidateDecisionRequestV4,
+    IdentityCandidatePageV4,
+    IdentityCandidateV4,
+    IdentityRelationshipV4,
     PotentialThreatV4,
     ReportStatus,
     ScopeDecisionV4,
@@ -622,6 +627,46 @@ async def disable_brand_v4(
     principal: PrincipalDependency,
 ) -> BrandRecordV4:
     return await admin.disable_brand(str(brand_id), principal)
+
+
+@router.get(
+    "/admin/identity-candidates/page",
+    response_model=IdentityCandidatePageV4,
+    responses=_COMMON_ERRORS,
+)
+async def page_identity_candidates_v4(
+    admin: SecurityTrustAdminServiceDependency,
+    principal: PrincipalDependency,
+    status: IdentityAssociationAssuranceV4 | None = None,
+    relationship: IdentityRelationshipV4 | None = None,
+    entity: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> IdentityCandidatePageV4:
+    records = await admin.list_identity_candidates(principal)
+    if status is not None:
+        records = [item for item in records if item.assurance is status]
+    if relationship is not None:
+        records = [item for item in records if item.relationship is relationship]
+    if entity:
+        needle = entity.casefold()
+        records = [item for item in records if needle in item.entity_name.casefold()]
+    items, total = _page(records, limit, offset)
+    return IdentityCandidatePageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/admin/identity-candidates/{candidate_id}/decisions",
+    response_model=IdentityCandidateV4,
+    responses=_COMMON_ERRORS,
+)
+async def decide_identity_candidate_v4(
+    candidate_id: UUID,
+    request: IdentityCandidateDecisionRequestV4,
+    admin: SecurityTrustAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> IdentityCandidateV4:
+    return await admin.decide_identity_candidate(str(candidate_id), request, principal)
 
 
 @router.post("/admin/whitelist", response_model=WhitelistRecordV4, status_code=201, responses=_COMMON_ERRORS)

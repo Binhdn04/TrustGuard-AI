@@ -125,7 +125,27 @@ class BrandMatcher:
             return None, []
         brand = _brand_for_message(request.message, context.claimed_entity, brands, observed_at)
         if brand is None:
-            return None, []
+            if not context.claimed_entity:
+                return None, []
+            evidence = []
+            for url in context.urls:
+                host = (urlsplit(url).hostname or "").casefold()
+                evidence.append(
+                    _evidence(
+                        SecurityEvidenceTypeV4.BRAND_MATCH,
+                        "brand-registry",
+                        "claimed_identity_unverified",
+                        (
+                            f"Không có reviewed identity để xác nhận domain {host} thuộc tổ chức "
+                            f"{context.claimed_entity}."
+                        ),
+                        observed_at,
+                        target=host,
+                        confidence=0.5,
+                        provenance_ref="brand-registry:review-required",
+                    )
+                )
+            return None, evidence
         evidence: list[SecurityEvidenceV4] = []
         provenance = f"brand:{brand.brand_id}:{brand.policy_version}"
         identities = runtime_official_identities(brand, observed_at)
@@ -264,6 +284,15 @@ class SecurityTrustService:
         payload = scope.model_dump()
         payload["evidence"] = list({item.evidence_ref: item for item in [*scope.evidence, *evidence]}.values())
         payload["investigation_plan"] = plan
+        if any(item.signal == "claimed_identity_unverified" for item in evidence):
+            payload["limitations"] = list(
+                dict.fromkeys(
+                    [
+                        *scope.limitations,
+                        "Không có reviewed identity để xác nhận domain thuộc tổ chức được nhắc đến.",
+                    ]
+                )
+            )
         return SecurityScopeResponseV4.model_validate(payload)
 
     def _local_plan(self, scope: SecurityScopeResponseV4, brand: BrandRecordV4 | None) -> list[InvestigationStepV4]:

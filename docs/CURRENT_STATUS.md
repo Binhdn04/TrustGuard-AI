@@ -1,6 +1,6 @@
 # Current Status
 
-**Updated:** 2026-08-20
+**Updated:** 2026-08-21
 
 `Implemented` nghĩa là có code và automated coverage trong repository, không đồng nghĩa đã verify trên
 hosted production với OIDC, PostgreSQL, Redis và provider thật.
@@ -24,19 +24,22 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |
-| Official verification | publisher/claim/resource verification, reviewed identities, consented search/fetch, resource matching, rollout `off|shadow|visible|enforced` |
-| Evaluation | versioned offline security, memory, AI and immutable `security-v4-v2` official-link datasets/reports with rollout guard |
-| Frontend | Security Chat, Simple/Analyst views, Observatory, Review Room, Trust/Audit |
-| Schema | Alembic through `0018_remove_vector_compat` |
+| Official verification | publisher/claim/resource verification plus identity discovery v2, 7-day candidate cache, typed multi-host evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
+| Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
+| Frontend | Security Chat, Simple/Analyst views, Observatory, Review Room, Trust candidate queue/Audit |
+| Schema | Alembic through `0019_security_identity_discovery` (one head) |
 
 ## Partial and pending
 
 - `BLOCK_DOMAIN` và `PUBLISH_BROAD_WARNING` chưa có execution sink.
 - Async, reviewed-memory và AI flags mặc định tắt, chỉ bật tuần tự sau gate tương ứng.
 - Official Link Verification implementation WP0–WP10 đã hoàn thành; CP10 release approval vẫn pending hosted evidence và Tech Lead/Security Lead review.
+- Identity discovery v2 đã có local automated coverage; PostgreSQL/provider thật, reviewer workflow và rollout
+  observation vẫn cần hosted validation trước enforced production.
 - Chưa có hosted OIDC/PostgreSQL/Redis/VirusTotal evidence với credential thật.
 - Chưa có production backup/restore, load, lease-loss và Redis-outage rehearsal.
 - `0018_remove_vector_compat` cần backup và staging rehearsal trên database cũ.
+- `0019_security_identity_discovery` additive vẫn cần staging migration/persistence parity smoke trên PostgreSQL.
 
 ## Deprecated and removed
 
@@ -59,6 +62,7 @@ public capability.
 5. Chạy Official Link Verification theo `shadow -> visible -> enforced -> visible -> off`, lưu observation window
    và rollback evidence cho từng stage.
 6. Validate reviewed CP10 evidence bằng tooling trong [TESTING.md](TESTING.md), sau đó Tech Lead và Security Lead review.
+7. Validate identity candidate TTL/revalidation, PostgreSQL versioning, RBAC promotion và exact-resource endorsement
+   trong cùng hosted rollout windows; không dùng auto-verified association để tự kết luận `SAFE`.
 
 Không giữ test count cũ trong status. Lấy kết quả mới từ CI hoặc chạy lệnh trong [TESTING.md](TESTING.md).
-

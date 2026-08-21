@@ -66,6 +66,7 @@ validate request/version → scope/context → boundary hoặc investigation
 ```
 
 - AI không trực tiếp đặt risk, score, consent, network target hoặc admin decision.
+- AI planner chỉ sắp thứ tự candidate đang runnable; policy quyết định coverage và AI không được skip evidence step.
 - External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
 - SSRF guard chặn private/local/metadata target và revalidate từng redirect.
 - Whitelist có provenance và chạy trước negative scoring.
@@ -73,6 +74,13 @@ validate request/version → scope/context → boundary hoặc investigation
 - User reads luôn owner-scoped; admin routes yêu cầu `security_admin`.
 - Không lưu raw private message, URL query token, OTP hoặc credential trong memory/audit.
 - Admin Copilot chỉ suggestion; action thật cần reviewer, note, evidence và audit.
+
+Identity discovery là phần mở rộng provider-neutral của official-link verification, không phải pipeline mới.
+Khi reviewed registry thiếu/ambiguous hoặc chưa biết URL người dùng, coordinator có thể chạy tối đa ba query
+được dẫn xuất từ tên entity đã grounded. Search hit chỉ tạo candidate `discovered`; `verified` cần hai evidence
+family trên hai source host độc lập và một anchor phù hợp với relationship. Association tự động có TTL 7 ngày,
+không ghi vào `BrandRecordV4` và không tự tạo kết luận `SAFE`. Chỉ admin review mới promote thành immutable
+brand version; third-party endorsement luôn giới hạn ở exact URL/resource.
 
 ## Persistence and lifecycle
 
@@ -82,6 +90,8 @@ validate request/version → scope/context → boundary hoặc investigation
 - Memory ảnh hưởng risk phải reviewed, owner-scoped và không self-match analysis hiện tại.
 - Campaign dùng named security signals, không dùng embeddings/vector database.
 - Migration `0018_remove_vector_compat` xóa fact-check/source-discovery/vector storage cũ và không downgrade.
+- Migration `0019_security_identity_discovery` thêm candidate versions, immutable typed observations và immutable
+  reviewer decisions riêng cho Security v4; SQLite fallback có schema tương đương.
 
 ## Code map
 
@@ -94,4 +104,3 @@ validate request/version → scope/context → boundary hoặc investigation
 | Persistence | `src/repositories/`, `migrations/versions/` |
 | AI/evaluation | `src/security_ai/`, `src/evaluation/` |
 | Frontend/tests | `frontend/src/`, `tests/` |
-

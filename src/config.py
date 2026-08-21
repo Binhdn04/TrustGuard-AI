@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "off"
     security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
-    security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
-    security_ai_turn_deadline_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
-    security_ai_max_retries: int = Field(default=1, ge=0, le=2)
+    security_ai_timeout_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
+    security_ai_turn_deadline_seconds: float = Field(default=60.0, gt=0.0, le=120.0)
+    security_ai_max_retries: int = Field(default=0, ge=0, le=2)
     security_ai_small_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_synthesis_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_small_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     live_providers_required: bool = False
-    analysis_deadline_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
+    analysis_deadline_seconds: float = Field(default=60.0, gt=0.0, le=120.0)
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)

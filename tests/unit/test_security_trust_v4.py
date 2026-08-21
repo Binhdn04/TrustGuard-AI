@@ -128,6 +128,24 @@ async def test_brand_mismatch_alone_is_low_risk() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unreviewed_claimed_identity_is_visible_and_never_safe() -> None:
+    message = "Bệnh viện Đại học Y yêu cầu đăng ký tại https://bachmai.gov.vn/"
+    request, scoped = _scope(message)
+    context = scoped.security_context.model_copy(update={"claimed_entity": "Bệnh viện Đại học Y"})
+    scoped = scoped.model_copy(update={"security_context": context})
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+
+    enriched = await SecurityTrustService(_TrustRepository(), clock=lambda: NOW).enrich(request, investigated)
+    result = assess_security_risk(enriched)
+
+    identity = next(item for item in result.evidence if item.signal == "claimed_identity_unverified")
+    assert identity.target == "bachmai.gov.vn"
+    assert "Bệnh viện Đại học Y" in identity.description
+    assert any("reviewed identity" in item for item in result.limitations)
+    assert result.risk is SecurityRiskV4.LOW_RISK
+
+
+@pytest.mark.asyncio
 async def test_repository_enforces_effective_interval_and_disable(tmp_path) -> None:
     repository = SQLiteBlacklistRepository(tmp_path / "trust.db")
     active = _brand()

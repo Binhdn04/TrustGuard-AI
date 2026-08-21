@@ -135,6 +135,32 @@ def test_ungrounded_or_low_confidence_signals_are_discarded() -> None:
     assert merged.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
     assert merged.security_context is None
     assert any("source span" in item for item in merged.limitations)
+    assert any("payment_request, scenario, scope_decision" in item for item in merged.limitations)
+
+
+def test_literal_claimed_entity_is_grounded_when_model_omits_metadata() -> None:
+    message = "Bệnh viện Đại học Y yêu cầu đăng ký tại https://bachmai.gov.vn/"
+    scoped = _scope(message)
+    output = Understanding(claimed_entity="Bệnh viện Đại học Y")
+
+    merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert merged.security_context.claimed_entity == "Bệnh viện Đại học Y"
+    assert merged.assistant_context.field_confidences["claimed_entity"] == 1
+    span = next(item for item in merged.assistant_context.source_spans if item.field_name == "claimed_entity")
+    assert message[span.start : span.end] == "Bệnh viện Đại học Y"
+    assert all("claimed_entity" not in item for item in merged.limitations)
+
+
+def test_arbitrary_literal_is_not_promoted_to_claimed_entity_without_grounding() -> None:
+    message = "Hãy mở link ngay https://example.com"
+    scoped = _scope(message)
+    output = Understanding(claimed_entity="ngay")
+
+    merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert merged.security_context.claimed_entity is None
+    assert any("claimed_entity" in item for item in merged.limitations)
 
 
 def test_ai_cannot_replace_locally_extracted_urls() -> None:

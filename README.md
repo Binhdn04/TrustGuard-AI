@@ -198,8 +198,10 @@ Mọi flag AI mặc định tắt. Khi bật bất kỳ AI operation nào trong 
 | `SECURITY_AI_SMALL_MODEL` | `gpt-4o-mini` | Understanding và planning model. |
 | `SECURITY_AI_SYNTHESIS_MODEL` | `gpt-4o-mini` | Response/copilot synthesis model. |
 | `SECURITY_AI_MAX_CALLS_PER_TURN` | `4` | Tổng call budget cho một turn. |
-| `SECURITY_AI_TIMEOUT_SECONDS` | `12` | Timeout mỗi AI call. |
-| `SECURITY_AI_TURN_DEADLINE_SECONDS` | `15` | Deadline chung của turn AI. |
+| `SECURITY_AI_TIMEOUT_SECONDS` | `15` | Timeout mỗi AI call. |
+| `SECURITY_AI_TURN_DEADLINE_SECONDS` | `60` | Deadline chung cho understanding, planning và explanation. |
+| `SECURITY_AI_MAX_RETRIES` | `0` | Không retry tự động để một stage không chiếm ngân sách của stage sau. |
+| `ANALYSIS_DEADLINE_SECONDS` | `60` | Deadline end-to-end, bao gồm AI và provider tools. |
 
 ### Investigation providers
 

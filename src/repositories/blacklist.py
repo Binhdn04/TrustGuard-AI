@@ -25,6 +25,8 @@ from src.models import (
     BrandRecordV4,
     ErrorCode,
     Evidence,
+    IdentityCandidateDecisionV4,
+    IdentityCandidateV4,
     InvestigationStep,
     ReportReviewDecision,
     ReportStatus,
@@ -206,6 +208,29 @@ class SQLiteBlacklistRepository:
             CREATE TABLE IF NOT EXISTS security_trust_audit (
                 audit_id TEXT PRIMARY KEY, resource_type TEXT NOT NULL, resource_id TEXT NOT NULL,
                 action TEXT NOT NULL, reviewer_id TEXT NOT NULL, occurred_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS security_identity_candidates (
+                candidate_id TEXT PRIMARY KEY, entity_name TEXT NOT NULL,
+                canonical_domain TEXT NOT NULL, relationship TEXT NOT NULL,
+                assurance TEXT NOT NULL, version INTEGER NOT NULL,
+                expires_at TEXT, terminal_decision_id TEXT,
+                record_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(entity_name, canonical_domain, relationship, version),
+                FOREIGN KEY (terminal_decision_id) REFERENCES security_identity_decisions(decision_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_security_identity_candidates_queue
+                ON security_identity_candidates(assurance, relationship, created_at DESC);
+            CREATE TABLE IF NOT EXISTS security_identity_evidence (
+                evidence_ref TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
+                source_host TEXT NOT NULL, family TEXT NOT NULL,
+                observation_json TEXT NOT NULL, observed_at TEXT NOT NULL,
+                FOREIGN KEY (candidate_id) REFERENCES security_identity_candidates(candidate_id)
+            );
+            CREATE TABLE IF NOT EXISTS security_identity_decisions (
+                decision_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL UNIQUE,
+                action TEXT NOT NULL, reviewer_id TEXT NOT NULL,
+                decision_json TEXT NOT NULL, decided_at TEXT NOT NULL,
+                FOREIGN KEY (candidate_id) REFERENCES security_identity_candidates(candidate_id)
             );
             CREATE TABLE IF NOT EXISTS security_memory (
                 memory_id TEXT PRIMARY KEY, analysis_id TEXT NOT NULL UNIQUE,
@@ -448,6 +473,76 @@ class SQLiteBlacklistRepository:
             for item in effective
             if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
         ]
+
+    async def save_identity_candidate(self, record: IdentityCandidateV4) -> IdentityCandidateV4:
+        async with self._lock:
+            row = self._connection.execute(
+                """SELECT candidate_id,version FROM security_identity_candidates
+                   WHERE entity_name=? AND canonical_domain=? AND relationship=?
+                   ORDER BY version DESC LIMIT 1""",
+                (record.entity_name, record.canonical_domain, record.relationship.value),
+            ).fetchone()
+            version = max(record.version, (row[1] if row else 0) + 1)
+            stored = record.model_copy(
+                update={"version": version, "supersedes": UUID(row[0]) if row else record.supersedes}
+            )
+            self._connection.execute(
+                """INSERT INTO security_identity_candidates(
+                       candidate_id,entity_name,canonical_domain,relationship,assurance,version,
+                       expires_at,terminal_decision_id,record_json,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    str(stored.association_id), stored.entity_name, stored.canonical_domain,
+                    stored.relationship.value, stored.assurance.value, stored.version,
+                    stored.expires_at.isoformat() if stored.expires_at else None,
+                    str(stored.terminal_decision_id) if stored.terminal_decision_id else None,
+                    stored.model_dump_json(), stored.discovered_at.isoformat(),
+                ),
+            )
+            for observation in stored.observations:
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO security_identity_evidence(
+                           evidence_ref,candidate_id,source_host,family,observation_json,observed_at
+                       ) VALUES(?,?,?,?,?,?)""",
+                    (observation.evidence_ref, str(stored.association_id), observation.source_host,
+                     observation.family.value, observation.model_dump_json(), observation.observed_at.isoformat()),
+                )
+            self._connection.commit()
+        return stored
+
+    async def list_identity_candidates(self) -> list[IdentityCandidateV4]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_identity_candidates ORDER BY created_at DESC"
+            ).fetchall()
+        return [IdentityCandidateV4.model_validate_json(row[0]) for row in rows]
+
+    async def create_identity_decision(
+        self, decision: IdentityCandidateDecisionV4, updated: IdentityCandidateV4
+    ) -> None:
+        async with self._lock:
+            existing = self._connection.execute(
+                "SELECT 1 FROM security_identity_decisions WHERE candidate_id=?",
+                (str(decision.candidate_id),),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("identity candidate already has a terminal decision")
+            self._connection.execute(
+                """INSERT INTO security_identity_decisions(
+                       decision_id,candidate_id,action,reviewer_id,decision_json,decided_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (str(decision.decision_id), str(decision.candidate_id), decision.action.value,
+                 decision.reviewer_id, decision.model_dump_json(), decision.decided_at.isoformat()),
+            )
+            self._connection.execute(
+                """UPDATE security_identity_candidates SET assurance=?,terminal_decision_id=?,record_json=?
+                   WHERE candidate_id=?""",
+                (updated.assurance.value, str(decision.decision_id), updated.model_dump_json(),
+                 str(updated.association_id)),
+            )
+            self._trust_audit("identity_candidate", str(updated.association_id), decision.action.value,
+                              decision.reviewer_id, decision.decided_at)
+            self._connection.commit()
 
     async def disable_brand(self, brand_id: str, reviewer_id: str, at: datetime) -> BrandRecordV4 | None:
         async with self._lock:

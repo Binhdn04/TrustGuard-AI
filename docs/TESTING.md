@@ -56,6 +56,8 @@ populate a passing evidence file from offline fixtures or unit-test output.
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
 - AI grounding/fallback/prompt injection/budget/deadline;
 - frontend risk/follow-up presentation, polling, history và admin workflow.
+- identity discovery query hygiene, consent/SSRF/budget, 7-day stale revalidation, relationship evidence anchors,
+  SQLite/PostgreSQL versioning, admin RBAC/terminal decisions/promotion và Trust candidate queue.
 
 ## Manual scenarios
 
@@ -73,7 +75,10 @@ Chỉ dùng reserved `.test` domains.
 | Prompt injection yêu cầu bỏ policy | Policy/tool boundary không đổi |
 | Multi-turn stale version | Conflict; không trộn owner/case |
 | Duplicate admin decision | Một terminal transition, không duplicate side effect |
+| Search hit identity đơn lẻ | Chỉ `discovered`, 0 risk point, không `SAFE` |
+| Reviewed exact third-party resource | `endorsed_third_party_service`; không mở trust cho partner domain |
+| Explicit ownership conflict | Auto mismatch tối thiểu low risk; reviewer confirmation tối thiểu suspicious |
+| Association quá 7 ngày | Không được dùng; consented request kế tiếp tạo version revalidation mới |
 
 `MALICIOUS` cần confirmed evidence hoặc nhiều chỉ báo độc lập mạnh. Report phải ghi commit, dataset/version,
 environment và command; không copy số liệu test cũ.
-

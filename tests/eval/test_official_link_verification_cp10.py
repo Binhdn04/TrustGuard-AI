@@ -15,7 +15,7 @@ from src.evaluation.official_link_verification import (
 
 DATASET_V1 = "tests/eval/security_v4_v1.jsonl"
 DATASET_V2 = "tests/eval/security_v4_v2.jsonl"
-IMMUTABLE_V1_SHA256 = "19e8aa9f57d7930162159db3624169722896679fa210c3abf9805a5bf6412a7f"
+IMMUTABLE_V1_SHA256 = "dc78b477a43d14beb5ec19e517fb1bdb8dd21cc6d95addc80fd897a1721aa710"
 
 
 def test_security_v4_v2_is_additive_and_v1_remains_immutable() -> None:

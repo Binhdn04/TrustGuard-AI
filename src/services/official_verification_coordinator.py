@@ -6,10 +6,10 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 from pydantic import Field, model_validator
@@ -18,6 +18,12 @@ from src.agents.tools.models import ToolContractModel
 from src.models import (
     BrandRecordV4,
     ClaimVerificationV4,
+    IdentityAssociationAssuranceV4,
+    IdentityAssociationV4,
+    IdentityCandidateV4,
+    IdentityEvidenceFamilyV4,
+    IdentityEvidenceObservationV4,
+    IdentityRelationshipV4,
     LinkRoleV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
@@ -184,6 +190,10 @@ _ACTION_ROLES = {
 class OfficialBrandRepository(Protocol):
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]: ...
 
+    async def list_identity_candidates(self) -> list[IdentityCandidateV4]: ...
+
+    async def save_identity_candidate(self, record: IdentityCandidateV4) -> IdentityCandidateV4: ...
+
 
 class ReviewedSourceRegistry(Protocol):
     def matching_entries(self, url: str, at: datetime) -> Sequence[object]: ...
@@ -245,6 +255,10 @@ class OfficialVerificationCoordinatorOutcome(ToolContractModel):
     outbound_resolutions: int = Field(default=0, ge=0, le=_MAX_OUTBOUND_RESOLUTIONS)
     early_stop_reason: str | None = Field(default=None, pattern=r"^[a-z0-9_]+$")
     limitations: list[str] = Field(default_factory=list, max_length=50)
+    identity_candidate_count: int = Field(default=0, ge=0, le=20)
+    identity_verified_count: int = Field(default=0, ge=0, le=20)
+    identity_conflicting_count: int = Field(default=0, ge=0, le=20)
+    identity_cache_hits: int = Field(default=0, ge=0, le=20)
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,8 +385,44 @@ def _claim_qualifiers(message: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(qualifiers))
 
 
+def _canonical_discovery_url(url: str) -> str | None:
+    try:
+        normalized = normalize_verification_url(url).canonical_url
+    except UrlNormalizationError:
+        return None
+    parsed = urlsplit(normalized)
+    # Query data is unnecessary for identity candidates and may contain secrets.
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
+
+
+def _entity_appears(entity: str, text: str) -> bool:
+    folded_text = _fold(text)
+    tokens = [token for token in _fold(entity).split() if len(token) >= 3]
+    return bool(tokens) and sum(token in folded_text for token in set(tokens)) >= min(2, len(set(tokens)))
+
+
+def _identity_observation(
+    family: IdentityEvidenceFamilyV4,
+    canonical_url: str,
+    content_hash: str,
+    now: datetime,
+) -> IdentityEvidenceObservationV4:
+    canonical = _canonical_discovery_url(canonical_url)
+    if canonical is None:  # pragma: no cover - callers only pass guarded URLs
+        raise ValueError("identity evidence requires a public canonical URL")
+    host = (urlsplit(canonical).hostname or "").casefold()
+    return IdentityEvidenceObservationV4(
+        evidence_ref=_ref("identity-evidence", family.value, host, canonical, content_hash),
+        family=family,
+        source_host=host,
+        canonical_url=canonical,
+        content_hash=content_hash,
+        observed_at=now,
+    )
+
+
 class OfficialLinkVerificationCoordinator:
-    policy_version = "official-link-verification-v1"
+    policy_version = "official-link-verification-v2"
 
     def __init__(
         self,
@@ -461,6 +511,8 @@ class OfficialLinkVerificationCoordinator:
         adapter_attempts = 0
         early_stop_reason: str | None = None
         claim_qualifiers = _claim_qualifiers(request.message)
+        identity_associations: list[IdentityAssociationV4] = []
+        identity_evidence: list[IdentityEvidenceObservationV4] = []
 
         def add_candidate(url: str) -> None:
             if len(candidates) >= _MAX_CANDIDATES:
@@ -563,6 +615,45 @@ class OfficialLinkVerificationCoordinator:
         elif identities and online_verification_needed:
             limitations.append("official_source_consent_required")
 
+        discovery_persistence_available = all(
+            callable(getattr(self._brands, method, None))
+            for method in ("list_identity_candidates", "save_identity_candidate")
+        )
+        discovery_needed = (
+            discovery_persistence_available
+            and
+            early_stop_reason != "strong_official_contradiction"
+            and (
+                resolution.status in {BrandResolutionStatus.NOT_FOUND, BrandResolutionStatus.AMBIGUOUS}
+                or not identities
+                or bool(user_urls)
+            )
+        )
+        if discovery_needed:
+            (
+                identity_associations,
+                identity_evidence,
+                discovery_searches,
+                discovery_fetches,
+                discovery_calls,
+                discovery_limitations,
+            ) = await self._discover_identity_associations(
+                intent,
+                user_urls,
+                identities,
+                pages,
+                now,
+                official_consent=request.consent.official_source_lookup,
+                external_consent=request.consent.external_url_lookup,
+                search_cap=max(0, _MAX_SEARCH_ATTEMPTS - search_attempts),
+                fetch_cap=max(0, _MAX_OFFICIAL_FETCHES - official_fetches),
+                execution_context=execution_context,
+            )
+            search_attempts += discovery_searches
+            official_fetches += discovery_fetches
+            adapter_attempts += discovery_calls
+            limitations.extend(discovery_limitations)
+
         source_refs, link_evidence = self._public_evidence(
             brand,
             identities,
@@ -594,6 +685,8 @@ class OfficialLinkVerificationCoordinator:
             source_refs,
             [item.public for item in link_evidence],
             limitations,
+            identity_associations,
+            identity_evidence,
         )
         self._validate_reference_closure(report)
         return OfficialVerificationCoordinatorOutcome(
@@ -605,6 +698,342 @@ class OfficialLinkVerificationCoordinator:
             outbound_resolutions=outbound_resolutions,
             early_stop_reason=early_stop_reason,
             limitations=_unique(limitations)[:50],
+            identity_candidate_count=len(identity_associations),
+            identity_verified_count=sum(
+                item.assurance is IdentityAssociationAssuranceV4.VERIFIED for item in identity_associations
+            ),
+            identity_conflicting_count=sum(
+                item.assurance in {
+                    IdentityAssociationAssuranceV4.CONFLICTING,
+                    IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH,
+                }
+                for item in identity_associations
+            ),
+            identity_cache_hits=(len(identity_associations) if "identity_cache_hit" in limitations else 0),
+        )
+
+    async def _discover_identity_associations(
+        self,
+        intent: GroundedVerificationIntent,
+        user_urls: Sequence[str],
+        identities: Sequence[OfficialIdentityV4],
+        reviewed_pages: Sequence[_PageEvidence],
+        now: datetime,
+        *,
+        official_consent: bool,
+        external_consent: bool,
+        search_cap: int,
+        fetch_cap: int,
+        execution_context: TurnExecutionContext,
+    ) -> tuple[list[IdentityAssociationV4], list[IdentityEvidenceObservationV4], int, int, int, list[str]]:
+        entity = intent.contract.organization_name
+        if entity is None:
+            return [], [], 0, 0, 0, []
+        cached: list[IdentityCandidateV4] = []
+        stale_found = False
+        list_candidates = getattr(self._brands, "list_identity_candidates", None)
+        if list_candidates is not None:
+            candidate_records = [
+                item for item in await list_candidates() if _fold(item.entity_name) == _fold(entity)
+            ]
+            stale_found = any(
+                item.assurance in {
+                    IdentityAssociationAssuranceV4.DISCOVERED,
+                    IdentityAssociationAssuranceV4.VERIFIED,
+                    IdentityAssociationAssuranceV4.CONFLICTING,
+                }
+                and (item.expires_at is None or item.expires_at <= now)
+                for item in candidate_records
+            )
+            cached = [
+                item
+                for item in candidate_records
+                if (
+                    item.assurance
+                    in {
+                        IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH,
+                        IdentityAssociationAssuranceV4.REJECTED,
+                        IdentityAssociationAssuranceV4.PROMOTED,
+                    }
+                    or (
+                        item.assurance in {
+                            IdentityAssociationAssuranceV4.DISCOVERED,
+                            IdentityAssociationAssuranceV4.VERIFIED,
+                            IdentityAssociationAssuranceV4.CONFLICTING,
+                        }
+                        and item.expires_at is not None
+                        and now < item.expires_at
+                    )
+                )
+            ]
+        requested_targets = {_canonical_discovery_url(url) for url in user_urls}
+        requested_targets.discard(None)
+        if cached and (not requested_targets or requested_targets <= {item.canonical_url for item in cached}):
+            return list(cached), [obs for item in cached for obs in item.observations], 0, 0, 0, ["identity_cache_hit"]
+
+        direct_associations: list[IdentityCandidateV4] = []
+        for target in requested_targets:
+            target_host = (urlsplit(target).hostname or "").casefold()
+            for page in reviewed_pages:
+                source_host = (urlsplit(page.extraction.source_canonical_url).hostname or "").casefold()
+                if source_host == target_host or not any(
+                    _canonical_discovery_url(link.canonical_url) == target for link in page.extraction.links
+                ):
+                    continue
+                direct_observations = [
+                    _identity_observation(
+                        IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT,
+                        page.extraction.source_canonical_url,
+                        page.extraction.content_hash,
+                        now,
+                    ),
+                    _identity_observation(
+                        IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH,
+                        target,
+                        hashlib.sha256(target.encode()).hexdigest(),
+                        now,
+                    ),
+                ]
+                association = self._association_from_observations(
+                    entity,
+                    target,
+                    IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+                    direct_observations,
+                    now,
+                )
+                direct_associations.append(
+                    IdentityCandidateV4(**association.model_dump(), observations=direct_observations)
+                )
+                break
+        if direct_associations and requested_targets <= {item.canonical_url for item in direct_associations}:
+            save = getattr(self._brands, "save_identity_candidate", None)
+            stored = [await save(item) for item in direct_associations] if save is not None else direct_associations
+            return list(stored), [obs for item in stored for obs in item.observations], 0, 0, 0, []
+
+        if not official_consent:
+            stale = ["identity_stale_revalidation"] if stale_found else []
+            return [], [], 0, 0, 0, [*stale, "official_source_consent_required"]
+        if self._search is None:
+            stale = ["identity_stale_revalidation"] if stale_found else []
+            return [], [], 0, 0, 0, [*stale, "official_web_search_unavailable"]
+
+        queries = self._identity_discovery_queries(intent)
+        candidate_urls: list[str] = []
+        searches = calls = fetches = 0
+        limitations: list[str] = ["identity_stale_revalidation"] if stale_found else []
+        for query in queries[: min(3, search_cap)]:
+            result = await self._search.search_one(
+                query, execution_context=execution_context, max_results=_MAX_SEARCH_RESULTS
+            )
+            searches += 1
+            calls += result.tool_calls_used
+            if result.status is VerificationTransportStatus.SUCCESS:
+                for hit in result.results:
+                    canonical = _canonical_discovery_url(hit.url)
+                    if canonical and canonical not in candidate_urls:
+                        candidate_urls.append(canonical)
+                    if len(candidate_urls) >= _MAX_CANDIDATES:
+                        break
+            elif result.limitation is not None:
+                limitations.append(f"identity_search_{result.limitation.value}")
+            if len(candidate_urls) >= _MAX_CANDIDATES:
+                break
+
+        # A user target is only fetched under its separate consent. Search candidates
+        # are fetched under official-source consent and every redirect remains guarded.
+        fetch_urls: list[str] = []
+        if external_consent:
+            for url in requested_targets:
+                if url not in fetch_urls:
+                    fetch_urls.append(url)
+        fetch_urls.extend(url for url in candidate_urls if url not in fetch_urls)
+        fetched_pages: dict[str, tuple[str, str, str]] = {}
+        if self._fetcher is not None:
+            for url in fetch_urls[:fetch_cap]:
+                fetched = await self._fetcher.fetch(url, execution_context=execution_context)
+                fetches += 1
+                calls += fetched.tool_calls_used
+                if fetched.status is VerificationTransportStatus.SUCCESS and fetched.document is not None:
+                    canonical = _canonical_discovery_url(fetched.document.final_url)
+                    if canonical:
+                        text = (
+                            _visible_html_text(fetched.document.body)
+                            + " "
+                            + fetched.document.body.decode("utf-8", errors="ignore")[:_MAX_VISIBLE_TEXT]
+                        )
+                        fetched_pages[canonical] = (
+                            text,
+                            hashlib.sha256(fetched.document.body).hexdigest(),
+                            (urlsplit(canonical).hostname or "").casefold(),
+                        )
+                elif fetched.limitation is not None:
+                    limitations.append(f"identity_fetch_{fetched.limitation.value}")
+        else:
+            limitations.append("official_fetch_unavailable")
+
+        associations: list[IdentityAssociationV4] = []
+        observations: list[IdentityEvidenceObservationV4] = []
+        for canonical in candidate_urls:
+            host = (urlsplit(canonical).hostname or "").casefold()
+            candidate_observations: list[IdentityEvidenceObservationV4] = []
+            page = fetched_pages.get(canonical)
+            if page is not None and _entity_appears(entity, page[0]):
+                family = (
+                    IdentityEvidenceFamilyV4.PARENT_DECLARATION
+                    if any(term in _fold(page[0]) for term in ("parent organization", "parent company", "truc thuoc", "thuoc to chuc"))
+                    else IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION
+                )
+                candidate_observations.append(_identity_observation(family, canonical, page[1], now))
+            for source_url, (text, content_hash, source_host) in fetched_pages.items():
+                if source_host == host or source_url == canonical:
+                    continue
+                if canonical in text and _entity_appears(entity, text):
+                    folded_source = _fold(text)
+                    family = (
+                        IdentityEvidenceFamilyV4.EXPLICIT_OWNERSHIP_CONFLICT
+                        if any(term in _fold(text) for term in _CONTRADICTION_TERMS)
+                        else (
+                            IdentityEvidenceFamilyV4.PARENT_DECLARATION
+                            if any(
+                                term in folded_source
+                                for term in (
+                                    "parent organization",
+                                    "parent company",
+                                    "subsidiary",
+                                    "member of",
+                                    "truc thuoc",
+                                    "don vi thuoc",
+                                )
+                            )
+                            else IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK
+                        )
+                    )
+                    candidate_observations.append(_identity_observation(family, source_url, content_hash, now))
+            relationship = (
+                IdentityRelationshipV4.PARENT_ORGANIZATION
+                if any(item.family is IdentityEvidenceFamilyV4.PARENT_DECLARATION for item in candidate_observations)
+                else IdentityRelationshipV4.OFFICIAL_CONTROLLED
+            )
+            if relationship is IdentityRelationshipV4.PARENT_ORGANIZATION:
+                candidate_observations = [
+                    _identity_observation(
+                        IdentityEvidenceFamilyV4.CANDIDATE_CORROBORATION,
+                        item.canonical_url,
+                        item.content_hash,
+                        now,
+                    )
+                    if item.family is IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION
+                    else item
+                    for item in candidate_observations
+                ]
+            association = self._association_from_observations(
+                entity, canonical, relationship,
+                candidate_observations, now,
+            )
+            associations.append(association)
+            observations.extend(candidate_observations)
+
+        # Exact links from a reviewed identity are an endorsement anchor. Trust is
+        # intentionally scoped to the exact resource, never the partner domain.
+        reviewed_hosts = {
+            (urlsplit(_identity_url(identity) or "").hostname or "").casefold() for identity in identities
+        }
+        for user_url in user_urls:
+            canonical = _canonical_discovery_url(user_url)
+            if canonical is None:
+                continue
+            anchor: list[IdentityEvidenceObservationV4] = []
+            for page in reviewed_pages:
+                if any(_canonical_discovery_url(link.canonical_url) == canonical for link in page.extraction.links):
+                    anchor.append(
+                        _identity_observation(
+                            IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT,
+                            page.extraction.source_canonical_url,
+                            page.extraction.content_hash,
+                            now,
+                        )
+                    )
+            target = fetched_pages.get(canonical)
+            if target is not None and (urlsplit(canonical).hostname or "").casefold() not in reviewed_hosts:
+                anchor.append(
+                    _identity_observation(IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH, canonical, target[1], now)
+                )
+            if anchor:
+                association = self._association_from_observations(
+                    entity, canonical, IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE, anchor, now,
+                )
+                associations = [item for item in associations if item.canonical_url != canonical]
+                associations.append(association)
+                observations.extend(anchor)
+
+        save = getattr(self._brands, "save_identity_candidate", None)
+        if save is not None:
+            stored_associations: list[IdentityAssociationV4] = []
+            by_ref = {item.evidence_ref: item for item in observations}
+            for association in associations:
+                candidate = IdentityCandidateV4(
+                    **association.model_dump(),
+                    observations=[by_ref[ref] for ref in association.evidence_refs if ref in by_ref],
+                )
+                stored_associations.append(await save(candidate))
+            associations = stored_associations
+        return associations[:20], list({item.evidence_ref: item for item in observations}.values())[:50], searches, fetches, calls, _unique(limitations)
+
+    @staticmethod
+    def _identity_discovery_queries(intent: GroundedVerificationIntent) -> list[str]:
+        values = [intent.contract.organization_name or ""]
+        values.extend(item.value for item in intent.derived_organizations)
+        queries: list[str] = []
+        for value in values:
+            bounded = " ".join(value.split())[:200]
+            if bounded and bounded.casefold() not in {item.casefold() for item in queries}:
+                queries.append(bounded)
+        return queries[:3]
+
+    @staticmethod
+    def _association_from_observations(
+        entity: str,
+        canonical_url: str,
+        relationship: IdentityRelationshipV4,
+        observations: Sequence[IdentityEvidenceObservationV4],
+        now: datetime,
+    ) -> IdentityAssociationV4:
+        families = {item.family for item in observations}
+        hosts = {item.source_host for item in observations}
+        required = {
+            IdentityRelationshipV4.OFFICIAL_CONTROLLED: (
+                {IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION},
+                {IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK},
+            ),
+            IdentityRelationshipV4.PARENT_ORGANIZATION: (
+                {IdentityEvidenceFamilyV4.PARENT_DECLARATION},
+                {
+                    IdentityEvidenceFamilyV4.CANDIDATE_CORROBORATION,
+                    IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
+                },
+            ),
+            IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE: (
+                {IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT},
+                {IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH},
+            ),
+        }[relationship]
+        verified = len(hosts) >= 2 and bool(families & required[0]) and bool(families & required[1])
+        conflicting = IdentityEvidenceFamilyV4.EXPLICIT_OWNERSHIP_CONFLICT in families
+        return IdentityAssociationV4(
+            entity_name=entity,
+            canonical_url=canonical_url,
+            canonical_domain=(urlsplit(canonical_url).hostname or "").casefold(),
+            relationship=relationship,
+            assurance=(
+                IdentityAssociationAssuranceV4.CONFLICTING
+                if conflicting
+                else (IdentityAssociationAssuranceV4.VERIFIED if verified else IdentityAssociationAssuranceV4.DISCOVERED)
+            ),
+            confidence=(0.9 if conflicting else (0.85 if verified else 0.35)),
+            evidence_refs=[item.evidence_ref for item in observations],
+            discovered_at=now,
+            verified_at=now if verified or conflicting else None,
+            expires_at=now + timedelta(days=7),
         )
 
     def _publisher_component(
@@ -1079,6 +1508,8 @@ class OfficialLinkVerificationCoordinator:
         sources: Sequence[OfficialSourceReferenceV4],
         links: Sequence[OfficialLinkReferenceV4],
         limitations: Sequence[str],
+        identity_associations: Sequence[IdentityAssociationV4] = (),
+        identity_evidence: Sequence[IdentityEvidenceObservationV4] = (),
     ) -> OfficialLinkVerificationReportV4:
         statuses = [
             component.status
@@ -1100,6 +1531,7 @@ class OfficialLinkVerificationCoordinator:
             overall = VerificationStatusV4.UNVERIFIED
             reason = "applicable_evidence_insufficient"
         return OfficialLinkVerificationReportV4(
+            schema_version="official-link-verification-v2",
             intent=intent.contract,
             publisher_verification=publisher,
             claim_verification=claim,
@@ -1109,6 +1541,9 @@ class OfficialLinkVerificationCoordinator:
             source_refs=list(sources)[:20],
             link_refs=list(links)[:50],
             limitations=_unique(list(limitations))[:50],
+            identity_associations=list(identity_associations)[:20],
+            identity_evidence=list(identity_evidence)[:50],
+            policy_version="official-link-verification-v2",
         )
 
     @staticmethod
@@ -1123,6 +1558,14 @@ class OfficialLinkVerificationCoordinator:
         source_ids = {source.source_ref for source in report.source_refs}
         if any(link.source_ref not in source_ids for link in report.link_refs):
             raise ValueError("official link reference cites an unavailable source")
+        identity_refs = {item.evidence_ref for item in report.identity_evidence}
+        cited_identity_refs = {
+            evidence_ref
+            for association in report.identity_associations
+            for evidence_ref in association.evidence_refs
+        }
+        if cited_identity_refs - identity_refs:
+            raise ValueError("identity association evidence-reference closure failed")
 
 
 __all__ = [
