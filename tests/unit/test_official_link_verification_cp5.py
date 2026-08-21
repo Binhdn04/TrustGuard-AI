@@ -386,9 +386,7 @@ async def test_extract_returns_bounded_normalized_document_without_serializing_r
 
 
 def test_missing_tavily_keeps_local_registry_path_available() -> None:
-    bundle = build_official_verification_providers(
-        SimpleNamespace(tavily_api_key="", provider_timeout_seconds=5)
-    )
+    bundle = build_official_verification_providers(SimpleNamespace(tavily_api_key="", provider_timeout_seconds=5))
 
     assert bundle.search is None
     assert bundle.extract is None

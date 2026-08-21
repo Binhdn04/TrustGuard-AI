@@ -89,9 +89,7 @@ def test_ai_priority_deduplicates_allowlisted_ordered_and_requested_hints() -> N
         scoped.security_context,
         external_url_lookup=request.consent.external_url_lookup,
     )
-    reputation_id = next(
-        step.step_id for step in plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION
-    )
+    reputation_id = next(step.step_id for step in plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION)
 
     prioritized = apply_plan_priority(
         plan,
@@ -138,7 +136,9 @@ async def test_ai_cannot_skip_a_runnable_investigation_candidate() -> None:
 
     result = await service.investigate(request, scoped)
 
-    reputation = next(step for step in result.investigation_plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION)
+    reputation = next(
+        step for step in result.investigation_plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION
+    )
     assert reputation.status_reason == "not_configured"
     assert all(step.status_reason != "ai_priority_skip" for step in result.investigation_plan)
     assert any("deterministic plan" in limitation for limitation in result.limitations)

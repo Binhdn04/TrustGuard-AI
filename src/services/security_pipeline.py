@@ -163,8 +163,7 @@ class SecurityTriagePipeline:
     @property
     def _risk_v3_enforced(self) -> bool:
         return bool(
-            self._official_verification_rollout is not None
-            and self._official_verification_rollout.risk_v3_enforced
+            self._official_verification_rollout is not None and self._official_verification_rollout.risk_v3_enforced
         )
 
     async def _resolve_investigation(self) -> SecurityInvestigationService:

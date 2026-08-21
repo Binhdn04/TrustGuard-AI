@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -11,6 +12,7 @@ from src.agents.nodes.planning import step_id_for
 from src.agents.nodes.rules import normalize_url
 from src.models import (
     BrandRecordV4,
+    EntityUrlRelationshipV4,
     InvestigationStepV4,
     OfficialIdentityMatchScopeV4,
     SecurityEvidenceTypeV4,
@@ -35,6 +37,10 @@ _EMAIL_RE = re.compile(r"(?<![\w.+-])([\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![
 class SecurityTrustRepository(Protocol):
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]: ...
     async def list_active_whitelist(self, at: datetime) -> list[WhitelistRecordV4]: ...
+
+
+class ReviewedSourceIdentityRegistry(Protocol):
+    def matching_entries(self, url: str, at: datetime) -> Sequence[object]: ...
 
 
 def _fold(value: str) -> str:
@@ -112,7 +118,52 @@ def _brand_for_message(
     return resolution.brand if resolution.status is BrandResolutionStatus.RESOLVED else None
 
 
+def _target_owner(
+    url: str,
+    brands: list[BrandRecordV4],
+    observed_at: datetime,
+    source_registry: ReviewedSourceIdentityRegistry | None,
+) -> tuple[str, str] | None:
+    host = (urlsplit(url).hostname or "").casefold().rstrip(".")
+    brand_owners: dict[str, tuple[str, str]] = {}
+    for brand in brands:
+        for identity in runtime_official_identities(brand, observed_at):
+            candidate = canonical_whitelist_url(identity.canonical_value)
+            identity_host = (urlsplit(candidate or f"//{identity.canonical_value}").hostname or "").casefold()
+            matched = (
+                identity.match_scope is OfficialIdentityMatchScopeV4.HOST_AND_SUBDOMAINS
+                and _is_domain_or_subdomain(host, identity_host)
+            ) or (
+                identity.match_scope is OfficialIdentityMatchScopeV4.EXACT and candidate == canonical_whitelist_url(url)
+            )
+            if matched:
+                brand_owners[_fold(brand.name)] = (brand.name, f"brand:{brand.brand_id}:{brand.policy_version}")
+    if len(brand_owners) == 1:
+        return next(iter(brand_owners.values()))
+    if len(brand_owners) > 1:
+        return None
+    source_owners: dict[str, tuple[str, str]] = {}
+    if source_registry is not None:
+        for entry in source_registry.matching_entries(url, observed_at):
+            pattern = getattr(entry, "normalized_pattern", "")
+            publisher = getattr(entry, "publisher", "")
+            if (
+                publisher
+                and pattern
+                and not pattern.startswith("*.")
+                and not getattr(entry, "explicit_deny", False)
+                and pattern.casefold().rstrip(".") == host
+            ):
+                source_id = getattr(entry, "source_id", "reviewed")
+                policy = getattr(entry, "policy_version", "source-registry")
+                source_owners[_fold(publisher)] = (publisher, f"source:{source_id}:{policy}")
+    return next(iter(source_owners.values())) if len(source_owners) == 1 else None
+
+
 class BrandMatcher:
+    def __init__(self, source_registry: ReviewedSourceIdentityRegistry | None = None) -> None:
+        self._source_registry = source_registry
+
     def match(
         self,
         request: SecurityTriageCreateRequestV4,
@@ -124,7 +175,8 @@ class BrandMatcher:
         if context is None:
             return None, []
         brand = _brand_for_message(request.message, context.claimed_entity, brands, observed_at)
-        if brand is None:
+        claims_by_index = {item.url_index: item for item in context.entity_url_claims}
+        if brand is None and not claims_by_index:
             if not context.claimed_entity:
                 return None, []
             evidence = []
@@ -136,8 +188,9 @@ class BrandMatcher:
                         "brand-registry",
                         "claimed_identity_unverified",
                         (
-                            f"Không có reviewed identity để xác nhận domain {host} thuộc tổ chức "
-                            f"{context.claimed_entity}."
+                            f"Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ "
+                            f"giữa URL trên {host} và tổ chức {context.claimed_entity}; domain có thể là nền "
+                            "tảng bên thứ ba và không được mặc định là tài sản của tổ chức."
                         ),
                         observed_at,
                         target=host,
@@ -147,8 +200,8 @@ class BrandMatcher:
                 )
             return None, evidence
         evidence: list[SecurityEvidenceV4] = []
-        provenance = f"brand:{brand.brand_id}:{brand.policy_version}"
-        identities = runtime_official_identities(brand, observed_at)
+        provenance = f"brand:{brand.brand_id}:{brand.policy_version}" if brand else "brand-registry:unresolved"
+        identities = runtime_official_identities(brand, observed_at) if brand else ()
         official_domains = {
             item.canonical_value
             for item in identities
@@ -157,16 +210,37 @@ class BrandMatcher:
         exact_urls = {
             canonical_whitelist_url(item.canonical_value)
             for item in identities
-            if item.match_scope is OfficialIdentityMatchScopeV4.EXACT
-            and "://" in item.canonical_value
+            if item.match_scope is OfficialIdentityMatchScopeV4.EXACT and "://" in item.canonical_value
         }
-        for url in context.urls:
+        for url_index, url in enumerate(context.urls):
             host = (urlsplit(url).hostname or "").casefold()
             exact_url = canonical_whitelist_url(url)
-            if exact_url in exact_urls or any(
-                _is_domain_or_subdomain(host, official) for official in official_domains
-            ):
+            claim = claims_by_index.get(url_index)
+            owner = _target_owner(url, brands, observed_at, self._source_registry) if claim else None
+            evidence_provenance = provenance
+            if context.claimed_entity and claim is None:
+                evidence.append(
+                    _evidence(
+                        SecurityEvidenceTypeV4.BRAND_MATCH,
+                        "local-entity-linker",
+                        "entity_url_relation_unresolved",
+                        (
+                            f"Nội dung có nhắc {context.claimed_entity} và domain {host}, nhưng chưa có "
+                            "quan hệ entity-URL được grounded."
+                        ),
+                        observed_at,
+                        target=host,
+                        confidence=0.5,
+                        provenance_ref="local-entity-linker:v1",
+                    )
+                )
+            if claim and claim.relationship is EntityUrlRelationshipV4.REFERENCE_ONLY:
+                continue
+            if exact_url in exact_urls or any(_is_domain_or_subdomain(host, official) for official in official_domains):
                 signal, confidence = "official_match", 1.0
+            elif claim and owner is not None and _fold(claim.entity_name) != _fold(owner[0]):
+                signal, confidence = "entity_target_mismatch", 1.0
+                evidence_provenance = f"{provenance}|{owner[1]}"
             elif host.startswith("xn--") or ".xn--" in host:
                 signal, confidence = "homograph_domain", 0.9
             elif any(
@@ -175,21 +249,28 @@ class BrandMatcher:
                 for official in official_domains
             ):
                 signal, confidence = "lookalike_domain", 0.85
-            else:
+            elif brand is not None:
                 signal, confidence = "domain_mismatch", 0.7
+            else:
+                signal, confidence = "entity_target_unverified", 0.5
             evidence.append(
                 _evidence(
                     SecurityEvidenceTypeV4.BRAND_MATCH,
                     "brand-registry",
                     signal,
-                    f"Domain được đối chiếu với registry của {brand.name}; kết quả={signal}.",
+                    (
+                        f"Domain thuộc reviewed identity của {owner[0]} nhưng nội dung gắn domain với "
+                        f"{claim.entity_name}; kết quả={signal}."
+                        if signal == "entity_target_mismatch" and owner is not None and claim is not None
+                        else f"Domain được đối chiếu với registry của {brand.name if brand else context.claimed_entity}; kết quả={signal}."
+                    ),
                     observed_at,
                     target=host,
                     confidence=confidence,
-                    provenance_ref=provenance,
+                    provenance_ref=evidence_provenance,
                 )
             )
-        official_contacts = {_fold(item) for item in brand.official_contacts}
+        official_contacts = {_fold(item) for item in brand.official_contacts} if brand else set()
         for contact in _EMAIL_RE.findall(request.message):
             digest_target = f"contact:{hashlib.sha256(contact.casefold().encode()).hexdigest()[:16]}"
             signal = "official_contact_match" if _fold(contact) in official_contacts else "contact_mismatch"
@@ -198,7 +279,7 @@ class BrandMatcher:
                     SecurityEvidenceTypeV4.BRAND_MATCH,
                     "brand-registry",
                     signal,
-                    f"Contact được đối chiếu với registry của {brand.name}; kết quả={signal}.",
+                    f"Contact được đối chiếu với registry của {brand.name if brand else context.claimed_entity}; kết quả={signal}.",
                     observed_at,
                     target=digest_target,
                     confidence=1.0 if signal == "official_contact_match" else 0.7,
@@ -214,10 +295,11 @@ class SecurityTrustService:
         repository: SecurityTrustRepository,
         *,
         matcher: BrandMatcher | None = None,
+        source_registry: ReviewedSourceIdentityRegistry | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._repository = repository
-        self._matcher = matcher or BrandMatcher()
+        self._matcher = matcher or BrandMatcher(source_registry)
         self._clock = clock
 
     async def enrich(
@@ -284,12 +366,21 @@ class SecurityTrustService:
         payload = scope.model_dump()
         payload["evidence"] = list({item.evidence_ref: item for item in [*scope.evidence, *evidence]}.values())
         payload["investigation_plan"] = plan
-        if any(item.signal == "claimed_identity_unverified" for item in evidence):
+        limitation_messages: list[str] = []
+        if any(item.signal in {"claimed_identity_unverified", "entity_target_unverified"} for item in evidence):
+            limitation_messages.append(
+                "Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ giữa URL và tổ chức."
+            )
+        if any(item.signal == "entity_url_relation_unresolved" for item in evidence):
+            limitation_messages.append(
+                "Chưa xác nhận được quan hệ giữa domain và tổ chức được nhắc đến trong nội dung."
+            )
+        if limitation_messages:
             payload["limitations"] = list(
                 dict.fromkeys(
                     [
                         *scope.limitations,
-                        "Không có reviewed identity để xác nhận domain thuộc tổ chức được nhắc đến.",
+                        *limitation_messages,
                     ]
                 )
             )

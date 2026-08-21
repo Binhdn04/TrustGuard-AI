@@ -13,6 +13,7 @@ from src.security_ai.runtime import TurnExecutionContext
 from src.services.official_verification_coordinator import (
     OfficialLinkVerificationCoordinator,
     OfficialVerificationCoordinatorOutcome,
+    apply_official_verification_outcome,
 )
 
 
@@ -151,13 +152,7 @@ class OfficialVerificationRolloutStage:
         )
         if self.mode is OfficialVerificationMode.SHADOW or report is None:
             return scope
-        return scope.model_copy(
-            update={
-                "official_verification": report,
-                "limitations": list(dict.fromkeys([*scope.limitations, *outcome.limitations])),
-                "tool_calls_used": scope.tool_calls_used + outcome.adapter_attempts,
-            }
-        )
+        return apply_official_verification_outcome(scope, outcome)
 
     def _record(
         self,

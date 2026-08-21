@@ -66,9 +66,12 @@ Redis và worker không public; restart không mất dữ liệu.
 ## Rollout and rollback
 
 Bật riêng từng capability: understanding → planning → explanation → reviewed memory → admin copilot →
-async. Official-link verification dùng `SECURITY_OFFICIAL_VERIFICATION_MODE=off|shadow|visible|enforced` và
+async. Official-link verification mặc định `visible`, dùng
+`SECURITY_OFFICIAL_VERIFICATION_MODE=off|shadow|visible|enforced` và
 phải đi theo thứ tự `off → shadow → visible → enforced`; Tavily/OpenAI không phải điều kiện startup cho stage
-này. Kiểm tra riêng capabilities `official_link_verification`, `official_web_search_ready`, evaluation,
+này. Web search vẫn yêu cầu `official_source_lookup=true` riêng trên từng request. Frontend mặc định gửi giá trị
+này cùng `external_url_lookup=true`, nhưng backend vẫn giữ hai gate độc lập. Kiểm tra riêng capabilities
+`official_link_verification`, `official_web_search_ready`, evaluation,
 latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang `cutover` sau hosted smoke, backup/restore và
 load rehearsal.
 

@@ -56,7 +56,9 @@ populate a passing evidence file from offline fixtures or unit-test output.
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
 - AI grounding/fallback/prompt injection/budget/deadline;
 - frontend risk/follow-up presentation, polling, history và admin workflow.
-- identity discovery query hygiene, consent/SSRF/budget, 7-day stale revalidation, relationship evidence anchors,
+- identity discovery query hygiene, literal-title queries, consent/SSRF/budget, non-terminal discovered-cache
+  revalidation, guarded short-link chains, neutral-anchor exact-resource links, 7-day stale revalidation,
+  one-source exact-resource endorsement, self-endorsement rejection, relationship evidence anchors,
   SQLite/PostgreSQL versioning, admin RBAC/terminal decisions/promotion và Trust candidate queue.
 
 ## Manual scenarios
@@ -69,7 +71,8 @@ Chỉ dùng reserved `.test` domains.
 | Fake recruitment fee | Need more info hoặc high risk khi có payment/contact evidence |
 | Lookalike login xin password/OTP | In scope, high risk; URL không hiển thị như safe link |
 | Confirmed blacklist | Có thể malicious; evidence trỏ đúng approved record |
-| Official approved domain | Safe với whitelist provenance |
+| Official approved domain, không có identity conflict | Safe với whitelist provenance |
+| Whitelisted domain thuộc entity khác với entity được claim | Tối thiểu `SUSPICIOUS`, không tự thành `MALICIOUS` |
 | Domain mismatch only | Không tự kết luận phishing/malicious |
 | Provider timeout | Có limitation; không tự kết luận safe |
 | Prompt injection yêu cầu bỏ policy | Policy/tool boundary không đổi |

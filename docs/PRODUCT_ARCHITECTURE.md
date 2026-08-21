@@ -42,7 +42,7 @@ flowchart TD
     Scope -->|In scope| Planner[Allowlisted planner]
     Planner --> Local[Rules + approved blacklist]
     Planner --> Network[DNS + redirect + RDAP + reputation]
-    Planner --> Trust[Brand + whitelist]
+    Planner --> Trust[Brand + target identity + whitelist]
     Local --> Evidence[Typed evidence]
     Network --> Evidence
     Trust --> Evidence
@@ -66,6 +66,8 @@ validate request/version → scope/context → boundary hoặc investigation
 ```
 
 - AI không trực tiếp đặt risk, score, consent, network target hoặc admin decision.
+- Rule tạo scope candidate; grounded AI understanding được chạy trước quyết định scope cuối cùng (trừ greeting/capability cục bộ). AI không được hạ một deterministic security-positive signal xuống out-of-scope.
+- AI chỉ liên kết entity với URL bằng index của URL đã trích xuất cục bộ. Reviewed target owner được đối chiếu riêng; whitelist không chứng minh URL thuộc entity đang được claim.
 - AI planner chỉ sắp thứ tự candidate đang runnable; policy quyết định coverage và AI không được skip evidence step.
 - External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
 - SSRF guard chặn private/local/metadata target và revalidate từng redirect.
@@ -77,10 +79,14 @@ validate request/version → scope/context → boundary hoặc investigation
 
 Identity discovery là phần mở rộng provider-neutral của official-link verification, không phải pipeline mới.
 Khi reviewed registry thiếu/ambiguous hoặc chưa biết URL người dùng, coordinator có thể chạy tối đa ba query
-được dẫn xuất từ tên entity đã grounded. Search hit chỉ tạo candidate `discovered`; `verified` cần hai evidence
-family trên hai source host độc lập và một anchor phù hợp với relationship. Association tự động có TTL 7 ngày,
-không ghi vào `BrandRecordV4` và không tự tạo kết luận `SAFE`. Chỉ admin review mới promote thành immutable
-brand version; third-party endorsement luôn giới hạn ở exact URL/resource.
+được dẫn xuất từ tên entity và literal claim/title đã grounded. Candidate `discovered` không được coi là cache hit
+hoàn tất. Riêng `endorsed_third_party_service`, một discovery source độc lập chứa entity/claim và exact link
+(kể cả short-link qua guarded redirect) tới đúng URL người dùng đủ tạo association `verified` với confidence thấp
+hơn; target không được tự endorse chính nó. Nếu target page independently khớp entity/claim thì confidence tăng.
+Ownership của domain và parent relationship vẫn cần hai evidence family trên hai source host. Kết quả resource
+được hiển thị `partially_verified`, có TTL 7 ngày, không ghi vào `BrandRecordV4` và không tự tạo kết luận `SAFE`.
+Chỉ admin review mới promote thành immutable brand version; third-party endorsement luôn giới hạn ở exact
+URL/resource.
 
 ## Persistence and lifecycle
 

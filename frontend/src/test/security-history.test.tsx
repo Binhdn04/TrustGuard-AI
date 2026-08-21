@@ -136,7 +136,7 @@ describe("FE5 case detail and resume", () => {
       message: "Họ vừa yêu cầu gửi OTP",
       conversation_id: analysis.conversation_id,
       conversation_version: 3,
-      consent: { external_url_lookup: true },
+      consent: { external_url_lookup: true, official_source_lookup: true },
     }));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(`/cases/${next.analysis_id}`));
   });

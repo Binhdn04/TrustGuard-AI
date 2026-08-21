@@ -388,9 +388,7 @@ def evaluate_set(cases: list[SecurityEvaluationCase]) -> dict[str, object]:
         "unnecessary_provider_call_rate": _ratio(unnecessary_calls, total_provider_calls),
         "mean_latency_ms": round(fmean(item.latency_ms for item in results), 3),
         "p95_latency_ms": round(_percentile([item.latency_ms for item in results], 0.95), 3),
-        "p95_estimated_cost_usd": round(
-            _percentile([item.estimated_cost_usd for item in results], 0.95), 6
-        ),
+        "p95_estimated_cost_usd": round(_percentile([item.estimated_cost_usd for item in results], 0.95), 6),
         "total_estimated_cost_usd": round(sum(item.estimated_cost_usd for item in results), 6),
     }
     gates = {
@@ -406,8 +404,7 @@ def evaluate_set(cases: list[SecurityEvaluationCase]) -> dict[str, object]:
             metrics["false_positive_rate"] <= RELEASE_BASELINE["false_positive_rate"]
         ),
         "unnecessary_provider_call_rate": (
-            metrics["unnecessary_provider_call_rate"]
-            <= RELEASE_BASELINE["unnecessary_provider_call_rate"]
+            metrics["unnecessary_provider_call_rate"] <= RELEASE_BASELINE["unnecessary_provider_call_rate"]
         ),
         "p95_latency_ms": metrics["p95_latency_ms"] <= 15_000,
         "p95_estimated_cost_usd": metrics["p95_estimated_cost_usd"] <= 0.05,

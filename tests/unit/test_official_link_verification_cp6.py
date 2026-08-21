@@ -195,6 +195,39 @@ def test_html_extraction_is_bounded_to_fifty_unique_links() -> None:
     assert result.links[-1].canonical_url.endswith("/resource/49")
 
 
+def test_reviewed_linkedin_organization_profile_accepts_only_its_own_posts() -> None:
+    identity = _url_identity("https://www.linkedin.com/school/tsinghua-university/")
+    post = "https://www.linkedin.com/posts/tsinghua-university_ai-highereducation-activity-7484925098416566273-RLNz"
+
+    accepted = OfficialHtmlLinkExtractor().extract(
+        _html_document(
+            "<article><a href='https://bit.ly/4phgUu7'>Apply</a></article>",
+            final_url=post,
+        ),
+        accepted_identities=[identity],
+    )
+    prefixed_spoof = OfficialHtmlLinkExtractor().extract(
+        _html_document(
+            "<article><a href='https://attacker.example'>Apply</a></article>",
+            final_url="https://www.linkedin.com/posts/tsinghua-university-fake_ai-activity-1",
+        ),
+        accepted_identities=[identity],
+    )
+    unrelated = OfficialHtmlLinkExtractor().extract(
+        _html_document(
+            "<article><a href='https://attacker.example'>Apply</a></article>",
+            final_url="https://www.linkedin.com/posts/unrelated_ai-activity-1",
+        ),
+        accepted_identities=[identity],
+    )
+
+    assert accepted.identity_assessment.status is FinalPageIdentityStatus.ACCEPTED
+    assert accepted.identity_assessment.reason_code == "reviewed_social_publisher_post"
+    assert accepted.links[0].canonical_url == "https://bit.ly/4phgUu7"
+    assert prefixed_spoof.identity_assessment.status is FinalPageIdentityStatus.REJECTED
+    assert unrelated.identity_assessment.status is FinalPageIdentityStatus.REJECTED
+
+
 def test_linkedin_bitly_forms_gle_google_forms_chain_matches_by_provider_id() -> None:
     linkedin = "https://www.linkedin.com/company/example-university/"
     extracted = OfficialHtmlLinkExtractor().extract(

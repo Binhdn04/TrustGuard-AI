@@ -23,6 +23,7 @@ SECURITY_CONTEXT_VERSION = SECURITY_CONTEXT_VERSION_V2
 SECURITY_RISK_POLICY_VERSION = "security-risk-v1"
 SECURITY_RISK_POLICY_VERSION_V2 = "security-risk-v2"
 SECURITY_RISK_POLICY_VERSION_V3 = "security-risk-v3"
+SECURITY_RISK_POLICY_VERSION_V4 = "security-risk-v4"
 SECURITY_UNDERSTANDING_VERSION_V1 = "security-understanding-v1"
 SECURITY_UNDERSTANDING_VERSION_V2 = "security-understanding-v2"
 SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
@@ -84,6 +85,19 @@ class RequestedActionV4(StrEnum):
     SUBMIT_FORM = "submit_form"
     REGISTER_OR_APPLY = "register_or_apply"
     DOWNLOAD_FILE = "download_file"
+
+
+class EntityUrlRelationshipV4(StrEnum):
+    CLAIMED_OFFICIAL_SITE = "claimed_official_site"
+    CLAIMED_ENDORSED_SERVICE = "claimed_endorsed_service"
+    REFERENCE_ONLY = "reference_only"
+
+
+class EntityUrlClaimV4(SecurityContractModel):
+    entity_name: str = Field(min_length=1, max_length=200)
+    url_index: int = Field(ge=0, lt=10)
+    relationship: EntityUrlRelationshipV4
+    confidence: float = Field(ge=0.8, le=1)
 
 
 class VerificationTopicV4(StrEnum):
@@ -518,7 +532,9 @@ class ResourceVerificationV4(OfficialVerificationComponentV4):
 
 
 class OfficialLinkVerificationReportV4(SecurityContractModel):
-    schema_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
+    schema_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = (
+        OFFICIAL_LINK_VERIFICATION_VERSION_V1
+    )
     intent: VerificationIntentV4
     publisher_verification: PublisherVerificationV4
     claim_verification: ClaimVerificationV4
@@ -530,7 +546,9 @@ class OfficialLinkVerificationReportV4(SecurityContractModel):
     limitations: list[str] = Field(default_factory=list, max_length=50)
     identity_associations: list[IdentityAssociationV4] = Field(default_factory=list, max_length=20)
     identity_evidence: list[IdentityEvidenceObservationV4] = Field(default_factory=list, max_length=50)
-    policy_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
+    policy_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = (
+        OFFICIAL_LINK_VERIFICATION_VERSION_V1
+    )
 
 
 class IdentityCandidateV4(IdentityAssociationV4):
@@ -603,10 +621,7 @@ class BrandCreateRequestV4(SecurityContractModel):
         if not self.official_domains and not any(
             item.lifecycle is TrustLifecycleV4.ACTIVE
             and (item.effective_until is None or item.effective_until > self.effective_from)
-            and (
-                self.effective_until is None
-                or (item.effective_from or self.effective_from) < self.effective_until
-            )
+            and (self.effective_until is None or (item.effective_from or self.effective_from) < self.effective_until)
             for item in self.official_identities
         ):
             raise ValueError("a brand requires an official domain or an active official identity")
@@ -702,6 +717,7 @@ class SecurityContextV4(SecurityContractModel):
     payment_request: bool
     personal_information_request: bool
     impersonation_signals: list[str] = Field(default_factory=list, max_length=10)
+    entity_url_claims: list[EntityUrlClaimV4] = Field(default_factory=list, max_length=10)
     potential_threat: PotentialThreatV4
 
 
@@ -729,9 +745,9 @@ class AssistantContextV4(SecurityContractModel):
     )
     source_spans: list[AssistantSourceSpanV4] = Field(default_factory=list, max_length=50)
     derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
-    understanding_version: Literal[
-        "security-understanding-v1", "security-understanding-v2"
-    ] = SECURITY_UNDERSTANDING_VERSION
+    understanding_version: Literal["security-understanding-v1", "security-understanding-v2"] = (
+        SECURITY_UNDERSTANDING_VERSION
+    )
     model_version: str = Field(min_length=1, max_length=200)
 
 
@@ -801,7 +817,9 @@ class SecurityScopeResponseV4(SecurityContractModel):
     score: int | None = Field(default=None, ge=0, le=100)
     confidence: float | None = Field(default=None, ge=0, le=1)
     threat_type: PotentialThreatV4 | None = None
-    policy_version: Literal["security-risk-v1", "security-risk-v2", "security-risk-v3"] | None = None
+    policy_version: Literal["security-risk-v1", "security-risk-v2", "security-risk-v3", "security-risk-v4"] | None = (
+        None
+    )
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -1321,6 +1339,7 @@ __all__ = [
     "SECURITY_RISK_POLICY_VERSION",
     "SECURITY_RISK_POLICY_VERSION_V2",
     "SECURITY_RISK_POLICY_VERSION_V3",
+    "SECURITY_RISK_POLICY_VERSION_V4",
     "SECURITY_UNDERSTANDING_VERSION",
     "SECURITY_UNDERSTANDING_VERSION_V1",
     "SECURITY_UNDERSTANDING_VERSION_V2",
@@ -1355,6 +1374,8 @@ __all__ = [
     "OfficialVerificationComponentV4",
     "PublisherVerificationV4",
     "RequestedActionV4",
+    "EntityUrlRelationshipV4",
+    "EntityUrlClaimV4",
     "ResourceIdentityV4",
     "ResourceMatchStatusV4",
     "ResourceMatchV4",

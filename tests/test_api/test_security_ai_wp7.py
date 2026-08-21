@@ -17,7 +17,9 @@ USER = {"Authorization": "Bearer dev-user-token"}
 
 
 class _Copilot:
-    def __init__(self): self.calls = []
+    def __init__(self):
+        self.calls = []
+
     async def suggest(self, analysis_id, principal, *, refresh=False):
         self.calls.append((analysis_id, principal.user_id, refresh))
         return SecurityAdminCopilotResponseV4(
@@ -34,13 +36,18 @@ class _Copilot:
 @pytest.mark.asyncio
 async def test_admin_copilot_endpoint_is_admin_only_and_additive(client) -> None:
     service, analysis_id = _Copilot(), uuid4()
+
     async def override_copilot():
         return service
 
     app.dependency_overrides[get_security_admin_copilot_service] = override_copilot
     try:
-        denied = await client.post(f"/api/v4/admin/analyses/{analysis_id}/copilot", headers=USER, json={"refresh": False})
-        allowed = await client.post(f"/api/v4/admin/analyses/{analysis_id}/copilot", headers=ADMIN, json={"refresh": True})
+        denied = await client.post(
+            f"/api/v4/admin/analyses/{analysis_id}/copilot", headers=USER, json={"refresh": False}
+        )
+        allowed = await client.post(
+            f"/api/v4/admin/analyses/{analysis_id}/copilot", headers=ADMIN, json={"refresh": True}
+        )
     finally:
         app.dependency_overrides.pop(get_security_admin_copilot_service, None)
     assert denied.status_code == 403
@@ -52,7 +59,9 @@ async def test_admin_copilot_endpoint_is_admin_only_and_additive(client) -> None
 def test_openapi_exposes_typed_admin_copilot() -> None:
     document = app.openapi()
     operation = document["paths"]["/api/v4/admin/analyses/{analysis_id}/copilot"]["post"]
-    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("SecurityAdminCopilotResponseV4")
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "SecurityAdminCopilotResponseV4"
+    )
 
 
 @pytest.mark.asyncio
@@ -65,6 +74,7 @@ async def test_admin_copilot_has_a_dedicated_refresh_rate_limit(client, monkeypa
 
     service, analysis_id = _Copilot(), uuid4()
     monkeypatch.setattr("src.api.security_v4.get_rate_limiter", lambda: _DeniedLimiter())
+
     async def override_copilot():
         return service
 

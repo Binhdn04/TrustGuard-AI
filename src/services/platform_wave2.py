@@ -312,6 +312,7 @@ class Wave2Repository(Protocol):
 
     async def operations_metrics(self, started_at: datetime, ended_at: datetime) -> OperationsMetricsResponseV3: ...
 
+
 @dataclass(slots=True)
 class _MemoryAppeal:
     owner_id: str
@@ -540,6 +541,31 @@ def default_source_policies() -> list[SourceRegistryEntry]:
             )
         )
     for publisher, domain, source_type in vietnam_tier_b:
+        if (
+            source_type
+            in {
+                "academic_institution",
+                "financial_institution",
+                "healthcare_provider",
+                "official_enterprise",
+            }
+            and domain not in existing_patterns
+        ):
+            existing_patterns.add(domain)
+            policies.append(
+                SourceRegistryEntry(
+                    publisher=publisher,
+                    normalized_pattern=domain,
+                    tier=SourceTier.B,
+                    source_type=source_type,
+                    allowed_operations={"search", "read", "compare"},
+                    policy_version="source-policy-vietnam-identity-v1",
+                    effective_from=reviewed_at,
+                    default_freshness_seconds=21600,
+                    reviewer_id="system-bootstrap",
+                    reviewed_at=reviewed_at,
+                )
+            )
         pattern = f"*.{domain}"
         if pattern in existing_patterns:
             continue
@@ -1371,6 +1397,7 @@ class Wave2PlatformService:
     async def list_sources(self, at: datetime | None = None) -> list[SourceRegistryEntry]:
         policies = await self.repository.load_source_policies(at or datetime.now(UTC))  # type: ignore[attr-defined]
         return effective_source_policies(policies)
+
 
 def _hostname_matches(hostname: str, pattern: str) -> bool:
     if pattern.startswith("*."):

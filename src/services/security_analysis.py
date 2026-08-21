@@ -260,9 +260,7 @@ class SecurityAnalysisService:
                 # response, while the conversation summary below keeps it for
                 # the next genuine security turn.
                 "security_context": (
-                    None
-                    if response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
-                    else merged
+                    None if response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK else merged
                 ),
                 "assistant_context": assistant_context,
             }
@@ -403,9 +401,7 @@ class SecurityAnalysisService:
     @staticmethod
     def _provisional_risk_hint(response: SecurityScopeResponseV4) -> SecurityRiskV4:
         context = response.security_context
-        if context is not None and (
-            context.credential_request or context.otp_request or context.payment_request
-        ):
+        if context is not None and (context.credential_request or context.otp_request or context.payment_request):
             return SecurityRiskV4.HIGH_RISK
         return SecurityRiskV4.SUSPICIOUS
 

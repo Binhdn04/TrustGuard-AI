@@ -8,6 +8,7 @@ from src.models import (
     SECURITY_RISK_POLICY_VERSION,
     SECURITY_RISK_POLICY_VERSION_V2,
     SECURITY_RISK_POLICY_VERSION_V3,
+    SECURITY_RISK_POLICY_VERSION_V4,
     ExposureStateV4,
     IdentityAssociationAssuranceV4,
     PotentialThreatV4,
@@ -81,9 +82,7 @@ def _target_matches(reviewed_target: str | None, weak_target: str | None) -> boo
     if weak_target is None:
         return False
     hostname = urlsplit(weak_target if "://" in weak_target else f"//{weak_target}").hostname
-    reviewed_hostname = urlsplit(
-        reviewed_target if "://" in reviewed_target else f"//{reviewed_target}"
-    ).hostname
+    reviewed_hostname = urlsplit(reviewed_target if "://" in reviewed_target else f"//{reviewed_target}").hostname
     candidate = (hostname or weak_target).casefold().rstrip(".")
     reviewed = (reviewed_hostname or reviewed_target).casefold().rstrip(".")
     return candidate == reviewed or candidate.endswith(f".{reviewed}")
@@ -154,11 +153,7 @@ def _association_is_unverified_target(scope: SecurityScopeResponseV4, evidence: 
 
 def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     report = scope.official_verification
-    if (
-        report is None
-        or report.overall_status is not VerificationStatusV4.VERIFIED
-        or report.identity_associations
-    ):
+    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED or report.identity_associations:
         return False
     applicable = [
         component
@@ -169,8 +164,10 @@ def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
         )
         if component.applicable
     ]
-    return bool(applicable) and not report.limitations and all(
-        component.status is VerificationStatusV4.VERIFIED for component in applicable
+    return (
+        bool(applicable)
+        and not report.limitations
+        and all(component.status is VerificationStatusV4.VERIFIED for component in applicable)
     )
 
 
@@ -184,10 +181,7 @@ def _has_sensitive_action(scope: SecurityScopeResponseV4) -> bool:
         or context.payment_request
         or context.personal_information_request
         or context.requested_action in _SENSITIVE_ACTIONS
-        or (
-            scope.assistant_context is not None
-            and scope.assistant_context.exposure_state in _INCIDENT_EXPOSURES
-        )
+        or (scope.assistant_context is not None and scope.assistant_context.exposure_state in _INCIDENT_EXPOSURES)
     )
 
 
@@ -311,7 +305,7 @@ def assess_security_risk(
         if signal_parts & _SAFE_SIGNALS:
             safe_refs.append(item.evidence_ref)
         points = max((_WEAK_SIGNAL_POINTS.get(signal, 0) for signal in signal_parts), default=0)
-        if has_whitelist and item.type.value in {"local_url_rule", "rdap", "brand_match"}:
+        if has_whitelist and item.type.value in {"local_url_rule", "rdap"}:
             points = 0
         if points and official_verification_enforced:
             if _official_can_suppress(scope, item):
@@ -353,8 +347,36 @@ def assess_security_risk(
             item.assurance is IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH
             for item in scope.official_verification.identity_associations
         )
+    identity_mismatch_evidence = next(
+        (item for item in scope.evidence if item.signal.casefold() == "entity_target_mismatch"),
+        None,
+    )
+    identity_confirmed_mismatch = identity_confirmed_mismatch or identity_mismatch_evidence is not None
+    identity_relation_unresolved = any(
+        item.signal.casefold()
+        in {
+            "claimed_identity_unverified",
+            "entity_target_unverified",
+            "entity_url_relation_unresolved",
+        }
+        for item in scope.evidence
+    )
+    claimed_url_indexes = {item.url_index for item in context.entity_url_claims}
+    identity_relation_unresolved = identity_relation_unresolved or bool(
+        context.claimed_entity
+        and context.urls
+        and set(range(len(context.urls))) - claimed_url_indexes
+        and not (official_verification_enforced and _complete_official_verification(scope))
+    )
+    ai_understanding_fallback = bool(
+        scope.assistant_context is not None
+        and scope.assistant_context.processing_mode.value == "fallback"
+        and (context.urls or context.claimed_entity or context.entity_url_claims)
+    )
     if identity_confirmed_mismatch:
-        contributions.append(_Contribution(40, context_ref))
+        contributions.append(
+            _Contribution(40, identity_mismatch_evidence.evidence_ref if identity_mismatch_evidence else context_ref)
+        )
     elif identity_conflicting:
         contributions.append(_Contribution(20, context_ref))
     if official_conflicting:
@@ -380,9 +402,20 @@ def assess_security_risk(
         and not strong_refs
         and not reviewed_risk_refs
         and not residual_official_mismatch
+        and not identity_confirmed_mismatch
+        and not identity_relation_unresolved
+        and not ai_understanding_fallback
     ):
         risk = SecurityRiskV4.SAFE
-    elif not official_verification_enforced and safe_refs and score == 0 and not scope.errors:
+    elif (
+        not official_verification_enforced
+        and safe_refs
+        and score == 0
+        and not scope.errors
+        and not identity_confirmed_mismatch
+        and not identity_relation_unresolved
+        and not ai_understanding_fallback
+    ):
         risk = SecurityRiskV4.SAFE
     else:
         risk = _risk_for_score(score)
@@ -419,7 +452,11 @@ def assess_security_risk(
         confidence += 0.15
     elif len({item.type for item in grounded}) > 1:
         confidence += 0.15
-    if (scope.errors or scope.limitations) and not (strong_refs or safe_refs):
+    if (
+        identity_relation_unresolved and risk not in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}
+    ) or ai_understanding_fallback:
+        confidence = min(confidence, 0.65)
+    elif (scope.errors or scope.limitations) and not (strong_refs or safe_refs):
         confidence = min(confidence, 0.65)
 
     payload = scope.model_dump()
@@ -433,9 +470,13 @@ def assess_security_risk(
         confidence=round(min(confidence, 0.95), 2),
         threat_type=context.potential_threat,
         policy_version=(
-            SECURITY_RISK_POLICY_VERSION_V3
-            if official_verification_enforced
-            else (SECURITY_RISK_POLICY_VERSION_V2 if memory_enabled else SECURITY_RISK_POLICY_VERSION)
+            SECURITY_RISK_POLICY_VERSION_V4
+            if context.entity_url_claims or identity_confirmed_mismatch or ai_understanding_fallback
+            else (
+                SECURITY_RISK_POLICY_VERSION_V3
+                if official_verification_enforced
+                else (SECURITY_RISK_POLICY_VERSION_V2 if memory_enabled else SECURITY_RISK_POLICY_VERSION)
+            )
         ),
         recommended_actions=_actions(scope, risk),
         explanation=_explanation(risk, grounded),

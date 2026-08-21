@@ -86,7 +86,7 @@ class _PassthroughStage:
         "Khóa học Python cơ bản",
     ],
 )
-async def test_deterministic_oos_has_zero_ai_provider_and_network_calls(message: str) -> None:
+async def test_nonlocal_oos_runs_only_semantic_scope_before_terminating(message: str) -> None:
     request = SecurityTriageCreateRequestV4(message=message)
     scoped = SecurityTriageScopeService().assess(request)
     model = _MustNotCallModel()
@@ -110,21 +110,25 @@ async def test_deterministic_oos_has_zero_ai_provider_and_network_calls(message:
 
     assert result.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
     assert result.tool_calls_used == 0
-    assert model.calls == 0
+    assert model.calls == 1
     assert resolved == []
 
 
 @pytest.mark.asyncio
 async def test_incident_exposure_short_circuits_before_investigation_and_trust() -> None:
     request = SecurityTriageCreateRequestV4(message="Tôi đã bấm link https://example.test/login")
-    scoped = SecurityTriageScopeService().assess(request).model_copy(
-        update={
-            "assistant_context": AssistantContextV4(
-                processing_mode=AssistantProcessingModeV4.RULES_ONLY,
-                exposure_state=ExposureStateV4.LINK_OPENED,
-                model_version="rules-only-v1",
-            )
-        }
+    scoped = (
+        SecurityTriageScopeService()
+        .assess(request)
+        .model_copy(
+            update={
+                "assistant_context": AssistantContextV4(
+                    processing_mode=AssistantProcessingModeV4.RULES_ONLY,
+                    exposure_state=ExposureStateV4.LINK_OPENED,
+                    model_version="rules-only-v1",
+                )
+            }
+        )
     )
     resolved: list[str] = []
 
@@ -232,6 +236,31 @@ def test_rule_intent_has_confidence_and_literal_spans_for_every_accepted_field()
     for field in (intent.organization, intent.claim, intent.action):
         assert field is not None and field.confidence >= 0.8
         assert all(message[span.start : span.end].strip() for span in field.source_spans)
+
+
+def test_quoted_program_title_is_used_as_bounded_literal_claim() -> None:
+    message = (
+        '[Online] Chương Trình Trải Nghiệm "Future Learning With AI" '
+        "Do Đại Học Thanh Hoa Tổ Chức 2026. Please visit https://example.test/apply to apply."
+    )
+    context = extract_security_context(message)
+
+    intent = build_grounded_verification_intent(message, context)
+
+    assert intent is not None and intent.claim is not None
+    assert intent.contract.claim_summary == "Future Learning With AI"
+    span = intent.claim.source_spans[0]
+    assert message[span.start : span.end] == "Future Learning With AI"
+
+
+def test_quoted_secret_like_value_cannot_become_a_persisted_claim() -> None:
+    message = 'ACME yêu cầu nhập "OTP 123456" tại https://example.test/login'
+    context = extract_security_context(message)
+
+    intent = build_grounded_verification_intent(message, context)
+
+    assert intent is not None
+    assert intent.contract.claim_summary is None
 
 
 def test_semantic_normalization_is_derived_and_not_misrepresented_as_source_text() -> None:
@@ -412,9 +441,7 @@ def test_query_builder_redacts_urls_emails_otps_credentials_and_tokens() -> None
         organization=organization,
         claim=claim,
         action=None,
-        derived_organizations=(
-            DerivedOrganizationName("ACME eyJabc1234567890.xyz1234567890", "configured_alias"),
-        ),
+        derived_organizations=(DerivedOrganizationName("ACME eyJabc1234567890.xyz1234567890", "configured_alias"),),
     )
 
     queries = OfficialVerificationQueryBuilder().build(intent)

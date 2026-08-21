@@ -59,7 +59,7 @@ async def test_capabilities_publish_truthful_pre_cutover_boundary(client) -> Non
 
 @pytest.mark.asyncio
 async def test_disabled_ai_flags_are_byte_compatible_with_legacy_capabilities(client, monkeypatch) -> None:
-    disabled_settings = Settings(_env_file=None)
+    disabled_settings = Settings(security_official_verification_mode="off", _env_file=None)
     monkeypatch.setattr(
         "src.api.security_v4.get_settings",
         lambda: disabled_settings,

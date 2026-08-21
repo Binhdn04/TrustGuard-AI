@@ -302,11 +302,7 @@ def apply_plan_priority(
             preferred_ids.append(step.step_id)
 
     active = set(preferred_ids)
-    if any(
-        dependency not in active
-        for step_id in active
-        for dependency in by_id[step_id].depends_on
-    ):
+    if any(dependency not in active for step_id in active for dependency in by_id[step_id].depends_on):
         return None
 
     active_ids: list[str] = []

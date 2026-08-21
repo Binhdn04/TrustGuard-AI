@@ -97,6 +97,7 @@ _GOOGLE_FORM_PATH_RE = re.compile(
 )
 _MICROSOFT_FORM_PATH_RE = re.compile(r"^/(?:r|e)/([^/?#]+)(?:/|$)", re.IGNORECASE)
 _REDIRECT_ONLY_HOSTS = frozenset({"bit.ly", "bitly.com", "forms.gle", "aka.ms"})
+_LINKEDIN_ORGANIZATION_PROFILE_KINDS = frozenset({"company", "school", "showcase"})
 _DIRECT_FALLBACK_LIMITATIONS = frozenset(
     {
         VerificationTransportLimitation.PROVIDER_TIMEOUT,
@@ -278,6 +279,43 @@ def _identity_url(identity: OfficialIdentityV4) -> VerificationUrl | None:
         return None
 
 
+def _reviewed_linkedin_publisher_post(
+    final_url: VerificationUrl,
+    identity: OfficialIdentityV4,
+) -> bool:
+    """Match a LinkedIn organization post to its exact reviewed account slug.
+
+    LinkedIn publishes organization posts under ``/posts/<account>_...`` rather
+    than below the reviewed ``/company|school|showcase/<account>`` profile URL.
+    The mapping stays platform- and account-scoped; it never trusts LinkedIn as
+    a whole or treats a similarly prefixed account as the reviewed publisher.
+    """
+    if identity.identity_type is not OfficialIdentityTypeV4.SOCIAL_PROFILE:
+        return False
+    identity_url = _identity_url(identity)
+    if identity_url is None:
+        return False
+    profile = urlsplit(identity_url.canonical_url)
+    final = urlsplit(final_url.canonical_url)
+    profile_host = (profile.hostname or "").casefold()
+    final_host = (final.hostname or "").casefold()
+    if not (
+        (profile_host == "linkedin.com" or profile_host.endswith(".linkedin.com"))
+        and (final_host == "linkedin.com" or final_host.endswith(".linkedin.com"))
+    ):
+        return False
+    profile_parts = [part.casefold() for part in profile.path.split("/") if part]
+    post_parts = [part.casefold() for part in final.path.split("/") if part]
+    if (
+        len(profile_parts) != 2
+        or profile_parts[0] not in _LINKEDIN_ORGANIZATION_PROFILE_KINDS
+        or len(post_parts) < 2
+        or post_parts[0] != "posts"
+    ):
+        return False
+    return post_parts[1].startswith(f"{profile_parts[1]}_")
+
+
 def assess_final_page_identity(
     final_url: str,
     accepted_identities: Sequence[OfficialIdentityV4],
@@ -317,6 +355,14 @@ def assess_final_page_identity(
                 final_display_url=normalized.display_url,
                 final_canonical_url=normalized.canonical_url,
                 reason_code="reviewed_exact_url_identity",
+                identity_id=str(identity.identity_id),
+            )
+        if _reviewed_linkedin_publisher_post(normalized, identity):
+            return FinalPageIdentityAssessment(
+                status=FinalPageIdentityStatus.ACCEPTED,
+                final_display_url=normalized.display_url,
+                final_canonical_url=normalized.canonical_url,
+                reason_code="reviewed_social_publisher_post",
                 identity_id=str(identity.identity_id),
             )
 

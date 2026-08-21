@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from src.security_ai.contracts import AssistantOperation, ModelResponse, StrictModel
 
 OutputT = TypeVar("OutputT", bound=StrictModel)
+logger = logging.getLogger("trustguard.security_ai")
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +143,7 @@ class SecurityAssistantRuntime:
             remaining_seconds = min(ai_remaining_seconds, execution_remaining_seconds)
             if remaining_seconds <= 0:
                 self._metric(operation, 0, "turn_deadline_exceeded", error="turn_deadline_exceeded")
+                self._log_fallback(operation, "turn_deadline_exceeded", attempt + 1)
                 return RuntimeResult(None, "fallback", "turn_deadline_exceeded")
             try:
                 # Retries are provider calls too and consume the same per-turn
@@ -148,6 +151,7 @@ class SecurityAssistantRuntime:
                 self.budget.reserve(operation)
             except BudgetExceededError as exc:
                 self._metric(operation, 0, "budget_exceeded", error=str(exc))
+                self._log_fallback(operation, str(exc), attempt + 1)
                 return RuntimeResult(None, "fallback", str(exc))
             started = perf_counter()
             call_timeout = min(self.timeout_seconds, remaining_seconds)
@@ -175,6 +179,7 @@ class SecurityAssistantRuntime:
             self._metric(operation, started, error, error=error)
             if attempt < self.max_retries:
                 continue
+            self._log_fallback(operation, error, attempt + 1)
             return RuntimeResult(None, "fallback", error)
         return RuntimeResult(None, "fallback", "provider_error")
 
@@ -199,4 +204,16 @@ class SecurityAssistantRuntime:
                 status=status,
                 error=error,
             )
+        )
+
+    @staticmethod
+    def _log_fallback(operation: AssistantOperation, error: str, attempts: int) -> None:
+        """Emit operational diagnostics without prompts or provider payloads."""
+        logger.warning(
+            "security_ai_invocation_fallback",
+            extra={
+                "operation": operation.value,
+                "failure_code": error,
+                "attempts": attempts,
+            },
         )

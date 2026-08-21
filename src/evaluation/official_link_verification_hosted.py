@@ -146,8 +146,11 @@ def evaluate_hosted_evidence(
         "stage_latency": metrics["max_stage_p95_latency_ms"] <= 30_000,
         "stage_cost": metrics["max_stage_estimated_cost_usd"] <= 0.05,
         "hard_case_grounded": evidence.hard_case.evidence_reference_closure,
-        "hard_case_no_fabrication": evidence.hard_case.fabricated_ref_count == evidence.hard_case.fabricated_url_count == 0,
-        "hard_case_resource_match": evidence.hard_case.resource_match_status in {"EXACT_RESOURCE", "EXACT_CANONICAL_URL"},
+        "hard_case_no_fabrication": evidence.hard_case.fabricated_ref_count
+        == evidence.hard_case.fabricated_url_count
+        == 0,
+        "hard_case_resource_match": evidence.hard_case.resource_match_status
+        in {"EXACT_RESOURCE", "EXACT_CANONICAL_URL"},
     }
     return {
         "schema_version": "official-link-verification-hosted-report-v1",

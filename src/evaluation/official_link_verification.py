@@ -136,8 +136,7 @@ class OfficialVerificationEvaluationCase(EvaluationModel):
             if self.official_source_kind != "social_announcement":
                 raise ValueError("the hard case must identify an official social announcement")
             social_announcement_fixture = any(
-                "social" in hit.title.casefold() and "announcement" in hit.title.casefold()
-                for hit in self.search_hits
+                "social" in hit.title.casefold() and "announcement" in hit.title.casefold() for hit in self.search_hits
             )
             if not social_announcement_fixture:
                 raise ValueError("the hard case must include a labeled social-announcement search result")
@@ -221,7 +220,8 @@ class _SearchProvider:
         query_gate = self.case.search_hit_query_contains
         selected = (
             self.case.search_hits[:max_results]
-            if self.case.search_status == "success" and (query_gate is None or query_gate.casefold() in query.casefold())
+            if self.case.search_status == "success"
+            and (query_gate is None or query_gate.casefold() in query.casefold())
             else []
         )
         if not selected:
@@ -260,7 +260,11 @@ class _HtmlFetcher:
             )
         if self.case.fetch_limitation is not None:
             return HtmlFetchEnvelope(
-                status=(VerificationTransportStatus.BLOCKED if self.case.fetch_limitation is VerificationTransportLimitation.SSRF_BLOCKED else VerificationTransportStatus.LIMITED),
+                status=(
+                    VerificationTransportStatus.BLOCKED
+                    if self.case.fetch_limitation is VerificationTransportLimitation.SSRF_BLOCKED
+                    else VerificationTransportStatus.LIMITED
+                ),
                 limitation=self.case.fetch_limitation,
                 usage=_usage("fetch", network_units=1),
             )
@@ -303,11 +307,7 @@ def _brands(case: OfficialVerificationEvaluationCase) -> list[BrandRecordV4]:
         )
         for item in case.identities
     ]
-    domains = [
-        item.value
-        for item in case.identities
-        if item.identity_type is OfficialIdentityTypeV4.DOMAIN
-    ]
+    domains = [item.value for item in case.identities if item.identity_type is OfficialIdentityTypeV4.DOMAIN]
     return [
         BrandRecordV4(
             brand_id=uuid5(NAMESPACE_URL, f"{case.id}:brand"),
@@ -420,11 +420,17 @@ async def evaluate_case(case: OfficialVerificationEvaluationCase) -> OfficialVer
         update={
             "official_verification": report,
             "limitations": list(dict.fromkeys([*scoped.limitations, *outcome.limitations])),
-            "investigation_status": SecurityInvestigationStatusV4.COMPLETED if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE else scoped.investigation_status,
+            "investigation_status": SecurityInvestigationStatusV4.COMPLETED
+            if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE
+            else scoped.investigation_status,
             "next_step": "RISK_ASSESSMENT" if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE else scoped.next_step,
         }
     )
-    risk_result = assess_security_risk(staged, official_verification_enforced=True) if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE else staged
+    risk_result = (
+        assess_security_risk(staged, official_verification_enforced=True)
+        if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE
+        else staged
+    )
 
     expected = case.expected
     actual_components = _component_values(report)
@@ -468,9 +474,7 @@ async def evaluate_case(case: OfficialVerificationEvaluationCase) -> OfficialVer
     fabricated_urls = returned_urls - _allowed_urls(case)
     match_status = report.resource_verification.match.status if report and report.resource_verification.match else None
     resource_match_pass = (
-        match_status is expected.resource_match_status
-        if expected.resource_match_status is not None
-        else None
+        match_status is expected.resource_match_status if expected.resource_match_status is not None else None
     )
     limitations = list(dict.fromkeys([*outcome.limitations, *(report.limitations if report else [])]))
     bounded_pass = outcome.adapter_attempts <= expected.max_adapter_attempts
@@ -500,7 +504,9 @@ async def evaluate_case(case: OfficialVerificationEvaluationCase) -> OfficialVer
         reference_closure_pass=not fabricated_refs,
         fabricated_ref_count=len(fabricated_refs),
         fabricated_url_count=len(fabricated_urls),
-        query_pass=all(any(term.casefold() in query.casefold() for query in search.queries) for term in expected.query_contains),
+        query_pass=all(
+            any(term.casefold() in query.casefold() for query in search.queries) for term in expected.query_contains
+        ),
         bounded_pass=bounded_pass and all(item in limitations for item in expected.required_limitations),
     )
 
@@ -529,7 +535,9 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)] if ordered else 0.0
 
 
-async def evaluate_set(cases: list[OfficialVerificationEvaluationCase], *, dataset_path: str | Path) -> dict[str, object]:
+async def evaluate_set(
+    cases: list[OfficialVerificationEvaluationCase], *, dataset_path: str | Path
+) -> dict[str, object]:
     results = [await evaluate_case(case) for case in cases]
     expected_by_id = {case.id: case.expected for case in cases}
     component_checks = sum(item.component_checks for item in results)
@@ -543,14 +551,22 @@ async def evaluate_set(cases: list[OfficialVerificationEvaluationCase], *, datas
         "case_count": len(results),
         "scope_accuracy": _ratio(sum(item.scope_pass for item in results), len(results)),
         "component_status_accuracy": _ratio(component_correct, component_checks),
-        "labeled_resource_match_precision": _ratio(sum(item.resource_match_pass is True for item in labeled_resource), len(labeled_resource)),
-        "evidence_reference_closure_rate": _ratio(sum(item.reference_closure_pass for item in official_reports), len(official_reports)),
-        "grounded_explanation_rate": _ratio(sum(item.reference_closure_pass for item in official_reports), len(official_reports)),
+        "labeled_resource_match_precision": _ratio(
+            sum(item.resource_match_pass is True for item in labeled_resource), len(labeled_resource)
+        ),
+        "evidence_reference_closure_rate": _ratio(
+            sum(item.reference_closure_pass for item in official_reports), len(official_reports)
+        ),
+        "grounded_explanation_rate": _ratio(
+            sum(item.reference_closure_pass for item in official_reports), len(official_reports)
+        ),
         "fabricated_ref_count": sum(item.fabricated_ref_count for item in results),
         "fabricated_url_count": sum(item.fabricated_url_count for item in results),
         "oos_provider_network_ai_calls": sum(item.adapter_attempts + item.network_units for item in out_of_scope),
         "not_found_to_malicious_count": sum(item.risk is SecurityRiskV4.MALICIOUS for item in not_found),
-        "ssrf_bypass_count": sum(not any(value.endswith("ssrf_blocked") for value in item.limitations) for item in ssrf),
+        "ssrf_bypass_count": sum(
+            not any(value.endswith("ssrf_blocked") for value in item.limitations) for item in ssrf
+        ),
         "max_estimated_cost_usd_per_analysis": max((item.estimated_cost_usd for item in results), default=0),
         "mean_latency_ms": round(fmean(item.latency_ms for item in results), 3),
         "p95_latency_ms": round(_percentile([item.latency_ms for item in results], 0.95), 3),

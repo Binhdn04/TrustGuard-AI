@@ -464,14 +464,11 @@ class SQLiteBlacklistRepository:
         effective = [
             item
             for item in await self.list_brands()
-            if item.effective_from <= at
-            and (item.effective_until is None or at < item.effective_until)
+            if item.effective_from <= at and (item.effective_until is None or at < item.effective_until)
         ]
         superseded = {item.supersedes for item in effective if item.supersedes is not None}
         return [
-            item
-            for item in effective
-            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
+            item for item in effective if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
         ]
 
     async def save_identity_candidate(self, record: IdentityCandidateV4) -> IdentityCandidateV4:
@@ -492,11 +489,16 @@ class SQLiteBlacklistRepository:
                        expires_at,terminal_decision_id,record_json,created_at
                    ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    str(stored.association_id), stored.entity_name, stored.canonical_domain,
-                    stored.relationship.value, stored.assurance.value, stored.version,
+                    str(stored.association_id),
+                    stored.entity_name,
+                    stored.canonical_domain,
+                    stored.relationship.value,
+                    stored.assurance.value,
+                    stored.version,
                     stored.expires_at.isoformat() if stored.expires_at else None,
                     str(stored.terminal_decision_id) if stored.terminal_decision_id else None,
-                    stored.model_dump_json(), stored.discovered_at.isoformat(),
+                    stored.model_dump_json(),
+                    stored.discovered_at.isoformat(),
                 ),
             )
             for observation in stored.observations:
@@ -504,8 +506,14 @@ class SQLiteBlacklistRepository:
                     """INSERT OR IGNORE INTO security_identity_evidence(
                            evidence_ref,candidate_id,source_host,family,observation_json,observed_at
                        ) VALUES(?,?,?,?,?,?)""",
-                    (observation.evidence_ref, str(stored.association_id), observation.source_host,
-                     observation.family.value, observation.model_dump_json(), observation.observed_at.isoformat()),
+                    (
+                        observation.evidence_ref,
+                        str(stored.association_id),
+                        observation.source_host,
+                        observation.family.value,
+                        observation.model_dump_json(),
+                        observation.observed_at.isoformat(),
+                    ),
                 )
             self._connection.commit()
         return stored
@@ -531,17 +539,32 @@ class SQLiteBlacklistRepository:
                 """INSERT INTO security_identity_decisions(
                        decision_id,candidate_id,action,reviewer_id,decision_json,decided_at
                    ) VALUES(?,?,?,?,?,?)""",
-                (str(decision.decision_id), str(decision.candidate_id), decision.action.value,
-                 decision.reviewer_id, decision.model_dump_json(), decision.decided_at.isoformat()),
+                (
+                    str(decision.decision_id),
+                    str(decision.candidate_id),
+                    decision.action.value,
+                    decision.reviewer_id,
+                    decision.model_dump_json(),
+                    decision.decided_at.isoformat(),
+                ),
             )
             self._connection.execute(
                 """UPDATE security_identity_candidates SET assurance=?,terminal_decision_id=?,record_json=?
                    WHERE candidate_id=?""",
-                (updated.assurance.value, str(decision.decision_id), updated.model_dump_json(),
-                 str(updated.association_id)),
+                (
+                    updated.assurance.value,
+                    str(decision.decision_id),
+                    updated.model_dump_json(),
+                    str(updated.association_id),
+                ),
             )
-            self._trust_audit("identity_candidate", str(updated.association_id), decision.action.value,
-                              decision.reviewer_id, decision.decided_at)
+            self._trust_audit(
+                "identity_candidate",
+                str(updated.association_id),
+                decision.action.value,
+                decision.reviewer_id,
+                decision.decided_at,
+            )
             self._connection.commit()
 
     async def disable_brand(self, brand_id: str, reviewer_id: str, at: datetime) -> BrandRecordV4 | None:
@@ -551,9 +574,7 @@ class SQLiteBlacklistRepository:
             ).fetchone()
             if row is None:
                 return None
-            superseding_rows = self._connection.execute(
-                "SELECT record_json FROM security_brands"
-            ).fetchall()
+            superseding_rows = self._connection.execute("SELECT record_json FROM security_brands").fetchall()
             if any(
                 item.supersedes is not None and str(item.supersedes) == brand_id
                 for item in (BrandRecordV4.model_validate_json(value[0]) for value in superseding_rows)
@@ -1361,9 +1382,14 @@ class SQLiteBlacklistRepository:
                            evidence_snapshot_hash,requested_at,completed_at
                        ) VALUES(?,?,?,?,?,?,?,?)""",
                     (
-                        str(suggestion.suggestion_id), str(suggestion.analysis_id), reviewer_id,
-                        suggestion.model_dump_json(), suggestion.usage.model_dump_json(),
-                        evidence_snapshot_hash, requested_at.isoformat(), completed_at.isoformat(),
+                        str(suggestion.suggestion_id),
+                        str(suggestion.analysis_id),
+                        reviewer_id,
+                        suggestion.model_dump_json(),
+                        suggestion.usage.model_dump_json(),
+                        evidence_snapshot_hash,
+                        requested_at.isoformat(),
+                        completed_at.isoformat(),
                     ),
                 )
                 self._insert_security_feedback_audit(audit)

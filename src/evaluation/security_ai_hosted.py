@@ -104,9 +104,7 @@ def evaluate_hosted_ai_evidence(evidence: HostedAIEvidence) -> dict[str, object]
         "hallucinated_evidence_rate": _ratio(
             sum(item.hallucinated_evidence for item in observations), reasons, empty=0
         ),
-        "hallucinated_action_rate": _ratio(
-            sum(item.hallucinated_actions for item in observations), reasons, empty=0
-        ),
+        "hallucinated_action_rate": _ratio(sum(item.hallucinated_actions for item in observations), reasons, empty=0),
         "unnecessary_provider_call_rate": _ratio(unnecessary, calls, empty=0),
         "llm_fallback_success_rate": _ratio(sum(item.fallback_success for item in fallback), len(fallback)),
         "malicious_precision": evidence.observed_malicious_precision,
@@ -129,12 +127,8 @@ def evaluate_hosted_ai_evidence(evidence: HostedAIEvidence) -> dict[str, object]
             metrics["unnecessary_provider_call_rate"] <= evidence.baseline.unnecessary_provider_call_rate
         ),
         "llm_fallback_success_rate": metrics["llm_fallback_success_rate"] == 1,
-        "malicious_precision_no_regression": (
-            metrics["malicious_precision"] >= evidence.baseline.malicious_precision
-        ),
-        "false_positive_rate_no_regression": (
-            metrics["false_positive_rate"] <= evidence.baseline.false_positive_rate
-        ),
+        "malicious_precision_no_regression": (metrics["malicious_precision"] >= evidence.baseline.malicious_precision),
+        "false_positive_rate_no_regression": (metrics["false_positive_rate"] <= evidence.baseline.false_positive_rate),
         "report_appeal_overturn_rate_no_regression": (
             metrics["report_appeal_overturn_rate"] <= evidence.baseline.report_appeal_overturn_rate
         ),

@@ -38,7 +38,11 @@ class DeterministicFakeSecurityAssistant(SecurityAssistantModel):
 
     async def draft_admin_review(self, case_detail: dict[str, Any]):
         refs = [str(item["evidence_ref"]) for item in case_detail.get("evidence", [])[:3]]
-        rationale = [{"text": "The deterministic case evidence supports manual review.", "evidence_refs": refs[:1]}] if refs else []
+        rationale = (
+            [{"text": "The deterministic case evidence supports manual review.", "evidence_refs": refs[:1]}]
+            if refs
+            else []
+        )
         return self._response(
             AdminReviewDraft(
                 evidence_summary="Review the cited deterministic evidence.",

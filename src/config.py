@@ -28,15 +28,15 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
     llm_max_retries: int = Field(default=2, ge=0)
 
-    # Security assistant runtime. Every capability is independently gated and
-    # defaults off so the existing v4 path remains unchanged.
-    security_ai_understanding_enabled: bool = False
-    security_ai_planning_enabled: bool = False
-    security_ai_explanation_enabled: bool = False
+    # Security assistant runtime. AI stages default on but remain independently
+    # gated as operational kill switches; policy remains deterministic.
+    security_ai_understanding_enabled: bool = True
+    security_ai_planning_enabled: bool = True
+    security_ai_explanation_enabled: bool = True
     security_async_execution_enabled: bool = False
     security_memory_retrieval_enabled: bool = False
-    security_admin_copilot_enabled: bool = False
-    security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "off"
+    security_admin_copilot_enabled: bool = True
+    security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "visible"
     security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
     security_ai_timeout_seconds: float = Field(default=15.0, gt=0.0, le=15.0)

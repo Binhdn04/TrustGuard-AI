@@ -124,9 +124,7 @@ def test_discovery_query_is_natural_entity_first_and_bounded() -> None:
         organization=GroundedTextValue(name, 1, (span,)),
         claim=None,
         action=None,
-        derived_organizations=(
-            DerivedOrganizationName("Benh vien Dai hoc Y Ha Noi", "accent_fold"),
-        ),
+        derived_organizations=(DerivedOrganizationName("Benh vien Dai hoc Y Ha Noi", "accent_fold"),),
     )
     queries = OfficialLinkVerificationCoordinator._identity_discovery_queries(intent)
     assert queries[0] == name
@@ -138,9 +136,21 @@ def test_discovery_query_is_natural_entity_first_and_bounded() -> None:
 @pytest.mark.parametrize(
     ("relationship", "anchor", "corroboration"),
     [
-        (IdentityRelationshipV4.OFFICIAL_CONTROLLED, IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION, IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK),
-        (IdentityRelationshipV4.PARENT_ORGANIZATION, IdentityEvidenceFamilyV4.PARENT_DECLARATION, IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK),
-        (IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE, IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT, IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH),
+        (
+            IdentityRelationshipV4.OFFICIAL_CONTROLLED,
+            IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION,
+            IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
+        ),
+        (
+            IdentityRelationshipV4.PARENT_ORGANIZATION,
+            IdentityEvidenceFamilyV4.PARENT_DECLARATION,
+            IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
+        ),
+        (
+            IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+            IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT,
+            IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH,
+        ),
     ],
 )
 def test_two_independent_evidence_families_verify_each_relationship(relationship, anchor, corroboration) -> None:
@@ -149,7 +159,48 @@ def test_two_independent_evidence_families_verify_each_relationship(relationship
         _observation(corroboration, "authority.example", "f"),
     ]
     association = OfficialLinkVerificationCoordinator._association_from_observations(
-        "Entity", "https://entity.example/resource", relationship, observations, NOW
+        "Entity", "https://target.example/resource", relationship, observations, NOW
     )
     assert association.relationship is relationship
     assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+
+
+def test_one_external_exact_endorsement_verifies_only_the_submitted_resource() -> None:
+    observation = _observation(
+        IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT,
+        "publisher.example",
+        "a",
+    )
+
+    association = OfficialLinkVerificationCoordinator._association_from_observations(
+        "Entity",
+        "https://forms.example/resource/123",
+        IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+        [observation],
+        NOW,
+    )
+
+    assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+    assert association.confidence == 0.7
+    assert association.canonical_url == "https://forms.example/resource/123"
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        _observation(IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH, "forms.example", "b"),
+        _observation(IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT, "forms.example", "c"),
+    ],
+)
+def test_target_cannot_verify_its_own_endorsement_with_one_source(
+    observation: IdentityEvidenceObservationV4,
+) -> None:
+    association = OfficialLinkVerificationCoordinator._association_from_observations(
+        "Entity",
+        "https://forms.example/resource/123",
+        IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+        [observation],
+        NOW,
+    )
+
+    assert association.assurance is IdentityAssociationAssuranceV4.DISCOVERED

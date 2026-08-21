@@ -8,6 +8,7 @@ SECURITY_TRIAGE_CONTRACT_VERSION = "v4"
 
 ProductProfile = Literal["security_triage_vnext"]
 
+
 @dataclass(frozen=True, slots=True)
 class ProductRouteMetadata:
     api_contract: str

@@ -23,9 +23,7 @@ _MAX_QUERY_VARIANTS = 6
 _MAX_QUERY_ATTEMPTS = 4
 
 _EMAIL_RE = re.compile(r"(?i)\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b")
-_URL_RE = re.compile(
-    r"(?i)\b(?:https?://|www\.)\S+|\b(?:[a-z0-9-]+\.)+(?:com|vn|org|net|edu|gov|io|app)(?:/\S*)?"
-)
+_URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)\S+|\b(?:[a-z0-9-]+\.)+(?:com|vn|org|net|edu|gov|io|app)(?:/\S*)?")
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(?:password|passcode|mật\s*khẩu|mat\s*khau|token|secret|api[_-]?key|credential)\s*[:=]\s*\S+"
 )
@@ -36,6 +34,7 @@ _JWT_RE = re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}(?:\.[a-zA-Z0-
 _LONG_TOKEN_RE = re.compile(r"\b(?=[a-zA-Z0-9_-]{20,}\b)(?=[a-zA-Z0-9_-]*[a-zA-Z])(?=[a-zA-Z0-9_-]*\d)[a-zA-Z0-9_-]+\b")
 _POSSIBLE_OTP_RE = re.compile(r"(?<!\d)\d{4,8}(?!\d)")
 _SPACE_RE = re.compile(r"\s+")
+_QUOTED_CLAIM_RE = re.compile(r'["“”]([^"“”]{4,200})["“”]')
 
 _TOPIC_QUERY_TERMS = {
     VerificationTopicV4.RECRUITMENT: ("tuyển dụng", "recruitment"),
@@ -194,6 +193,28 @@ def _bounded_semantic_source(
     return None
 
 
+def _quoted_claim_source(message: str) -> tuple[str, int, int] | None:
+    """Return a bounded literal title without letting arbitrary prose become a query."""
+    for match in _QUOTED_CLAIM_RE.finditer(message):
+        value = _SPACE_RE.sub(" ", match.group(1)).strip()
+        if not value or any(
+            pattern.search(value)
+            for pattern in (
+                _EMAIL_RE,
+                _URL_RE,
+                _SECRET_ASSIGNMENT_RE,
+                _OTP_RE,
+                _JWT_RE,
+                _LONG_TOKEN_RE,
+                _POSSIBLE_OTP_RE,
+            )
+        ):
+            continue
+        start, end = match.span(1)
+        return value, start, end
+    return None
+
+
 def _accent_fold(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(char for char in normalized if not unicodedata.combining(char)).replace("đ", "d").replace("Đ", "D")
@@ -236,19 +257,26 @@ def build_grounded_verification_intent(
                     assistant.field_confidences["claimed_entity"],
                     bounded_spans,
                 )
-                if (
-                    source_value.casefold() != context.claimed_entity.casefold()
-                    and not _is_whole_message(context.claimed_entity, message)
+                if source_value.casefold() != context.claimed_entity.casefold() and not _is_whole_message(
+                    context.claimed_entity, message
                 ):
-                    derived.append(
-                        DerivedOrganizationName(context.claimed_entity, "semantic_normalization")
-                    )
+                    derived.append(DerivedOrganizationName(context.claimed_entity, "semantic_normalization"))
 
     claim: GroundedTextValue | None = None
     topic: VerificationTopicV4 | None = None
     topic_source = verification_topic_source(message)
     if topic_source is not None:
         topic, source_value, (start, end) = topic_source
+    quoted_claim = _quoted_claim_source(message)
+    if quoted_claim is not None:
+        source_value, start, end = quoted_claim
+        claim = GroundedTextValue(
+            source_value,
+            1.0,
+            (AssistantSourceSpanV4(field_name="claim_summary", start=start, end=end),),
+        )
+    elif topic_source is not None:
+        _, source_value, (start, end) = topic_source
         claim = GroundedTextValue(
             source_value,
             1.0,
@@ -287,9 +315,7 @@ def build_grounded_verification_intent(
             derived.append(DerivedOrganizationName(folded, "accent_fold"))
     derived_unique = _unique_derived(derived)
     action_url_indices = (
-        list(range(len(context.urls)))
-        if action is not None and action.value in _URL_RELEVANT_ACTIONS
-        else []
+        list(range(len(context.urls))) if action is not None and action.value in _URL_RELEVANT_ACTIONS else []
     )
     contract = VerificationIntentV4(
         organization_name=organization.value if organization else None,

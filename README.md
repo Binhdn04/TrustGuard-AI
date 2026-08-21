@@ -9,7 +9,7 @@ TrustGuard AI là trợ lý hội thoại giúp người dùng đánh giá tin n
 ```mermaid
 flowchart LR
     Input[Message / URL] --> Scope[Security scope +<br/>normalized context]
-    Scope --> Understanding[Rules + optional<br/>grounded AI understanding]
+    Scope --> Understanding[Rules + default-on<br/>grounded AI understanding]
     Understanding --> Decision{In scope?}
     Decision -->|No / need info| Boundary[Boundary or<br/>follow-up question]
     Decision -->|Incident exposure| Recovery[Recovery-first path]
@@ -36,6 +36,7 @@ Xem [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md) để biết produc
 - Security scope gate, structured context và multi-turn conversation có optimistic versioning.
 - Local URL rules, approved blacklist, SSRF guard, DNS, redirect resolution, RDAP và VirusTotal reputation khi được cấu hình.
 - Brand registry và whitelist có provenance.
+- Whitelist chỉ xác nhận target; quan hệ tổ chức–URL được kiểm tra riêng và mismatch không thể bị whitelist che khuất.
 - Risk policy xác định: `SAFE`, `LOW_RISK`, `SUSPICIOUS`, `HIGH_RISK`, `MALICIOUS`, `INSUFFICIENT_EVIDENCE`.
 - Grounded assistant response; AI output không hợp lệ hoặc không grounded tự động rơi về policy response.
 - Owner-isolated history, reports, appeals, event replay và WebSocket stream.
@@ -185,15 +186,16 @@ NEXT_PUBLIC_OIDC_REDIRECT_URI=https://app.example.com/auth/callback
 
 ### Security AI feature flags
 
-Mọi flag AI mặc định tắt. Khi bật bất kỳ AI operation nào trong production, phải có `OPENAI_API_KEY` và model configuration hợp lệ.
+Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Trong production phải có `OPENAI_API_KEY` và model configuration hợp lệ khi bất kỳ AI operation nào được bật.
 
 | Biến | Mặc định | Stage được bật |
 |---|---:|---|
-| `SECURITY_AI_UNDERSTANDING_ENABLED` | `false` | Structured semantic understanding có source spans/confidence. |
-| `SECURITY_AI_PLANNING_ENABLED` | `false` | Chỉ ưu tiên deterministic plan; không được tạo target/tool mới. |
-| `SECURITY_AI_EXPLANATION_ENABLED` | `false` | Synthesis có grounding; failure quay về policy response. |
-| `SECURITY_ADMIN_COPILOT_ENABLED` | `false` | Gợi ý cho admin, không tự thực thi action. |
+| `SECURITY_AI_UNDERSTANDING_ENABLED` | `true` | Structured semantic understanding có source spans/confidence; flag là kill switch. |
+| `SECURITY_AI_PLANNING_ENABLED` | `true` | Chỉ ưu tiên deterministic plan; không được tạo target/tool mới. |
+| `SECURITY_AI_EXPLANATION_ENABLED` | `true` | Synthesis có grounding; failure quay về policy response. |
+| `SECURITY_ADMIN_COPILOT_ENABLED` | `true` | Gợi ý cho admin có RBAC, không tự thực thi action. |
 | `SECURITY_MEMORY_RETRIEVAL_ENABLED` | `false` | Dùng reviewed, owner-scoped memory và risk policy v2. |
+| `SECURITY_OFFICIAL_VERIFICATION_MODE` | `visible` | Chạy official-link verification và hiển thị kết quả; chỉ web-search khi request có consent riêng. |
 | `OPENAI_API_KEY` | rỗng | Credential của AI provider. |
 | `SECURITY_AI_SMALL_MODEL` | `gpt-4o-mini` | Understanding và planning model. |
 | `SECURITY_AI_SYNTHESIS_MODEL` | `gpt-4o-mini` | Response/copilot synthesis model. |
@@ -248,12 +250,16 @@ curl -sS -X POST "$API_URL/api/v4/analyses" \
     "message": "Ngân hàng yêu cầu tôi gửi OTP và đăng nhập tại https://secure-check.example/login",
     "execution_mode": "inline",
     "consent": {
-      "external_url_lookup": false
+      "external_url_lookup": false,
+      "official_source_lookup": false
     }
   }'
 ```
 
 Response quan trọng gồm `analysis_id`, `conversation_id`, `conversation_version`, `scope_decision`, `security_context`, `evidence`, `risk`, `recommended_actions`, `assistant_response` và `limitations`.
+
+Frontend Security Triage gửi cả `external_url_lookup=true` và `official_source_lookup=true` trên từng lượt;
+API caller khác vẫn phải truyền hai consent độc lập trong chính request của mình.
 ```
 
 ## Database migrations

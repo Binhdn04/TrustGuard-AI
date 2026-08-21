@@ -53,9 +53,16 @@ class SecurityTrustAdminService:
         candidates = await self._repository.list_identity_candidates()
         candidate = next((item for item in candidates if str(item.association_id) == candidate_id), None)
         if candidate is None:
-            raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Identity candidate was not found.", retryable=False)
+            raise PlatformError(
+                status_code=404, code=ErrorCode.NOT_FOUND, message="Identity candidate was not found.", retryable=False
+            )
         if candidate.terminal_decision_id is not None:
-            raise PlatformError(status_code=409, code=ErrorCode.CONFLICT, message="Identity candidate already has a terminal decision.", retryable=False)
+            raise PlatformError(
+                status_code=409,
+                code=ErrorCode.CONFLICT,
+                message="Identity candidate already has a terminal decision.",
+                retryable=False,
+            )
 
         now = datetime.now(UTC)
         decision = IdentityCandidateDecisionV4(
@@ -112,17 +119,22 @@ class SecurityTrustAdminService:
         if request.target_brand_id is not None:
             matches = [item for item in records if item.brand_id == request.target_brand_id]
             if not matches:
-                raise PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message="Target brand was not found.", retryable=False)
+                raise PlatformError(
+                    status_code=404, code=ErrorCode.NOT_FOUND, message="Target brand was not found.", retryable=False
+                )
         else:
             entity = candidate.entity_name.casefold()
             matches = [
-                item for item in records
+                item
+                for item in records
                 if entity in {item.name.casefold(), *(alias.casefold() for alias in item.aliases)}
             ]
             if len(matches) > 1:
                 raise PlatformError(
-                    status_code=409, code=ErrorCode.CONFLICT,
-                    message="Identity candidate is ambiguous; target_brand_id is required.", retryable=False,
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Identity candidate is ambiguous; target_brand_id is required.",
+                    retryable=False,
                 )
         identity = OfficialIdentityV4(
             identity_type=request.identity_type or OfficialIdentityTypeV4.WEBSITE,
@@ -228,9 +240,7 @@ class SecurityTrustAdminService:
                 retryable=False,
             ) from exc
 
-        unique_identities = {
-            (item.identity_type.value, item.canonical_value.casefold()): item for item in identities
-        }
+        unique_identities = {(item.identity_type.value, item.canonical_value.casefold()): item for item in identities}
         return BrandRecordV4(
             **request.model_dump(exclude={"official_domains", "official_identities"}),
             official_domains=domains,

@@ -368,35 +368,23 @@ async def evaluate_ai_case(case: SecurityAIEvaluationCase) -> SecurityAICaseResu
         allowed_actions = set(completed.recommended_actions)
         total_reasons = len(response.top_reasons)
         grounded_reasons = sum(set(reason.evidence_refs) <= available_refs for reason in response.top_reasons)
-        hallucinated_evidence = sum(
-            len(set(reason.evidence_refs) - available_refs) for reason in response.top_reasons
-        )
+        hallucinated_evidence = sum(len(set(reason.evidence_refs) - available_refs) for reason in response.top_reasons)
         hallucinated_actions = sum(step.action not in allowed_actions for step in response.immediate_steps)
 
     predicted = _predicted_fields(final)
     tp, fp, fn = _field_counts(predicted, case.expected.fields)
     turns_pass = case.expected.turns_to_verdict == verdict_turn
-    follow_up_pass = (
-        follow_up_before_verdict and turns_pass if case.expected.follow_up_completed else True
-    )
+    follow_up_pass = follow_up_before_verdict and turns_pass if case.expected.follow_up_completed else True
     safe_out_of_scope_short_circuit = (
-        final.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
-        and provider_calls == 0
+        final.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK and provider_calls == 0
     )
-    fallback_pass = (
-        fallback_seen or safe_out_of_scope_short_circuit
-        if case.expected.fallback_expected
-        else True
-    )
+    fallback_pass = fallback_seen or safe_out_of_scope_short_circuit if case.expected.fallback_expected else True
     return SecurityAICaseResult(
         id=case.id,
         category=case.category,
         scenario_group=case.scenario_group,
         scope_decision=final.scope_decision,
-        exposure_state=(
-            final.assistant_context.exposure_state
-            if final.assistant_context else ExposureStateV4.UNKNOWN
-        ),
+        exposure_state=(final.assistant_context.exposure_state if final.assistant_context else ExposureStateV4.UNKNOWN),
         actual_turns_to_verdict=verdict_turn,
         turn_count=len(case.turns),
         field_true_positive=tp,
@@ -456,17 +444,13 @@ async def evaluate_ai_set(cases: list[SecurityAIEvaluationCase]) -> dict[str, ob
         "field_metrics_by_scenario": scenarios,
         "scope_routing_accuracy": _ratio(sum(item.scope_pass for item in results), len(results)),
         "exposure_state_accuracy": _ratio(sum(item.exposure_pass for item in results), len(results)),
-        "follow_up_completion_rate": _ratio(
-            sum(item.follow_up_pass for item in follow_up_cases), len(follow_up_cases)
-        ),
+        "follow_up_completion_rate": _ratio(sum(item.follow_up_pass for item in follow_up_cases), len(follow_up_cases)),
         "turns_to_verdict_accuracy": _ratio(sum(item.turns_pass for item in verdict_cases), len(verdict_cases)),
         "grounded_reason_rate": _ratio(sum(item.grounded_reasons for item in results), reason_count),
         "hallucinated_evidence_rate": _ratio(
             sum(item.hallucinated_evidence for item in results), reason_count, empty=0
         ),
-        "hallucinated_action_rate": _ratio(
-            sum(item.hallucinated_actions for item in results), reason_count, empty=0
-        ),
+        "hallucinated_action_rate": _ratio(sum(item.hallucinated_actions for item in results), reason_count, empty=0),
         "unnecessary_provider_call_rate": _ratio(unnecessary, provider_calls, empty=0),
         "llm_fallback_success_rate": _ratio(sum(item.fallback_pass for item in fallback_cases), len(fallback_cases)),
         "p95_latency_ms": round(_percentile(per_turn_latency, 0.95), 3),

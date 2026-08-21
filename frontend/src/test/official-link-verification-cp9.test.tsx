@@ -64,4 +64,29 @@ describe("CP9 official link verification presentation", () => {
     render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="analyst" />);
     expect(screen.getByText("Claim verification").parentElement).toHaveTextContent("Khong ap dung");
   });
+
+  it("shows automatically verified associations as exact-resource scoped", () => {
+    const value = report("PARTIALLY_VERIFIED");
+    value.identity_associations = [{
+      association_id: "20000000-0000-4000-8000-000000000001",
+      entity_name: "Tsinghua University",
+      canonical_url: "https://v.wjx.cn/vm/to3MR3b.aspx",
+      canonical_domain: "v.wjx.cn",
+      relationship: "endorsed_third_party_service",
+      assurance: "verified",
+      confidence: 0.85,
+      evidence_refs: ["identity-evidence:cccccccccccccccc"],
+      discovered_at: "2026-08-21T00:00:00Z",
+      verified_at: "2026-08-21T00:00:00Z",
+      expires_at: "2026-08-28T00:00:00Z",
+      policy_version: "identity-discovery-v2",
+    }];
+
+    render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="analyst" />);
+
+    expect(screen.getByText("Resource-scoped identity associations")).toBeInTheDocument();
+    expect(screen.getByText(/Da tu dong xac nhan chuoi endorsement/i)).toBeInTheDocument();
+    expect(screen.getByText(/khong xac nhan toan bo domain/i)).toBeInTheDocument();
+    expect(screen.getByText("verified")).toBeInTheDocument();
+  });
 });

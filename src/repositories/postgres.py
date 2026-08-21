@@ -251,14 +251,11 @@ class PostgresPlatformRepository:
         effective = [
             item
             for item in await self.list_brands()
-            if item.effective_from <= at
-            and (item.effective_until is None or at < item.effective_until)
+            if item.effective_from <= at and (item.effective_until is None or at < item.effective_until)
         ]
         superseded = {item.supersedes for item in effective if item.supersedes is not None}
         return [
-            item
-            for item in effective
-            if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
+            item for item in effective if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
         ]
 
     async def save_identity_candidate(self, record: IdentityCandidateV4) -> IdentityCandidateV4:
@@ -268,7 +265,9 @@ class PostgresPlatformRepository:
                 """SELECT id,version FROM security_identity_candidates
                    WHERE entity_name=$1 AND canonical_domain=$2 AND relationship=$3
                    ORDER BY version DESC LIMIT 1 FOR UPDATE""",
-                record.entity_name, record.canonical_domain, record.relationship.value,
+                record.entity_name,
+                record.canonical_domain,
+                record.relationship.value,
             )
             version = max(record.version, (previous["version"] if previous else 0) + 1)
             stored = record.model_copy(
@@ -279,10 +278,18 @@ class PostgresPlatformRepository:
                        id,entity_name,canonical_url,canonical_domain,relationship,assurance,
                        confidence,version,expires_at,terminal_decision_id,record,created_at
                    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)""",
-                stored.association_id, stored.entity_name, stored.canonical_url,
-                stored.canonical_domain, stored.relationship.value, stored.assurance.value,
-                stored.confidence, stored.version, stored.expires_at, stored.terminal_decision_id,
-                stored.model_dump_json(), stored.discovered_at,
+                stored.association_id,
+                stored.entity_name,
+                stored.canonical_url,
+                stored.canonical_domain,
+                stored.relationship.value,
+                stored.assurance.value,
+                stored.confidence,
+                stored.version,
+                stored.expires_at,
+                stored.terminal_decision_id,
+                stored.model_dump_json(),
+                stored.discovered_at,
             )
             for observation in stored.observations:
                 await connection.execute(
@@ -290,18 +297,21 @@ class PostgresPlatformRepository:
                            evidence_ref,candidate_id,source_host,family,canonical_url,content_hash,
                            observation,observed_at
                        ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) ON CONFLICT DO NOTHING""",
-                    observation.evidence_ref, stored.association_id, observation.source_host,
-                    observation.family.value, observation.canonical_url, observation.content_hash,
-                    observation.model_dump_json(), observation.observed_at,
+                    observation.evidence_ref,
+                    stored.association_id,
+                    observation.source_host,
+                    observation.family.value,
+                    observation.canonical_url,
+                    observation.content_hash,
+                    observation.model_dump_json(),
+                    observation.observed_at,
                 )
         return stored
 
     async def list_identity_candidates(self) -> list[IdentityCandidateV4]:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                "SELECT record FROM security_identity_candidates ORDER BY created_at DESC"
-            )
+            rows = await connection.fetch("SELECT record FROM security_identity_candidates ORDER BY created_at DESC")
         return [IdentityCandidateV4.model_validate(_json_value(row["record"])) for row in rows]
 
     async def create_identity_decision(
@@ -322,20 +332,33 @@ class PostgresPlatformRepository:
                        id,candidate_id,action,reviewer_id,note,target_brand_id,relationship,
                        identity_type,evidence_refs,decision,decided_at
                    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11)""",
-                decision.decision_id, decision.candidate_id, decision.action.value,
-                decision.reviewer_id, decision.note, decision.target_brand_id,
+                decision.decision_id,
+                decision.candidate_id,
+                decision.action.value,
+                decision.reviewer_id,
+                decision.note,
+                decision.target_brand_id,
                 decision.relationship.value if decision.relationship else None,
                 decision.identity_type.value if decision.identity_type else None,
-                json.dumps(decision.evidence_refs), decision.model_dump_json(), decision.decided_at,
+                json.dumps(decision.evidence_refs),
+                decision.model_dump_json(),
+                decision.decided_at,
             )
             await connection.execute(
                 """UPDATE security_identity_candidates
                    SET assurance=$1,terminal_decision_id=$2,record=$3::jsonb WHERE id=$4""",
-                updated.assurance.value, decision.decision_id, updated.model_dump_json(), updated.association_id,
+                updated.assurance.value,
+                decision.decision_id,
+                updated.model_dump_json(),
+                updated.association_id,
             )
             await self._insert_trust_audit(
-                connection, "identity_candidate", updated.association_id,
-                decision.action.value, decision.reviewer_id, decision.decided_at,
+                connection,
+                "identity_candidate",
+                updated.association_id,
+                decision.action.value,
+                decision.reviewer_id,
+                decision.decided_at,
             )
 
     async def disable_brand(self, brand_id: str, reviewer_id: str, at: datetime) -> BrandRecordV4 | None:
@@ -799,7 +822,9 @@ class PostgresPlatformRepository:
                 final_event.model_dump_json(),
                 final_event.occurred_at,
             )
-            await connection.execute("DELETE FROM security_analysis_payloads_v4 WHERE analysis_id=$1", response.analysis_id)
+            await connection.execute(
+                "DELETE FROM security_analysis_payloads_v4 WHERE analysis_id=$1", response.analysis_id
+            )
             await connection.execute(
                 """UPDATE security_analysis_jobs_v4 SET status='completed',worker_id=NULL,
                           lease_expires_at=NULL,updated_at=$3 WHERE id=$1 AND worker_id=$2""",
@@ -1023,9 +1048,7 @@ class PostgresPlatformRepository:
             (SecurityMemoryRecordV4.model_validate(_json_value(row["record"])), row["reviewed_at"])
             for row in memory_rows
         ]
-        campaigns = [
-            SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) for row in campaign_rows
-        ]
+        campaigns = [SecurityCampaignRecordV4.model_validate(_json_value(row["record"])) for row in campaign_rows]
         return memories, campaigns
 
     async def correct_security_memory(

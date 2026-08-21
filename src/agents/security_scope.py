@@ -13,6 +13,10 @@ from src.models import (
     SecurityScenarioV4,
     VerificationTopicV4,
 )
+from src.services.security_entity_mentions import (
+    deterministic_entity_url_claims,
+    extract_entity_mentions,
+)
 
 _SPACE_RE = re.compile(r"\s+")
 _AMOUNT_RE = re.compile(
@@ -655,6 +659,13 @@ def extract_security_context(message: str) -> SecurityContextV4:
     online_task = _contains_any(text, _ONLINE_TASK_TERMS)
     personal_information_request = _contains_any(text, _PERSONAL_INFO_TERMS)
     entity = _claimed_entity(text)
+    entity_mentions = extract_entity_mentions(message, (entity,) if entity else ())
+    entity_url_claims = deterministic_entity_url_claims(message, entity_mentions, len(urls))
+    if entity is None:
+        if entity_url_claims:
+            entity = entity_url_claims[0].entity_name
+        elif len(entity_mentions) == 1 and urls:
+            entity = entity_mentions[0].text
 
     if online_task:
         scenario = SecurityScenarioV4.ONLINE_TASK
@@ -702,6 +713,7 @@ def extract_security_context(message: str) -> SecurityContextV4:
         payment_request=payment_request,
         personal_information_request=personal_information_request,
         impersonation_signals=impersonation_signals,
+        entity_url_claims=entity_url_claims,
         potential_threat=PotentialThreatV4.UNDETERMINED_SECURITY_THREAT,
     )
     return context.model_copy(update={"potential_threat": derive_potential_threat(context)})

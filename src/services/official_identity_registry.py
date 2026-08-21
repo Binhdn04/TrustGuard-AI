@@ -145,13 +145,9 @@ def normalize_official_identity(
             "entity_name": identity.entity_name or brand_name,
             "match_scope": match_scope,
             "relationship": relationship,
-            "provenance": (
-                brand_provenance if identity.provenance == "unversioned_contract" else identity.provenance
-            ),
+            "provenance": (brand_provenance if identity.provenance == "unversioned_contract" else identity.provenance),
             "policy_version": (
-                brand_policy_version
-                if identity.policy_version == "official-identity-v1"
-                else identity.policy_version
+                brand_policy_version if identity.policy_version == "official-identity-v1" else identity.policy_version
             ),
             "effective_from": identity.effective_from or brand_effective_from,
             "reviewed": True,
@@ -166,10 +162,7 @@ def runtime_official_identities(
 ) -> tuple[OfficialIdentityV4, ...]:
     """Read explicit identities and project legacy official_domains as primary websites."""
     explicit = list(brand.official_identities)
-    explicit_keys = {
-        (item.identity_type, item.canonical_value.casefold())
-        for item in explicit
-    }
+    explicit_keys = {(item.identity_type, item.canonical_value.casefold()) for item in explicit}
     for domain in brand.official_domains:
         canonical_domain = normalize_domain(domain)
         key = (OfficialIdentityTypeV4.PRIMARY_WEBSITE, canonical_domain)
@@ -213,15 +206,10 @@ def active_brand_versions(brands: Sequence[BrandRecordV4], at: datetime) -> list
     effective = [
         item
         for item in brands
-        if item.effective_from <= at
-        and (item.effective_until is None or at < item.effective_until)
+        if item.effective_from <= at and (item.effective_until is None or at < item.effective_until)
     ]
     superseded = {item.supersedes for item in effective if item.supersedes is not None}
-    return [
-        item
-        for item in effective
-        if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded
-    ]
+    return [item for item in effective if item.lifecycle is TrustLifecycleV4.ACTIVE and item.brand_id not in superseded]
 
 
 class OfficialIdentityRegistry:
@@ -325,9 +313,7 @@ class OfficialIdentityRegistry:
             and publisher in entity_names
         )
         return (
-            SourceIdentityAssessment.CONFIRMS_IDENTITY
-            if exact_entity_bound
-            else SourceIdentityAssessment.CORROBORATES
+            SourceIdentityAssessment.CONFIRMS_IDENTITY if exact_entity_bound else SourceIdentityAssessment.CORROBORATES
         )
 
 

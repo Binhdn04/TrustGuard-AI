@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
@@ -196,10 +197,15 @@ async def get_security_understanding_service(
     runtime: SecurityAssistantRuntimeDependency,
 ) -> SecuritySemanticUnderstandingService:
     settings = get_settings()
+
+    async def load_gazetteer_brands():
+        return await get_security_trust_repository().list_active_brands(datetime.now(UTC))
+
     return SecuritySemanticUnderstandingService(
         enabled=settings.security_ai_understanding_enabled,
         model=get_security_assistant_model(),
         runtime=runtime,
+        gazetteer_loader=load_gazetteer_brands,
     )
 
 
@@ -251,7 +257,7 @@ def get_security_trust_repository():
 
 @lru_cache
 def get_security_trust_service() -> SecurityTrustService:
-    return SecurityTrustService(get_security_trust_repository())
+    return SecurityTrustService(get_security_trust_repository(), source_registry=_source_registry)
 
 
 @lru_cache
@@ -419,7 +425,11 @@ async def start_durable_worker() -> None:
         return
     settings = get_settings()
     if settings.security_async_execution_enabled:
+
         def security_pipeline_factory(runtime: SecurityAssistantRuntime) -> SecurityTriagePipeline:
+            async def load_gazetteer_brands():
+                return await get_security_trust_repository().list_active_brands(datetime.now(UTC))
+
             memory_lookup = (
                 SecurityMemoryLookupTool(get_security_memory_service(), enabled=True)
                 if settings.security_memory_retrieval_enabled
@@ -430,6 +440,7 @@ async def start_durable_worker() -> None:
                     enabled=settings.security_ai_understanding_enabled,
                     model=get_security_assistant_model(),
                     runtime=runtime,
+                    gazetteer_loader=load_gazetteer_brands,
                 ),
                 investigation=get_security_investigation_service(),
                 trust=get_security_trust_service(),

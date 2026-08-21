@@ -162,9 +162,7 @@ def test_verified_suppresses_only_same_target_reviewed_brand_mismatch() -> None:
     enforced = assess_security_risk(prepared, official_verification_enforced=True)
     wrong_provenance = assess_security_risk(
         prepared.model_copy(
-            update={
-                "evidence": [evidence.model_copy(update={"provenance_ref": "brand:fixture:brand-registry-v2"})]
-            }
+            update={"evidence": [evidence.model_copy(update={"provenance_ref": "brand:fixture:brand-registry-v2"})]}
         ),
         official_verification_enforced=True,
     )
@@ -421,9 +419,7 @@ def test_structured_telemetry_serializes_only_the_redacted_allowlist() -> None:
         (),
         None,
     )
-    record.official_verification = {
-        field: getattr(event, field) for field in event.__dataclass_fields__
-    }
+    record.official_verification = {field: getattr(event, field) for field in event.__dataclass_fields__}
     payload = json.loads(RedactingJsonFormatter().format(record))
 
     assert payload["official_verification"] == record.official_verification
@@ -432,8 +428,11 @@ def test_structured_telemetry_serializes_only_the_redacted_allowlist() -> None:
 
 
 def test_rollback_modes_are_stateless_and_require_no_database_downgrade() -> None:
-    assert [Settings(security_official_verification_mode=mode, _env_file=None).security_official_verification_mode for mode in (
-        "enforced",
-        "visible",
-        "off",
-    )] == ["enforced", "visible", "off"]
+    assert [
+        Settings(security_official_verification_mode=mode, _env_file=None).security_official_verification_mode
+        for mode in (
+            "enforced",
+            "visible",
+            "off",
+        )
+    ] == ["enforced", "visible", "off"]

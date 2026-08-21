@@ -19,12 +19,12 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 | Boundary | `/api/v4` only; v2/v3 không mount/OpenAPI |
 | Scope | structured context, focused follow-up, recovery-first incident path |
 | Investigation | rules, blacklist, DNS, redirects, RDAP, VirusTotal, consent/budget/deadline/SSRF |
-| Trust/risk | versioned brand/whitelist, deterministic risk v1/v2, false-positive policy |
+| Trust/risk | versioned brand/whitelist, target-owner resolution, deterministic risk v1-v4, false-positive policy |
 | User flow | conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |
-| Official verification | publisher/claim/resource verification plus identity discovery v2, 7-day candidate cache, typed multi-host evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
+| Official verification | publisher/claim/resource verification plus identity discovery v2, literal-title search, one-source exact-resource endorsement, guarded redirects, 7-day terminal-aware cache, typed ownership evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | Security Chat, Simple/Analyst views, Observatory, Review Room, Trust candidate queue/Audit |
 | Schema | Alembic through `0019_security_identity_discovery` (one head) |
@@ -32,7 +32,7 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 ## Partial and pending
 
 - `BLOCK_DOMAIN` và `PUBLISH_BROAD_WARNING` chưa có execution sink.
-- Async, reviewed-memory và AI flags mặc định tắt, chỉ bật tuần tự sau gate tương ứng.
+- Understanding, planning, explanation và Admin Copilot mặc định bật với kill switch riêng; thiếu provider ở local/test fallback an toàn, production yêu cầu cấu hình AI hợp lệ. Async và reviewed-memory vẫn mặc định tắt.
 - Official Link Verification implementation WP0–WP10 đã hoàn thành; CP10 release approval vẫn pending hosted evidence và Tech Lead/Security Lead review.
 - Identity discovery v2 đã có local automated coverage; PostgreSQL/provider thật, reviewer workflow và rollout
   observation vẫn cần hosted validation trước enforced production.

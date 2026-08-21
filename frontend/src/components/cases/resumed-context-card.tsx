@@ -3,7 +3,10 @@
 import { useState, type FormEvent } from "react";
 import { ArrowUp, History, Loader2, ShieldCheck } from "lucide-react";
 
-import { AUTOMATIC_LOOKUP_DISCLOSURE } from "@/lib/security/automatic-lookup-policy";
+import {
+  AUTOMATIC_LOOKUP_DISCLOSURE,
+  OFFICIAL_SOURCE_LOOKUP_DISCLOSURE,
+} from "@/lib/security/automatic-lookup-policy";
 import type { SecurityConversationV4 } from "@/types/generated/api-v4";
 
 export function ResumedContextCard({
@@ -79,7 +82,7 @@ export function ResumedContextCard({
               {busy ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </button>
           </div>
-          <p className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE} Follow-up chỉ gửi context có cấu trúc, không gửi lại raw transcript cũ.</p>
+          <p className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE} {OFFICIAL_SOURCE_LOOKUP_DISCLOSURE} Follow-up chỉ gửi context có cấu trúc, không gửi lại raw transcript cũ.</p>
         </form>
       </div>
     </section>

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 
+from src.agents.nodes.extraction import extract_urls
 from src.agents.security_scope import derive_potential_threat, partial_security_context
 from src.models import (
     SECURITY_UNDERSTANDING_VERSION,
     AssistantContextV4,
     AssistantProcessingModeV4,
     AssistantSourceSpanV4,
+    BrandRecordV4,
+    EntityUrlClaimV4,
     ExposureStateV4,
     ScopeDecisionV4,
     SecurityContextV4,
@@ -20,6 +24,7 @@ from src.security_ai.contracts import (
     SecurityAssistantModel,
     SemanticSecuritySignal,
     Understanding,
+    UnderstandingSourceSpan,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.security_conversation_policy import (
@@ -28,6 +33,15 @@ from src.services.security_conversation_policy import (
     highest_exposure,
     select_missing_slot,
 )
+from src.services.security_entity_mentions import (
+    EntityMentionCandidate,
+    OrganizationGazetteer,
+    deterministic_entity_url_claims,
+    extract_entity_mentions,
+    extract_recovery_phrases,
+)
+
+GazetteerLoader = Callable[[], Awaitable[list[BrandRecordV4]]]
 
 _MIN_GROUNDED_CONFIDENCE = 0.80
 _FOLLOW_UP_QUESTION = (
@@ -68,7 +82,7 @@ def _unique(values: list[str]) -> list[str]:
 def _valid_spans(message: str, output: Understanding) -> dict[str, list[AssistantSourceSpanV4]]:
     valid: dict[str, list[AssistantSourceSpanV4]] = {}
     for span in output.source_spans:
-        if span.end > len(message) or not message[span.start : span.end].strip():
+        if span.end <= span.start or span.end > len(message) or not message[span.start : span.end].strip():
             continue
         converted = AssistantSourceSpanV4(
             field_name=span.field_name,
@@ -77,6 +91,133 @@ def _valid_spans(message: str, output: Understanding) -> dict[str, list[Assistan
         )
         valid.setdefault(span.field_name, []).append(converted)
     return valid
+
+
+def _literal_url_spans(message: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for value in extract_urls(message):
+        start = message.find(value, cursor)
+        if start < 0:
+            start = message.find(value)
+        if start >= 0:
+            spans.append((start, start + len(value)))
+            cursor = start + len(value)
+    return spans
+
+
+def _ground_backend_entity_references(
+    message: str,
+    output: Understanding,
+    mentions: list[EntityMentionCandidate],
+) -> tuple[Understanding, set[str]]:
+    """Resolve model-selected stable IDs to backend-owned values and spans."""
+    by_id = {item.mention_id: item for item in mentions}
+    invalid_fields: set[str] = set()
+    confidences = dict(output.field_confidences)
+    source_spans = list(output.source_spans)
+    claimed_entity = output.claimed_entity
+    selected_candidate_id = output.claimed_entity_candidate_id or output.claimed_entity_id
+    selected_entity = by_id.get(selected_candidate_id or "")
+    if selected_candidate_id is not None:
+        if selected_entity is None:
+            invalid_fields.add("claimed_entity")
+            claimed_entity = None
+        else:
+            claimed_entity = selected_entity.text
+            confidences["claimed_entity"] = confidences.get(
+                "claimed_entity_candidate_id",
+                confidences.get("claimed_entity_id", confidences.get("claimed_entity", 0)),
+            )
+            source_spans.append(
+                UnderstandingSourceSpan(
+                    field_name="claimed_entity",
+                    start=selected_entity.start,
+                    end=selected_entity.end,
+                )
+            )
+
+    url_spans = _literal_url_spans(message)
+    grounded_claims = []
+    for claim in output.entity_url_claims:
+        candidate_id = claim.entity_candidate_id or claim.entity_mention_id
+        entity = by_id.get(candidate_id or "") if candidate_id else None
+        entity_name = entity.text if entity is not None else claim.entity_name
+        if candidate_id is not None and entity is None:
+            invalid_fields.add("entity_url_claims")
+            continue
+        if entity_name is None or claim.url_index >= len(url_spans):
+            invalid_fields.add("entity_url_claims")
+            continue
+        grounded_claims.append(claim.model_copy(update={"entity_name": entity_name}))
+        if entity is not None:
+            url_start, url_end = url_spans[claim.url_index]
+            source_spans.append(
+                UnderstandingSourceSpan(
+                    field_name="entity_url_claims",
+                    start=min(entity.start, url_start),
+                    end=max(entity.end, url_end),
+                )
+            )
+            if selected_entity is None and claimed_entity is None:
+                selected_entity = entity
+                claimed_entity = entity.text
+                confidences["claimed_entity"] = confidences.get("entity_url_claims", 0)
+                source_spans.append(
+                    UnderstandingSourceSpan(
+                        field_name="claimed_entity",
+                        start=entity.start,
+                        end=entity.end,
+                    )
+                )
+
+    return (
+        output.model_copy(
+            update={
+                "claimed_entity": claimed_entity,
+                "entity_url_claims": grounded_claims,
+                "field_confidences": confidences,
+                "source_spans": source_spans,
+            }
+        ),
+        invalid_fields,
+    )
+
+
+def _backend_context_source_spans(
+    message: str,
+    context: SecurityContextV4,
+) -> list[AssistantSourceSpanV4]:
+    mentions = extract_entity_mentions(
+        message,
+        (context.claimed_entity,) if context.claimed_entity else (),
+    )
+    url_spans = _literal_url_spans(message)
+    spans: list[AssistantSourceSpanV4] = []
+    entity_mentions = {item.text.casefold(): item for item in mentions}
+    if context.claimed_entity:
+        entity = entity_mentions.get(context.claimed_entity.casefold())
+        if entity is not None:
+            spans.append(
+                AssistantSourceSpanV4(
+                    field_name="claimed_entity",
+                    start=entity.start,
+                    end=entity.end,
+                )
+            )
+    for claim in context.entity_url_claims:
+        entity = entity_mentions.get(claim.entity_name.casefold())
+        if entity is None or claim.url_index >= len(url_spans):
+            continue
+        url_start, url_end = url_spans[claim.url_index]
+        spans.append(
+            AssistantSourceSpanV4(
+                field_name="entity_url_claims",
+                start=min(entity.start, url_start),
+                end=max(entity.end, url_end),
+            )
+        )
+    return spans
 
 
 def _add_literal_claimed_entity_grounding(
@@ -154,12 +295,25 @@ def merge_semantic_understanding(
     output: Understanding,
     *,
     model_version: str,
+    entity_candidates: list[EntityMentionCandidate] | None = None,
 ) -> SecurityScopeResponseV4:
     """Ground and merge AI candidates without weakening deterministic signals."""
+    output, invalid_candidate_fields = _ground_backend_entity_references(
+        message,
+        output,
+        entity_candidates
+        if entity_candidates is not None
+        else extract_entity_mentions(
+            message,
+            (scope.security_context.claimed_entity,)
+            if scope.security_context is not None and scope.security_context.claimed_entity
+            else (),
+        ),
+    )
     spans = _valid_spans(message, output)
     output = _add_literal_claimed_entity_grounding(message, output, spans)
     accepted_fields: set[str] = set()
-    rejected_impact_fields: set[str] = set()
+    rejected_impact_fields: set[str] = set(invalid_candidate_fields)
 
     def accept(field_name: str, present: bool) -> bool:
         if not present:
@@ -178,6 +332,26 @@ def merge_semantic_understanding(
         else []
     )
     entity = output.claimed_entity if accept("claimed_entity", bool(output.claimed_entity)) else None
+    entity_url_claims: list[EntityUrlClaimV4] = []
+    if output.entity_url_claims:
+        if accept("entity_url_claims", True) and entity is not None:
+            for claim in output.entity_url_claims:
+                if (
+                    claim.url_index < len((scope.security_context or partial_security_context(message)).urls)
+                    and claim.entity_name is not None
+                    and claim.entity_name.casefold() == entity.casefold()
+                    and message.casefold().find(claim.entity_name.casefold()) >= 0
+                ):
+                    entity_url_claims.append(
+                        EntityUrlClaimV4(
+                            entity_name=entity,
+                            url_index=claim.url_index,
+                            relationship=claim.relationship,
+                            confidence=output.field_confidences["entity_url_claims"],
+                        )
+                    )
+                else:
+                    rejected_impact_fields.add("entity_url_claims")
     scenario = (
         output.scenario
         if accept("scenario", output.scenario is not None and output.scenario is not SecurityScenarioV4.UNKNOWN)
@@ -215,6 +389,8 @@ def merge_semantic_understanding(
             conflicts = True
         elif base.requested_action is None:
             updates["requested_action"] = requested_action
+    if entity_url_claims:
+        updates["entity_url_claims"] = entity_url_claims
 
     # AI candidates are additions only. Existing true rule signals are never removed.
     updates.update(
@@ -231,14 +407,22 @@ def merge_semantic_understanding(
     merged = base.model_copy(update=updates)
     merged = merged.model_copy(update={"potential_threat": derive_potential_threat(merged)})
 
-    accepted_spans = [span for field_name in accepted_fields for span in spans.get(field_name, [])][:50]
+    candidate_spans = [
+        *[span for field_name in accepted_fields for span in spans.get(field_name, [])],
+        *_backend_context_source_spans(message, merged),
+    ]
+    accepted_spans = list({(span.field_name, span.start, span.end): span for span in candidate_spans}.values())[:50]
+    accepted_confidences = {field_name: output.field_confidences[field_name] for field_name in accepted_fields}
+    for span in accepted_spans:
+        if span.field_name in {"claimed_entity", "entity_url_claims"}:
+            accepted_confidences.setdefault(span.field_name, 1.0)
     assistant_context = AssistantContextV4(
         processing_mode=AssistantProcessingModeV4.HYBRID,
         sender_intent=sender_intent,
         social_engineering_techniques=techniques,
         exposure_state=exposure_state,
         missing_information=_unique(output.missing_information)[:20],
-        field_confidences={field_name: output.field_confidences[field_name] for field_name in accepted_fields},
+        field_confidences=accepted_confidences,
         source_spans=accepted_spans,
         derived_query_provenance=output.derived_query_provenance,
         understanding_version=SECURITY_UNDERSTANDING_VERSION,
@@ -257,14 +441,9 @@ def merge_semantic_understanding(
     }
     if scope.scope_decision is ScopeDecisionV4.IN_SCOPE:
         if accepted_scope is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
-            update.update(
-                scope_decision=ScopeDecisionV4.NEED_MORE_INFO,
-                terminal=True,
-                next_step="END",
-                follow_up_question=_FOLLOW_UP_QUESTION,
-                boundary_message=None,
-                limitations=_unique([*limitations, _BOUNDARY_CONFLICT_LIMITATION]),
-            )
+            # A grounded model disagreement is retained, but cannot erase a
+            # deterministic positive security signal or stop investigation.
+            update["limitations"] = _unique([*limitations, _BOUNDARY_CONFLICT_LIMITATION])
     elif accepted_scope is ScopeDecisionV4.IN_SCOPE and _has_security_information(merged):
         update.update(
             scope_decision=ScopeDecisionV4.IN_SCOPE,
@@ -303,19 +482,22 @@ class SecuritySemanticUnderstandingService:
         enabled: bool,
         model: SecurityAssistantModel | None,
         runtime: SecurityAssistantRuntime,
+        gazetteer_loader: GazetteerLoader | None = None,
     ) -> None:
         self._enabled = enabled
         self._model = model
         self._runtime = runtime
+        self._gazetteer_loader = gazetteer_loader
 
     async def enrich(
         self,
         request: SecurityTriageCreateRequestV4,
         scope: SecurityScopeResponseV4,
     ) -> SecurityScopeResponseV4:
-        if not self._enabled:
-            return scope
-        if scope.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
+        if (
+            scope.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
+            and set(scope.scope_reasons) & _LOCAL_CONVERSATION_REASONS
+        ):
             rules_only = scope.model_copy(
                 update={
                     "assistant_context": _rules_only_context(
@@ -324,9 +506,11 @@ class SecuritySemanticUnderstandingService:
                     )
                 }
             )
-            if set(scope.scope_reasons) & _LOCAL_CONVERSATION_REASONS:
-                return rules_only
-            return apply_adaptive_conversation_policy(request.message, rules_only)
+            return rules_only
+        organization_candidates = await self._organization_candidates(request.message, scope)
+        scope = self._merge_local_candidates(request.message, scope, organization_candidates)
+        if not self._enabled:
+            return scope
         if self._model is None:
             return self._fallback(request.message, scope)
         preview_exposure = highest_exposure(
@@ -337,16 +521,23 @@ class SecuritySemanticUnderstandingService:
         # Always provide the policy-selected slot, including on the first vague
         # security turn where no structured context exists yet. This lets the
         # model phrase the one permitted question without choosing policy.
+        summary_payload = {
+            "security_context": (
+                scope.security_context.model_dump(mode="json", exclude_none=True)
+                if scope.security_context is not None
+                else None
+            ),
+            "exposure_state": preview_exposure.value,
+            "policy_selected_follow_up_slot": selected_slot.value if selected_slot else None,
+        }
+        if organization_candidates:
+            summary_payload["organization_candidates"] = [item.as_prompt_data() for item in organization_candidates]
+        phrase_candidates = extract_recovery_phrases(request.message, organization_candidates)
+        if phrase_candidates:
+            summary_payload["phrase_candidates"] = [item.as_prompt_data() for item in phrase_candidates]
+        entity_candidates = [*organization_candidates, *phrase_candidates]
         conversation_summary = json.dumps(
-            {
-                "security_context": (
-                    scope.security_context.model_dump(mode="json", exclude_none=True)
-                    if scope.security_context is not None
-                    else None
-                ),
-                "exposure_state": preview_exposure.value,
-                "policy_selected_follow_up_slot": selected_slot.value if selected_slot else None,
-            },
+            summary_payload,
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -362,6 +553,7 @@ class SecuritySemanticUnderstandingService:
             scope,
             result.output,
             model_version=result.model,
+            entity_candidates=entity_candidates,
         )
         return apply_adaptive_conversation_policy(
             request.message,
@@ -369,6 +561,66 @@ class SecuritySemanticUnderstandingService:
             drafted_slot=result.output.follow_up_slot,
             drafted_question=result.output.follow_up_question,
         )
+
+    async def _organization_candidates(
+        self,
+        message: str,
+        scope: SecurityScopeResponseV4,
+    ) -> list[EntityMentionCandidate]:
+        brands: list[BrandRecordV4] = []
+        if self._gazetteer_loader is not None:
+            try:
+                brands = await self._gazetteer_loader()
+            except Exception:
+                brands = []
+        gazetteer = OrganizationGazetteer.from_brands(brands)
+        literal_entities = (
+            (scope.security_context.claimed_entity,)
+            if scope.security_context is not None and scope.security_context.claimed_entity
+            else ()
+        )
+        return extract_entity_mentions(
+            message,
+            literal_entities,
+            gazetteer,
+        )
+
+    @staticmethod
+    def _merge_local_candidates(
+        message: str,
+        scope: SecurityScopeResponseV4,
+        candidates: list[EntityMentionCandidate],
+    ) -> SecurityScopeResponseV4:
+        context = scope.security_context
+        if context is None or not context.urls:
+            return scope
+        claims = deterministic_entity_url_claims(message, candidates, len(context.urls))
+        entity = context.claimed_entity
+        if entity is None:
+            if claims:
+                entity = claims[0].entity_name
+            elif len(candidates) == 1:
+                entity = candidates[0].text
+        combined_claims = list(
+            {
+                (item.entity_name.casefold(), item.url_index, item.relationship): item
+                for item in [*context.entity_url_claims, *claims]
+            }.values()
+        )
+        if entity == context.claimed_entity and combined_claims == context.entity_url_claims:
+            return scope
+        signals = list(context.impersonation_signals)
+        if entity and "claimed_organization" not in signals:
+            signals.append("claimed_organization")
+        merged = context.model_copy(
+            update={
+                "claimed_entity": entity,
+                "entity_url_claims": combined_claims,
+                "impersonation_signals": signals,
+            }
+        )
+        merged = merged.model_copy(update={"potential_threat": derive_potential_threat(merged)})
+        return scope.model_copy(update={"security_context": merged})
 
     @staticmethod
     def _fallback(message: str, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:

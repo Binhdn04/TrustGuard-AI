@@ -116,7 +116,7 @@ describe("Security Chat workspace", () => {
 
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
     expect(screen.queryByText("Cho phép kiểm tra URL bên ngoài")).not.toBeInTheDocument();
-    expect(screen.queryByText("Cho phép đối chiếu nguồn chính thức")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Cho phép đối chiếu nguồn chính thức/i })).not.toBeInTheDocument();
     expect(screen.getByText(/tự đối chiếu URL\/domain với dịch vụ bảo mật/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
@@ -124,7 +124,7 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByLabelText(/Dán tin nhắn đáng ngờ/i)).not.toBeInTheDocument();
     expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({
       execution_mode: "async",
-      consent: { external_url_lookup: true },
+      consent: { external_url_lookup: true, official_source_lookup: true },
     }));
     expect(create.mock.calls[0][1]).toEqual({ idempotencyKey: expect.any(String) });
   });
@@ -168,7 +168,7 @@ describe("Security Chat workspace", () => {
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       conversation_id: "10000000-0000-4000-8000-000000000001",
       conversation_version: 1,
-      consent: { external_url_lookup: true },
+      consent: { external_url_lookup: true, official_source_lookup: true },
     }));
   });
 
@@ -203,7 +203,7 @@ describe("Security Chat workspace", () => {
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       conversation_id: "10000000-0000-4000-8000-000000000001",
       conversation_version: 1,
-      consent: { external_url_lookup: true },
+      consent: { external_url_lookup: true, official_source_lookup: true },
     }));
   });
 

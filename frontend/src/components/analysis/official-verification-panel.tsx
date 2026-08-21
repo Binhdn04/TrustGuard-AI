@@ -49,6 +49,9 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
 }) {
   const report = viewModel.officialVerification;
   if (!report) return null;
+  const verifiedResourceAssociations = (report.identity_associations ?? []).filter(
+    (item) => item.assurance === "verified" && item.relationship === "endorsed_third_party_service",
+  );
   const status = STATUS[report.overall_status];
   const Icon = report.overall_status === "VERIFIED"
     ? BadgeCheck
@@ -71,6 +74,11 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
         <StatusBadge status={report.overall_status} />
       </div>
       <p className="mt-3 text-xs leading-5 text-muted-foreground">Ket luan: <code>{report.reason_code}</code>. Trang chi hien thi ket qua API, khong tu suy dien URL la an toan.</p>
+      {verifiedResourceAssociations.length > 0 && (
+        <p className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-xs leading-5 text-emerald-800 dark:text-emerald-200">
+          Da tu dong xac nhan chuoi endorsement cho dung tai nguyen nay; ket qua khong mo rong thanh tin cay cho toan bo domain.
+        </p>
+      )}
 
       {mode === "simple" ? (
         viewModel.actions.length > 0 && (
@@ -117,6 +125,24 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
 
           {report.source_refs.length > 0 && <div><h4 className="text-xs font-semibold">Official sources</h4><div className="mt-2 space-y-2">{report.source_refs.map((source) => <div key={source.source_ref}><p className="mb-1 text-[10px] text-muted-foreground">{source.source_ref}</p><CopySafeValue value={source.display_url} label="source URL" /></div>)}</div></div>}
           {report.link_refs.length > 0 && <div><h4 className="text-xs font-semibold">Outbound references</h4><div className="mt-2 space-y-2">{report.link_refs.map((link) => <div key={link.link_ref}><p className="mb-1 text-[10px] text-muted-foreground">{link.role} / {link.link_ref}</p><CopySafeValue value={link.display_url} label="outbound URL" /></div>)}</div></div>}
+          {(report.identity_associations?.length ?? 0) > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold">Resource-scoped identity associations</h4>
+              <p className="mt-1 text-xs text-muted-foreground">Ket qua nay chi ap dung cho dung tai nguyen duoc neu, khong xac nhan toan bo domain.</p>
+              <div className="mt-2 space-y-2">
+                {report.identity_associations?.map((association) => (
+                  <article key={association.association_id} className="rounded-xl border border-border bg-background/55 p-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">{association.entity_name}</p>
+                      <span className="rounded-full border border-border px-2 py-1 text-[10px] font-bold uppercase">{association.assurance}</span>
+                    </div>
+                    <p className="mt-2 text-muted-foreground">{association.relationship} / confidence {association.confidence.toFixed(2)}</p>
+                    <div className="mt-2"><CopySafeValue value={association.canonical_url} label="associated resource URL" /></div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
             <h4 className="text-xs font-semibold">Limitations</h4>
             {report.limitations.length > 0

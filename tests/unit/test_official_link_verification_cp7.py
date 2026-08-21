@@ -13,8 +13,15 @@ from src.models import (
     AssistantProcessingModeV4,
     BrandRecordV4,
     ExposureStateV4,
+    IdentityAssociationAssuranceV4,
+    IdentityCandidateV4,
+    IdentityRelationshipV4,
+    OfficialIdentityTypeV4,
+    OfficialIdentityV4,
     ResourceMatchStatusV4,
     ScopeDecisionV4,
+    SecurityEvidenceTypeV4,
+    SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
@@ -26,6 +33,8 @@ from src.services.official_verification_coordinator import (
     ComparisonRelation,
     OfficialLinkVerificationCoordinator,
     VerificationComparisonOutput,
+    _resource_endorsement_links,
+    apply_official_verification_outcome,
     validate_comparison_output,
 )
 from src.services.official_verification_transport import (
@@ -52,11 +61,19 @@ class _BrandRepository:
     def __init__(self, brands: list[BrandRecordV4]) -> None:
         self.brands = brands
         self.calls = 0
+        self.candidates: list[IdentityCandidateV4] = []
 
     async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
         assert at.tzinfo is not None
         self.calls += 1
         return self.brands
+
+    async def list_identity_candidates(self) -> list[IdentityCandidateV4]:
+        return list(self.candidates)
+
+    async def save_identity_candidate(self, record: IdentityCandidateV4) -> IdentityCandidateV4:
+        self.candidates.append(record)
+        return record
 
 
 def _brand() -> BrandRecordV4:
@@ -205,13 +222,14 @@ def _positive_page(link: str = USER_FORM) -> str:
 def _coordinator(
     *,
     brands: list[BrandRecordV4] | None = None,
+    repository: _BrandRepository | None = None,
     search=None,
     fetcher=None,
     extract=None,
     source_registry=None,
 ) -> OfficialLinkVerificationCoordinator:
     return OfficialLinkVerificationCoordinator(
-        _BrandRepository(brands if brands is not None else [_brand()]),
+        repository or _BrandRepository(brands if brands is not None else [_brand()]),
         search=search,
         fetcher=fetcher,
         extract=extract,
@@ -424,6 +442,175 @@ async def test_third_party_redirect_chains_match_with_external_consent() -> None
     assert outcome.outbound_resolutions == 1
     assert official_short in fetcher.calls
     assert "https://forms.gle/UserAlias" in fetcher.calls
+
+
+@pytest.mark.asyncio
+async def test_reviewed_social_account_post_can_endorse_an_exact_third_party_form() -> None:
+    user_form = "https://v.wjx.cn/vm/to3MR3b.aspx"
+    social_profile = "https://www.linkedin.com/school/tsinghua-university/"
+    social_post = (
+        "https://www.linkedin.com/posts/tsinghua-university_ai-highereducation-activity-7484925098416566273-RLNz"
+    )
+    short_link = "https://bit.ly/4phgUu7"
+    brand = BrandRecordV4(
+        name="Đại Học Thanh Hoa",
+        aliases=["Tsinghua University", "Thanh Hoa University"],
+        official_domains=["tsinghua.edu.cn"],
+        official_identities=[
+            OfficialIdentityV4(
+                identity_type=OfficialIdentityTypeV4.SOCIAL_PROFILE,
+                canonical_value=social_profile,
+                display_value=social_profile,
+                entity_name="Đại Học Thanh Hoa",
+                provenance="reviewed social identity fixture",
+                reviewed=True,
+            )
+        ],
+        provenance="reviewed Tsinghua fixture",
+        effective_from=NOW - timedelta(days=1),
+        reviewer_id="network-security-reviewer",
+        created_at=NOW - timedelta(days=1),
+    )
+    message = (
+        '[Online] Chương Trình Trải Nghiệm "Future Learning With AI" '
+        "Do Đại Học Thanh Hoa Tổ Chức 2026 (Miễn Phí Tham Dự) "
+        f"Please visit {user_form} to apply."
+    )
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    fetcher = _HtmlFetcher(
+        {
+            social_post: (
+                "<html><body><article>Tsinghua University School of Education "
+                f"invites learners to apply at <a href='{short_link}'>Apply</a>."
+                "</article></body></html>"
+            )
+        },
+        redirects={short_link: [short_link, user_form]},
+    )
+
+    outcome = await _coordinator(
+        brands=[brand],
+        search=_SearchProvider([_hit(social_post)]),
+        fetcher=fetcher,
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.publisher_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.resource_verification.match is not None
+    assert outcome.report.resource_verification.match.status is ResourceMatchStatusV4.EXACT_CANONICAL_URL
+    assert short_link in fetcher.calls
+
+
+@pytest.mark.asyncio
+async def test_discovered_entity_resource_chain_is_automatically_verified_without_promotion() -> None:
+    user_form = "https://v.wjx.cn/vm/to3MR3b.aspx"
+    social_post = (
+        "https://www.linkedin.com/posts/tsinghua-university_ai-highereducation-activity-7484925098416566273-RLNz"
+    )
+    short_link = "https://bit.ly/4phgUu7"
+    message = (
+        '[Online] Chương Trình Trải Nghiệm "Future Learning With AI" '
+        "Do Đại Học Thanh Hoa Tổ Chức 2026 (Miễn Phí Tham Dự) "
+        f"Please visit {user_form} to apply."
+    )
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    aggregator = "https://events.example/future-learning-with-ai"
+    search = _SearchProvider([_hit(aggregator), _hit(social_post)])
+    repository = _BrandRepository([])
+    repository.candidates.append(
+        IdentityCandidateV4(
+            entity_name="Đại Học Thanh Hoa",
+            canonical_url=user_form,
+            canonical_domain="v.wjx.cn",
+            relationship=IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+            assurance=IdentityAssociationAssuranceV4.DISCOVERED,
+            confidence=0.35,
+            discovered_at=NOW,
+            expires_at=NOW + timedelta(days=7),
+        )
+    )
+    fetcher = _HtmlFetcher(
+        {
+            user_form: (
+                "<html><body>Future Learning With AI — Future Education and Learning Team, "
+                "School of Education, Tsinghua University.</body></html>"
+            ),
+            aggregator: (
+                "<html><body><article>Đại Học Thanh Hoa tổ chức Future Learning With AI. "
+                f"<a href='{user_form}'>Tại đây</a></article></body></html>"
+            ),
+            social_post: (
+                "<html><body><article>Tsinghua University presents "
+                "Future Learning With AI. "
+                f"<a href='{short_link}'>Apply</a></article></body></html>"
+            ),
+        },
+        redirects={short_link: [short_link, user_form]},
+    )
+
+    outcome = await _coordinator(
+        repository=repository,
+        search=search,
+        fetcher=fetcher,
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    association = next(item for item in outcome.report.identity_associations if item.canonical_url == user_form)
+    assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+    assert association.relationship.value == "endorsed_third_party_service"
+    assert outcome.report.publisher_verification.status is VerificationStatusV4.UNVERIFIED
+    assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert outcome.report.resource_verification.reason_code == "discovered_exact_resource_endorsement_chain"
+    assert outcome.report.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert short_link not in fetcher.calls
+    assert social_post in fetcher.calls
+    assert aggregator in fetcher.calls
+    assert search.calls[0][0].startswith('Đại Học Thanh Hoa "Future Learning With AI"')
+
+    unresolved = SecurityEvidenceV4(
+        evidence_ref="evidence:dddddddddddddddd",
+        type=SecurityEvidenceTypeV4.BRAND_MATCH,
+        source="brand-registry",
+        target="v.wjx.cn",
+        signal="claimed_identity_unverified",
+        description="Chưa xác nhận quan hệ URL.",
+        observed_at=NOW,
+        confidence=0.5,
+    )
+    staged = scope.model_copy(
+        update={
+            "evidence": [unresolved],
+            "limitations": [
+                "Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ giữa URL và tổ chức."
+            ],
+        }
+    )
+    reconciled = apply_official_verification_outcome(staged, outcome)
+    assert reconciled.evidence[0].description.startswith(
+        "Official verification đã xác nhận chuỗi endorsement cho đúng resource"
+    )
+    assert all("Chưa có reviewed identity hoặc exact-resource" not in item for item in reconciled.limitations)
+    assert any("không mở rộng kết quả cho toàn domain" in item for item in reconciled.limitations)
+    risk_result = assess_security_risk(reconciled)
+    assert "Official verification đã xác nhận chuỗi endorsement" in risk_result.explanation
+    assert "Không có reviewed identity để xác nhận domain" not in risk_result.explanation
+
+
+def test_neutral_anchor_is_kept_when_it_points_to_the_exact_submitted_resource() -> None:
+    target = "https://forms.example/form/abc"
+    body = f"<html><body><a href='{target}'>Tại đây</a></body></html>".encode()
+
+    links = _resource_endorsement_links(body, "https://publisher.example/post", {target})
+
+    assert links == [target]
 
 
 @pytest.mark.asyncio

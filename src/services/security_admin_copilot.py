@@ -27,7 +27,9 @@ from src.security_ai.contracts import AdminReviewDraft, AssistantOperation
 class SecurityAdminCopilotService:
     """Grounded, suggestion-only assistant for the existing human review flow."""
 
-    def __init__(self, analyses, memory, repository, model, runtime: SecurityAssistantRuntime, *, enabled: bool) -> None:
+    def __init__(
+        self, analyses, memory, repository, model, runtime: SecurityAssistantRuntime, *, enabled: bool
+    ) -> None:
         self._analyses = analyses
         self._memory = memory
         self._repository = repository
@@ -107,8 +109,7 @@ class SecurityAdminCopilotService:
             conflicts = draft.conflicts
             missing = draft.missing_information
             rationale = [
-                SecurityAdminCopilotRationaleV4.model_validate(item.model_dump())
-                for item in draft.grounded_rationale
+                SecurityAdminCopilotRationaleV4.model_validate(item.model_dump()) for item in draft.grounded_rationale
             ]
             refs = list(dict.fromkeys(draft.evidence_refs))
             mode = AssistantGenerationModeV4.AI
@@ -168,7 +169,9 @@ class SecurityAdminCopilotService:
                     "payment_request": context.payment_request,
                     "personal_information_request": context.personal_information_request,
                 },
-            } if context else None,
+            }
+            if context
+            else None,
             "evidence": [
                 {
                     "evidence_ref": item.evidence_ref,
@@ -189,11 +192,7 @@ class SecurityAdminCopilotService:
     @staticmethod
     def _is_grounded(draft: AdminReviewDraft, allowed_refs: set[str]) -> bool:
         cited = [*draft.evidence_refs, *(ref for reason in draft.grounded_rationale for ref in reason.evidence_refs)]
-        return (
-            bool(draft.evidence_refs)
-            and bool(draft.grounded_rationale)
-            and set(cited).issubset(allowed_refs)
-        )
+        return bool(draft.evidence_refs) and bool(draft.grounded_rationale) and set(cited).issubset(allowed_refs)
 
     @staticmethod
     def _disposition_allowed(disposition: str, risk: SecurityRiskV4 | None) -> bool:
@@ -219,8 +218,13 @@ class SecurityAdminCopilotService:
         else:
             disposition = SecurityAdminCopilotDispositionV4.NO_CHANGE
         rationale = (
-            [SecurityAdminCopilotRationaleV4(text="Review the deterministic case evidence before deciding.", evidence_refs=[refs[0]])]
-            if refs else []
+            [
+                SecurityAdminCopilotRationaleV4(
+                    text="Review the deterministic case evidence before deciding.", evidence_refs=[refs[0]]
+                )
+            ]
+            if refs
+            else []
         )
         return (
             disposition,
