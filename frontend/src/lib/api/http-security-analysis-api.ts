@@ -52,6 +52,7 @@ import type {
 } from "@/types/generated/api-v3";
 
 import { ApiError } from "./api-error";
+import { networkError, resolveSecurityApiUrl } from "./security-api-url";
 import type {
   AnalysisEventQuery,
   IdentityCandidatePageQuery,
@@ -69,7 +70,6 @@ import type {
   SecurityTrustPageQuery,
 } from "./security-analysis-api.types";
 
-const DEFAULT_API_URL = "http://localhost:8000";
 type AccessTokenProvider = () => string | null | undefined;
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -99,12 +99,21 @@ function withQuery(resource: string, query?: object): string {
 
 export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
   private readonly baseUrl: string;
+  private readonly configurationError: ApiError | null;
 
   constructor(
-    baseUrl = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL,
+    baseUrl?: string,
     private readonly getAccessToken?: AccessTokenProvider,
   ) {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
+    try {
+      this.baseUrl = resolveSecurityApiUrl(baseUrl);
+      this.configurationError = null;
+    } catch (error) {
+      this.baseUrl = "";
+      this.configurationError = error instanceof ApiError
+        ? error
+        : new ApiError("Không thể đọc cấu hình API.", "API_CONFIGURATION_ERROR", false, 0);
+    }
   }
 
   private headers(contentType = false): Record<string, string> {
@@ -163,7 +172,7 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
   }
 
   async capturePage(analysisId: string, urlIndex: number): Promise<Blob> {
-    const response = await fetch(
+    const response = await this.request(
       `${this.baseUrl}/api/v4/analyses/${encodeURIComponent(analysisId)}/page-capture`,
       {
         method: "POST",
@@ -401,7 +410,7 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
   }
 
   private async get<T>(resource: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, {
+    const response = await this.request(`${this.baseUrl}/api/v4/${resource}`, {
       credentials: "include",
       headers: this.headers(),
     });
@@ -409,12 +418,21 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
   }
 
   private async post<T>(resource: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
-    const response = await fetch(`${this.baseUrl}/api/v4/${resource}`, {
+    const response = await this.request(`${this.baseUrl}/api/v4/${resource}`, {
       method: "POST",
       credentials: "include",
       headers: { ...this.headers(body !== undefined), ...extraHeaders },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     return readJson<T>(response);
+  }
+
+  private async request(url: string, options: RequestInit): Promise<Response> {
+    if (this.configurationError) throw this.configurationError;
+    try {
+      return await fetch(url, options);
+    } catch {
+      throw networkError(this.baseUrl);
+    }
   }
 }
