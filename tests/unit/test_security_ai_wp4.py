@@ -42,9 +42,24 @@ def test_grounding_verifier_rejects_hallucinated_refs_and_urls() -> None:
         summary="Mở https://unsafe.example để kiểm tra.",
         top_reasons=[SynthesisReason(text="OTP request", evidence_refs=["evidence:0123456789abcdef"])],
     )
+    statistical = AssistantSynthesis(
+        summary="Rủi ro cao với điểm số 95/100 và độ tin cậy 90%.",
+        top_reasons=[SynthesisReason(text="Có yêu cầu OTP.", evidence_refs=["evidence:0123456789abcdef"])],
+    )
+    statistical_reason = AssistantSynthesis(
+        summary="Nội dung này có nguy cơ cao.",
+        top_reasons=[
+            SynthesisReason(
+                text="Tín hiệu OTP có độ tin cậy 90%.",
+                evidence_refs=["evidence:0123456789abcdef"],
+            )
+        ],
+    )
 
     assert grounded_ai_response(scoped, invented) is None
     assert grounded_ai_response(scoped, linked) is None
+    assert grounded_ai_response(scoped, statistical) is None
+    assert grounded_ai_response(scoped, statistical_reason) is None
 
 
 class _ValidSynthesisModel:
@@ -119,4 +134,10 @@ async def test_disabled_ai_still_returns_a_policy_grounded_answer_without_failur
 
     assert result.assistant_response is not None
     assert result.assistant_response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
+    assert "điểm số" not in result.assistant_response.summary.casefold()
+    assert "độ tin cậy" not in result.assistant_response.summary.casefold()
+    assert "Không chia sẻ mã OTP" in result.assistant_response.summary
+    assert result.assistant_response.top_reasons[0].text == (
+        "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."
+    )
     assert not any("AI explanation" in item for item in result.limitations)

@@ -28,19 +28,27 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
     llm_max_retries: int = Field(default=2, ge=0)
 
-    # Security assistant runtime. Every capability is independently gated and
-    # defaults off so the existing v4 path remains unchanged.
-    security_ai_understanding_enabled: bool = False
-    security_ai_planning_enabled: bool = False
-    security_ai_explanation_enabled: bool = False
+    # Security assistant runtime. AI stages default on but remain independently
+    # gated as operational kill switches; policy remains deterministic.
+    security_ai_understanding_enabled: bool = True
+    security_ai_planning_enabled: bool = True
+    security_ai_explanation_enabled: bool = True
     security_async_execution_enabled: bool = False
     security_memory_retrieval_enabled: bool = False
-    security_admin_copilot_enabled: bool = False
+    security_admin_copilot_enabled: bool = True
+    security_page_capture_enabled: bool = False
+    security_page_capture_timeout_seconds: float = Field(default=12.0, gt=0.0, le=30.0)
+    security_page_capture_max_image_bytes: int = Field(default=2_000_000, ge=100_000, le=5_000_000)
+    security_page_capture_max_concurrency: int = Field(default=2, ge=1, le=4)
+    security_page_capture_viewport_width: int = Field(default=1280, ge=640, le=1920)
+    security_page_capture_viewport_height: int = Field(default=720, ge=480, le=1080)
+    security_page_capture_jpeg_quality: int = Field(default=72, ge=40, le=90)
+    security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "visible"
     security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
     security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
-    security_ai_timeout_seconds: float = Field(default=12.0, gt=0.0, le=15.0)
-    security_ai_turn_deadline_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
-    security_ai_max_retries: int = Field(default=1, ge=0, le=2)
+    security_ai_timeout_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
+    security_ai_turn_deadline_seconds: float = Field(default=60.0, gt=0.0, le=120.0)
+    security_ai_max_retries: int = Field(default=0, ge=0, le=2)
     security_ai_small_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_synthesis_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_small_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
@@ -57,7 +65,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     live_providers_required: bool = False
-    analysis_deadline_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
+    analysis_deadline_seconds: float = Field(default=60.0, gt=0.0, le=120.0)
     post_processing_reserve_seconds: float = Field(default=10.0, ge=0.0, le=60.0)
     max_provider_cost_usd: float = Field(default=0.05, gt=0.0, le=10.0)
     max_claim_concurrency: int = Field(default=3, ge=1, le=3)
@@ -124,6 +132,11 @@ class Settings(BaseSettings):
             "security_async_execution": durable_ready,
             "security_memory_retrieval": self.security_memory_retrieval_enabled,
             "security_admin_copilot": self.security_admin_copilot_enabled and provider_ready,
+            "security_page_capture": self.security_page_capture_enabled,
+            "official_link_verification": self.security_official_verification_mode != "off",
+            "official_web_search_ready": (
+                self.security_official_verification_mode != "off" and bool(self.tavily_api_key.strip())
+            ),
         }
 
     def security_ai_provider_configuration_valid(self) -> bool:

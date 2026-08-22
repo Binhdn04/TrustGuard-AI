@@ -1,0 +1,116 @@
+{
+  "schema_version": "official-link-verification-cp10-evidence-v1",
+  "checkpoint": "CP10",
+  "captured_at": "2026-08-20T23:15:00+07:00",
+  "base_commit_sha": "22d9dac5a4fa47d279896ebb98be1c99cbb15036",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP9",
+    "commit_sha": "22d9dac5a4fa47d279896ebb98be1c99cbb15036",
+    "evidence": "eval/results/official-link-verification-cp9-evidence.json",
+    "independent_review_evidence_provided": false
+  },
+  "release_dataset": {
+    "version": "security-v4-v2",
+    "case_count": 12,
+    "sha256": "69e93b7e6161989320fce7204606387bc54a50f693d311addd780b60de232748",
+    "security_v4_v1_sha256": "19e8aa9f57d7930162159db3624169722896679fa210c3abf9805a5bf6412a7f",
+    "security_v4_v1_unchanged": true,
+    "report": "eval/results/security-v4-v2-report.json"
+  },
+  "offline_evaluation": {
+    "status": "pass",
+    "scope_accuracy": 1.0,
+    "component_status_accuracy": 1.0,
+    "labeled_resource_match_precision": 1.0,
+    "evidence_reference_closure_rate": 1.0,
+    "grounded_explanation_rate": 1.0,
+    "fabricated_ref_count": 0,
+    "fabricated_url_count": 0,
+    "oos_provider_network_ai_calls": 0,
+    "not_found_to_malicious_count": 0,
+    "ssrf_bypass_count": 0,
+    "max_estimated_cost_usd_per_analysis": 0.008,
+    "p95_latency_ms": 6.39,
+    "budget_exhaustion_bounded_partial": true
+  },
+  "hard_case_offline": {
+    "input_language": "vi",
+    "last_derived_query": "Dai hoc VinUni recruitment official",
+    "labeled_source_kind": "social_announcement",
+    "short_url": true,
+    "third_party_form": "google_form",
+    "resource_match_status": "EXACT_RESOURCE",
+    "overall_status": "VERIFIED",
+    "reference_closure": true,
+    "fabricated_ref_count": 0,
+    "fabricated_url_count": 0
+  },
+  "contract_and_integration_coverage": {
+    "consent_matrix": "tests/unit/test_official_link_verification_cp7.py plus security-v4-v2 consent cases",
+    "openapi": "tests/contract/test_official_link_verification_cp2.py and tests/test_api/test_routes.py",
+    "persistence_and_events": "tests/test_api/test_security_v4.py",
+    "async_and_idempotency": "tests/test_api/test_security_ai_wp5.py",
+    "inline_worker_parity_and_rollout": "tests/test_api/test_security_pipeline_cp1.py and tests/unit/test_official_link_verification_cp8.py",
+    "retries_ssrf_and_provider_failure": "tests/unit/test_official_link_verification_cp5.py plus security-v4-v2 failure cases",
+    "owner_and_rbac": "tests/test_api/test_security_conversations_v4.py and admin API tests",
+    "capabilities": "tests/test_api/test_security_api_readiness_v4.py and tests/unit/test_official_link_verification_cp8.py"
+  },
+  "verification": {
+    "cp10_focused": "10 passed",
+    "backend_pytest": "391 passed",
+    "backend_ruff": "pass",
+    "alembic_head": "0018_remove_vector_compat",
+    "frontend_unit": "75 passed",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_build": "pass",
+    "frontend_e2e_production": "2 passed",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "hosted_release_evidence": {
+    "status": "pending",
+    "release_approved": false,
+    "docker_daemon_available": false,
+    "hosted_url_and_oidc_token_configured": false,
+    "reviewed_evidence_file_provided": false,
+    "required_check_count": 11,
+    "required_stage_sequence": ["shadow", "visible", "enforced", "visible", "off"],
+    "validator": "scripts/evaluate_official_link_verification_hosted.py",
+    "hard_case_smoke": "scripts/smoke_official_link_verification.py",
+    "pending_checks": [
+      "hosted_smoke",
+      "postgres_persistence",
+      "redis_worker",
+      "oidc_user",
+      "oidc_admin_rbac",
+      "backup_restore",
+      "ssrf",
+      "prompt_injection",
+      "provider_failure",
+      "load",
+      "rollback"
+    ]
+  },
+  "review": {
+    "implementation_status": "offline_verified_hosted_pending",
+    "release_gate_status": "not_approved",
+    "required_reviewer_roles": ["Tech lead", "Security lead"],
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "Docker Desktop client is installed but the desktop-linux daemon is not running, so local PostgreSQL/Redis/worker rehearsal was not claimed.",
+    "No hosted URL, OIDC access token or live provider configuration was available, so hosted smoke and rollout observations were not claimed.",
+    "Node 24.14.1 keeps the Unicode workspace path percent-encoded in check:cutover; the script's exact source patterns were scanned with zero violations.",
+    "Python temporary-directory ACLs require the process-local full-test harness with pre-created directories.",
+    "The default uv cache is not writable; backend verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl",
+    "frontend/test-results/.last-run.json"
+  ]
+}

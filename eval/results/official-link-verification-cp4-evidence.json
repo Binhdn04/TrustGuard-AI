@@ -1,0 +1,97 @@
+{
+  "schema_version": "official-link-verification-cp4-evidence-v1",
+  "checkpoint": "CP4",
+  "captured_at": "2026-08-20T16:32:56+07:00",
+  "base_commit_sha": "2d7a6c4",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP3",
+    "commit_sha": "2d7a6c4",
+    "evidence": "eval/results/official-link-verification-cp3-evidence.json"
+  },
+  "identity_contract": {
+    "brand_official_identities": "additive",
+    "identity_fields": [
+      "identity_type",
+      "canonical_value",
+      "match_scope",
+      "relationship",
+      "provenance",
+      "policy_version",
+      "effective_from",
+      "effective_until",
+      "supersedes"
+    ],
+    "legacy_domain_projection": "primary_website",
+    "empty_official_domains_requires_active_identity": "pass",
+    "persisted_identities_require_review": "pass"
+  },
+  "resolution": {
+    "order": [
+      "exact_canonical_name",
+      "exact_alias",
+      "bounded_phrase"
+    ],
+    "accent_folding": "pass",
+    "ambiguous_match_has_no_identity_or_allowlist": "pass",
+    "social_profile_exact_match": "pass",
+    "careers_page_exact_match": "pass",
+    "sub_organization_bounded_match": "pass"
+  },
+  "source_registry": {
+    "exact_entity_bound_reviewed_entry_confirms": "pass",
+    "wildcard_or_broad_entry_only_corroborates": "pass",
+    "online_discovery_confirms_identity": false,
+    "online_discovery_persists_identity": false
+  },
+  "admin_versioning": {
+    "create_requires_security_admin": "pass",
+    "supersede_requires_security_admin": "pass",
+    "disable_requires_security_admin": "pass",
+    "supersede_is_append_only": "pass",
+    "disable_is_append_only": "pass",
+    "immutable_audit_events": [
+      "created",
+      "superseded",
+      "disabled"
+    ]
+  },
+  "persistence": {
+    "sqlite_old_and_versioned_records": "pass",
+    "postgres_json_record_path": "implemented_not_hosted",
+    "migration_added": false,
+    "alembic_head": "0018_remove_vector_compat"
+  },
+  "verification": {
+    "cp4_unit_contract_api_regression": "pass",
+    "backend_pytest": "pass",
+    "backend_ruff": "pass",
+    "frontend_unit": "pass",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "runtime_boundary": {
+    "public_api_prefix": "/api/v4",
+    "official_verification_coordinator_enabled": false,
+    "online_transport_added": false,
+    "risk_behavior_changed": false
+  },
+  "review": {
+    "implementation_status": "verified",
+    "required_reviewer_role": "Security admin reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "The current .venv uses Python 3.13.13 while CP0 used Python 3.11.15; Python 3.13 temporary-directory ACLs require a process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the current cutover script, so the canonical script cannot scan this workspace path; the equivalent source-pattern scan passes.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl"
+  ]
+}

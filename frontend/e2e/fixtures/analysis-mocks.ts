@@ -71,7 +71,26 @@ export async function installUserAnalysisFlow(page: Page) {
     threat_type: "PROMOTION_PRIZE_SCAM", policy_version: "security-risk-v1",
     recommended_actions: ["DO_NOT_OPEN_LINK", "REPORT_AND_BLOCK_SENDER"],
     explanation: "Liên kết có tín hiệu giả mạo chương trình trúng thưởng và yêu cầu đăng nhập.",
-    explanation_evidence_refs: ["evidence:aaaaaaaaaaaaaaaa"], created_at: now, completed_at: now,
+    explanation_evidence_refs: ["evidence:aaaaaaaaaaaaaaaa"],
+    official_verification: {
+      schema_version: "official-link-verification-v1",
+      intent: { schema_version: "verification-intent-v1", organization_name: "Tap doan X", derived_organization_names: [], claim_summary: "Chuong trinh nhan qua", topic: "promotion", requested_action: "open_link", action_url_indices: [0] },
+      publisher_verification: { applicable: true, status: "PARTIALLY_VERIFIED", reason_code: "publisher_name_only", evidence_refs: ["source:aaaaaaaaaaaaaaaa"], identity: null },
+      claim_verification: { applicable: true, status: "UNVERIFIED", reason_code: "claim_not_found", evidence_refs: [], topic: "promotion" },
+      resource_verification: {
+        applicable: true, status: "CONFLICTING", reason_code: "different_resource", evidence_refs: ["link:bbbbbbbbbbbbbbbb"],
+        match: {
+          status: "DIFFERENT_RESOURCE", reason_code: "canonical_mismatch",
+          user_resource: { schema_version: "resource-identity-v1", resource_type: "url", provider: null, resource_id: null, canonical_url: DANGEROUS_URL, match_key: DANGEROUS_URL },
+          official_resource: { schema_version: "resource-identity-v1", resource_type: "url", provider: null, resource_id: null, canonical_url: "https://tapdoanx.example/promotion", match_key: "https://tapdoanx.example/promotion" },
+        },
+      },
+      overall_status: "CONFLICTING", reason_code: "resource_conflicts_with_official_source",
+      source_refs: [{ source_ref: "source:aaaaaaaaaaaaaaaa", identity: null, display_url: "https://tapdoanx.example/promotion", canonical_url: "https://tapdoanx.example/promotion", content_hash: null }],
+      link_refs: [{ link_ref: "link:bbbbbbbbbbbbbbbb", source_ref: "source:aaaaaaaaaaaaaaaa", role: "registration", display_url: DANGEROUS_URL, canonical_url: DANGEROUS_URL, resource: null }],
+      limitations: ["web_search_unavailable"], policy_version: "official-link-verification-v1",
+    },
+    created_at: now, completed_at: now,
   };
   const running = { ...completed, status: "running" as const, terminal: false, next_step: "RISK_ASSESSMENT" as const, completed_at: null };
   const followUp = {
@@ -97,6 +116,12 @@ export async function installUserAnalysisFlow(page: Page) {
     updated_at: now,
     expires_at: "2026-09-12T08:00:00Z",
   };
+
+  await page.route("**/api/v4/capabilities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ contract_version: "v4", product_profile: "security_triage_vnext", release_profile: "pre_cutover", conversation_resume: true, admin_feedback_review: true, intelligence_explorer: true, unified_v4_audit: true, admin_action_contract: "v4", executable_admin_actions: ["add_to_blacklist"], deferred_admin_actions: ["block_domain"], official_link_verification: true }),
+  }));
 
   await page.route("**/api/v4/ws-tickets", (route) => route.fulfill({
     status: 501,
@@ -235,6 +260,7 @@ export async function installAdminReviewFlow(page: Page) {
   const brand: BrandRecordV4 = {
     brand_id: "90000000-0000-4000-8000-000000000009", name: "Tập đoàn X",
     aliases: ["Tap doan X"], official_domains: ["tapdoanx.example"], official_contacts: ["1900-0000"],
+    official_identities: [], supersedes: null,
     provenance: "Verified corporate registry", policy_version: "brand-registry-v1",
     effective_from: v3.created_at, effective_until: null, lifecycle: "active",
     reviewer_id: "admin-e2e", created_at: v3.created_at,
@@ -266,5 +292,6 @@ export async function installAdminReviewFlow(page: Page) {
   });
   await page.route(`**/api/v4/admin/analyses/${ANALYSIS_ID}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(adminCase) }));
   await page.route("**/api/v4/admin/brands/page*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", items: [brand], total: 1, limit: 10, offset: 0 }) }));
+  await page.route(`**/api/v4/admin/brands/${brand.brand_id}/versions`, (route) => route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ...brand, ...route.request().postDataJSON(), brand_id: "90000000-0000-4000-8000-000000000010", supersedes: brand.brand_id }) }));
   await page.route("**/api/v4/admin/audit*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", items: [auditEvent], total: 1, limit: 20, offset: 0 }) }));
 }

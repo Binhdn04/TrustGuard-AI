@@ -22,6 +22,20 @@ def test_security_ai_structured_outputs_forbid_extra_fields() -> None:
         Understanding.model_validate({"sender_intent": "payment", "invented": True})
 
 
+@pytest.mark.parametrize(("start", "end"), [(83, 83), (90, 83), (0, 0)])
+def test_provider_source_span_offsets_are_deferred_to_grounding_boundary(start: int, end: int) -> None:
+    parsed = Understanding.model_validate(
+        {
+            "sender_intent": "registration",
+            "field_confidences": {"sender_intent": 0.9},
+            "source_spans": [{"field_name": "sender_intent", "start": start, "end": end}],
+        }
+    )
+
+    assert parsed.source_spans[0].start == start
+    assert parsed.source_spans[0].end == end
+
+
 @pytest.mark.asyncio
 async def test_fake_adapter_passes_typed_schema_and_accounts_budget() -> None:
     fake = DeterministicFakeSecurityAssistant()
@@ -69,6 +83,23 @@ async def test_runtime_retries_malformed_output_then_falls_back() -> None:
     assert calls == 2
     assert runtime.budget.calls == 2
     assert len(runtime.metrics) == 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_logs_normalized_fallback_without_provider_payload(caplog) -> None:
+    async def malformed():
+        return {"output": {"unknown": "private-provider-payload"}, "provider": "fake", "model": "bad"}
+
+    runtime = SecurityAssistantRuntime(max_retries=0)
+    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+        result = await runtime.invoke(AssistantOperation.UNDERSTAND, malformed, Understanding)
+
+    record = next(item for item in caplog.records if item.getMessage() == "security_ai_invocation_fallback")
+    assert result.error == "invalid_structured_output"
+    assert record.operation == "understand"
+    assert record.failure_code == "invalid_structured_output"
+    assert record.attempts == 1
+    assert "private-provider-payload" not in record.getMessage()
 
 
 @pytest.mark.asyncio
@@ -209,12 +240,24 @@ def test_security_ai_rejects_invalid_pricing_configuration() -> None:
         )
 
 
-def test_all_security_ai_flags_default_off() -> None:
+def test_security_ai_stages_default_on_but_require_a_provider(monkeypatch) -> None:
+    for key in (
+        "SECURITY_AI_UNDERSTANDING_ENABLED",
+        "SECURITY_AI_PLANNING_ENABLED",
+        "SECURITY_AI_EXPLANATION_ENABLED",
+        "SECURITY_ADMIN_COPILOT_ENABLED",
+        "SECURITY_OFFICIAL_VERIFICATION_MODE",
+        "OPENAI_API_KEY",
+        "TAVILY_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
-    assert settings.security_ai_understanding_enabled is False
-    assert settings.security_ai_planning_enabled is False
-    assert settings.security_ai_explanation_enabled is False
+    assert settings.security_ai_understanding_enabled is True
+    assert settings.security_ai_planning_enabled is True
+    assert settings.security_ai_explanation_enabled is True
     assert settings.security_async_execution_enabled is False
     assert settings.security_memory_retrieval_enabled is False
-    assert settings.security_admin_copilot_enabled is False
-    assert not any(settings.enabled_security_capabilities().values())
+    assert settings.security_admin_copilot_enabled is True
+    assert settings.security_official_verification_mode == "visible"
+    assert settings.enabled_security_capabilities()["official_link_verification"] is True
+    assert settings.enabled_security_capabilities()["official_web_search_ready"] is False

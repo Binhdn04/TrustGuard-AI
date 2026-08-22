@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Activity, Bot, ChevronDown, CircleHelp, FileSearch, RotateCcw, ShieldCheck } from "lucide-react";
 
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
+import { useAccountPreferences } from "@/lib/account-preferences-context";
 import type { SecurityCaseState, SecurityCaseTurn } from "@/lib/hooks/use-security-case";
 import {
   mapSecurityCaseViewModel,
@@ -14,7 +15,7 @@ import { cn } from "@/lib/utils";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
-import { ActionRiskPanel } from "./action-risk-panel";
+import { ActionRiskPanel, SimpleRiskTechnicalDetails } from "./action-risk-panel";
 import { AnalysisAppealForm } from "./analysis-appeal-form";
 import { AnalysisLimitations } from "./analysis-limitations";
 import { AnalysisReportForm } from "./analysis-report-form";
@@ -22,6 +23,8 @@ import { CaseSignalMap } from "./case-signal-map";
 import { ConversationPanel } from "./conversation-panel";
 import { EvidenceDeck } from "./evidence-deck";
 import { InvestigationTimelineV4 } from "./investigation-timeline-v4";
+import { OfficialVerificationPanel } from "./official-verification-panel";
+import { PageCapturePanel } from "./page-capture-panel";
 import { SimpleAnalystToggle } from "./simple-analyst-toggle";
 
 type MobilePanel = "conversation" | "investigation" | "action";
@@ -111,65 +114,93 @@ function ActionPanel({
   return (
     <section aria-labelledby="action-heading" className="case-panel min-h-[36rem] overflow-hidden">
       <header className="border-b border-border/70 px-4 py-3.5">
-        <p className="micro-label">{mode === "simple" ? "02 / Kết quả" : "03 / Action"}</p>
-        <h2 id="action-heading" className="mt-1 text-sm font-semibold">
+        {mode === "analyst" && <p className="micro-label">03 / Action</p>}
+        <h2 id="action-heading" className={mode === "simple" ? "text-sm font-semibold" : "mt-1 text-sm font-semibold"}>
           {mode === "simple" ? "Kết luận và hướng dẫn" : "Decision & next steps"}
         </h2>
       </header>
       <div className="space-y-4 p-4">
         {completed ? (
           <>
-            <ActionRiskPanel viewModel={completed} mode={mode} />
-            {mode === "simple" && reasons.length > 0 && (
-              <section aria-labelledby="agent-reasons-heading" className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                <div className="flex items-center gap-2">
-                  <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary"><Bot className="size-4" aria-hidden="true" /></span>
-                  <h3 id="agent-reasons-heading" className="text-sm font-semibold">Các dấu hiệu chính</h3>
-                </div>
-                <ol className="mt-3 space-y-2 text-sm leading-6">
-                  {reasons.map((reason, index) => (
-                    <li key={`${reason.text}:${index}`} className="flex gap-2">
-                      <span className="mt-0.5 font-bold text-primary">{index + 1}.</span>
-                      <span>{reason.text}</span>
-                    </li>
-                  ))}
-                </ol>
-              </section>
-            )}
-            {mode === "simple" && uncertainties.length > 0 && (
-              <section aria-labelledby="agent-uncertainties-heading" className="rounded-2xl border border-amber-500/25 bg-amber-500/8 p-4">
-                <h3 id="agent-uncertainties-heading" className="flex items-center gap-2 text-sm font-semibold"><CircleHelp className="size-4" />Điều chưa xác minh được</h3>
-                <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                  {uncertainties.map((item) => <li key={item}>• {item}</li>)}
-                </ul>
-              </section>
+            <ActionRiskPanel
+              viewModel={completed}
+              mode={mode}
+              showSimpleTechnicalDetails={mode !== "simple"}
+            />
+            {mode === "simple" && (
+              <PageCapturePanel
+                analysisId={latest!.analysis_id}
+                urls={completed.context?.urls ?? []}
+                api={api}
+              />
             )}
             {mode === "simple" ? (
-              <>
-                <details className="group rounded-2xl border border-border bg-background/45">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
-                    Đã kiểm tra những gì?
-                    <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden="true" />
-                  </summary>
-                  <div className="space-y-5 border-t border-border/70 p-4">
-                    <InvestigationTimelineV4 lifecycle={completed.lifecycle} steps={completed.steps} errors={completed.errors} mode="simple" />
-                    <EvidenceDeck evidence={completed.evidence} mode="simple" />
-                    <AnalysisLimitations limitations={latest!.limitations} />
-                  </div>
-                </details>
-                <details className="group rounded-2xl border border-border bg-background/45">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
-                    Báo cáo hoặc yêu cầu xem xét
-                    <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden="true" />
-                  </summary>
-                  <div className="space-y-4 border-t border-border/70 p-4">
-                    <AnalysisReportForm analysisId={latest!.analysis_id} securityApi={api} />
-                    <AnalysisAppealForm analysisId={latest!.analysis_id} securityApi={api} />
-                  </div>
-                </details>
-              </>
+              <details
+                key={`${latest!.analysis_id}:${latest!.conversation_version}`}
+                className="group/result overflow-hidden rounded-2xl border border-primary/25 bg-background/55 shadow-sm"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-primary hover:bg-primary/5">
+                  <span>Xem kết quả chi tiết</span>
+                  <ChevronDown className="size-4 transition-transform group-open/result:rotate-180" aria-hidden="true" />
+                </summary>
+                <div className="space-y-4 border-t border-border/70 p-4">
+                  <SimpleRiskTechnicalDetails viewModel={completed} />
+                  <OfficialVerificationPanel viewModel={completed} mode="simple" />
+                  {reasons.length > 0 && (
+                    <section aria-labelledby="agent-reasons-heading" className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                      <div className="flex items-center gap-2">
+                        <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary"><Bot className="size-4" aria-hidden="true" /></span>
+                        <h3 id="agent-reasons-heading" className="text-sm font-semibold">Các dấu hiệu chính</h3>
+                      </div>
+                      <ol className="mt-3 space-y-2 text-sm leading-6">
+                        {reasons.map((reason, index) => (
+                          <li key={`${reason.text}:${index}`} className="flex gap-2">
+                            <span className="mt-0.5 font-bold text-primary">{index + 1}.</span>
+                            <span>{reason.text}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </section>
+                  )}
+                  {uncertainties.length > 0 && (
+                    <section aria-labelledby="agent-uncertainties-heading" className="rounded-2xl border border-amber-500/25 bg-amber-500/8 p-4">
+                      <h3 id="agent-uncertainties-heading" className="flex items-center gap-2 text-sm font-semibold"><CircleHelp className="size-4" />Điều chưa xác minh được</h3>
+                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                        {uncertainties.map((item) => <li key={item}>• {item}</li>)}
+                      </ul>
+                    </section>
+                  )}
+                  <details className="group/checks rounded-2xl border border-border bg-background/45">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
+                      Đã kiểm tra những gì?
+                      <ChevronDown className="size-4 transition-transform group-open/checks:rotate-180" aria-hidden="true" />
+                    </summary>
+                    <div className="space-y-5 border-t border-border/70 p-4">
+                      <InvestigationTimelineV4 lifecycle={completed.lifecycle} steps={completed.steps} errors={completed.errors} mode="simple" />
+                      <EvidenceDeck evidence={completed.evidence} mode="simple" />
+                      <AnalysisLimitations limitations={latest!.limitations} />
+                    </div>
+                  </details>
+                  <details className="group/report rounded-2xl border border-border bg-background/45">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
+                      Báo cáo hoặc yêu cầu xem xét
+                      <ChevronDown className="size-4 transition-transform group-open/report:rotate-180" aria-hidden="true" />
+                    </summary>
+                    <div className="space-y-4 border-t border-border/70 p-4">
+                      <AnalysisReportForm analysisId={latest!.analysis_id} securityApi={api} />
+                      <AnalysisAppealForm analysisId={latest!.analysis_id} securityApi={api} />
+                    </div>
+                  </details>
+                </div>
+              </details>
             ) : (
               <>
+                <OfficialVerificationPanel viewModel={completed} mode="analyst" />
+                <PageCapturePanel
+                  analysisId={latest!.analysis_id}
+                  urls={completed.context?.urls ?? []}
+                  api={api}
+                />
                 <AnalysisReportForm analysisId={latest!.analysis_id} securityApi={api} />
                 <AnalysisAppealForm analysisId={latest!.analysis_id} securityApi={api} />
               </>
@@ -178,10 +209,12 @@ function ActionPanel({
         ) : (
           <div className="rounded-xl border border-dashed border-border p-5 text-center">
             <ShieldCheck className="mx-auto size-5 text-muted-foreground" />
-            <p className="mt-2 text-sm font-semibold">{busy ? "Đang chờ verdict" : "Chưa có hành động được khuyến nghị"}</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Frontend không tự tính verdict, score hoặc hành động khi API chưa trả kết luận.
-            </p>
+            <p className="mt-2 text-sm font-semibold">{busy ? "Đang chờ kết quả" : "Chưa có hướng dẫn"}</p>
+            {mode === "analyst" && (
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Frontend không tự tính verdict, score hoặc hành động khi API chưa trả kết luận.
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -214,8 +247,14 @@ export function CaseWorkspace({
   onRetry(): void;
   onReset(): void;
 }) {
+  const { preferences } = useAccountPreferences();
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("conversation");
   const [mode, setMode] = useState<SecurityPresentationMode>("simple");
+  useEffect(() => {
+    // Presentation preference never changes the analysis request or result.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(preferences.defaultPresentation);
+  }, [preferences.defaultPresentation]);
   const analysisLabel = latest?.analysis_id ? latest.analysis_id.slice(0, 8) : "pending";
   const viewModel = useMemo(
     () => latest ? mapSecurityCaseViewModel(latest, lifecycleEvents) : null,
@@ -228,13 +267,15 @@ export function CaseWorkspace({
     <div className="space-y-4">
       <header className="flex flex-col justify-between gap-4 border-b border-border/70 pb-4 sm:flex-row sm:items-end">
         <div>
-          <p className="micro-label text-primary">ACTIVE CASE / {analysisLabel}</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-[-0.025em] sm:text-3xl">
+          {mode === "analyst" && <p className="micro-label text-primary">ACTIVE CASE / {analysisLabel}</p>}
+          <h1 className={cn("text-2xl font-semibold tracking-[-0.025em] sm:text-3xl", mode === "analyst" && "mt-2")}>
             {mode === "simple" ? "Trợ lý an toàn số" : "Security investigation workspace"}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {latest ? `${latest.status} · ${latest.scope_decision}` : "Đang tạo case từ nội dung intake"}
-          </p>
+          {mode === "analyst" && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {latest ? `${latest.status} · ${latest.scope_decision}` : "Đang tạo case từ nội dung intake"}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SimpleAnalystToggle

@@ -73,7 +73,9 @@ def _case(risk=SecurityRiskV4.HIGH_RISK):
 
 
 class _Analyses:
-    def __init__(self, case): self.case = case
+    def __init__(self, case):
+        self.case = case
+
     async def get_for_admin(self, analysis_id, principal):
         assert analysis_id == self.case.analysis_id and principal is ADMIN
         return self.case.model_copy(deep=True)
@@ -86,9 +88,14 @@ class _Memory:
 
 
 class _Repository:
-    def __init__(self): self.saved = []
-    async def latest_security_admin_copilot(self, analysis_id, snapshot_hash): return None
-    async def save_security_admin_copilot(self, *args): self.saved.append(args)
+    def __init__(self):
+        self.saved = []
+
+    async def latest_security_admin_copilot(self, analysis_id, snapshot_hash):
+        return None
+
+    async def save_security_admin_copilot(self, *args):
+        self.saved.append(args)
 
 
 class _Model:
@@ -98,17 +105,22 @@ class _Model:
         self.action = action
         self.disposition = disposition
         self.rationale = rationale
+
     async def draft_admin_review(self, case_detail):
         self.calls += 1
-        assert case_detail["allowed_admin_actions"] == ["add_to_blacklist", "block_domain", "publish_broad_warning", "none"]
+        assert case_detail["allowed_admin_actions"] == [
+            "add_to_blacklist",
+            "block_domain",
+            "publish_broad_warning",
+            "none",
+        ]
         return ModelResponse(
             output=AdminReviewDraft(
                 evidence_summary="Grounded reviewer summary.",
                 proposed_disposition=self.disposition,
                 proposed_admin_action=self.action,
                 grounded_rationale=(
-                    [{"text": "Credential request is recorded.", "evidence_refs": [self.ref]}]
-                    if self.rationale else []
+                    [{"text": "Credential request is recorded.", "evidence_refs": [self.ref]}] if self.rationale else []
                 ),
                 evidence_refs=[self.ref],
             ),
@@ -121,8 +133,12 @@ class _Model:
 async def test_copilot_is_grounded_and_never_executes_prompt_injected_action() -> None:
     case, repository, model = _case(), _Repository(), _Model()
     service = SecurityAdminCopilotService(
-        _Analyses(case), _Memory(), repository, model,
-        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
+        _Analyses(case),
+        _Memory(),
+        repository,
+        model,
+        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)),
+        enabled=True,
     )
     result = await service.suggest(case.analysis_id, ADMIN)
 
@@ -138,8 +154,12 @@ async def test_copilot_is_grounded_and_never_executes_prompt_injected_action() -
 async def test_ungrounded_or_low_risk_output_stays_policy_grounded_or_removes_high_impact_action() -> None:
     case, repository = _case(SecurityRiskV4.LOW_RISK), _Repository()
     ungrounded = SecurityAdminCopilotService(
-        _Analyses(case), _Memory(), repository, _Model(ref="evidence:ffffffffffffffff"),
-        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
+        _Analyses(case),
+        _Memory(),
+        repository,
+        _Model(ref="evidence:ffffffffffffffff"),
+        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)),
+        enabled=True,
     )
     result = await ungrounded.suggest(case.analysis_id, ADMIN)
     assert result.generation_mode.value == "policy_grounded"
@@ -158,8 +178,12 @@ async def test_ungrounded_or_low_risk_output_stays_policy_grounded_or_removes_hi
 async def test_copilot_rejects_missing_rationale_or_disposition_that_conflicts_with_risk(model) -> None:
     case = _case(SecurityRiskV4.HIGH_RISK)
     service = SecurityAdminCopilotService(
-        _Analyses(case), _Memory(), _Repository(), model,
-        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
+        _Analyses(case),
+        _Memory(),
+        _Repository(),
+        model,
+        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)),
+        enabled=True,
     )
     result = await service.suggest(case.analysis_id, ADMIN)
     assert result.generation_mode.value == "policy_grounded"
@@ -183,13 +207,21 @@ async def test_sqlite_persists_suggestion_usage_snapshot_and_audit(tmp_path) -> 
     case, model = _case(), _Model(action="add_to_blacklist")
     await repository.save_security_analysis("owner", case, [])
     service = SecurityAdminCopilotService(
-        _Analyses(case), _Memory(), repository, model,
-        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
+        _Analyses(case),
+        _Memory(),
+        repository,
+        model,
+        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)),
+        enabled=True,
     )
     first = await service.suggest(case.analysis_id, ADMIN)
     second_service = SecurityAdminCopilotService(
-        _Analyses(case), _Memory(), repository, model,
-        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)), enabled=True,
+        _Analyses(case),
+        _Memory(),
+        repository,
+        model,
+        SecurityAssistantRuntime(budget=TurnBudget(max_calls=1)),
+        enabled=True,
     )
     second = await second_service.suggest(case.analysis_id, ADMIN)
     audit = await repository.list_security_admin_audit()

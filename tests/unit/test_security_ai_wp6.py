@@ -190,9 +190,7 @@ async def test_security_risk_v2_uses_malicious_memory_and_false_positive_only_su
             "description": "Reviewed malicious pattern.",
         }
     )
-    unrelated_weak = weak.model_copy(
-        update={"evidence_ref": "evidence:8888888888888888", "target": "other.example"}
-    )
+    unrelated_weak = weak.model_copy(update={"evidence_ref": "evidence:8888888888888888", "target": "other.example"})
     blacklist = SecurityEvidenceV4(
         evidence_ref="evidence:6666666666666666",
         type=SecurityEvidenceTypeV4.BLACKLIST,

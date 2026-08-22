@@ -1,6 +1,12 @@
+import type { SecurityConsentV4 } from "@/types/generated/api-v4";
+
 export const AUTOMATIC_LOOKUP_CONSENT = {
   external_url_lookup: true,
-} as const;
+  official_source_lookup: true,
+} as const satisfies SecurityConsentV4;
 
 export const AUTOMATIC_LOOKUP_DISCLOSURE =
-  "Khi bạn gửi, TrustGuard có thể tự đối chiếu URL/domain với dịch vụ bảo mật khi cần. Không gửi mật khẩu, mã OTP hoặc token thật.";
+  "Khi gửi, TrustGuard có thể kiểm tra liên kết bằng dịch vụ bảo mật.";
+
+export const OFFICIAL_SOURCE_LOOKUP_DISCLOSURE =
+  "Có thể đối chiếu nguồn công khai; không gửi mật khẩu, OTP hoặc token.";

@@ -46,11 +46,6 @@ _LOCAL_SIGNAL_BY_TITLE = {
     "Tên miền có mẫu mạo danh khuyến mãi": "promotion_lure_domain",
 }
 
-_MANDATORY_PLANNER_TOOLS = {
-    SecurityInvestigationToolV4.SECURITY_CONTEXT_ANALYSIS,
-    SecurityInvestigationToolV4.LOCAL_URL_RULES,
-    SecurityInvestigationToolV4.BLACKLIST_LOOKUP,
-}
 _TRUST_TOOLS = {
     SecurityInvestigationToolV4.BRAND_MATCH,
     SecurityInvestigationToolV4.WHITELIST_LOOKUP,
@@ -277,9 +272,12 @@ def _candidate_payload(plan: list[InvestigationStepV4]) -> list[dict[str, Any]]:
             "target": step.target,
             "reason_code": step.reason_code,
             "depends_on": step.depends_on,
-            "mandatory": step.tool in _MANDATORY_PLANNER_TOOLS,
+            "mandatory": True,
         }
         for step in plan
+        # Policy owns non-applicability and consent skips. The AI only sees
+        # runnable candidates and therefore cannot rewrite those decisions.
+        if step.status is not SecurityInvestigationStepStatusV4.SKIPPED
     ]
 
 
@@ -287,39 +285,45 @@ def apply_plan_priority(
     plan: list[InvestigationStepV4],
     priority: PlanPriority,
 ) -> list[InvestigationStepV4] | None:
-    """Apply an AI ranking only when every reference remains inside policy."""
+    """Apply AI priority hints while policy retains dependency ordering."""
     by_id = {step.step_id: step for step in plan}
     supplied = set(priority.ordered_step_ids) | set(priority.skipped_step_ids) | set(priority.requested_step_ids)
     if not supplied <= by_id.keys():
         return None
-    if any(by_id[step_id].tool in _MANDATORY_PLANNER_TOOLS for step_id in priority.skipped_step_ids):
+    if priority.skipped_step_ids:
         return None
 
-    skipped = set(priority.skipped_step_ids)
-    active_ids = [*priority.ordered_step_ids, *priority.requested_step_ids]
+    # The model supplies priority hints, not an execution graph. Dedupe a
+    # harmless repeated allowlisted candidate and let policy restore the
+    # dependency-safe order deterministically.
+    preferred_ids = list(dict.fromkeys([*priority.ordered_step_ids, *priority.requested_step_ids]))
     for step in plan:
-        if step.step_id not in skipped and step.step_id not in active_ids:
-            active_ids.append(step.step_id)
-    if len(active_ids) != len(set(active_ids)):
+        if step.step_id not in preferred_ids:
+            preferred_ids.append(step.step_id)
+
+    active = set(preferred_ids)
+    if any(dependency not in active for step_id in active for dependency in by_id[step_id].depends_on):
         return None
 
-    position = {step_id: index for index, step_id in enumerate(active_ids)}
-    for step_id in active_ids:
-        for dependency in by_id[step_id].depends_on:
-            if dependency in skipped or dependency not in position or position[dependency] > position[step_id]:
-                return None
-
-    prioritized = [by_id[step_id] for step_id in active_ids]
-    prioritized.extend(
-        by_id[step_id].model_copy(
-            update={
-                "status": SecurityInvestigationStepStatusV4.SKIPPED,
-                "status_reason": "ai_priority_skip",
-            }
+    active_ids: list[str] = []
+    remaining = set(preferred_ids)
+    while remaining:
+        ready = next(
+            (
+                step_id
+                for step_id in preferred_ids
+                if step_id in remaining and all(dependency in active_ids for dependency in by_id[step_id].depends_on)
+            ),
+            None,
         )
-        for step_id in priority.skipped_step_ids
-    )
-    return prioritized
+        if ready is None:
+            # Defensive cycle/missing-dependency guard. The deterministic
+            # candidate graph should never reach this branch.
+            return None
+        active_ids.append(ready)
+        remaining.remove(ready)
+
+    return [by_id[step_id] for step_id in active_ids]
 
 
 class SecurityInvestigationService:
@@ -373,7 +377,10 @@ class SecurityInvestigationService:
         evidence = [self._context_evidence(context)]
         errors: list[SecurityToolErrorV4] = []
         limitations = list(scope.limitations)
-        if self._planning_enabled and self._assistant_model is not None:
+        # A one-step plan has nothing for AI to rank or skip. Avoid spending a
+        # provider call (and producing a misleading fallback limitation) for
+        # context-only investigations.
+        if self._planning_enabled and self._assistant_model is not None and len(plan) > 1:
             turn_runtime = runtime or self._runtime_factory()
             result = await turn_runtime.invoke(
                 AssistantOperation.PRIORITIZE_PLAN,
@@ -464,7 +471,12 @@ class SecurityInvestigationService:
         if context.urls and not request.consent.external_url_lookup:
             limitations.append("External URL/domain lookup bị bỏ qua vì chưa có consent.")
 
-        deadline_at = monotonic() + self._deadline_seconds
+        turn_remaining = (
+            runtime.execution_context.remaining_seconds
+            if runtime is not None and runtime.execution_context is not None
+            else self._deadline_seconds
+        )
+        deadline_at = monotonic() + min(self._deadline_seconds, turn_remaining)
         calls_used = 0
         for index, item in enumerate(plan):
             if item.status is not SecurityInvestigationStepStatusV4.PENDING:
@@ -822,11 +834,14 @@ class SecurityInvestigationService:
             if result.registrar is not None:
                 details.append(f"registrar={result.registrar}")
             signal = "+".join(result.signals) if result.signals else "registration_metadata"
-            limitations = (
-                ["RDAP không tìm thấy registration record; kết quả này không chứng minh domain an toàn."]
-                if result.signals == ["not_found"]
-                else []
-            )
+            if "not_found" in result.signals:
+                limitations = ["RDAP không tìm thấy registration record; kết quả này không chứng minh domain an toàn."]
+            elif "service_unavailable" in result.signals:
+                limitations = [
+                    "Registry của hậu tố domain không công bố dịch vụ RDAP; thiếu dữ liệu này không chứng minh domain an toàn."
+                ]
+            else:
+                limitations = []
             return [
                 _evidence(
                     SecurityEvidenceTypeV4.RDAP,

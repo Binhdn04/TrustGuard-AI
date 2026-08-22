@@ -1,0 +1,204 @@
+{
+  "schema_version": "official-link-verification-cp0-baseline-v1",
+  "checkpoint": "CP0",
+  "captured_at": "2026-08-20T09:54:48+07:00",
+  "commit_sha": "f52c0a75b494927ae6d72e12a9a298e29e485c10",
+  "worktree_clean": false,
+  "environment": {
+    "os_shell": "Windows PowerShell",
+    "system_python": "3.14.6",
+    "uv_python": "3.11.15",
+    "uv": "0.11.32",
+    "node": "24.18.0",
+    "npm": "11.16.0",
+    "next": "16.3.0"
+  },
+  "openapi": {
+    "sha256": "94f4e934a9a93d2172493b091e4e0b218d75a200f4d28b46ba42750c3c7ddf0a",
+    "public_api_prefixes": [
+      "/api/v4"
+    ],
+    "analysis_request_ref": "#/components/schemas/SecurityTriageCreateRequestV4",
+    "analysis_200_ref": "#/components/schemas/SecurityScopeResponseV4",
+    "analysis_202_ref": "#/components/schemas/SecurityAnalysisAcceptedResponseV4",
+    "scope_response_fields": [
+      "analysis_id",
+      "assistant_context",
+      "assistant_response",
+      "boundary_message",
+      "completed_at",
+      "confidence",
+      "contract_version",
+      "conversation_id",
+      "conversation_version",
+      "created_at",
+      "errors",
+      "evidence",
+      "explanation",
+      "explanation_evidence_refs",
+      "follow_up_question",
+      "follow_up_slot",
+      "investigation_plan",
+      "investigation_status",
+      "limitations",
+      "next_step",
+      "policy_version",
+      "recommended_actions",
+      "risk",
+      "scope_decision",
+      "scope_reasons",
+      "score",
+      "security_context",
+      "status",
+      "terminal",
+      "threat_type",
+      "tool_calls_used"
+    ],
+    "security_context_fields": [
+      "amount",
+      "claimed_entity",
+      "credential_request",
+      "impersonation_signals",
+      "otp_request",
+      "payment_request",
+      "personal_information_request",
+      "potential_threat",
+      "requested_action",
+      "scenario",
+      "schema_version",
+      "urgency",
+      "urls"
+    ],
+    "requested_actions": [
+      "login",
+      "share_otp",
+      "share_credentials",
+      "transfer_money",
+      "pay_fee",
+      "provide_personal_information",
+      "open_link",
+      "install_app",
+      "share_screen",
+      "scan_qr"
+    ],
+    "consent_fields": [
+      "external_url_lookup"
+    ],
+    "capability_fields": [
+      "admin_action_contract",
+      "admin_feedback_review",
+      "contract_version",
+      "conversation_resume",
+      "deferred_admin_actions",
+      "executable_admin_actions",
+      "intelligence_explorer",
+      "product_profile",
+      "release_profile",
+      "security_admin_copilot",
+      "security_ai_explanation",
+      "security_ai_planning",
+      "security_ai_understanding",
+      "security_async_execution",
+      "security_memory_retrieval",
+      "unified_v4_audit"
+    ],
+    "official_verification_field_present": false,
+    "official_verification_capability_present": false
+  },
+  "local_capabilities_response": {
+    "status_code": 200,
+    "body": {
+      "admin_action_contract": "v4",
+      "admin_feedback_review": true,
+      "contract_version": "v4",
+      "conversation_resume": true,
+      "deferred_admin_actions": [
+        "block_domain",
+        "publish_broad_warning",
+        "ai_security_copilot"
+      ],
+      "executable_admin_actions": [
+        "add_to_blacklist"
+      ],
+      "intelligence_explorer": true,
+      "product_profile": "security_triage_vnext",
+      "release_profile": "pre_cutover",
+      "security_admin_copilot": true,
+      "security_ai_explanation": true,
+      "security_ai_planning": true,
+      "security_ai_understanding": true,
+      "security_memory_retrieval": true,
+      "unified_v4_audit": true
+    },
+    "note": "Values reflect the local .env at capture time; no secret values are included."
+  },
+  "representative_scope_fixtures": {
+    "oos_general_fact": {
+      "message": "Tay Ban Nha vo dich World Cup dung khong?",
+      "scope_decision": "OUT_OF_SCOPE_GENERAL_FACT_CHECK",
+      "scope_reasons": [
+        "general_fact_check_sports"
+      ],
+      "terminal": true,
+      "next_step": "END",
+      "risk": null,
+      "tool_calls_used": 0
+    },
+    "vague_security_concern": {
+      "message": "tin nhan la",
+      "scope_decision": "NEED_MORE_INFO",
+      "scope_reasons": [
+        "security_concern_missing_context"
+      ],
+      "terminal": true,
+      "next_step": "END",
+      "risk": null,
+      "tool_calls_used": 0
+    },
+    "bare_url": {
+      "message": "https://example.test/path?utm_source=fixture",
+      "scope_decision": "IN_SCOPE",
+      "scope_reasons": [
+        "url_present"
+      ],
+      "terminal": false,
+      "next_step": "INVESTIGATION",
+      "requested_action": "open_link",
+      "risk": null,
+      "tool_calls_used": 0
+    },
+    "sensitive_action": {
+      "message": "Ngan hang yeu cau toi gui OTP ngay",
+      "scope_decision": "IN_SCOPE",
+      "scope_reasons": [
+        "otp_request"
+      ],
+      "terminal": false,
+      "next_step": "INVESTIGATION",
+      "requested_action": "share_otp",
+      "risk": null,
+      "tool_calls_used": 0
+    }
+  },
+  "verification": {
+    "backend": {
+      "ruff": "pass",
+      "pytest": "pass",
+      "alembic_head": "0018_remove_vector_compat"
+    },
+    "frontend": {
+      "unit": "pass",
+      "lint": "pass",
+      "typecheck": "pass",
+      "cutover": "pass",
+      "build": "pass",
+      "e2e": "pass"
+    }
+  },
+  "environment_constraints": [
+    "PowerShell blocks npm.ps1; use npm.cmd.",
+    "The default uv cache path is not writable; use uv run --no-cache --no-sync with the existing environment.",
+    "The default pytest temp/cache paths are not writable; use a new workspace-local --basetemp and disable cacheprovider.",
+    "FastAPI TestClient emits a Starlette httpx deprecation warning; it does not fail the baseline."
+  ]
+}

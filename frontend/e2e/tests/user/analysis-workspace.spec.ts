@@ -48,9 +48,17 @@ test("mobile keyboard flow: analyze → report/appeal → history resume", async
   await page.getByRole("tab", { name: "Kết quả" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Nguy hiểm" })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/Không mở liên kết/i)).toBeVisible();
+  await expect(page.getByText(/Không mở liên kết/i).first()).toBeVisible();
   await expect(page.getByText(/tín hiệu rủi ro cao tạm thời/i)).toHaveCount(0);
 
+  await expect(page.getByRole("heading", { name: "Thong tin mau thuan" })).toBeVisible();
+  await page.getByRole("button", { name: "analyst" }).click();
+  const verification = page.locator("[aria-labelledby='official-verification-heading']");
+  await expect(verification.getByText("Resource / canonical chain (text only)")).toBeVisible();
+  await expect(verification.getByText(/web_search_unavailable/)).toBeVisible();
+  await expect(verification.locator("a")).toHaveCount(0);
+  await expect(verification.getByText(DANGEROUS_URL).first()).toBeVisible();
+  await page.getByRole("button", { name: "simple" }).click();
   await expectNoSeriousAccessibilityViolations(page, "[aria-labelledby='risk-heading']");
 
   await page.getByRole("tab", { name: "Trò chuyện" }).click();

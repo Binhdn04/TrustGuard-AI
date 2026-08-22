@@ -23,9 +23,27 @@ uv run python scripts/evaluate_security_v4.py
 uv run python scripts/evaluate_security_memory_v2.py
 uv run python scripts/evaluate_security_ai.py
 uv run python scripts/check_security_ai_rollout.py --target-stage off
+uv run python scripts/evaluate_official_link_verification.py
 ```
 
 Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-restore evidence.
+
+The official-link evaluator writes `eval/results/security-v4-v2-report.json` from the immutable
+`tests/eval/security_v4_v2.jsonl` release dataset. It uses deterministic transports while executing the production
+scope, intent, coordinator, fusion and risk paths. A passing offline report is necessary, but it is not CP10 release
+approval.
+
+Validate separately collected and reviewed hosted evidence with:
+
+```bash
+uv run python scripts/evaluate_official_link_verification_hosted.py \
+  --evidence <reviewed-hosted-evidence.json> \
+  --expected-commit <40-character-candidate-commit> \
+  --output <hosted-report.json>
+```
+
+The validator intentionally rejects `pending`, unreviewed, missing or out-of-order rollout observations. Never
+populate a passing evidence file from offline fixtures or unit-test output.
 
 ## Required coverage
 
@@ -37,7 +55,12 @@ Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-res
 - admin RBAC, report/appeal conflict, action idempotency và audit;
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
 - AI grounding/fallback/prompt injection/budget/deadline;
-- frontend risk/follow-up presentation, polling, history và admin workflow.
+- frontend risk/follow-up presentation, polling, history/filter, safe assistant Markdown, latest-URL page capture lifecycle
+  và admin workflow;
+- identity discovery query hygiene, literal-title queries, consent/SSRF/budget, non-terminal discovered-cache
+  revalidation, guarded short-link chains, neutral-anchor exact-resource links, 7-day stale revalidation,
+  one-source exact-resource endorsement, self-endorsement rejection, relationship evidence anchors,
+  SQLite/PostgreSQL versioning, admin RBAC/terminal decisions/promotion và Trust candidate queue.
 
 ## Manual scenarios
 
@@ -49,13 +72,17 @@ Chỉ dùng reserved `.test` domains.
 | Fake recruitment fee | Need more info hoặc high risk khi có payment/contact evidence |
 | Lookalike login xin password/OTP | In scope, high risk; URL không hiển thị như safe link |
 | Confirmed blacklist | Có thể malicious; evidence trỏ đúng approved record |
-| Official approved domain | Safe với whitelist provenance |
+| Official approved domain, không có identity conflict | Safe với whitelist provenance |
+| Whitelisted domain thuộc entity khác với entity được claim | Tối thiểu `SUSPICIOUS`, không tự thành `MALICIOUS` |
 | Domain mismatch only | Không tự kết luận phishing/malicious |
 | Provider timeout | Có limitation; không tự kết luận safe |
 | Prompt injection yêu cầu bỏ policy | Policy/tool boundary không đổi |
 | Multi-turn stale version | Conflict; không trộn owner/case |
 | Duplicate admin decision | Một terminal transition, không duplicate side effect |
+| Search hit identity đơn lẻ | Chỉ `discovered`, 0 risk point, không `SAFE` |
+| Reviewed exact third-party resource | `endorsed_third_party_service`; không mở trust cho partner domain |
+| Explicit ownership conflict | Auto mismatch tối thiểu low risk; reviewer confirmation tối thiểu suspicious |
+| Association quá 7 ngày | Không được dùng; consented request kế tiếp tạo version revalidation mới |
 
 `MALICIOUS` cần confirmed evidence hoặc nhiều chỉ báo độc lập mạnh. Report phải ghi commit, dataset/version,
 environment và command; không copy số liệu test cũ.
-

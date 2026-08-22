@@ -48,6 +48,20 @@ async def test_v4_out_of_scope_is_terminal_without_resolving_investigation(clien
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Xin chào", "Bạn là ai?"])
+async def test_v4_chat_answers_basic_local_intents_without_ai_provider(client, message: str) -> None:
+    response = await client.post(
+        "/api/v4/chat",
+        headers=USER_HEADERS,
+        json={"message": message},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["route"] == "conversation"
+    assert "TrustGuard" in response.json()["response"]
+
+
+@pytest.mark.asyncio
 async def test_v4_in_scope_returns_context_and_completes_local_investigation(client, caplog) -> None:
     with caplog.at_level(logging.INFO, logger="trustguard.http"):
         response = await client.post(

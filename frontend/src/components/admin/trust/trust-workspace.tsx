@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Database, GitBranch, Landmark, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Database, GitBranch, Landmark, LockKeyhole, ScanSearch, ShieldCheck } from "lucide-react";
 
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 import type {
   BrandCreateRequestV4, BrandPageV4, BrandRecordV4, SecurityCampaignAuditRecordV4,
+  IdentityCandidateDecisionRequestV4, IdentityCandidatePageV4, IdentityCandidateV4,
   SecurityCampaignPageV4, SecurityCampaignRecordV4, SecurityMemoryAuditRecordV4,
   SecurityMemoryPageV4, SecurityMemoryRecordV4, SecurityMemoryReviewedVerdictV4,
   WhitelistCreateRequestV4, WhitelistPageV4, WhitelistRecordV4,
@@ -17,11 +18,12 @@ import type {
 
 import { BrandRegistry, type TrustRegistryQuery } from "./brand-registry";
 import { CampaignReview, type CampaignReviewQuery } from "./campaign-review";
+import { IdentityCandidateQueue, type IdentityCandidateQuery } from "./identity-candidate-queue";
 import { SecurityMemoryRegistry, type SecurityMemoryQueryState } from "./security-memory-registry";
 import { WhitelistRegistry, type WhitelistRegistryQuery } from "./whitelist-registry";
 
 const PAGE_SIZE = 10;
-type Surface = "brands" | "whitelist" | "memory" | "campaigns";
+type Surface = "brands" | "identity" | "whitelist" | "memory" | "campaigns";
 type LoadState = { loading: boolean; error: string | null };
 
 export function TrustWorkspace({ api = getSecurityAnalysisApi() }: { api?: SecurityAnalysisApi }) {
@@ -29,10 +31,12 @@ export function TrustWorkspace({ api = getSecurityAnalysisApi() }: { api?: Secur
   const isAdmin = user?.role === "security_admin";
   const [surface, setSurface] = useState<Surface>("brands");
   const [brandQuery, setBrandQuery] = useState<TrustRegistryQuery>({ q: "", lifecycle: "all", page: 1 });
+  const [identityQuery, setIdentityQuery] = useState<IdentityCandidateQuery>({ entity: "", status: "all", relationship: "all", page: 1 });
   const [whitelistQuery, setWhitelistQuery] = useState<WhitelistRegistryQuery>({ q: "", lifecycle: "all", page: 1 });
   const [memoryQuery, setMemoryQuery] = useState<SecurityMemoryQueryState>({ q: "", risk: "all", verdict: "all", page: 1 });
   const [campaignQuery, setCampaignQuery] = useState<CampaignReviewQuery>({ q: "", status: "all", page: 1 });
   const [brands, setBrands] = useState<BrandPageV4 | null>(null);
+  const [identityCandidates, setIdentityCandidates] = useState<IdentityCandidatePageV4 | null>(null);
   const [whitelist, setWhitelist] = useState<WhitelistPageV4 | null>(null);
   const [memory, setMemory] = useState<SecurityMemoryPageV4 | null>(null);
   const [campaigns, setCampaigns] = useState<SecurityCampaignPageV4 | null>(null);
@@ -63,6 +67,16 @@ export function TrustWorkspace({ api = getSecurityAnalysisApi() }: { api?: Secur
     } catch (error) { if (generation === generations.current.list) setState({ loading: false, error: error instanceof Error ? error.message : "Không thể tải whitelist." }); }
   }, [api, isAdmin, surface, whitelistQuery]);
 
+  const loadIdentityCandidates = useCallback(async () => {
+    if (!isAdmin || surface !== "identity") return;
+    if (!api.pageIdentityCandidates) { setState({ loading: false, error: "Identity candidate API is unavailable." }); return; }
+    const generation = ++generations.current.list; setState({ loading: true, error: null });
+    try {
+      const result = await api.pageIdentityCandidates({ limit: PAGE_SIZE, offset: (identityQuery.page - 1) * PAGE_SIZE, ...(identityQuery.entity.trim() ? { entity: identityQuery.entity.trim() } : {}), ...(identityQuery.status !== "all" ? { status: identityQuery.status as "discovered" | "verified" | "conflicting" | "promoted" | "rejected" | "confirmed_mismatch" } : {}), ...(identityQuery.relationship !== "all" ? { relationship: identityQuery.relationship as "official_controlled" | "parent_organization" | "endorsed_third_party_service" } : {}) });
+      if (generation === generations.current.list) { setIdentityCandidates(result); setState({ loading: false, error: null }); }
+    } catch (error) { if (generation === generations.current.list) setState({ loading: false, error: error instanceof Error ? error.message : "Không thể tải identity candidates." }); }
+  }, [api, identityQuery, isAdmin, surface]);
+
   const loadMemory = useCallback(async () => {
     if (!isAdmin || surface !== "memory") return;
     const generation = ++generations.current.list; setState({ loading: true, error: null });
@@ -83,6 +97,7 @@ export function TrustWorkspace({ api = getSecurityAnalysisApi() }: { api?: Secur
 
   useEffect(() => { void Promise.resolve().then(loadBrands); }, [loadBrands]);
   useEffect(() => { void Promise.resolve().then(loadWhitelist); }, [loadWhitelist]);
+  useEffect(() => { void Promise.resolve().then(loadIdentityCandidates); }, [loadIdentityCandidates]);
   useEffect(() => { void Promise.resolve().then(loadMemory); }, [loadMemory]);
   useEffect(() => { void Promise.resolve().then(loadCampaigns); }, [loadCampaigns]);
 
@@ -91,6 +106,10 @@ export function TrustWorkspace({ api = getSecurityAnalysisApi() }: { api?: Secur
     try { await operation(); await reload(); }
     catch (error) { setState((current) => ({ ...current, error: error instanceof Error ? error.message : "Không thể lưu thay đổi trust." })); }
     finally { setBusy(false); }
+  };
+  const decideIdentity = async (candidate: IdentityCandidateV4, request: IdentityCandidateDecisionRequestV4) => {
+    if (!api.decideIdentityCandidate) { setState({ loading: false, error: "Identity review API is unavailable." }); return; }
+    await mutate(() => api.decideIdentityCandidate!(candidate.association_id, request), loadIdentityCandidates);
   };
 
   const selectMemory = async (record: SecurityMemoryRecordV4) => {
@@ -124,10 +143,12 @@ export function TrustWorkspace({ api = getSecurityAnalysisApi() }: { api?: Secur
 
   const tabs: Array<{ id: Surface; label: string; icon: typeof Landmark }> = [
     { id: "brands", label: "Brands", icon: Landmark }, { id: "whitelist", label: "Whitelist", icon: ShieldCheck },
+    { id: "identity", label: "Identity queue", icon: ScanSearch },
     { id: "memory", label: "Security Memory", icon: Database }, { id: "campaigns", label: "Campaigns", icon: GitBranch },
   ];
   return <div className="space-y-6"><header className="border-b border-border/70 pb-6"><p className="micro-label text-primary">ADMIN / SECURITY V4</p><h1 className="mt-2 text-3xl font-bold tracking-[-0.025em]">Trust Control Center</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Lifecycle-controlled brand and whitelist registries, explainable Memory corrections and campaign review. Every displayed state comes from v4.</p></header><div className="flex gap-1 overflow-x-auto rounded-xl bg-muted p-1" role="tablist" aria-label="Trust surface">{tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={surface === id} onClick={() => { generations.current.detail += 1; setSurface(id); setState({ loading: false, error: null }); setDetailState({ loading: false, error: null }); }} className={cn("inline-flex min-w-fit flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold", surface === id ? "bg-background shadow-sm" : "text-muted-foreground")}><Icon className="size-4" />{label}</button>)}</div>
-    {surface === "brands" && <BrandRegistry page={brands} query={brandQuery} loading={state.loading} busy={busy} error={state.error} onQueryChange={setBrandQuery} onCreate={(request: BrandCreateRequestV4) => mutate(() => api.createBrand(request), loadBrands)} onDisable={(record: BrandRecordV4) => mutate(() => api.disableBrand(record.brand_id), loadBrands)} onRetry={loadBrands} />}
+    {surface === "brands" && <BrandRegistry page={brands} query={brandQuery} loading={state.loading} busy={busy} error={state.error} onQueryChange={setBrandQuery} onCreate={(request: BrandCreateRequestV4) => mutate(() => api.createBrand(request), loadBrands)} onCreateVersion={(brandId: string, request: BrandCreateRequestV4) => mutate(() => api.createBrandVersion(brandId, request), loadBrands)} onDisable={(record: BrandRecordV4) => mutate(() => api.disableBrand(record.brand_id), loadBrands)} onRetry={loadBrands} />}
+    {surface === "identity" && <IdentityCandidateQueue page={identityCandidates} query={identityQuery} loading={state.loading} busy={busy} error={state.error} onQueryChange={setIdentityQuery} onDecide={decideIdentity} onRetry={loadIdentityCandidates} />}
     {surface === "whitelist" && <WhitelistRegistry page={whitelist} query={whitelistQuery} loading={state.loading} busy={busy} error={state.error} onQueryChange={setWhitelistQuery} onCreate={(request: WhitelistCreateRequestV4) => mutate(() => api.createWhitelist(request), loadWhitelist)} onDisable={(record: WhitelistRecordV4) => mutate(() => api.disableWhitelist(record.whitelist_id), loadWhitelist)} onRetry={loadWhitelist} />}
     {surface === "memory" && <SecurityMemoryRegistry page={memory} query={memoryQuery} selected={selectedMemory} audit={memoryAudit} loading={state.loading} detailLoading={detailState.loading} busy={busy} error={state.error ?? detailState.error} onQueryChange={setMemoryQuery} onSelect={selectMemory} onCorrect={correctMemory} onRetry={loadMemory} />}
     {surface === "campaigns" && <CampaignReview page={campaigns} query={campaignQuery} selected={selectedCampaign} audit={campaignAudit} loading={state.loading} detailLoading={detailState.loading} busy={busy} error={state.error ?? detailState.error} onQueryChange={setCampaignQuery} onSelect={selectCampaign} onReview={reviewCampaign} onRetry={loadCampaigns} />}

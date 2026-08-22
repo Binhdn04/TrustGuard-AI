@@ -1,0 +1,93 @@
+{
+  "schema_version": "official-link-verification-cp5-evidence-v1",
+  "checkpoint": "CP5",
+  "captured_at": "2026-08-20T18:54:58+07:00",
+  "base_commit_sha": "843c722",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP4",
+    "commit_sha": "843c722",
+    "evidence": "eval/results/official-link-verification-cp4-evidence.json"
+  },
+  "provider_contract": {
+    "web_search_method": "search_one",
+    "web_extract_method": "extract",
+    "normalized_envelopes": "pass",
+    "tavily_provider_neutral_adapters": "pass",
+    "fact_check_orchestrator_used": false,
+    "provider_failure_creates_substitute_citation": false
+  },
+  "guarded_html_fetch": {
+    "accepted_media_types": [
+      "text/html",
+      "application/xhtml+xml"
+    ],
+    "max_response_bytes": 1000000,
+    "max_redirects": 5,
+    "dns_revalidated_each_hop": "pass",
+    "dns_pinning_preserved": "pass",
+    "port_policy_preserved": "pass",
+    "raw_body_excluded_from_serialization": "pass"
+  },
+  "network_security": {
+    "private_ip": "pass",
+    "metadata_endpoint": "pass",
+    "dns_rebinding": "pass",
+    "private_redirect": "pass",
+    "redirect_loop": "pass",
+    "redirect_limit": "pass",
+    "invalid_port": "pass",
+    "timeout": "pass",
+    "rate_limit_429": "pass",
+    "oversized_response": "pass",
+    "non_html_response": "pass"
+  },
+  "shared_execution_context": {
+    "provider_request_reserves_network_unit": "pass",
+    "direct_redirect_hop_reserves_network_unit": "pass",
+    "request_17_sent": false,
+    "max_network_units": 16,
+    "adapter_attempts_distinct_from_network_units": "pass",
+    "budget_blocked_attempt_network_units": 0
+  },
+  "offline_behavior": {
+    "missing_tavily_search": null,
+    "missing_tavily_extract": null,
+    "local_registry_available": true,
+    "normalized_limitation": "provider_unavailable"
+  },
+  "verification": {
+    "cp5_network_and_regression": "pass",
+    "backend_pytest": "pass",
+    "backend_ruff": "pass",
+    "alembic_head": "0018_remove_vector_compat",
+    "frontend_unit": "pass",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "runtime_boundary": {
+    "public_api_prefix": "/api/v4",
+    "official_verification_coordinator_enabled": false,
+    "transport_auto_invoked": false,
+    "risk_behavior_changed": false,
+    "migration_added": false
+  },
+  "review": {
+    "implementation_status": "verified",
+    "required_reviewer_role": "SSRF/security reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "The current .venv uses Python 3.13.13 while CP0 used Python 3.11.15; Python 3.13 temporary-directory ACLs require a process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the current cutover script, so the canonical script cannot scan this workspace path; the equivalent source-pattern scan passes.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl"
+  ]
+}

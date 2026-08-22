@@ -66,7 +66,21 @@ describe("application shell", () => {
 
     expect(await screen.findAllByText("Observatory")).not.toHaveLength(0);
     expect(api.getCapabilities).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("official-verification-capability")).toHaveTextContent("Official verification: off");
     expect(screen.queryByText(/Hệ thống sẵn sàng/i)).not.toBeInTheDocument();
     expect(screen.getByText("Workspace content")).toBeInTheDocument();
+  });
+
+  it("exposes web readiness from rollback capabilities", async () => {
+    const api = {
+      getCapabilities: vi.fn().mockResolvedValue({
+        ...capabilities,
+        official_link_verification: true,
+        official_web_search_ready: true,
+      }),
+    } as unknown as SecurityAnalysisApi;
+
+    render(<AppShell api={api}><p>Workspace content</p></AppShell>);
+    expect(await screen.findByTestId("official-verification-capability")).toHaveTextContent("Official verification: web ready");
   });
 });

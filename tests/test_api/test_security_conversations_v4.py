@@ -1,9 +1,22 @@
 import asyncio
+import json
 
 import pytest
 
 USER_HEADERS = {"Authorization": "Bearer dev-user-token"}
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
+
+
+class _ContextCapturingChatAgent:
+    def __init__(self) -> None:
+        self.states: list[dict] = []
+
+    async def ainvoke(self, state: dict) -> dict:
+        self.states.append(state)
+        return {
+            "response": "Đừng gửi mã OTP vì ngân hàng thật không yêu cầu mã này qua tin nhắn.",
+            "analysis": json.dumps({"tools_called": []}),
+        }
 
 
 @pytest.mark.asyncio
@@ -50,6 +63,67 @@ async def test_conversation_owner_is_enforced_before_context_read(client) -> Non
 
     assert denied_get.status_code == 403
     assert denied_continue.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_owner_scoped_structured_context_without_raw_history(client, monkeypatch) -> None:
+    created = await client.post(
+        "/api/v4/analyses",
+        headers=USER_HEADERS,
+        json={"message": "Ngân hàng yêu cầu tôi gửi OTP ngay"},
+    )
+    body = created.json()
+    agent = _ContextCapturingChatAgent()
+    monkeypatch.setattr("src.agents.graph.agent", agent)
+
+    contextual = await client.post(
+        "/api/v4/chat",
+        headers=USER_HEADERS,
+        json={
+            "message": "Tại sao tôi không nên làm theo?",
+            "conversation_id": body["conversation_id"],
+            "conversation_version": body["conversation_version"],
+        },
+    )
+    denied = await client.post(
+        "/api/v4/chat",
+        headers=ADMIN_HEADERS,
+        json={
+            "message": "Tại sao?",
+            "conversation_id": body["conversation_id"],
+            "conversation_version": body["conversation_version"],
+        },
+    )
+    stale = await client.post(
+        "/api/v4/chat",
+        headers=USER_HEADERS,
+        json={
+            "message": "Tại sao?",
+            "conversation_id": body["conversation_id"],
+            "conversation_version": body["conversation_version"] + 1,
+        },
+    )
+
+    assert contextual.status_code == 200
+    assert contextual.json()["route"] == "conversation"
+    retained = json.loads(agent.states[0]["context"])
+    assert retained["schema"] == "security-chat-context-v1"
+    assert retained["security_context"]["otp_request"] is True
+    assert retained["current_assessment"]["risk"] == body["risk"]
+    assert "score" not in retained["current_assessment"]
+    assert denied.status_code == 403
+    assert stale.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_chat_requires_complete_conversation_reference(client) -> None:
+    response = await client.post(
+        "/api/v4/chat",
+        headers=USER_HEADERS,
+        json={"message": "Tại sao?", "conversation_id": "10000000-0000-4000-8000-000000000001"},
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -118,3 +192,37 @@ async def test_conversation_summary_redacts_url_secrets_and_does_not_inherit_con
 
     assert retained_url == "https://example.com/login"
     assert any("consent" in item for item in second.json()["limitations"])
+
+
+@pytest.mark.asyncio
+async def test_greeting_inside_active_case_is_answered_without_losing_security_context(client) -> None:
+    first = await client.post(
+        "/api/v4/analyses",
+        headers=USER_HEADERS,
+        json={"message": "Ngân hàng yêu cầu tôi gửi OTP ngay"},
+    )
+    first_body = first.json()
+    greeting = await client.post(
+        "/api/v4/analyses",
+        headers=USER_HEADERS,
+        json={
+            "message": "Xin chào",
+            "conversation_id": first_body["conversation_id"],
+            "conversation_version": first_body["conversation_version"],
+        },
+    )
+    conversation = await client.get(
+        f"/api/v4/conversations/{first_body['conversation_id']}",
+        headers=USER_HEADERS,
+    )
+
+    assert first.status_code == 200
+    assert greeting.status_code == 200
+    assert greeting.json()["scope_decision"] == "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+    assert greeting.json()["scope_reasons"] == ["assistant_greeting"]
+    assert greeting.json()["boundary_message"].startswith("Chào bạn!")
+    assert greeting.json()["security_context"] is None
+    assert greeting.json()["risk"] is None
+    assert greeting.json()["tool_calls_used"] == 0
+    assert greeting.json()["conversation_version"] == first_body["conversation_version"] + 1
+    assert conversation.json()["summary"]["security_context"]["otp_request"] is True

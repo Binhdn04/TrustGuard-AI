@@ -2,6 +2,11 @@ import type {
   BrandCreateRequestV4,
   BrandPageV4,
   BrandRecordV4,
+  IdentityAssociationAssuranceV4,
+  IdentityCandidateDecisionRequestV4,
+  IdentityCandidatePageV4,
+  IdentityCandidateV4,
+  IdentityRelationshipV4,
   PotentialThreatV4,
   SecurityAdminAuditPageV4,
   SecurityAdminCopilotRequestV4,
@@ -78,6 +83,12 @@ export interface SecurityTrustPageQuery extends SecurityPaginationQuery {
   q?: string;
 }
 
+export interface IdentityCandidatePageQuery extends SecurityPaginationQuery {
+  status?: IdentityAssociationAssuranceV4;
+  relationship?: IdentityRelationshipV4;
+  entity?: string;
+}
+
 export interface SecurityMemoryPageQuery extends SecurityPaginationQuery {
   q?: string;
   risk?: SecurityRiskV4;
@@ -114,14 +125,20 @@ export interface SecurityAppealPageQuery extends SecurityPaginationQuery {
   q?: string;
 }
 
+export interface SecurityChatContext {
+  conversationId: string;
+  conversationVersion: number;
+}
+
 export interface SecurityAnalysisApi {
   getCapabilities(): Promise<SecurityCapabilitiesResponseV4>;
-  chat?(message: string): Promise<SecurityChatResponseV4>;
+  chat?(message: string, context?: SecurityChatContext): Promise<SecurityChatResponseV4>;
   createAnalysis(
     request: SecurityTriageCreateRequestV4,
     options?: { idempotencyKey?: string },
   ): Promise<SecurityScopeResponseV4 | SecurityAnalysisAcceptedResponseV4>;
   getAnalysis(analysisId: string): Promise<SecurityScopeResponseV4>;
+  capturePage?(analysisId: string, urlIndex: number): Promise<Blob>;
   getAdminAnalysis(analysisId: string): Promise<SecurityScopeResponseV4>;
   draftAdminCopilot?(analysisId: string, request: SecurityAdminCopilotRequestV4): Promise<SecurityAdminCopilotResponseV4>;
   listAnalyses(): Promise<SecurityScopeResponseV4[]>;
@@ -143,9 +160,12 @@ export interface SecurityAnalysisApi {
   decideAdminAction?(actionId: string, request: AdminActionDecisionRequestV3): Promise<AdminActionDecisionResponseV3>;
   listAdminActionAudit?(actionId: string): Promise<AdminActionAuditRecordV3[]>;
   createBrand(request: BrandCreateRequestV4): Promise<BrandRecordV4>;
+  createBrandVersion(brandId: string, request: BrandCreateRequestV4): Promise<BrandRecordV4>;
   listBrands(): Promise<BrandRecordV4[]>;
   pageBrands(query?: SecurityTrustPageQuery): Promise<BrandPageV4>;
   disableBrand(brandId: string): Promise<BrandRecordV4>;
+  pageIdentityCandidates?(query?: IdentityCandidatePageQuery): Promise<IdentityCandidatePageV4>;
+  decideIdentityCandidate?(candidateId: string, request: IdentityCandidateDecisionRequestV4): Promise<IdentityCandidateV4>;
   createWhitelist(request: WhitelistCreateRequestV4): Promise<WhitelistRecordV4>;
   listWhitelist(): Promise<WhitelistRecordV4[]>;
   pageWhitelist(query?: SecurityTrustPageQuery): Promise<WhitelistPageV4>;

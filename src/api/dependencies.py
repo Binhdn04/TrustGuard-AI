@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
@@ -29,7 +30,23 @@ from src.core.errors import PlatformError
 from src.core.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from src.models import ErrorCode
 from src.repositories import PostgresPlatformRepository, SQLiteBlacklistRepository
-from src.security_ai import ModelTokenPricing, OpenAISecurityAssistant, SecurityAssistantRuntime, TurnBudget
+from src.security_ai import (
+    ModelTokenPricing,
+    OpenAISecurityAssistant,
+    SecurityAssistantRuntime,
+    TurnBudget,
+    TurnExecutionContext,
+)
+from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
+from src.services.official_verification_rollout import (
+    OfficialVerificationMode,
+    OfficialVerificationRolloutStage,
+)
+from src.services.official_verification_transport import (
+    GuardedHtmlFetcher,
+    build_official_verification_providers,
+)
+from src.services.page_capture import PageCaptureService
 from src.services.platform_wave2 import (
     MemoryWave2Repository,
     VersionedSourceRegistry,
@@ -63,6 +80,57 @@ _source_registry = VersionedSourceRegistry(default_source_policies())
 
 
 @lru_cache
+def get_official_verification_rollout_stage() -> OfficialVerificationRolloutStage | None:
+    settings = get_settings()
+    mode = OfficialVerificationMode(settings.security_official_verification_mode)
+    if mode is OfficialVerificationMode.OFF:
+        return None
+    providers = build_official_verification_providers(settings)
+    fetcher = GuardedHtmlFetcher(timeout=settings.provider_timeout_seconds)
+    coordinator = OfficialLinkVerificationCoordinator(
+        get_security_trust_repository(),
+        search=providers.search,
+        extract=providers.extract,
+        fetcher=fetcher,
+        source_registry=_source_registry,
+    )
+    closers = [item for item in (providers.search, providers.extract, fetcher) if item is not None]
+    return OfficialVerificationRolloutStage(
+        coordinator,
+        mode=mode,
+        closers=closers,
+    )
+
+
+async def close_official_verification_rollout_stage() -> None:
+    if get_official_verification_rollout_stage.cache_info().currsize:
+        stage = get_official_verification_rollout_stage()
+        get_official_verification_rollout_stage.cache_clear()
+        if stage is not None:
+            await stage.aclose()
+
+
+@lru_cache
+def get_page_capture_service() -> PageCaptureService:
+    settings = get_settings()
+    return PageCaptureService(
+        timeout_seconds=settings.security_page_capture_timeout_seconds,
+        max_image_bytes=settings.security_page_capture_max_image_bytes,
+        max_concurrency=settings.security_page_capture_max_concurrency,
+        viewport_width=settings.security_page_capture_viewport_width,
+        viewport_height=settings.security_page_capture_viewport_height,
+        jpeg_quality=settings.security_page_capture_jpeg_quality,
+    )
+
+
+async def close_page_capture_service() -> None:
+    if get_page_capture_service.cache_info().currsize:
+        service = get_page_capture_service()
+        get_page_capture_service.cache_clear()
+        await service.aclose()
+
+
+@lru_cache
 def get_security_assistant_model():
     """Construct the provider only when at least one AI operation is enabled."""
     settings = get_settings()
@@ -92,25 +160,52 @@ def get_security_assistant_model():
     )
 
 
-def new_security_assistant_runtime() -> SecurityAssistantRuntime:
+def new_security_turn_execution_context() -> TurnExecutionContext:
+    settings = get_settings()
+    return TurnExecutionContext(
+        deadline_seconds=settings.analysis_deadline_seconds,
+        max_estimated_cost_usd=settings.max_provider_cost_usd,
+        ai_budget=TurnBudget(max_calls=settings.security_ai_max_calls_per_turn),
+    )
+
+
+def new_security_assistant_runtime(
+    execution_context: TurnExecutionContext | None = None,
+) -> SecurityAssistantRuntime:
     """Budgets are per turn, so this dependency must never be cached."""
     settings = get_settings()
+    context = execution_context or new_security_turn_execution_context()
     return SecurityAssistantRuntime(
         timeout_seconds=settings.security_ai_timeout_seconds,
         turn_deadline_seconds=settings.security_ai_turn_deadline_seconds,
         max_retries=settings.security_ai_max_retries,
-        budget=TurnBudget(max_calls=settings.security_ai_max_calls_per_turn),
+        budget=context.ai_budget,
+        turn_started_at=context.started_at,
+        execution_context=context,
     )
 
 
-async def get_security_turn_runtime() -> SecurityAssistantRuntime:
+async def get_security_turn_execution_context() -> TurnExecutionContext:
+    """Create the end-to-end execution boundary once for this request."""
+    return new_security_turn_execution_context()
+
+
+SecurityTurnExecutionContextDependency = Annotated[
+    TurnExecutionContext,
+    Depends(get_security_turn_execution_context),
+]
+
+
+async def get_security_turn_runtime(
+    execution_context: SecurityTurnExecutionContextDependency,
+) -> SecurityAssistantRuntime:
     """One shared AI budget/deadline for the complete v4 turn.
 
     FastAPI caches dependency results for the lifetime of a request, so every
     AI stage receives this exact instance while different turns remain
     isolated.
     """
-    return new_security_assistant_runtime()
+    return new_security_assistant_runtime(execution_context)
 
 
 SecurityAssistantRuntimeDependency = Annotated[
@@ -123,10 +218,15 @@ async def get_security_understanding_service(
     runtime: SecurityAssistantRuntimeDependency,
 ) -> SecuritySemanticUnderstandingService:
     settings = get_settings()
+
+    async def load_gazetteer_brands():
+        return await get_security_trust_repository().list_active_brands(datetime.now(UTC))
+
     return SecuritySemanticUnderstandingService(
         enabled=settings.security_ai_understanding_enabled,
         model=get_security_assistant_model(),
         runtime=runtime,
+        gazetteer_loader=load_gazetteer_brands,
     )
 
 
@@ -178,7 +278,7 @@ def get_security_trust_repository():
 
 @lru_cache
 def get_security_trust_service() -> SecurityTrustService:
-    return SecurityTrustService(get_security_trust_repository())
+    return SecurityTrustService(get_security_trust_repository(), source_registry=_source_registry)
 
 
 @lru_cache
@@ -346,7 +446,11 @@ async def start_durable_worker() -> None:
         return
     settings = get_settings()
     if settings.security_async_execution_enabled:
+
         def security_pipeline_factory(runtime: SecurityAssistantRuntime) -> SecurityTriagePipeline:
+            async def load_gazetteer_brands():
+                return await get_security_trust_repository().list_active_brands(datetime.now(UTC))
+
             memory_lookup = (
                 SecurityMemoryLookupTool(get_security_memory_service(), enabled=True)
                 if settings.security_memory_retrieval_enabled
@@ -357,6 +461,7 @@ async def start_durable_worker() -> None:
                     enabled=settings.security_ai_understanding_enabled,
                     model=get_security_assistant_model(),
                     runtime=runtime,
+                    gazetteer_loader=load_gazetteer_brands,
                 ),
                 investigation=get_security_investigation_service(),
                 trust=get_security_trust_service(),
@@ -365,6 +470,7 @@ async def start_durable_worker() -> None:
                     model=get_security_assistant_model(),
                     runtime=runtime,
                 ),
+                official_verification_rollout=get_official_verification_rollout_stage(),
                 memory_lookup=memory_lookup,
             )
 
@@ -531,6 +637,7 @@ async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
 
 
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
+PageCaptureServiceDependency = Annotated[PageCaptureService, Depends(get_page_capture_service)]
 TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(resolve_ticket_manager)]
 Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]
 SecurityTriageScopeServiceDependency = Annotated[

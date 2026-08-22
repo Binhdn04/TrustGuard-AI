@@ -25,8 +25,10 @@ for _flag in (
     "SECURITY_ASYNC_EXECUTION_ENABLED",
     "SECURITY_MEMORY_RETRIEVAL_ENABLED",
     "SECURITY_ADMIN_COPILOT_ENABLED",
+    "SECURITY_PAGE_CAPTURE_ENABLED",
 ):
     os.environ[_flag] = "false"
+os.environ["SECURITY_OFFICIAL_VERIFICATION_MODE"] = "off"
 
 from src.main import app  # noqa: E402 - test environment must precede application import
 

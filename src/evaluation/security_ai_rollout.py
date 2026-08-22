@@ -120,9 +120,7 @@ def evaluate_rollout_readiness(
         "deterministic_evaluation": _report_passed(
             deterministic_report, "dataset_version", "security-v4-eval-v1", "dataset_sha256"
         ),
-        "ai_evaluation": _report_passed(
-            ai_report, "dataset_version", "security-ai-eval-v1", "dataset_sha256"
-        ),
+        "ai_evaluation": _report_passed(ai_report, "dataset_version", "security-ai-eval-v1", "dataset_sha256"),
         "hosted_evaluation": _hosted_report_passed(hosted_report, target_stage),
     }
     if target_stage is SecurityAIRolloutStage.OFF:
@@ -141,9 +139,9 @@ def evaluate_rollout_readiness(
         gates[f"flag_{flag_name}"] = bool(getattr(settings, flag_name)) is should_enable
 
     if target_index >= _STAGES.index(SecurityAIRolloutStage.ASYNC_EXECUTION):
-        gates["durable_postgresql_ready"] = settings.database_url.startswith(
-            ("postgresql://", "postgresql+asyncpg://")
-        ) and settings.run_durable_worker
+        gates["durable_postgresql_ready"] = (
+            settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")) and settings.run_durable_worker
+        )
     if target_index >= _STAGES.index(SecurityAIRolloutStage.UNDERSTANDING):
         gates["ai_provider_configured"] = settings.security_ai_provider_configuration_valid()
 
@@ -169,7 +167,8 @@ def evaluate_rollout_readiness(
             "database_action": "none",
             "instruction": (
                 f"Set {rollback_flag}=false; keep additive schema and audit data."
-                if rollback_flag else "All Security AI rollout flags remain disabled."
+                if rollback_flag
+                else "All Security AI rollout flags remain disabled."
             ),
         },
     }

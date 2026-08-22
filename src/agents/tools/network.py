@@ -103,7 +103,13 @@ class GuardedHttpClient:
         self._client = client
         self._guard = guard or SsrfGuard()
 
-    async def get(self, url: str, **kwargs: object) -> tuple[httpx.Response, list[str]]:
+    async def get(
+        self,
+        url: str,
+        *,
+        before_request: Callable[[], None] | None = None,
+        **kwargs: object,
+    ) -> tuple[httpx.Response, list[str]]:
         current = url
         chain = [url]
         visited = {url}
@@ -133,6 +139,8 @@ class GuardedHttpClient:
                 extensions=extensions,
                 **kwargs,
             )
+            if before_request is not None:
+                before_request()
             # ``AsyncClient.get`` eagerly buffers the complete response. Use
             # streaming so the byte limit is enforced while data arrives.
             response = await self._client.send(request, stream=True, follow_redirects=False)

@@ -1,0 +1,85 @@
+{
+  "schema_version": "official-link-verification-cp1-evidence-v1",
+  "checkpoint": "CP1",
+  "captured_at": "2026-08-20T10:12:20+07:00",
+  "commit_sha": "f52c0a75b494927ae6d72e12a9a298e29e485c10",
+  "worktree_clean": false,
+  "baseline": {
+    "checkpoint": "CP0",
+    "evidence": "eval/results/official-link-verification-cp0-baseline.json",
+    "openapi_sha256": "94f4e934a9a93d2172493b091e4e0b218d75a200f4d28b46ba42750c3c7ddf0a"
+  },
+  "implementation": {
+    "inline_pipeline": "SecurityTriagePipeline",
+    "durable_worker_pipeline": "SecurityTriagePipeline",
+    "turn_execution_context": {
+      "request_scoped": true,
+      "monotonic_deadline": true,
+      "shared_ai_attempt_budget": true,
+      "network_unit_budget_present": true,
+      "estimated_cost_budget_present": true,
+      "verification_behavior_enabled": false
+    },
+    "out_of_scope_boundary": {
+      "lazy_investigation_resolution": true,
+      "lazy_memory_resolution": true,
+      "provider_or_network_calls": 0
+    }
+  },
+  "contract": {
+    "current_openapi_sha256": "94f4e934a9a93d2172493b091e4e0b218d75a200f4d28b46ba42750c3c7ddf0a",
+    "matches_cp0": true,
+    "public_schema_changed": false,
+    "risk_policy_changed": false,
+    "migration_added": false
+  },
+  "verification": {
+    "cp1_focused": {
+      "ruff": "pass",
+      "pytest": "pass"
+    },
+    "backend": {
+      "ruff": "pass",
+      "pytest": "pass",
+      "alembic_head": "0018_remove_vector_compat"
+    },
+    "frontend": {
+      "unit": "pass",
+      "lint": "pass",
+      "typecheck": "pass",
+      "cutover": "pass",
+      "build": "pass",
+      "e2e": "pass"
+    },
+    "checkpoint_assertions": {
+      "inline_worker_result_parity": "pass",
+      "worker_progress_event_order": "pass",
+      "inline_route_uses_shared_pipeline": "pass",
+      "out_of_scope_lazy_provider_boundary": "pass",
+      "end_to_end_deadline_propagation": "pass",
+      "shared_ai_budget_identity": "pass",
+      "retry_idempotency_regression": "pass"
+    }
+  },
+  "cp1_owned_files": [
+    "src/agents/security_investigation.py",
+    "src/api/dependencies.py",
+    "src/api/security_v4.py",
+    "src/security_ai/__init__.py",
+    "src/security_ai/runtime.py",
+    "src/services/security_pipeline.py",
+    "tests/test_api/test_security_pipeline_cp1.py",
+    "tests/unit/test_security_pipeline_cp1.py",
+    "eval/results/official-link-verification-cp1-evidence.json",
+    "eval/results/official-link-verification-cp1-handoff.md"
+  ],
+  "deferred": [
+    "Provider-request and redirect-hop network-unit enforcement remains WP5.",
+    "Official-source verification behavior remains disabled until its later packages."
+  ],
+  "environment_constraints": [
+    "PowerShell blocks npm.ps1; use npm.cmd.",
+    "The default uv cache path is not writable; use uv run --no-cache --no-sync with the existing environment.",
+    "The default pytest temp/cache paths are not writable; use a new workspace-local --basetemp and disable cacheprovider."
+  ]
+}

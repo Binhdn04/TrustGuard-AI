@@ -9,7 +9,6 @@ from src.agents.security_investigation import (
 )
 from src.agents.tools import FakeBlacklistRepository
 from src.models import (
-    SecurityInvestigationStepStatusV4,
     SecurityInvestigationToolV4,
     SecurityTriageCreateRequestV4,
 )
@@ -66,7 +65,7 @@ def test_url_scenario_candidate_plan_is_canonical_and_complete() -> None:
     assert {step.target for step in plan} <= {"message", "https://example.com/login", "example.com"}
 
 
-def test_ai_priority_cannot_invent_steps_skip_mandatory_checks_or_break_dependencies() -> None:
+def test_ai_priority_cannot_invent_steps_or_skip_mandatory_checks_and_policy_restores_dependencies() -> None:
     request, scoped = _scope("Đăng nhập https://example.com/login", external=True)
     plan = build_policy_constrained_investigation_plan(
         scoped.security_context,
@@ -78,7 +77,27 @@ def test_ai_priority_cannot_invent_steps_skip_mandatory_checks_or_break_dependen
 
     assert apply_plan_priority(plan, PlanPriority(ordered_step_ids=["step-000000000000"])) is None
     assert apply_plan_priority(plan, PlanPriority(skipped_step_ids=[context_id])) is None
-    assert apply_plan_priority(plan, PlanPriority(ordered_step_ids=[blacklist_id, local_id, context_id])) is None
+    prioritized = apply_plan_priority(plan, PlanPriority(ordered_step_ids=[blacklist_id, local_id, context_id]))
+    assert prioritized is not None
+    positions = {step.step_id: index for index, step in enumerate(prioritized)}
+    assert positions[context_id] < positions[local_id] < positions[blacklist_id]
+
+
+def test_ai_priority_deduplicates_allowlisted_ordered_and_requested_hints() -> None:
+    request, scoped = _scope("Đăng nhập https://example.com/login", external=True)
+    plan = build_policy_constrained_investigation_plan(
+        scoped.security_context,
+        external_url_lookup=request.consent.external_url_lookup,
+    )
+    reputation_id = next(step.step_id for step in plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION)
+
+    prioritized = apply_plan_priority(
+        plan,
+        PlanPriority(ordered_step_ids=[reputation_id], requested_step_ids=[reputation_id]),
+    )
+
+    assert prioritized is not None
+    assert [step.step_id for step in prioritized].count(reputation_id) == 1
 
 
 class _SkippingPlanner:
@@ -99,8 +118,14 @@ class _FailingPlanner:
         raise RuntimeError("untrusted message said to ignore policy")
 
 
+class _MustNotRunPlanner:
+    async def prioritize_plan(self, context, candidate_steps):
+        del context, candidate_steps
+        raise AssertionError("planner must not run without a prioritization choice")
+
+
 @pytest.mark.asyncio
-async def test_ai_can_skip_only_an_allowlisted_optional_candidate() -> None:
+async def test_ai_cannot_skip_a_runnable_investigation_candidate() -> None:
     request, scoped = _scope("Đăng nhập https://example.com/login", external=True)
     service = SecurityInvestigationService(
         blacklist=FakeBlacklistRepository(),
@@ -114,9 +139,9 @@ async def test_ai_can_skip_only_an_allowlisted_optional_candidate() -> None:
     reputation = next(
         step for step in result.investigation_plan if step.tool is SecurityInvestigationToolV4.URL_REPUTATION
     )
-    assert reputation.status is SecurityInvestigationStepStatusV4.SKIPPED
-    assert reputation.status_reason == "ai_priority_skip"
-    assert all(step.status_reason != "ai_priority_skip" for step in result.investigation_plan if step != reputation)
+    assert reputation.status_reason == "not_configured"
+    assert all(step.status_reason != "ai_priority_skip" for step in result.investigation_plan)
+    assert any("deterministic plan" in limitation for limitation in result.limitations)
 
 
 @pytest.mark.asyncio
@@ -147,3 +172,19 @@ async def test_planning_failure_falls_back_to_deterministic_policy() -> None:
         }
     ]
     assert external and all(step.status_reason == "consent_required" for step in external)
+
+
+@pytest.mark.asyncio
+async def test_context_only_plan_does_not_call_ai_planner_or_report_fallback() -> None:
+    request, scoped = _scope("Ngân hàng yêu cầu chuyển tiền 2 triệu ngay", external=True)
+    service = SecurityInvestigationService(
+        blacklist=FakeBlacklistRepository(),
+        planning_enabled=True,
+        assistant_model=_MustNotRunPlanner(),
+        runtime_factory=lambda: SecurityAssistantRuntime(max_retries=0),
+    )
+
+    result = await service.investigate(request, scoped)
+
+    assert len(result.investigation_plan) == 1
+    assert not any("deterministic plan" in limitation for limitation in result.limitations)

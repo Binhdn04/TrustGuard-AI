@@ -121,9 +121,7 @@ def _public_match_summary(matches: set[str]) -> str:
 
 
 def _public_target(matches: set[str]) -> str | None:
-    identities = sorted(
-        item.split(":", 1)[1] for item in matches if item.startswith(("domain:", "redirect:"))
-    )
+    identities = sorted(item.split(":", 1)[1] for item in matches if item.startswith(("domain:", "redirect:")))
     return identities[0] if len(identities) == 1 else None
 
 

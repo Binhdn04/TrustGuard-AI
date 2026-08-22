@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, FileQuestion, Loader2, Plus, RotateCw } from "lucide-react";
+import { ArrowLeft, ChevronDown, FileQuestion, Loader2, Plus, RotateCw } from "lucide-react";
 
 import { ActionRiskPanel } from "@/components/analysis/action-risk-panel";
 import { AnalysisAppealForm } from "@/components/analysis/analysis-appeal-form";
@@ -14,6 +14,7 @@ import { EvidenceDeck } from "@/components/analysis/evidence-deck";
 import { InvestigationTimelineV4 } from "@/components/analysis/investigation-timeline-v4";
 import { SimpleAnalystToggle } from "@/components/analysis/simple-analyst-toggle";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
+import { useAccountPreferences } from "@/lib/account-preferences-context";
 import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
@@ -44,6 +45,7 @@ export function CaseDetail({
   api?: SecurityAnalysisApi;
 }) {
   const router = useRouter();
+  const { preferences } = useAccountPreferences();
   const [result, setResult] = useState<SecurityScopeResponseV4 | null>(null);
   const [conversation, setConversation] = useState<SecurityConversationV4 | null>(null);
   const [events, setEvents] = useState<SecurityAnalysisEventV4[]>([]);
@@ -54,6 +56,12 @@ export function CaseDetail({
   const [resumeIssue, setResumeIssue] = useState<string | null>(null);
   const generation = useRef(0);
   const subscription = useRef<{ stop(): void } | null>(null);
+
+  useEffect(() => {
+    // This is a display-only preference and does not rerun the investigation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(preferences.defaultPresentation);
+  }, [preferences.defaultPresentation]);
 
   const stopRuntime = useCallback(() => {
     subscription.current?.stop();
@@ -210,36 +218,63 @@ export function CaseDetail({
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-8 sm:px-6">
       <header className="flex flex-col justify-between gap-4 border-b border-border/70 pb-5 sm:flex-row sm:items-end">
         <div>
-          <Link href="/history" className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />Case library</Link>
-          <p className="micro-label mt-4 text-primary">CASE DETAIL / {result.analysis_id.slice(0, 8)}</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-[-0.025em]">Security investigation record</h1>
-          <p className="mt-1 text-xs text-muted-foreground">{result.status} · {result.scope_decision} · <time dateTime={result.created_at}>{new Date(result.created_at).toLocaleString("vi-VN")}</time></p>
+          <Link href="/history" className="inline-flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />Lịch sử</Link>
+          {mode === "analyst" && <p className="micro-label mt-4 text-primary">CASE DETAIL / {result.analysis_id.slice(0, 8)}</p>}
+          <h1 className={mode === "simple" ? "mt-4 text-2xl font-semibold tracking-[-0.025em]" : "mt-1 text-2xl font-semibold tracking-[-0.025em]"}>
+            {mode === "simple" ? "Chi tiết cuộc trò chuyện" : "Security investigation record"}
+          </h1>
+          {mode === "analyst" && <p className="mt-1 text-xs text-muted-foreground">{result.status} · {result.scope_decision} · <time dateTime={result.created_at}>{new Date(result.created_at).toLocaleString("vi-VN")}</time></p>}
         </div>
-        <div className="flex flex-wrap gap-2"><SimpleAnalystToggle mode={mode} onChange={setMode} /><Link href="/" className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold"><Plus className="size-3.5" />Case mới</Link></div>
+        <div className="flex flex-wrap gap-2"><SimpleAnalystToggle mode={mode} onChange={setMode} /><Link href="/" className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold"><Plus className="size-3.5" />Cuộc trò chuyện mới</Link></div>
       </header>
 
       {result.scope_decision === "IN_SCOPE" && viewModel ? (
         <div className="grid gap-5 xl:grid-cols-[minmax(22rem,0.85fr)_minmax(28rem,1.15fr)]">
           <div className="space-y-5">
             {result.risk && <div className="case-panel p-5"><ActionRiskPanel viewModel={viewModel} mode={mode} /></div>}
-            <ResumedContextCardOrIssue conversation={conversation} busy={resumeBusy} issue={resumeIssue} onResume={resume} />
-            {result.risk && <div className="case-panel space-y-4 p-5"><AnalysisReportForm analysisId={result.analysis_id} securityApi={api} /><AnalysisAppealForm analysisId={result.analysis_id} securityApi={api} /></div>}
+            <ResumedContextCardOrIssue conversation={conversation} busy={resumeBusy} issue={resumeIssue} mode={mode} onResume={resume} />
+            {result.risk && (mode === "simple" ? (
+              <details className="group/report case-panel overflow-hidden">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-semibold">
+                  Báo cáo hoặc yêu cầu xem xét
+                  <ChevronDown className="size-4 transition-transform group-open/report:rotate-180" aria-hidden="true" />
+                </summary>
+                <div className="space-y-4 border-t border-border/70 p-5"><AnalysisReportForm analysisId={result.analysis_id} securityApi={api} /><AnalysisAppealForm analysisId={result.analysis_id} securityApi={api} /></div>
+              </details>
+            ) : (
+              <div className="case-panel space-y-4 p-5"><AnalysisReportForm analysisId={result.analysis_id} securityApi={api} /><AnalysisAppealForm analysisId={result.analysis_id} securityApi={api} /></div>
+            ))}
           </div>
-          <section aria-label="Investigation details" className="case-panel space-y-7 p-5">
-            <CaseSignalMap nodes={viewModel.signalNodes} edges={viewModel.signalEdges} mode={mode} />
-            <InvestigationTimelineV4 lifecycle={viewModel.lifecycle} steps={viewModel.steps} errors={viewModel.errors} mode={mode} />
-            <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
-            <AnalysisLimitations limitations={result.limitations} />
-          </section>
+          {mode === "simple" ? (
+            <details className="group/investigation case-panel h-fit overflow-hidden">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-semibold">
+                Xem dữ liệu kiểm tra chi tiết
+                <ChevronDown className="size-4 transition-transform group-open/investigation:rotate-180" aria-hidden="true" />
+              </summary>
+              <section aria-label="Investigation details" className="space-y-7 border-t border-border/70 p-5">
+                <CaseSignalMap nodes={viewModel.signalNodes} edges={viewModel.signalEdges} mode={mode} />
+                <InvestigationTimelineV4 lifecycle={viewModel.lifecycle} steps={viewModel.steps} errors={viewModel.errors} mode={mode} />
+                <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
+                <AnalysisLimitations limitations={result.limitations} />
+              </section>
+            </details>
+          ) : (
+            <section aria-label="Investigation details" className="case-panel space-y-7 p-5">
+              <CaseSignalMap nodes={viewModel.signalNodes} edges={viewModel.signalEdges} mode={mode} />
+              <InvestigationTimelineV4 lifecycle={viewModel.lifecycle} steps={viewModel.steps} errors={viewModel.errors} mode={mode} />
+              <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
+              <AnalysisLimitations limitations={result.limitations} />
+            </section>
+          )}
         </div>
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
           <section className="case-panel p-5">
-            <p className="micro-label">Scope result</p>
-            <h2 className="mt-2 text-lg font-semibold">{result.scope_decision === "NEED_MORE_INFO" ? "Cần thêm thông tin" : "Ngoài phạm vi Security Triage"}</h2>
+            {mode === "analyst" && <p className="micro-label">Scope result</p>}
+            <h2 className={mode === "simple" ? "text-lg font-semibold" : "mt-2 text-lg font-semibold"}>{result.scope_decision === "NEED_MORE_INFO" ? "Cần thêm thông tin" : "Ngoài phạm vi Security Triage"}</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{result.follow_up_question ?? result.boundary_message ?? "API chưa trả thông điệp bổ sung."}</p>
           </section>
-          <ResumedContextCardOrIssue conversation={conversation} busy={resumeBusy} issue={resumeIssue} onResume={resume} />
+          <ResumedContextCardOrIssue conversation={conversation} busy={resumeBusy} issue={resumeIssue} mode={mode} onResume={resume} />
         </div>
       )}
     </div>
@@ -250,19 +285,21 @@ function ResumedContextCardOrIssue({
   conversation,
   busy,
   issue,
+  mode,
   onResume,
 }: {
   conversation: SecurityConversationV4 | null;
   busy: boolean;
   issue: string | null;
+  mode: SecurityPresentationMode;
   onResume(message: string): Promise<boolean>;
 }) {
-  if (conversation) return <ResumedContextCard conversation={conversation} busy={busy} issue={issue} onResume={onResume} />;
+  if (conversation) return <ResumedContextCard conversation={conversation} busy={busy} issue={issue} mode={mode} onResume={onResume} />;
   return (
     <section aria-labelledby="resume-unavailable-heading" className="case-panel p-5">
-      <p className="micro-label">PRIVACY-SAFE RESUME</p>
-      <h2 id="resume-unavailable-heading" className="mt-2 text-base font-semibold">Không thể tiếp tục conversation</h2>
-      <p role="alert" className="mt-2 text-sm leading-6 text-muted-foreground">{issue ?? "Structured conversation context không khả dụng."}</p>
+      {mode === "analyst" && <p className="micro-label">PRIVACY-SAFE RESUME</p>}
+      <h2 id="resume-unavailable-heading" className={mode === "simple" ? "text-base font-semibold" : "mt-2 text-base font-semibold"}>Không thể tiếp tục cuộc trò chuyện</h2>
+      <p role="alert" className="mt-2 text-sm leading-6 text-muted-foreground">{issue ?? "Thông tin cuộc trò chuyện không còn khả dụng."}</p>
       <Link href="/" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"><Plus className="size-4" />Bắt đầu case mới</Link>
     </section>
   );

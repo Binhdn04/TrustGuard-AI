@@ -42,7 +42,7 @@ flowchart TD
     Scope -->|In scope| Planner[Allowlisted planner]
     Planner --> Local[Rules + approved blacklist]
     Planner --> Network[DNS + redirect + RDAP + reputation]
-    Planner --> Trust[Brand + whitelist]
+    Planner --> Trust[Brand + target identity + whitelist]
     Local --> Evidence[Typed evidence]
     Network --> Evidence
     Trust --> Evidence
@@ -66,13 +66,37 @@ validate request/version → scope/context → boundary hoặc investigation
 ```
 
 - AI không trực tiếp đặt risk, score, consent, network target hoặc admin decision.
+- Rule tạo scope candidate; grounded AI understanding được chạy trước quyết định scope cuối cùng (trừ greeting/capability cục bộ). AI không được hạ một deterministic security-positive signal xuống out-of-scope.
+- AI chỉ liên kết entity với URL bằng index của URL đã trích xuất cục bộ. Reviewed target owner được đối chiếu riêng; whitelist không chứng minh URL thuộc entity đang được claim.
+- AI planner chỉ sắp thứ tự candidate đang runnable; policy quyết định coverage và AI không được skip evidence step.
+- Chat follow-up gửi conversation ID/version và chỉ nhận owner-scoped structured summary đã làm sạch cùng assessment
+  hiện tại. Context được đưa cho model dưới dạng untrusted JSON, không gồm raw chat, score/confidence hay evidence ID;
+  stale version bị từ chối và chat thường không làm tăng version hoặc persist nội dung mới.
+- Frontend chỉ render Markdown giới hạn trong phản hồi chatbot (nhấn mạnh, danh sách, inline code và HTTP(S) link)
+  thành React element; không dùng raw HTML. Nội dung người dùng không được diễn giải như Markdown.
 - External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
 - SSRF guard chặn private/local/metadata target và revalidate từng redirect.
+- Page capture tự chạy ở frontend cho URL cuối cùng (URL mới nhất) sau khi case có kết quả, owner-scoped theo URL
+  index và gửi consent mới cho từng request. Chromium dùng context tạm không cookie/download/service worker,
+  không vượt CAPTCHA hoặc access denial, chặn private/local target, popup, active stream và URL tải tệp phổ biến.
+  API chỉ trả ảnh viewport với `Cache-Control: no-store`; frontend chỉ giữ Blob mới nhất trong RAM, thu hồi Blob
+  trước đó và ảnh không đi vào evidence, conversation hay database.
 - Whitelist có provenance và chạy trước negative scoring.
 - Provider no-hit/error/timeout, domain age hoặc mismatch riêng lẻ không đủ tạo `MALICIOUS`.
 - User reads luôn owner-scoped; admin routes yêu cầu `security_admin`.
 - Không lưu raw private message, URL query token, OTP hoặc credential trong memory/audit.
 - Admin Copilot chỉ suggestion; action thật cần reviewer, note, evidence và audit.
+
+Identity discovery là phần mở rộng provider-neutral của official-link verification, không phải pipeline mới.
+Khi reviewed registry thiếu/ambiguous hoặc chưa biết URL người dùng, coordinator có thể chạy tối đa ba query
+được dẫn xuất từ tên entity và literal claim/title đã grounded. Candidate `discovered` không được coi là cache hit
+hoàn tất. Riêng `endorsed_third_party_service`, một discovery source độc lập chứa entity/claim và exact link
+(kể cả short-link qua guarded redirect) tới đúng URL người dùng đủ tạo association `verified` với confidence thấp
+hơn; target không được tự endorse chính nó. Nếu target page independently khớp entity/claim thì confidence tăng.
+Ownership của domain và parent relationship vẫn cần hai evidence family trên hai source host. Kết quả resource
+được hiển thị `partially_verified`, có TTL 7 ngày, không ghi vào `BrandRecordV4` và không tự tạo kết luận `SAFE`.
+Chỉ admin review mới promote thành immutable brand version; third-party endorsement luôn giới hạn ở exact
+URL/resource.
 
 ## Persistence and lifecycle
 
@@ -82,6 +106,8 @@ validate request/version → scope/context → boundary hoặc investigation
 - Memory ảnh hưởng risk phải reviewed, owner-scoped và không self-match analysis hiện tại.
 - Campaign dùng named security signals, không dùng embeddings/vector database.
 - Migration `0018_remove_vector_compat` xóa fact-check/source-discovery/vector storage cũ và không downgrade.
+- Migration `0019_security_identity_discovery` thêm candidate versions, immutable typed observations và immutable
+  reviewer decisions riêng cho Security v4; SQLite fallback có schema tương đương.
 
 ## Code map
 
@@ -94,4 +120,3 @@ validate request/version → scope/context → boundary hoặc investigation
 | Persistence | `src/repositories/`, `migrations/versions/` |
 | AI/evaluation | `src/security_ai/`, `src/evaluation/` |
 | Frontend/tests | `frontend/src/`, `tests/` |
-

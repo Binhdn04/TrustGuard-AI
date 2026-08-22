@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from src.api.dependencies import get_security_understanding_service
@@ -90,7 +92,12 @@ async def test_hybrid_understanding_drives_risk_and_persists_redacted_context(cl
     assert body["assistant_context"]["model_version"] == "semantic-eval-v1"
     assert body["assistant_context"]["source_spans"]
     assert body["security_context"]["urls"] == []
-    assert model.conversation_summary is None
+    assert model.conversation_summary is not None
+    assert json.loads(model.conversation_summary) == {
+        "security_context": None,
+        "exposure_state": "UNKNOWN",
+        "policy_selected_follow_up_slot": "action_taken",
+    }
     stored = conversation.json()["summary"]["assistant_context"]
     assert stored == body["assistant_context"]
     assert message not in conversation.text

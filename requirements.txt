@@ -5,6 +5,8 @@ pydantic>=2.10.0
 pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
 httpx>=0.28.1
+beautifulsoup4>=4.12,<5
+playwright>=1.52,<2
 
 # AI / LangChain
 langchain>=0.3.0

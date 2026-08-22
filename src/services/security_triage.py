@@ -26,8 +26,13 @@ _FOLLOW_UP_QUESTION = (
 )
 _EXTRACTION_LIMITATION = "Chỉ trích xuất được một phần security context; cần xác minh thêm ở bước điều tra."
 _CAPABILITIES_MESSAGE = (
-    "Tôi có thể kiểm tra dấu hiệu phishing, lừa đảo, giả mạo thương hiệu, URL đáng ngờ và các yêu cầu "
-    "chuyển tiền, đăng nhập hoặc cung cấp OTP. Hãy gửi nội dung tin nhắn hoặc đường link bạn muốn kiểm tra."
+    "Tôi là TrustGuard, trợ lý hỗ trợ nhận diện phishing, lừa đảo, giả mạo thương hiệu, URL đáng ngờ "
+    "và các yêu cầu chuyển tiền, đăng nhập hoặc cung cấp OTP. Hãy gửi nội dung tin nhắn hoặc đường link "
+    "bạn muốn kiểm tra; nếu còn thiếu thông tin, tôi sẽ hỏi lại từng câu ngắn."
+)
+_GREETING_MESSAGE = (
+    "Chào bạn! Tôi là TrustGuard. Tôi có thể giúp bạn kiểm tra tin nhắn, đường link hoặc yêu cầu đáng ngờ "
+    "trước khi bạn đăng nhập, gửi OTP hay chuyển tiền. Bạn muốn kiểm tra tình huống nào?"
 )
 _GENERAL_FACT_BOUNDARY_MESSAGE = (
     "Tôi không hỗ trợ kiểm chứng tin tức chung. Nếu thông tin này đang được dùng để yêu cầu bạn chuyển tiền, "
@@ -49,7 +54,9 @@ class SecurityTriageScopeService:
         assessment = classify_security_scope(request.message)
         reasons = list(assessment.reason_codes)
         if assessment.decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
-            if "assistant_capabilities" in reasons:
+            if "assistant_greeting" in reasons:
+                boundary_message = _GREETING_MESSAGE
+            elif "assistant_capabilities" in reasons:
                 boundary_message = _CAPABILITIES_MESSAGE
             elif "no_security_signal" in reasons or any(reason.startswith("general_fact_check_") for reason in reasons):
                 boundary_message = _GENERAL_FACT_BOUNDARY_MESSAGE

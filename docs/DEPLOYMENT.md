@@ -29,11 +29,18 @@ CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
 SECURITY_RELEASE_PROFILE=pre_cutover
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 LIVE_PROVIDERS_REQUIRED=false
+SECURITY_PAGE_CAPTURE_ENABLED=false
 ```
 
 Backend đặt `RUN_DURABLE_WORKER=false`; worker đặt `RUN_DURABLE_WORKER=true`. Frontend cần API URL và
 OIDC Authorization Code + PKCE. Không đưa demo token vào hosted build. Chỉ thêm AI/provider secrets khi
 capability được duyệt. Google Web Risk, Google Fact Check, Jina, flash model và ChromaDB không thuộc setup.
+
+Page capture mặc định tắt. Chỉ bật `SECURITY_PAGE_CAPTURE_ENABLED=true` khi backend Chromium đã được giới hạn
+egress khỏi private/metadata/service network; Docker image cài Chromium cho API target. Frontend tự yêu cầu ảnh
+của URL mới nhất sau khi case có kết quả; chỉ Blob mới nhất nằm trong RAM của tab, Blob trước được thu hồi, không
+lưu bền và response dùng `no-store`. Chromium không vượt CAPTCHA/access denial và chặn download, popup cùng
+active stream. Tắt flag là rollback tức thời, không cần migration.
 
 ## Preflight and migration
 
@@ -46,6 +53,8 @@ Chạy toàn bộ checks trong [TESTING.md](TESTING.md). Trước migration dest
 5. xác minh v4, worker và dữ liệu cần giữ.
 
 `0018_remove_vector_compat` không downgrade. Không chạy nếu chưa chứng minh restore.
+`0019_security_identity_discovery` là additive và không tái tạo các bảng source-discovery/fact-check đã xóa.
+Sau upgrade, kiểm tra candidate/evidence/decision tables và một Alembic head trước khi bật discovery rollout.
 
 ## Deploy and verify
 
@@ -64,10 +73,45 @@ Redis và worker không public; restart không mất dữ liệu.
 ## Rollout and rollback
 
 Bật riêng từng capability: understanding → planning → explanation → reviewed memory → admin copilot →
-async. Kiểm tra evaluation, capabilities, latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang
-`cutover` sau hosted smoke, backup/restore và load rehearsal.
+async. Official-link verification mặc định `visible`, dùng
+`SECURITY_OFFICIAL_VERIFICATION_MODE=off|shadow|visible|enforced` và
+phải đi theo thứ tự `off → shadow → visible → enforced`; Tavily/OpenAI không phải điều kiện startup cho stage
+này. Web search vẫn yêu cầu `official_source_lookup=true` riêng trên từng request. Frontend mặc định gửi giá trị
+này cùng `external_url_lookup=true`, nhưng backend vẫn giữ hai gate độc lập. Kiểm tra riêng capabilities
+`official_link_verification`, `official_web_search_ready`, evaluation,
+latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang `cutover` sau hosted smoke, backup/restore và
+load rehearsal.
 
-Khi incident: tắt flag mới bật, rollback application image, giữ schema. Không tự động downgrade/drop/restore
+Khi official-link verification có incident, rollback `enforced → visible → off`; thay đổi này không yêu cầu
+database downgrade. Với incident khác: tắt flag mới bật, rollback application image, giữ schema. Không tự động downgrade/drop/restore
 database để rollback code. Provider failure không được suy diễn thành `SAFE`; worker failure phải cho phép
 quay về inline/polling path và giữ audit evidence.
 
+Identity candidates đã persist được giữ nguyên khi rollback mode. `off` không discovery; `shadow` vẫn persist và
+telemetry nhưng không đổi response/risk; `visible` chỉ hiển thị association; `enforced` mới áp dụng mismatch policy.
+Không drop `0019` để rollback application vì quyết định reviewer là immutable audit data.
+
+## Official-link CP10 hosted evidence
+
+Run the Vietnamese hard-case smoke at every applicable observation stage using a reviewed message and a real OIDC
+user token. The script emits only a minimized summary; store the protected raw deployment logs outside the repo.
+
+```bash
+LIVE_SMOKE_TOKEN=<oidc-user-token> TRUSTGUARD_BASE_URL=https://<backend-domain> \
+  uv run python scripts/smoke_official_link_verification.py \
+  "<reviewed Vietnamese recruitment message with the submitted third-party form URL>" \
+  --output <stage-hard-case-summary.json>
+```
+
+The final hosted evidence must identify the deployed 40-character commit SHA and include reviewed checks named
+`hosted_smoke`, `postgres_persistence`, `redis_worker`, `oidc_user`, `oidc_admin_rbac`, `backup_restore`, `ssrf`,
+`prompt_injection`, `provider_failure`, `load` and `rollback`. Record positive-duration observation windows in the
+exact sequence `shadow -> visible -> enforced -> visible -> off`. Each window records sample count, p95 latency,
+maximum estimated provider cost, error rate and an evidence reference. The hard case records Vietnamese input,
+English derived query, an actual official social source, short URL, third-party form, exact resource match, reference
+closure and zero fabrication.
+
+Pass the collected JSON through the hosted validator documented in `TESTING.md`. CP10 remains unapproved until the
+generated hosted report passes and the tech lead and security lead review the referenced evidence. Offline fakes,
+local SQLite tests and manually authored `passed` claims cannot substitute for PostgreSQL/Redis/worker, OIDC/RBAC,
+backup/restore, live provider/failure, load or rollback observations.

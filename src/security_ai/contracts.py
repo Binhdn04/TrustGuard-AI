@@ -6,6 +6,9 @@ from typing import Annotated, Any, Generic, Literal, Protocol, TypeVar, runtime_
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.models.security_v4 import (
+    SECURITY_UNDERSTANDING_VERSION,
+    DerivedQueryProvenanceV4,
+    EntityUrlRelationshipV4,
     ExposureStateV4,
     MissingInformationSlotV4,
     RequestedActionV4,
@@ -37,14 +40,33 @@ class SemanticSecuritySignal(StrEnum):
 
 
 class UnderstandingSourceSpan(StrictModel):
+    """Untrusted provider offsets validated against the message during merge.
+
+    Keep this wire type structurally permissive for non-negative offsets. A
+    model can occasionally return an empty, reversed, or out-of-bounds span;
+    rejecting the nested object here would discard every otherwise valid
+    semantic field in the response. The merge boundary owns relational and
+    message-length validation and drops only the affected field.
+    """
+
     field_name: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
     start: int = Field(ge=0)
-    end: int = Field(gt=0)
+    end: int = Field(ge=0)
+
+
+class EntityUrlClaimCandidate(StrictModel):
+    entity_candidate_id: str | None = Field(default=None, pattern=r"^(?:entity|phrase)_[0-9]+$")
+    entity_mention_id: str | None = Field(default=None, pattern=r"^entity_[0-9]+$")
+    # Compatibility for deterministic fixtures and older adapters. Hosted AI
+    # is instructed to select a backend-created mention ID instead.
+    entity_name: str | None = Field(default=None, min_length=1, max_length=200)
+    url_index: int = Field(ge=0, lt=10)
+    relationship: EntityUrlRelationshipV4
 
     @model_validator(mode="after")
-    def validate_offsets(self) -> UnderstandingSourceSpan:
-        if self.end <= self.start:
-            raise ValueError("source span end must be greater than start")
+    def require_entity_reference(self) -> EntityUrlClaimCandidate:
+        if self.entity_candidate_id is None and self.entity_mention_id is None and self.entity_name is None:
+            raise ValueError("entity URL claim requires a mention ID or entity name")
         return self
 
 
@@ -53,6 +75,9 @@ class Understanding(StrictModel):
     sender_intent: str | None = None
     social_engineering_techniques: list[str] = Field(default_factory=list, max_length=20)
     claimed_entity: str | None = None
+    claimed_entity_candidate_id: str | None = Field(default=None, pattern=r"^(?:entity|phrase)_[0-9]+$")
+    claimed_entity_id: str | None = Field(default=None, pattern=r"^entity_[0-9]+$")
+    entity_url_claims: list[EntityUrlClaimCandidate] = Field(default_factory=list, max_length=10)
     scenario: SecurityScenarioV4 | None = None
     requested_action: RequestedActionV4 | None = None
     exposure_state: ExposureStateV4 = ExposureStateV4.UNKNOWN
@@ -62,7 +87,10 @@ class Understanding(StrictModel):
     follow_up_question: str | None = Field(default=None, max_length=500)
     field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(default_factory=dict, max_length=50)
     source_spans: list[UnderstandingSourceSpan] = Field(default_factory=list, max_length=50)
-    understanding_version: Literal["security-understanding-v1"] = "security-understanding-v1"
+    derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
+    understanding_version: Literal["security-understanding-v1", "security-understanding-v2"] = (
+        SECURITY_UNDERSTANDING_VERSION
+    )
 
     @field_validator("scope_decision", "scenario", "requested_action", "follow_up_slot", mode="before")
     @classmethod

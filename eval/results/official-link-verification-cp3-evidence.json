@@ -1,0 +1,63 @@
+{
+  "schema_version": "official-link-verification-cp3-evidence-v1",
+  "checkpoint": "CP3",
+  "captured_at": "2026-08-20T16:14:53+07:00",
+  "base_commit_sha": "3f7b4287f524cd54171313cf62581a77171e645b",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP2",
+    "commit_sha": "3f7b4287f524cd54171313cf62581a77171e645b",
+    "evidence": "eval/results/official-link-verification-cp2-evidence.json"
+  },
+  "scope_and_intent": {
+    "neutral_recruitment_promotion_form_event_course_is_oos": "pass",
+    "new_actions_rule_and_grounded_semantic": "pass",
+    "bare_url_url_triage_only": "pass",
+    "incident_exposure_short_circuit": "pass",
+    "accepted_fields_require_confidence_and_source_span": "pass",
+    "derived_organization_has_provenance_without_source_span": "pass"
+  },
+  "query_policy": {
+    "deterministic": true,
+    "max_variants": 6,
+    "max_sequential_attempts": 4,
+    "max_query_characters": 300,
+    "redacts_url_email_otp_password_and_token_like_values": "pass",
+    "case_insensitive_deduplication": "pass",
+    "whole_raw_message_rejected": "pass"
+  },
+  "safety": {
+    "deterministic_oos_ai_calls": 0,
+    "deterministic_oos_external_calls": 0,
+    "ai_created_url_or_network_target": 0,
+    "official_verification_runtime_enabled": false,
+    "provider_or_network_adapter_added": false
+  },
+  "verification": {
+    "cp3_unit_and_regression": "pass",
+    "backend_pytest": "pass",
+    "backend_ruff": "pass",
+    "alembic_head": "0018_remove_vector_compat",
+    "frontend_unit": "pass",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "review": {
+    "implementation_status": "verified",
+    "required_reviewer_role": "Security policy reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "The current .venv uses Python 3.13.13 while CP0 used Python 3.11.15; Python 3.13 temporary-directory ACLs require a process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the current cutover script, so the canonical script cannot scan this workspace path; the equivalent source-pattern scan passes.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl"
+  ]
+}

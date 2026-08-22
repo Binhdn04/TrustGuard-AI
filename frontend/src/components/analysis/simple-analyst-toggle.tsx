@@ -8,20 +8,22 @@ export function SimpleAnalystToggle({
   mode: SecurityPresentationMode;
   onChange(mode: SecurityPresentationMode): void;
 }) {
+  const labels = { simple: "Cơ bản", analyst: "Kỹ thuật" } as const;
   return (
     <div role="group" aria-label="Mức chi tiết" className="inline-flex rounded-xl border border-border bg-card p-1">
       {(["simple", "analyst"] as const).map((option) => (
         <button
           key={option}
           type="button"
+          aria-label={option}
           aria-pressed={mode === option}
           onClick={() => onChange(option)}
           className={cn(
-            "rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition-colors",
+            "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
             mode === option ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
           )}
         >
-          {option}
+          {labels[option]}
         </button>
       ))}
     </div>

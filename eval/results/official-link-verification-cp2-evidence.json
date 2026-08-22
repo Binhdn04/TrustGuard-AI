@@ -1,0 +1,57 @@
+{
+  "schema_version": "official-link-verification-cp2-evidence-v1",
+  "checkpoint": "CP2",
+  "captured_at": "2026-08-20T15:45:41+07:00",
+  "base_commit_sha": "07cd139e1a135b38132d72fd826755669489cdac",
+  "worktree_clean": false,
+  "baseline": {
+    "checkpoint": "CP1",
+    "evidence": "eval/results/official-link-verification-cp1-evidence.json",
+    "openapi_sha256": "94f4e934a9a93d2172493b091e4e0b218d75a200f4d28b46ba42750c3c7ddf0a"
+  },
+  "contract": {
+    "current_openapi_sha256": "55f47228202cb83205fcb3ef4cfd2d0d990771a5a3cfba9fede71b3267cc8c02",
+    "public_api_prefix": "/api/v4",
+    "security_context_reads": [
+      "security-context-v1",
+      "security-context-v2"
+    ],
+    "security_context_emits": "security-context-v2",
+    "understanding_reads": [
+      "security-understanding-v1",
+      "security-understanding-v2"
+    ],
+    "understanding_emits": "security-understanding-v2",
+    "risk_policy_reads": [
+      "security-risk-v1",
+      "security-risk-v2",
+      "security-risk-v3"
+    ],
+    "risk_v3_runtime_enabled": false,
+    "official_verification_runtime_enabled": false,
+    "none_report_omitted": true,
+    "capability_fields_hidden_by_default": true
+  },
+  "persistence": {
+    "sqlite_old_new_json_round_trip": "pass",
+    "postgres_jsonb_old_new_model_round_trip": "pass",
+    "old_brand_json_parse": "pass",
+    "migration_added": false,
+    "alembic_head": "0018_remove_vector_compat"
+  },
+  "verification": {
+    "ruff": "pass",
+    "pytest": "pass",
+    "openapi_contract": "pass",
+    "frontend_unit": "pass",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "environment_constraints": [
+    "The current .venv uses Python 3.13.13 while CP0 used Python 3.11.15; Python 3.13 temporary-directory ACLs require a process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the current cutover script, so the canonical script cannot scan this workspace path; the equivalent source-pattern scan passes.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ]
+}

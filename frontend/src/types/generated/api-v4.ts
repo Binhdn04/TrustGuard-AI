@@ -38,7 +38,26 @@ export type RequestedActionV4 =
   | "open_link"
   | "install_app"
   | "share_screen"
-  | "scan_qr";
+  | "scan_qr"
+  | "submit_form"
+  | "register_or_apply"
+  | "download_file";
+
+export type VerificationTopicV4 =
+  | "recruitment" | "promotion" | "event" | "course" | "survey"
+  | "account" | "payment" | "charity" | "investment" | "general_notice" | "unknown";
+export type LinkRoleV4 =
+  | "official_website" | "official_announcement" | "social_profile" | "application"
+  | "registration" | "form" | "download" | "login" | "payment" | "contact" | "other";
+export type VerificationStatusV4 = "VERIFIED" | "PARTIALLY_VERIFIED" | "UNVERIFIED" | "CONFLICTING";
+export type OfficialIdentityTypeV4 =
+  | "primary_website" | "website" | "domain" | "careers_page" | "social_profile" | "sub_organization";
+export type OfficialIdentityMatchScopeV4 = "exact" | "host_and_subdomains" | "bounded_phrase";
+export type IdentityRelationshipV4 = "official_controlled" | "parent_organization" | "endorsed_third_party_service";
+export type IdentityAssociationAssuranceV4 = "discovered" | "verified" | "conflicting" | "promoted" | "rejected" | "confirmed_mismatch";
+export type IdentityEvidenceFamilyV4 = "entity_self_identification" | "independent_entity_link" | "parent_declaration" | "candidate_corroboration" | "exact_resource_endorsement" | "target_resource_match" | "explicit_ownership_conflict";
+export type ResourceTypeV4 = "url" | "google_form" | "microsoft_form" | "file" | "other";
+export type ResourceMatchStatusV4 = "EXACT_RESOURCE" | "EXACT_CANONICAL_URL" | "DIFFERENT_RESOURCE" | "UNRESOLVED";
 
 export type SecurityScenarioV4 =
   | "recruitment"
@@ -107,7 +126,7 @@ export type SecurityReportStatusV4 = "submitted" | "reviewing" | "processed";
 export type SecurityReportReviewDecisionV4 = "approved" | "rejected" | "dismissed";
 export type SecurityAppealStatusV4 = "submitted" | "under_review" | "resolved";
 export type SecurityAppealOutcomeV4 = "uphold" | "overturn" | "inconclusive";
-export type SecurityAuditResourceV4 = "brand" | "whitelist" | "memory" | "campaign" | "report" | "appeal" | "copilot";
+export type SecurityAuditResourceV4 = "brand" | "whitelist" | "memory" | "campaign" | "report" | "appeal" | "copilot" | "identity_candidate";
 export type SecurityAdminCopilotDispositionV4 = "confirm_malicious" | "confirm_safe" | "mark_false_positive" | "needs_more_information" | "no_change";
 export type SecurityAdminCopilotActionV4 = "add_to_blacklist" | "block_domain" | "publish_broad_warning" | "none";
 
@@ -147,9 +166,16 @@ export interface SecurityPageV4<T> {
 
 export interface SecurityConsentV4 {
   external_url_lookup: boolean;
+  official_source_lookup: boolean;
 }
 
 export type SecurityChatRouteV4 = "conversation" | "security_analysis";
+
+export interface SecurityChatRequestV4 {
+  message: string;
+  conversation_id?: string | null;
+  conversation_version?: number | null;
+}
 
 export interface SecurityChatResponseV4 {
   contract_version: "v4";
@@ -174,12 +200,130 @@ export interface SecurityCapabilitiesResponseV4 {
   security_async_execution?: true;
   security_memory_retrieval?: true;
   security_admin_copilot?: true;
+  official_link_verification?: true;
+  official_web_search_ready?: true;
+  security_page_capture?: true;
 }
+
+export interface DerivedQueryProvenanceV4 {
+  query_id: string;
+  derived_from_fields: string[];
+  transformations: string[];
+}
+
+export interface VerificationIntentV4 {
+  schema_version: "verification-intent-v1";
+  organization_name: string | null;
+  derived_organization_names: string[];
+  claim_summary: string | null;
+  topic: VerificationTopicV4 | null;
+  requested_action: RequestedActionV4 | null;
+  action_url_indices: number[];
+}
+
+export interface OfficialIdentityV4 {
+  identity_id?: string;
+  identity_type: OfficialIdentityTypeV4;
+  canonical_value: string;
+  display_value: string;
+  entity_name: string;
+  match_scope?: OfficialIdentityMatchScopeV4;
+  relationship?: string;
+  provenance?: string;
+  policy_version?: string;
+  effective_from?: string | null;
+  effective_until?: string | null;
+  supersedes?: string | null;
+  lifecycle?: TrustLifecycleV4;
+  reviewed?: boolean;
+  source_ref?: string | null;
+}
+
+export interface ResourceIdentityV4 {
+  schema_version: "resource-identity-v1";
+  resource_type: ResourceTypeV4;
+  provider: string | null;
+  resource_id: string | null;
+  canonical_url: string | null;
+  match_key: string;
+}
+
+export interface ResourceMatchV4 {
+  status: ResourceMatchStatusV4;
+  user_resource: ResourceIdentityV4 | null;
+  official_resource: ResourceIdentityV4 | null;
+  reason_code: string;
+}
+
+export interface OfficialSourceReferenceV4 {
+  source_ref: string;
+  identity: OfficialIdentityV4 | null;
+  display_url: string;
+  canonical_url: string;
+  content_hash: string | null;
+}
+
+export interface OfficialLinkReferenceV4 {
+  link_ref: string;
+  source_ref: string;
+  role: LinkRoleV4;
+  display_url: string;
+  canonical_url: string;
+  resource: ResourceIdentityV4 | null;
+}
+
+export interface OfficialVerificationComponentV4 {
+  applicable: boolean;
+  status: VerificationStatusV4 | null;
+  reason_code: string;
+  evidence_refs: string[];
+}
+export interface PublisherVerificationV4 extends OfficialVerificationComponentV4 { identity: OfficialIdentityV4 | null; }
+export interface ClaimVerificationV4 extends OfficialVerificationComponentV4 { topic: VerificationTopicV4 | null; }
+export interface ResourceVerificationV4 extends OfficialVerificationComponentV4 { match: ResourceMatchV4 | null; }
+
+export interface OfficialLinkVerificationReportV4 {
+  schema_version: "official-link-verification-v1" | "official-link-verification-v2";
+  intent: VerificationIntentV4;
+  publisher_verification: PublisherVerificationV4;
+  claim_verification: ClaimVerificationV4;
+  resource_verification: ResourceVerificationV4;
+  overall_status: VerificationStatusV4;
+  reason_code: string;
+  source_refs: OfficialSourceReferenceV4[];
+  link_refs: OfficialLinkReferenceV4[];
+  limitations: string[];
+  identity_associations?: IdentityAssociationV4[];
+  identity_evidence?: IdentityEvidenceObservationV4[];
+  policy_version: "official-link-verification-v1" | "official-link-verification-v2";
+}
+
+export interface IdentityEvidenceObservationV4 {
+  evidence_ref: string; family: IdentityEvidenceFamilyV4; source_host: string;
+  canonical_url: string; content_hash: string; observed_at: string;
+}
+export interface IdentityAssociationV4 {
+  association_id: string; entity_name: string; canonical_url: string; canonical_domain: string;
+  relationship: IdentityRelationshipV4; assurance: IdentityAssociationAssuranceV4;
+  confidence: number; evidence_refs: string[]; discovered_at: string;
+  verified_at: string | null; expires_at: string | null; policy_version: "identity-discovery-v2";
+}
+export interface IdentityCandidateV4 extends IdentityAssociationV4 {
+  version: number; observations: IdentityEvidenceObservationV4[];
+  supersedes: string | null; terminal_decision_id: string | null;
+}
+export type IdentityCandidateDecisionActionV4 = "approve" | "reject" | "confirm_mismatch";
+export interface IdentityCandidateDecisionRequestV4 {
+  action: IdentityCandidateDecisionActionV4; note: string; target_brand_id?: string | null;
+  relationship?: IdentityRelationshipV4 | null; identity_type?: OfficialIdentityTypeV4 | null;
+}
+export type IdentityCandidatePageV4 = SecurityPageV4<IdentityCandidateV4>;
 
 export interface BrandCreateRequestV4 {
   name: string;
   aliases?: string[];
   official_domains: string[];
+  official_identities?: OfficialIdentityV4[];
   official_contacts?: string[];
   provenance: string;
   policy_version?: string;
@@ -192,11 +336,13 @@ export interface BrandRecordV4 {
   name: string;
   aliases: string[];
   official_domains: string[];
+  official_identities: OfficialIdentityV4[];
   official_contacts: string[];
   provenance: string;
   policy_version: string;
   effective_from: string;
   effective_until: string | null;
+  supersedes: string | null;
   lifecycle: TrustLifecycleV4;
   reviewer_id: string;
   created_at: string;
@@ -236,8 +382,13 @@ export interface SecurityTriageCreateRequestV4 {
   conversation_version?: number;
 }
 
+export interface SecurityPageCaptureRequestV4 {
+  url_index: number;
+  external_url_lookup: true;
+}
+
 export interface SecurityContextV4 {
-  schema_version: "security-context-v1";
+  schema_version: "security-context-v1" | "security-context-v2";
   claimed_entity: string | null;
   scenario: SecurityScenarioV4;
   requested_action: RequestedActionV4 | null;
@@ -266,7 +417,8 @@ export interface AssistantContextV4 {
   missing_information: string[];
   field_confidences: Record<string, number>;
   source_spans: AssistantSourceSpanV4[];
-  understanding_version: "security-understanding-v1";
+  derived_query_provenance: DerivedQueryProvenanceV4[];
+  understanding_version: "security-understanding-v1" | "security-understanding-v2";
   model_version: string;
 }
 
@@ -360,6 +512,7 @@ export interface SecurityScopeResponseV4 {
   investigation_plan: SecurityInvestigationStepV4[];
   evidence: SecurityEvidenceV4[];
   errors: SecurityToolErrorV4[];
+  official_verification?: OfficialLinkVerificationReportV4 | null;
   tool_calls_used: number;
   risk: SecurityRiskV4 | null;
   score: number | null;

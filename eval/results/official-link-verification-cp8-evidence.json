@@ -1,0 +1,108 @@
+{
+  "schema_version": "official-link-verification-cp8-evidence-v1",
+  "checkpoint": "CP8",
+  "captured_at": "2026-08-20T22:04:13+07:00",
+  "base_commit_sha": "1ed8a45335b3ec3221ac5ff9de96b20c4506b6b9",
+  "worktree_clean": false,
+  "dependency": {
+    "checkpoint": "CP7",
+    "commit_sha": "1ed8a45335b3ec3221ac5ff9de96b20c4506b6b9",
+    "evidence": "eval/results/official-link-verification-cp7-evidence.json",
+    "independent_review_evidence_provided": false
+  },
+  "risk_v3": {
+    "policy_version": "security-risk-v3",
+    "enabled_only_in_mode": "enforced",
+    "verified_same_target_reviewed_brand_suppression": "pass",
+    "malicious_reputation_preserved": "pass",
+    "approved_blacklist_preserved": "pass",
+    "credential_otp_payment_personal_data_preserved": "pass",
+    "incident_recovery_preserved": "pass",
+    "conflicting_maximum_points": 25,
+    "conflicting_only_malicious": false,
+    "unverified_no_hit_not_applicable_points": 0,
+    "safe_requires_complete_applicable_verification": "pass",
+    "safe_blocked_by_sensitive_action_tool_error_or_strong_indicator": "pass"
+  },
+  "rollout": {
+    "setting": "SECURITY_OFFICIAL_VERIFICATION_MODE",
+    "accepted_modes": ["off", "shadow", "visible", "enforced"],
+    "default": "off",
+    "off_coordinator_injected": false,
+    "shadow_report_exposed_or_persisted": false,
+    "visible_risk_policy": "security-risk-v1/security-risk-v2",
+    "enforced_risk_policy": "security-risk-v3",
+    "off_shadow_visible_risk_fixture_compatibility": "pass",
+    "rollback_path": "enforced -> visible -> off",
+    "database_downgrade_required": false,
+    "migration_added": false
+  },
+  "provider_and_capabilities": {
+    "official_link_verification_separate": "pass",
+    "official_web_search_ready_separate": "pass",
+    "missing_tavily_startup_failure": false,
+    "missing_openai_startup_failure": false,
+    "reviewed_identity_direct_verification_without_tavily": true,
+    "inline_pipeline_injected": true,
+    "durable_worker_pipeline_injected": true
+  },
+  "observability": {
+    "aggregate_only": true,
+    "allowed_fields": [
+      "analysis_id",
+      "stage",
+      "provider",
+      "operation",
+      "counts",
+      "latency_ms",
+      "cost_usd",
+      "status",
+      "strength",
+      "target_hash",
+      "error_code"
+    ],
+    "counts_distinguish_adapter_attempts_and_network_units": true,
+    "raw_query_logged": false,
+    "raw_message_logged": false,
+    "raw_url_logged": false,
+    "raw_context_logged": false
+  },
+  "verification": {
+    "cp8_focused_tests": "16 passed",
+    "cp7_cp8_risk_config_regression": "56 passed",
+    "backend_pytest": "381 passed",
+    "backend_ruff": "pass",
+    "dependency_lock": "pass",
+    "alembic_head": "0018_remove_vector_compat",
+    "frontend_unit": "67 passed",
+    "frontend_lint": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_cutover_equivalent_scan": "pass",
+    "frontend_cutover_canonical": "environment_blocked"
+  },
+  "runtime_boundary": {
+    "public_api_prefix": "/api/v4",
+    "legacy_fact_check_used": false,
+    "general_fact_check_behavior_added": false,
+    "vector_dependency_added": false,
+    "production_coordinator_injected": true,
+    "deployment_gate_documented": true
+  },
+  "review": {
+    "implementation_status": "verified",
+    "required_reviewer_role": "Security risk policy reviewer",
+    "independent_review_complete": false
+  },
+  "environment_constraints": [
+    "Python 3.13 temporary-directory ACLs require the existing process-local test harness with pre-created directories.",
+    "Node 24.14.1 leaves percent-encoded Unicode in URL.pathname for the canonical cutover script; the equivalent source-pattern scan passes.",
+    "Frontend Vitest required execution outside the restricted sandbox because child-process spawn returned EPERM.",
+    "The default uv cache is not writable; verification used uv run --no-cache --no-sync."
+  ],
+  "unrelated_worktree_state_preserved": [
+    "tests/.pytest_all/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_all/test_timeout_restores_pending_0/session.jsonl",
+    "tests/.pytest_tmp/test_recovers_stale_pending_be0/session.jsonl",
+    "tests/.pytest_tmp/test_timeout_restores_pending_0/session.jsonl"
+  ]
+}
