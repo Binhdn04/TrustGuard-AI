@@ -2,6 +2,7 @@ import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4 } from "@/types/generated/api-v4";
 
 import type { SecurityAnalysisApi } from "./security-analysis-api.types";
+import { resolveSecurityApiUrl } from "./security-api-url";
 
 interface Callbacks {
   onEvents(events: SecurityAnalysisEventV4[]): void;
@@ -16,7 +17,7 @@ interface Options {
 }
 
 function streamUrl(path: string, ticket: string, cursor: string | null): string {
-  const url = new URL(path, process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
+  const url = new URL(path, resolveSecurityApiUrl());
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("ticket", ticket);
   if (cursor) url.searchParams.set("cursor", cursor);

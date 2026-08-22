@@ -211,4 +211,27 @@ describe("HttpSecurityAnalysisApi", () => {
       status: 403,
     });
   });
+
+  it("fails clearly when the frontend build has no API URL", async () => {
+    const api = new HttpSecurityAnalysisApi("", () => "owner-token");
+
+    await expect(api.getCapabilities()).rejects.toMatchObject({
+      name: "ApiError",
+      code: "API_CONFIGURATION_ERROR",
+      message: expect.stringContaining("NEXT_PUBLIC_API_URL"),
+    });
+  });
+
+  it("explains a network or CORS failure instead of surfacing the browser error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Request failed")));
+    const api = new HttpSecurityAnalysisApi("https://backend.example.test", () => "owner-token");
+
+    await expect(api.getCapabilities()).rejects.toMatchObject({
+      name: "ApiError",
+      code: "NETWORK_ERROR",
+      retryable: true,
+      status: 0,
+      message: expect.stringContaining("CORS_ORIGINS"),
+    });
+  });
 });
