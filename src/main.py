@@ -26,6 +26,7 @@ from src.core.errors import PlatformError
 from src.core.logging import configure_structured_logging
 from src.core.product_boundary import SECURITY_TRIAGE_API_PREFIX
 from src.models import ErrorCode
+from src.observability.langfuse import close_langfuse_observability
 
 
 @asynccontextmanager
@@ -50,6 +51,7 @@ async def lifespan(app: FastAPI):
         await close_ticket_manager()
         await close_event_notifier()
         await close_rate_limiter()
+        close_langfuse_observability()
         print("Shutting down...")
 
 

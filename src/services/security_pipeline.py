@@ -11,10 +11,12 @@ from src.models import (
     AnalysisStatus,
     ExposureStateV4,
     ScopeDecisionV4,
+    SecurityInvestigationStepStatusV4,
     SecurityRiskV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
 )
+from src.observability.langfuse import get_langfuse_observability
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
 from src.services.official_verification_rollout import OfficialVerificationRolloutStage
@@ -71,7 +73,20 @@ class SecurityTriagePipeline:
         progress: ProgressCallback | None = None,
         owner_id: str | None = None,
     ) -> SecurityScopeResponseV4:
-        scoped = await self._understanding.enrich(request, scoped)
+        observability = get_langfuse_observability()
+        with observability.observation(
+            "understand-security-context",
+            input={"initial_scope": scoped.scope_decision.value},
+        ) as observation:
+            scoped = await self._understanding.enrich(request, scoped)
+            if observation is not None:
+                observation.update(
+                    output={
+                        "status": "completed",
+                        "scope": scoped.scope_decision.value,
+                        "scenario": scoped.security_context.scenario.value if scoped.security_context else None,
+                    }
+                )
         if progress is not None:
             await progress("understanding", "Đã hợp nhất ngữ cảnh rule và AI.", [], None)
         if scoped.scope_decision is not ScopeDecisionV4.IN_SCOPE:
@@ -84,16 +99,29 @@ class SecurityTriagePipeline:
             memory_lookup = await self._resolve_memory_lookup()
             if memory_lookup is not None and owner_id is not None:
                 scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
-            scoped = assess_security_risk(
-                scoped,
-                memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
-                official_verification_enforced=self._risk_v3_enforced,
-            )
+            with observability.observation("assess-security-risk") as observation:
+                scoped = assess_security_risk(
+                    scoped,
+                    memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
+                    official_verification_enforced=self._risk_v3_enforced,
+                )
+                self._update_risk_observation(observation, scoped)
             if progress is not None:
                 await progress("incident_response", "Đã ưu tiên hướng dẫn khôi phục tức thời.", [], scoped.risk)
         else:
-            investigation = await self._resolve_investigation()
-            scoped = await investigation.investigate(request, scoped, runtime=runtime)
+            with observability.observation("investigate-security-case") as observation:
+                investigation = await self._resolve_investigation()
+                scoped = await investigation.investigate(request, scoped, runtime=runtime)
+                scoped = await self._trust.enrich(request, scoped)
+                self._record_tool_observations(observability, scoped)
+                if observation is not None:
+                    observation.update(
+                        output={
+                            "status": scoped.investigation_status.value,
+                            "tool_calls_used": scoped.tool_calls_used,
+                            "error_count": len(scoped.errors),
+                        }
+                    )
             if progress is not None:
                 await progress(
                     "investigation",
@@ -101,21 +129,36 @@ class SecurityTriagePipeline:
                     [item.evidence_ref for item in scoped.evidence],
                     None,
                 )
-            scoped = await self._trust.enrich(request, scoped)
-            if self._official_verification_rollout is not None:
-                assert runtime.execution_context is not None
-                scoped = await self._official_verification_rollout.run(
-                    request,
-                    scoped,
-                    execution_context=runtime.execution_context,
-                )
-            elif self._official_verification is not None:
-                assert runtime.execution_context is not None
-                scoped = await self._official_verification.verify(
-                    request,
-                    scoped,
-                    execution_context=runtime.execution_context,
-                )
+            with observability.observation("verify-official-identity") as observation:
+                if self._official_verification_rollout is not None:
+                    assert runtime.execution_context is not None
+                    scoped = await self._official_verification_rollout.run(
+                        request,
+                        scoped,
+                        execution_context=runtime.execution_context,
+                    )
+                elif self._official_verification is not None:
+                    assert runtime.execution_context is not None
+                    scoped = await self._official_verification.verify(
+                        request,
+                        scoped,
+                        execution_context=runtime.execution_context,
+                    )
+                if observation is not None:
+                    verification_failed = "official_verification_error" in scoped.limitations
+                    observation.update(
+                        output={
+                            "status": (
+                                "failed"
+                                if verification_failed
+                                else "completed"
+                                if scoped.official_verification
+                                else "not_applicable"
+                            ),
+                            "limitation_count": len(scoped.limitations),
+                        },
+                        level="ERROR" if verification_failed else "DEFAULT",
+                    )
             if progress is not None and scoped.official_verification is not None:
                 refs = [item.source_ref for item in scoped.official_verification.source_refs]
                 refs.extend(item.link_ref for item in scoped.official_verification.link_refs)
@@ -138,11 +181,13 @@ class SecurityTriagePipeline:
                         refs,
                         None,
                     )
-            scoped = assess_security_risk(
-                scoped,
-                memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
-                official_verification_enforced=self._risk_v3_enforced,
-            )
+            with observability.observation("assess-security-risk") as observation:
+                scoped = assess_security_risk(
+                    scoped,
+                    memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
+                    official_verification_enforced=self._risk_v3_enforced,
+                )
+                self._update_risk_observation(observation, scoped)
             if progress is not None:
                 await progress(
                     "risk_assessment",
@@ -150,7 +195,17 @@ class SecurityTriagePipeline:
                     list(scoped.explanation_evidence_refs),
                     scoped.risk,
                 )
-        scoped = await self._responses.enrich(scoped)
+        with observability.observation("generate-security-response") as observation:
+            scoped = await self._responses.enrich(scoped)
+            if observation is not None:
+                response = scoped.assistant_response
+                observation.update(
+                    output={
+                        "status": "completed",
+                        "generation_mode": response.generation_mode.value if response else None,
+                        "summary": response.summary if response else None,
+                    }
+                )
         if progress is not None:
             await progress(
                 "assistant_response",
@@ -159,6 +214,52 @@ class SecurityTriagePipeline:
                 scoped.risk,
             )
         return self._complete(scoped)
+
+    @staticmethod
+    def _update_risk_observation(observation, scoped: SecurityScopeResponseV4) -> None:
+        if observation is not None:
+            observation.update(
+                output={
+                    "status": "completed",
+                    "risk": scoped.risk.value if scoped.risk else None,
+                    "score": scoped.score,
+                    "confidence": scoped.confidence,
+                }
+            )
+
+    @staticmethod
+    def _record_tool_observations(observability, scoped: SecurityScopeResponseV4) -> None:
+        errors_by_step: dict[tuple[str, str], list[dict[str, object]]] = {}
+        for error in scoped.errors:
+            errors_by_step.setdefault((error.tool.value, error.target), []).append(
+                {
+                    "code": error.code,
+                    "provider": error.provider,
+                    "retryable": error.retryable,
+                }
+            )
+        for step in scoped.investigation_plan:
+            with observability.observation(
+                f"run-{step.tool.value}",
+                as_type="tool",
+                input={
+                    "reason_code": step.reason_code,
+                    "dependency_count": len(step.depends_on),
+                },
+                metadata={"operation": step.tool.value},
+            ) as observation:
+                if observation is not None:
+                    failed = step.status is SecurityInvestigationStepStatusV4.FAILED
+                    observation.update(
+                        output={
+                            "status": step.status.value,
+                            "status_reason": step.status_reason,
+                            "step_id": step.step_id,
+                            "errors": errors_by_step.get((step.tool.value, step.target), []),
+                        },
+                        level="ERROR" if failed else "DEFAULT",
+                        status_message=step.status_reason if failed else None,
+                    )
 
     @property
     def _risk_v3_enforced(self) -> bool:

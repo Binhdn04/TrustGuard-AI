@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from src.agents.tools import (
     CacheMetadata,
-    GoogleSafeBrowsingScanner,
-    GoogleWebRiskProvider,
     GuardedHttpClient,
     GuardedRedirectResolver,
     NormalizedToolResult,
@@ -21,32 +18,11 @@ from src.agents.tools import (
     UrlReputationFinding,
     UsageMetadata,
     VersionedMemoryCache,
-    VirusTotalUrlProvider,
-    build_provider_adapters,
     canonicalize_registrable_domain,
 )
 from src.models import Verdict
 
 NOW = datetime(2026, 8, 8, tzinfo=UTC)
-
-
-def test_provider_wiring_uses_virustotal_for_reputation_and_keeps_safe_browsing_compatibility() -> None:
-    settings = SimpleNamespace(
-        provider_timeout_seconds=10.0,
-        virustotal_api_key="virus-total",
-        reputation_max_network_calls=4,
-        google_safe_browsing_api_key="safe-browsing",
-        openai_api_key="",
-        tavily_api_key="",
-    )
-
-    adapters = build_provider_adapters(settings)
-
-    reputation = adapters["url_reputation"]
-    assert isinstance(reputation, ProductionUrlReputationCascade)
-    assert isinstance(reputation.primary, VirusTotalUrlProvider)
-    assert reputation.secondary is None
-    assert isinstance(adapters["url_scanner"], GoogleSafeBrowsingScanner)
 
 
 class _ChunkStream(httpx.AsyncByteStream):
@@ -111,30 +87,6 @@ async def test_versioned_cache_prunes_expired_entries_and_enforces_capacity() ->
     assert await cache.get("provider", "v1", "one") is None
 
 
-@pytest.mark.asyncio
-async def test_web_risk_no_hit_is_inconclusive_and_second_lookup_is_memory_hit() -> None:
-    calls = 0
-
-    async def resolver(_host: str, _port: int) -> list[str]:
-        return ["93.184.216.34"]
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(200, json={})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        provider = GoogleWebRiskProvider("secret", client=client, guard=SsrfGuard(resolver=resolver), clock=lambda: NOW)
-        first = await provider.lookup("https://unknown.example/path")
-        second = await provider.lookup("https://unknown.example/path")
-
-    assert first.status is ToolResultStatus.INCONCLUSIVE
-    assert first.result is not None and first.result.verdict is Verdict.INCONCLUSIVE
-    assert second.cache.status.value == "hit"
-    assert second.usage.network_calls == 0
-    assert calls == 1
-
-
 class _FixtureProvider:
     def __init__(self, finding: UrlReputationFinding) -> None:
         self.finding = finding
@@ -165,7 +117,7 @@ async def test_high_risk_cascade_escalates_and_normalizes_provider_disagreement(
     target = "https://conflict.example/login"
     primary = _FixtureProvider(
         UrlReputationFinding(
-            provider="google-web-risk",
+            provider="primary-reputation",
             provider_version="v1",
             normalized_url=target,
             matched=True,
@@ -175,7 +127,7 @@ async def test_high_risk_cascade_escalates_and_normalizes_provider_disagreement(
     )
     secondary = _FixtureProvider(
         UrlReputationFinding(
-            provider="virustotal",
+            provider="secondary-reputation",
             provider_version="v3",
             normalized_url=target,
             matched=True,

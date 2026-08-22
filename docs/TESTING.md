@@ -28,6 +28,9 @@ uv run python scripts/evaluate_official_link_verification.py
 
 Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-restore evidence.
 
+Official-link verification đã được triển khai hoàn chỉnh; các evaluator sau là regression/release
+gate cho implementation hiện hành.
+
 The official-link evaluator writes `eval/results/security-v4-v2-report.json` from the immutable
 `tests/eval/security_v4_v2.jsonl` release dataset. It uses deterministic transports while executing the production
 scope, intent, coordinator, fusion and risk paths. A passing offline report is necessary, but it is not CP10 release

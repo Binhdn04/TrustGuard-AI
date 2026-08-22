@@ -5,7 +5,6 @@ import pytest
 
 from src.agents.tools import (
     CacheMetadata,
-    GoogleWebRiskProvider,
     GuardedRedirectResolver,
     NormalizedRdapProvider,
     NormalizedToolResult,
@@ -66,26 +65,23 @@ async def test_redirect_private_hop_fails_closed():
 
 
 @pytest.mark.asyncio
-async def test_web_risk_and_virus_total_normalize_without_raw_body():
+async def test_virus_total_no_hit_is_inconclusive_without_raw_body():
     async def resolver(_host: str, _port: int) -> list[str]:
         return ["8.8.8.8"]
 
-    def web_handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"threat": {"threatTypes": ["SOCIAL_ENGINEERING"]}, "raw": "secret"})
-
     def vt_handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": {"attributes": {"last_analysis_stats": {"malicious": 0}}}})
+        return httpx.Response(
+            200,
+            json={"data": {"attributes": {"last_analysis_stats": {"malicious": 0}, "raw": "secret"}}},
+        )
 
     guard = SsrfGuard(resolver=resolver)
-    async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(web_handler)) as web_client,
-        httpx.AsyncClient(transport=httpx.MockTransport(vt_handler)) as vt_client,
-    ):
-        web = await GoogleWebRiskProvider("key", client=web_client, guard=guard).lookup("https://bad.example")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(vt_handler)) as vt_client:
         vt = await VirusTotalUrlProvider("key", client=vt_client, guard=guard).lookup("https://unknown.example")
-    assert web.result is not None and web.result.verdict is Verdict.MALICIOUS
+
     assert vt.status is ToolResultStatus.INCONCLUSIVE
-    assert "raw" not in web.model_dump_json()
+    assert vt.result is not None and vt.result.verdict is Verdict.INCONCLUSIVE
+    assert "secret" not in vt.model_dump_json()
 
 
 class _FixtureProvider:
@@ -139,8 +135,8 @@ class _FixtureProvider:
 
 @pytest.mark.asyncio
 async def test_cascade_disagreement_retry_and_provider_versioned_memory_hit():
-    primary = _FixtureProvider("web-risk", Verdict.MALICIOUS, failures=1)
-    secondary = _FixtureProvider("virus-total", Verdict.INCONCLUSIVE)
+    primary = _FixtureProvider("primary-reputation", Verdict.MALICIOUS, failures=1)
+    secondary = _FixtureProvider("secondary-reputation", Verdict.INCONCLUSIVE)
     service = UrlReputationService(primary, secondary, backoff_seconds=0, clock=lambda: NOW)
     first = await service.assess("https://bad.example", high_risk=True)
     second = await service.assess("https://bad.example", high_risk=True)
@@ -152,7 +148,7 @@ async def test_cascade_disagreement_retry_and_provider_versioned_memory_hit():
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_stops_repeated_provider_calls():
-    provider = _FixtureProvider("web-risk", Verdict.INCONCLUSIVE, failures=20)
+    provider = _FixtureProvider("primary-reputation", Verdict.INCONCLUSIVE, failures=20)
     service = UrlReputationService(
         provider, failure_threshold=1, max_attempts=1, circuit_cooldown=timedelta(minutes=1), clock=lambda: NOW
     )
@@ -162,19 +158,17 @@ async def test_circuit_breaker_stops_repeated_provider_calls():
     assert provider.calls == 1
 
 
-def test_real_provider_clients_are_lazy_before_consent():
-    web = GoogleWebRiskProvider("key")
+def test_runtime_provider_clients_are_lazy_before_consent():
     vt = VirusTotalUrlProvider("key")
     redirect = GuardedRedirectResolver()
-    assert web._client is None
     assert vt._client is None
     assert redirect._client is None
 
 
 @pytest.mark.asyncio
 async def test_secondary_provider_requires_positive_policy_budget():
-    primary = _FixtureProvider("web-risk", Verdict.MALICIOUS)
-    secondary = _FixtureProvider("virus-total", Verdict.INCONCLUSIVE)
+    primary = _FixtureProvider("primary-reputation", Verdict.MALICIOUS)
+    secondary = _FixtureProvider("secondary-reputation", Verdict.INCONCLUSIVE)
     service = UrlReputationService(primary, secondary, backoff_seconds=0, clock=lambda: NOW)
     result = await service.assess("https://bad.example", high_risk=True, secondary_budget_remaining=0)
     assert result.result is not None

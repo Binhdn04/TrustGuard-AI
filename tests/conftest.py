@@ -16,6 +16,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{(_TEST_DATA_DIR / 'app.db').as_posix()
 os.environ["SECURITY_DATABASE_PATH"] = str(_TEST_DATA_DIR / "security.db")
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
+# Keep pytest traces out of the developer's Langfuse project by default.
+# An explicit shell value can still opt a dedicated tracing test run in.
+os.environ.setdefault("LANGFUSE_TRACING_ENABLED", "false")
 # Collection imports the logging uploader, which loads the developer .env.
 # Keep rollout flags deterministic and prevent live AI/provider calls in tests.
 for _flag in (

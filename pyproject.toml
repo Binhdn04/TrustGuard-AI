@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.28.1",
     "langchain>=0.3.0",
     "langchain-openai>=0.3.0",
+    "langfuse>=4.14.4,<5",
     "langgraph>=0.2.0",
     "playwright>=1.52,<2",
     "pydantic>=2.10.0",

@@ -1,6 +1,6 @@
 # Current Status
 
-**Updated:** 2026-08-21
+**Updated:** 2026-08-22
 
 `Implemented` nghĩa là có code và automated coverage trong repository, không đồng nghĩa đã verify trên
 hosted production với OIDC, PostgreSQL, Redis và provider thật.
@@ -8,7 +8,7 @@ hosted production với OIDC, PostgreSQL, Redis và provider thật.
 ## Summary
 
 Security Triage v4 và frontend investigation workspace đã implement end-to-end trong repository. Runtime
-public chỉ còn `/api/v4`. Toàn bộ implementation của Official Link Verification WP0–WP10 đã hoàn thành và có
+public chỉ còn `/api/v4`. Official Link Verification đã được triển khai hoàn chỉnh và có
 automated/offline evidence. Production release chưa hoàn tất vì CP10 chưa có reviewed hosted evidence,
 backup/restore rehearsal, load/failure testing và live-provider smoke.
 
@@ -33,7 +33,7 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 
 - `BLOCK_DOMAIN` và `PUBLISH_BROAD_WARNING` chưa có execution sink.
 - Understanding, planning, explanation và Admin Copilot mặc định bật với kill switch riêng; thiếu provider ở local/test fallback an toàn, production yêu cầu cấu hình AI hợp lệ. Async và reviewed-memory vẫn mặc định tắt.
-- Official Link Verification implementation WP0–WP10 đã hoàn thành; CP10 release approval vẫn pending hosted evidence và Tech Lead/Security Lead review.
+- Official Link Verification đã hoàn thành; CP10 release approval vẫn pending hosted evidence và Tech Lead/Security Lead review.
 - Identity discovery v2 đã có local automated coverage; PostgreSQL/provider thật, reviewer workflow và rollout
   observation vẫn cần hosted validation trước enforced production.
 - Chưa có hosted OIDC/PostgreSQL/Redis/VirusTotal evidence với credential thật.

@@ -108,6 +108,7 @@ from src.models import (
     WhitelistPageV4,
     WhitelistRecordV4,
 )
+from src.observability.langfuse import get_langfuse_observability
 from src.services.page_capture import PageCaptureError
 from src.services.security_pipeline import SecurityTriagePipeline
 
@@ -364,7 +365,23 @@ async def security_chat_v4(
     from src.agents.graph import agent as chatbot_agent  # noqa: PLC0415
 
     try:
-        result = await chatbot_agent.ainvoke({"query": request.message, "context": retained_context})
+        observability = get_langfuse_observability()
+        with observability.trace(
+            "security-chat",
+            feature="chat",
+            user_id=principal.user_id,
+            session_id=str(request.conversation_id) if request.conversation_id else None,
+        ) as trace:
+            agent_input = {"query": request.message, "context": retained_context}
+            if observability.enabled:
+                result = await chatbot_agent.ainvoke(
+                    agent_input,
+                    config=observability.langchain_config("security-chat-agent"),
+                )
+            else:
+                result = await chatbot_agent.ainvoke(agent_input)
+            if trace is not None:
+                trace.update(output={"status": "ok"})
     except Exception as exc:
         raise PlatformError(
             status_code=503,
@@ -443,12 +460,46 @@ async def create_security_analysis_v4(
         memory_lookup_resolver=resolve_memory_lookup if settings.security_memory_retrieval_enabled else None,
     )
     try:
-        scoped = await pipeline.process(
-            request,
-            scoped,
-            runtime=ai_runtime,
-            owner_id=principal.user_id,
-        )
+        observability = get_langfuse_observability()
+        with observability.trace(
+            "security-analysis",
+            feature="analysis",
+            user_id=principal.user_id,
+            session_id=str(scoped.conversation_id),
+        ) as trace:
+            scoped = await pipeline.process(
+                request,
+                scoped,
+                runtime=ai_runtime,
+                owner_id=principal.user_id,
+            )
+            if trace is not None:
+                trace.update(
+                    output={
+                        "status": scoped.status.value,
+                        "scope": scoped.scope_decision.value,
+                        "risk": scoped.risk.value if scoped.risk else None,
+                        "score": scoped.score,
+                        "confidence": scoped.confidence,
+                        "threat_type": scoped.threat_type.value if scoped.threat_type else None,
+                        "investigation_status": scoped.investigation_status.value,
+                        "tool_calls_used": scoped.tool_calls_used,
+                        "errors": [
+                            {
+                                "tool": error.tool.value,
+                                "code": error.code,
+                                "provider": error.provider,
+                                "retryable": error.retryable,
+                            }
+                            for error in scoped.errors
+                        ],
+                        "assistant_response": (
+                            scoped.assistant_response.model_dump(mode="json")
+                            if scoped.assistant_response is not None
+                            else None
+                        ),
+                    }
+                )
     except Exception as exc:
         failed = scoped.model_copy(update={"status": AnalysisStatus.FAILED, "completed_at": datetime.now(UTC)})
         await analyses.persist_failed(failed, principal)
