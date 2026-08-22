@@ -196,7 +196,12 @@ describe("HttpSecurityAnalysisApi", () => {
 
   it("preserves the v4 error envelope", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      error: { code: "FORBIDDEN", message: "Admin only", retryable: false },
+      error: {
+        code: "FORBIDDEN",
+        message: "Admin only",
+        retryable: false,
+        details: { reason: "role" },
+      },
     }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
@@ -209,6 +214,7 @@ describe("HttpSecurityAnalysisApi", () => {
       message: "Admin only",
       retryable: false,
       status: 403,
+      details: { reason: "role" },
     });
   });
 

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisWorkspace } from "@/components/analysis/analysis-workspace";
+import { ApiError } from "@/lib/api/api-error";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import type { SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
@@ -109,6 +110,7 @@ describe("Security Chat workspace", () => {
       }),
       undefined,
     ));
+    expect(create.mock.calls[0][0]).not.toHaveProperty("execution_mode");
     const link = await screen.findByRole("link", { name: "https://forms.example.test/recruitment?id=42" });
     expect(link).toHaveAttribute("href", "https://forms.example.test/recruitment?id=42");
   });
@@ -462,6 +464,26 @@ describe("Security Chat workspace", () => {
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Cần thêm thông tin")).toBeInTheDocument();
     expect(screen.queryByText("Input 2")).not.toBeInTheDocument();
+  });
+
+  it("shows the incompatible request field returned by backend validation", async () => {
+    const create = vi.fn().mockRejectedValue(new ApiError(
+      "Request validation failed.",
+      "VALIDATION_ERROR",
+      false,
+      422,
+      { errors: [{ loc: ["body", "execution_mode"], type: "extra_forbidden" }] },
+    ));
+    render(<AnalysisWorkspace api={apiWith(create)} />);
+
+    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), {
+      target: { value: "Kiểm tra yêu cầu chuyển tiền" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Dữ liệu gửi lên không tương thích ở trường: body.execution_mode.",
+    );
   });
 
   it("renders a terminal failed response without inventing a verdict", async () => {
