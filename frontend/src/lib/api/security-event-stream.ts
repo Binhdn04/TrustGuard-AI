@@ -16,8 +16,8 @@ interface Options {
   webSocketFactory?: (url: string) => WebSocket;
 }
 
-function streamUrl(path: string, ticket: string, cursor: string | null): string {
-  const url = new URL(path, resolveSecurityApiUrl());
+function streamUrl(path: string, apiUrl: string, ticket: string, cursor: string | null): string {
+  const url = new URL(path, apiUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("ticket", ticket);
   if (cursor) url.searchParams.set("cursor", cursor);
@@ -65,10 +65,18 @@ export function subscribeToSecurityEvents(
   };
   const connect = async (): Promise<void> => {
     callbacks.onTransportChange(reconnects ? "reconnecting" : "connecting");
+    let apiUrl: string;
+    try {
+      apiUrl = resolveSecurityApiUrl();
+    } catch (error) {
+      callbacks.onError?.(error);
+      void poll();
+      return;
+    }
     try {
       const ticket = await api.createWebSocketTicket(analysisId);
       if (stopped) return;
-      const current = socketFactory(streamUrl(ticket.stream_path, ticket.ticket, cursor));
+      const current = socketFactory(streamUrl(ticket.stream_path, apiUrl, ticket.ticket, cursor));
       socket = current;
       current.onopen = () => {
         reconnects = 0;

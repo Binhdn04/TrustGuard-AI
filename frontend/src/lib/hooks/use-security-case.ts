@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ApiError } from "@/lib/api/api-error";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
 import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
@@ -43,6 +44,22 @@ function stateFor(result: SecurityScopeResponseV4): SecurityCaseState {
 }
 
 function messageForError(error: unknown): string {
+  if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+    const errors: unknown[] = Array.isArray(error.details.errors) ? error.details.errors : [];
+    const fields = errors
+      .map((item) => {
+        if (!item || typeof item !== "object" || !("loc" in item)) return null;
+        const location = (item as { loc: unknown }).loc;
+        if (!Array.isArray(location)) return null;
+        return location.filter((part: unknown): part is string | number => (
+          typeof part === "string" || typeof part === "number"
+        )).join(".");
+      })
+      .filter((field): field is string => Boolean(field));
+    if (fields.length) {
+      return `Dữ liệu gửi lên không tương thích ở trường: ${[...new Set(fields)].join(", ")}.`;
+    }
+  }
   return error instanceof Error
     ? error.message
     : "Không thể kết nối tới dịch vụ Security Triage.";
@@ -138,7 +155,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
       const result = await api.createAnalysis({
         message: submission.message,
         consent: AUTOMATIC_LOOKUP_CONSENT,
-        execution_mode: useAsync ? "async" : "inline",
+        ...(useAsync ? { execution_mode: "async" as const } : {}),
         ...(conversation
           ? { conversation_id: conversation.id, conversation_version: conversation.version }
           : {}),

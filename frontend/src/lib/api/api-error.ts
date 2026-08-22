@@ -4,6 +4,7 @@ export class ApiError extends Error {
     readonly code: string,
     readonly retryable: boolean,
     readonly status: number,
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";

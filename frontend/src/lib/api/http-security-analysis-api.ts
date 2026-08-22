@@ -81,6 +81,7 @@ async function readJson<T>(response: Response): Promise<T> {
       error?.code ?? "HTTP_ERROR",
       error?.retryable ?? response.status >= 500,
       response.status,
+      error?.details ?? {},
     );
   }
   return payload as T;
