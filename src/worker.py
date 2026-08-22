@@ -11,6 +11,7 @@ from src.api.dependencies import (
 )
 from src.config import get_settings
 from src.core.logging import configure_structured_logging
+from src.observability.langfuse import close_langfuse_observability
 
 
 async def run() -> None:
@@ -29,6 +30,7 @@ async def run() -> None:
         await stop_durable_worker()
         await close_security_analysis_service()
         await close_security_trust_services()
+        close_langfuse_observability()
 
 
 if __name__ == "__main__":

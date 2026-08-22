@@ -286,6 +286,21 @@ _SCOPED_RESOURCE_LIMITATION = (
 )
 
 
+def _current_identity_candidate_versions(
+    records: Sequence[IdentityCandidateV4],
+) -> list[IdentityCandidateV4]:
+    """Return the current candidate in each repository version chain."""
+    superseded_ids = {item.supersedes for item in records if item.supersedes is not None}
+    current = [item for item in records if item.association_id not in superseded_ids]
+    latest_by_key: dict[tuple[str, str, IdentityRelationshipV4], IdentityCandidateV4] = {}
+    for item in current:
+        key = (_fold(item.entity_name), item.canonical_domain.casefold(), item.relationship)
+        previous = latest_by_key.get(key)
+        if previous is None or (item.version, item.discovered_at) > (previous.version, previous.discovered_at):
+            latest_by_key[key] = item
+    return list(latest_by_key.values())
+
+
 def apply_official_verification_outcome(
     scope: SecurityScopeResponseV4,
     outcome: OfficialVerificationCoordinatorOutcome,
@@ -807,6 +822,7 @@ class OfficialLinkVerificationCoordinator:
             identity_evidence,
         )
         self._validate_reference_closure(report)
+        reported_associations = report.identity_associations
         return OfficialVerificationCoordinatorOutcome(
             report=report,
             adapter_attempts=adapter_attempts,
@@ -816,9 +832,9 @@ class OfficialLinkVerificationCoordinator:
             outbound_resolutions=outbound_resolutions,
             early_stop_reason=early_stop_reason,
             limitations=_unique(limitations)[:50],
-            identity_candidate_count=len(identity_associations),
+            identity_candidate_count=len(reported_associations),
             identity_verified_count=sum(
-                item.assurance is IdentityAssociationAssuranceV4.VERIFIED for item in identity_associations
+                item.assurance is IdentityAssociationAssuranceV4.VERIFIED for item in reported_associations
             ),
             identity_conflicting_count=sum(
                 item.assurance
@@ -826,9 +842,9 @@ class OfficialLinkVerificationCoordinator:
                     IdentityAssociationAssuranceV4.CONFLICTING,
                     IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH,
                 }
-                for item in identity_associations
+                for item in reported_associations
             ),
-            identity_cache_hits=(len(identity_associations) if "identity_cache_hit" in limitations else 0),
+            identity_cache_hits=(len(reported_associations) if "identity_cache_hit" in limitations else 0),
         )
 
     async def _discover_identity_associations(
@@ -852,7 +868,9 @@ class OfficialLinkVerificationCoordinator:
         stale_found = False
         list_candidates = getattr(self._brands, "list_identity_candidates", None)
         if list_candidates is not None:
-            candidate_records = [item for item in await list_candidates() if _fold(item.entity_name) == _fold(entity)]
+            candidate_records = _current_identity_candidate_versions(
+                [item for item in await list_candidates() if _fold(item.entity_name) == _fold(entity)]
+            )
             stale_found = any(
                 item.assurance
                 in {

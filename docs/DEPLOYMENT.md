@@ -42,6 +42,33 @@ của URL mới nhất sau khi case có kết quả; chỉ Blob mới nhất n�
 lưu bền và response dùng `no-store`. Chromium không vượt CAPTCHA/access denial và chặn download, popup cùng
 active stream. Tắt flag là rollback tức thời, không cần migration.
 
+### Langfuse tracing
+
+Tracing mặc định tắt. Cấu hình cùng một project key pair trên backend và worker, rồi bật gate sau khi kiểm tra
+data region/base URL:
+
+```dotenv
+APP_ENV=production
+LANGFUSE_TRACING_ENABLED=true
+LANGFUSE_PUBLIC_KEY=<project-public-key>
+LANGFUSE_SECRET_KEY=<project-secret-key>
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_SAMPLE_RATE=1.0
+```
+
+SDK chỉ gửi operation names, model/token/cost/latency, trạng thái chuẩn hóa, tags, environment, session UUID và
+user ID đã HMAC. Prompt, completion, private message, provider error, credential, OTP, token và URL payload được
+redact tại export boundary. Giảm `LANGFUSE_SAMPLE_RATE` theo volume/cost; rollback tức thời bằng
+`LANGFUSE_TRACING_ENABLED=false`. Không đưa Langfuse keys vào frontend hoặc log.
+
+`APP_ENV` được truyền trực tiếp vào thuộc tính environment của Langfuse: local dùng `development`, còn cả
+backend và worker trên Railway dùng `production`. Không cần cấu hình thêm `LANGFUSE_TRACING_ENVIRONMENT`.
+Trên Railway, tạo `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` và `LANGFUSE_BASE_URL` dưới Project Settings →
+Shared Variables, seal secret key, rồi share/reference chúng vào đúng hai service `backend` và `worker`. Đặt
+`APP_ENV=production`, `LANGFUSE_TRACING_ENABLED=true` và `LANGFUSE_SAMPLE_RATE` trên cả hai service; không share
+các biến Langfuse sang `frontend`. Review và deploy staged changes, sau đó chạy một request v4 inline và một job
+async (nếu async đang bật), rồi lọc `environment=production` trong Langfuse để xác minh cả hai execution path.
+
 ## Preflight and migration
 
 Chạy toàn bộ checks trong [TESTING.md](TESTING.md). Trước migration destructive trên database cũ:
@@ -71,6 +98,9 @@ localhost/CORS lỗi; worker không crash-loop/duplicate job; polling/WebSocket 
 Redis và worker không public; restart không mất dữ liệu.
 
 ## Rollout and rollback
+
+Official-link verification đã được triển khai hoàn chỉnh; các bước dưới đây là hosted
+rollout/release gate, không phải phần triển khai còn thiếu.
 
 Bật riêng từng capability: understanding → planning → explanation → reviewed memory → admin copilot →
 async. Official-link verification mặc định `visible`, dùng

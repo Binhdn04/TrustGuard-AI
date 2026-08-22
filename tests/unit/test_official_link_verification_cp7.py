@@ -632,6 +632,50 @@ async def test_provider_fallback_requires_explicit_url_and_caps_components_at_pa
 
 
 @pytest.mark.asyncio
+async def test_cache_ignores_superseded_candidate_versions_and_preserves_exact_resource_verification() -> None:
+    request, scope = _request_scope()
+    repository = _BrandRepository([])
+    previous: IdentityCandidateV4 | None = None
+    for version in range(1, 26):
+        verified = version == 25
+        candidate = IdentityCandidateV4(
+            entity_name="Vingroup",
+            canonical_url=USER_FORM,
+            canonical_domain="docs.google.com",
+            relationship=IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+            assurance=(
+                IdentityAssociationAssuranceV4.VERIFIED
+                if verified
+                else IdentityAssociationAssuranceV4.DISCOVERED
+            ),
+            confidence=0.7 if verified else 0.35,
+            discovered_at=NOW + timedelta(minutes=version),
+            verified_at=NOW + timedelta(minutes=version) if verified else None,
+            expires_at=NOW + timedelta(days=7),
+            version=version,
+            supersedes=previous.association_id if previous is not None else None,
+        )
+        repository.candidates.append(candidate)
+        previous = candidate
+
+    outcome = await _coordinator(repository=repository).coordinate(
+        request,
+        scope,
+        execution_context=TurnExecutionContext(),
+    )
+
+    assert outcome.report is not None
+    assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert len(outcome.report.identity_associations) == 1
+    assert previous is not None
+    assert outcome.report.identity_associations[0].association_id == previous.association_id
+    assert outcome.identity_candidate_count == 1
+    assert outcome.identity_verified_count == 1
+    assert outcome.identity_cache_hits == 1
+    assert "identity_cache_hit" in outcome.limitations
+
+
+@pytest.mark.asyncio
 async def test_coordinator_report_never_serializes_raw_html_or_sensitive_url_query() -> None:
     sensitive_url = f"{USER_FORM}?token=fixture-secret&utm_source=mail"
     request, scope = _request_scope(user_url=sensitive_url)

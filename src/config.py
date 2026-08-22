@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
     llm_max_retries: int = Field(default=2, ge=0)
 
+    # Langfuse tracing is opt-in and sends redacted observability metadata only.
+    langfuse_tracing_enabled: bool = False
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+
     # Security assistant runtime. AI stages default on but remain independently
     # gated as operational kill switches; policy remains deterministic.
     security_ai_understanding_enabled: bool = True
@@ -147,6 +154,14 @@ class Settings(BaseSettings):
             and self.security_ai_synthesis_model.strip()
         )
 
+    def langfuse_configuration_valid(self) -> bool:
+        return bool(
+            self.langfuse_tracing_enabled
+            and self.langfuse_public_key.strip()
+            and self.langfuse_secret_key.strip()
+            and self.langfuse_base_url.strip()
+        )
+
     @field_validator("security_ai_small_model", "security_ai_synthesis_model")
     @classmethod
     def validate_security_ai_model_name(cls, value: str) -> str:
@@ -182,6 +197,13 @@ class Settings(BaseSettings):
             if self.security_release_profile == "cutover":
                 if not self.live_providers_required:
                     raise ValueError("LIVE_PROVIDERS_REQUIRED must be true for production cutover")
+            if self.langfuse_tracing_enabled and urlparse(self.langfuse_base_url).scheme != "https":
+                raise ValueError("LANGFUSE_BASE_URL must use HTTPS when tracing is enabled in production")
+        if self.langfuse_tracing_enabled and not self.langfuse_configuration_valid():
+            raise ValueError(
+                "LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL are required "
+                "when LANGFUSE_TRACING_ENABLED is true"
+            )
         if self.live_providers_required:
             required = self.security_live_provider_requirements()
             missing = [name for name, value in required.items() if not value]

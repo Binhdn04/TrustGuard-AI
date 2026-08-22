@@ -9,6 +9,7 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import ValidationError
 
+from src.observability.langfuse import get_langfuse_observability
 from src.security_ai.contracts import AssistantOperation, ModelResponse, StrictModel
 
 OutputT = TypeVar("OutputT", bound=StrictModel)
@@ -156,26 +157,43 @@ class SecurityAssistantRuntime:
             started = perf_counter()
             call_timeout = min(self.timeout_seconds, remaining_seconds)
             deadline_limited = remaining_seconds <= self.timeout_seconds
-            try:
-                response = await asyncio.wait_for(call(), timeout=call_timeout)
-                parsed = ModelResponse[output_type].model_validate(response)
-                output = output_type.model_validate(parsed.output)
-                self.budget.input_tokens += parsed.usage.input_tokens
-                self.budget.output_tokens += parsed.usage.output_tokens
-                self.budget.cost_usd += parsed.usage.cost_usd
-                self._metric(operation, started, "ok", parsed)
-                return RuntimeResult(
-                    output,
-                    "ok",
-                    provider=parsed.provider,
-                    model=parsed.model,
-                )
-            except TimeoutError:
-                error = "turn_deadline_exceeded" if deadline_limited else "timeout"
-            except (ValidationError, TypeError, ValueError):
-                error = "invalid_structured_output"
-            except Exception:  # provider errors are normalized and never leak details
-                error = "provider_error"
+            with get_langfuse_observability().generation(operation.value) as generation:
+                try:
+                    response = await asyncio.wait_for(call(), timeout=call_timeout)
+                    parsed = ModelResponse[output_type].model_validate(response)
+                    output = output_type.model_validate(parsed.output)
+                    self.budget.input_tokens += parsed.usage.input_tokens
+                    self.budget.output_tokens += parsed.usage.output_tokens
+                    self.budget.cost_usd += parsed.usage.cost_usd
+                    if generation is not None:
+                        generation.update(
+                            output={"status": "ok"},
+                            model=parsed.model,
+                            usage_details={
+                                "input": parsed.usage.input_tokens,
+                                "output": parsed.usage.output_tokens,
+                            },
+                            cost_details={"total": parsed.usage.cost_usd},
+                        )
+                    self._metric(operation, started, "ok", parsed)
+                    return RuntimeResult(
+                        output,
+                        "ok",
+                        provider=parsed.provider,
+                        model=parsed.model,
+                    )
+                except TimeoutError:
+                    error = "turn_deadline_exceeded" if deadline_limited else "timeout"
+                except (ValidationError, TypeError, ValueError):
+                    error = "invalid_structured_output"
+                except Exception:  # provider errors are normalized and never leak details
+                    error = "provider_error"
+                if generation is not None:
+                    generation.update(
+                        output={"status": "fallback", "failure_code": error},
+                        level="WARNING",
+                        status_message=error,
+                    )
             self._metric(operation, started, error, error=error)
             if attempt < self.max_retries:
                 continue

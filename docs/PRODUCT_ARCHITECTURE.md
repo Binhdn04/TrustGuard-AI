@@ -88,6 +88,8 @@ validate request/version → scope/context → boundary hoặc investigation
 - Admin Copilot chỉ suggestion; action thật cần reviewer, note, evidence và audit.
 
 Identity discovery là phần mở rộng provider-neutral của official-link verification, không phải pipeline mới.
+Official-link verification đã được triển khai hoàn chỉnh trong runtime `/api/v4`; trạng thái release và
+hosted validation được theo dõi tại `CURRENT_STATUS.md`, `DEPLOYMENT.md` và `TESTING.md`.
 Khi reviewed registry thiếu/ambiguous hoặc chưa biết URL người dùng, coordinator có thể chạy tối đa ba query
 được dẫn xuất từ tên entity và literal claim/title đã grounded. Candidate `discovered` không được coi là cache hit
 hoàn tất. Riêng `endorsed_third_party_service`, một discovery source độc lập chứa entity/claim và exact link
