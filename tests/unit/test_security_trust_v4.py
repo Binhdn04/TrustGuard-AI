@@ -16,6 +16,7 @@ from src.models import (
     EntityUrlRelationshipV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
+    SecurityRecommendedActionV4,
     SecurityRiskV4,
     SecurityTriageCreateRequestV4,
     WhitelistRecordV4,
@@ -101,6 +102,8 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
     ).enrich(request, investigated)
     safe = assess_security_risk(enriched)
     assert safe.risk is SecurityRiskV4.SAFE
+    assert SecurityRecommendedActionV4.DO_NOT_OPEN_LINK not in safe.recommended_actions
+    assert SecurityRecommendedActionV4.PROCEED_WITH_CAUTION in safe.recommended_actions
 
     blacklist = SecurityEvidenceV4(
         evidence_ref=f"evidence:{'f' * 16}",

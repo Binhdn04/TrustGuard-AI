@@ -215,7 +215,14 @@ def _actions(scope: SecurityScopeResponseV4, risk: SecurityRiskV4) -> list[Secur
     }
     actions.extend(incident_actions.get(exposure, []))
     if context.urls or context.requested_action is RequestedActionV4.OPEN_LINK:
-        actions.append(SecurityRecommendedActionV4.DO_NOT_OPEN_LINK)
+        # A SAFE verdict requires reviewed trust evidence and no unresolved
+        # provider/policy conflict. Do not contradict that verdict with an
+        # unconditional instruction to avoid the verified link.
+        actions.append(
+            SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
+            if risk is SecurityRiskV4.SAFE
+            else SecurityRecommendedActionV4.DO_NOT_OPEN_LINK
+        )
     if context.credential_request:
         actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_CREDENTIALS)
         actions.append(SecurityRecommendedActionV4.CHANGE_PASSWORD_IF_ALREADY_SHARED)
