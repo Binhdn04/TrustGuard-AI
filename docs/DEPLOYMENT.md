@@ -12,6 +12,9 @@ Tài liệu hợp nhất Railway deployment và release/cutover runbook. Product
 5. Chỉ frontend/backend có public domain.
 
 Backend là service duy nhất chạy `alembic upgrade head` ở pre-deploy. Worker không chạy migration.
+Giữ Backend Watch Paths trống trong Railway Dashboard; `railway.backend.json` cũng đặt `watchPatterns: []` để
+source, migration, dependency và Dockerfile changes không bị Railway bỏ qua. GitHub Actions chịu trách nhiệm xác
+định service nào thực sự cần deploy.
 
 ## Production configuration
 
