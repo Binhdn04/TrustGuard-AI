@@ -79,7 +79,7 @@ describe("FE7 Security Review Room", () => {
     const securityApi = securityClient();
     render(<ReviewRoom securityApi={securityApi} actionApi={actionClient()} />);
 
-    expect(screen.getByRole("heading", { name: "Admin access required" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cần quyền quản trị" })).toBeInTheDocument();
     expect(securityApi.listAdminReports).not.toHaveBeenCalled();
     expect(securityApi.getAdminAnalysis).not.toHaveBeenCalled();
   });
@@ -124,10 +124,10 @@ describe("FE7 Security Review Room", () => {
     render(<ReviewRoom securityApi={securityClient({ draftAdminCopilot })} actionApi={actionClient()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(report.reason) }));
-    fireEvent.click(await screen.findByRole("button", { name: "Generate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Tạo gợi ý" }));
 
     expect(await screen.findByText("Credential evidence supports manual review.")).toBeInTheDocument();
-    expect(screen.getByLabelText("AI suggestion — not executed")).toHaveTextContent("executed=false");
+    expect(screen.getByLabelText("AI suggestion — not executed")).toHaveTextContent("Không tự thực thi");
     expect(screen.getByLabelText("Reviewer note")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Submit reviewed decision" })).toBeDisabled();
     expect(draftAdminCopilot).toHaveBeenCalledWith(report.analysis_id, { refresh: false });
@@ -188,7 +188,7 @@ describe("FE7 Security Review Room", () => {
     });
     render(<ReviewRoom securityApi={securityClient()} actionApi={actions} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: /Reviewed actions/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /Hành động chờ duyệt/i }));
     fireEvent.click(await screen.findByRole("button", { name: /add to blacklist/i }));
     expect(await screen.findByText("Known malicious host")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Reviewer note"), { target: { value: "Evidence confirmed" } });

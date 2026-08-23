@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BadgeCheck, Gavel, LockKeyhole, Workflow } from "lucide-react";
+import { BadgeCheck, LockKeyhole, Workflow } from "lucide-react";
 
 import { ApiError } from "@/lib/api/api-error";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
@@ -127,14 +127,14 @@ export function ReviewRoom({
   };
 
   if (authLoading) return <p role="status" className="py-16 text-center text-sm text-muted-foreground">Đang xác minh quyền truy cập…</p>;
-  if (!isAdmin) return <div className="mx-auto max-w-xl py-12 text-center"><LockKeyhole className="mx-auto size-8 text-muted-foreground" /><h1 className="mt-3 text-xl font-semibold">Admin access required</h1><p className="mt-2 text-sm text-muted-foreground">Review Room chỉ gọi admin APIs sau khi xác nhận security_admin.</p><Link href="/" className="mt-5 inline-flex rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Về New case</Link></div>;
+  if (!isAdmin) return <div className="mx-auto max-w-xl py-12 text-center"><LockKeyhole className="mx-auto size-8 text-muted-foreground" /><h1 className="mt-3 text-xl font-semibold">Cần quyền quản trị</h1><p className="mt-2 text-sm text-muted-foreground">Bạn không có quyền xem khu vực này.</p><Link href="/" className="mt-5 inline-flex rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Về trang chính</Link></div>;
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-border/70 pb-6"><p className="micro-label text-primary">ADMIN / HUMAN-IN-THE-LOOP</p><div className="mt-2 flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><Gavel className="size-5" /></span><div><h1 className="text-3xl font-bold tracking-[-0.025em]">Security Review Room</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Structured, privacy-minimized case evidence before every feedback decision and reviewed action.</p></div></div></header>
+      <header className="border-b border-border/70 pb-4"><h1 className="text-2xl font-bold tracking-[-0.025em] sm:text-3xl">Duyệt bảo mật</h1><p className="mt-1 text-sm text-muted-foreground">Xử lý báo cáo, khiếu nại và hành động chờ duyệt.</p></header>
       <div className="inline-grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label="Review Room surface">
-        <button type="button" role="tab" aria-selected={surface === "feedback"} onClick={() => setSurface("feedback")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "feedback" ? "bg-background shadow-sm" : "text-muted-foreground")}><BadgeCheck className="size-4" />Feedback decisions</button>
-        <button type="button" role="tab" aria-selected={surface === "actions"} onClick={() => setSurface("actions")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "actions" ? "bg-background shadow-sm" : "text-muted-foreground")}><Workflow className="size-4" />Reviewed actions</button>
+        <button type="button" role="tab" aria-selected={surface === "feedback"} onClick={() => setSurface("feedback")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "feedback" ? "bg-background shadow-sm" : "text-muted-foreground")}><BadgeCheck className="size-4" />Báo cáo & khiếu nại</button>
+        <button type="button" role="tab" aria-selected={surface === "actions"} onClick={() => setSurface("actions")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "actions" ? "bg-background shadow-sm" : "text-muted-foreground")}><Workflow className="size-4" />Hành động chờ duyệt</button>
       </div>
 
       {surface === "feedback" ? (

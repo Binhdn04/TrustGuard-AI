@@ -93,7 +93,7 @@ describe("FE6 Threat Observatory", () => {
     const client = createApi();
     render(<ObservatoryWorkspace api={client} />);
 
-    expect(screen.getByRole("heading", { name: "Admin access required" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cần quyền quản trị" })).toBeInTheDocument();
     expect(client.listDomainIntelligence).not.toHaveBeenCalled();
     expect(client.listThreatIntelligence).not.toHaveBeenCalled();
   });
@@ -131,9 +131,9 @@ describe("FE6 Threat Observatory", () => {
     fireEvent.change(screen.getByLabelText("Tìm domain"), { target: { value: "gift-secure" } });
     fireEvent.change(screen.getByLabelText("Lọc domain theo risk"), { target: { value: "MALICIOUS" } });
     fireEvent.change(screen.getByLabelText("Lọc domain theo threat"), { target: { value: "PHISHING" } });
-    const domainSection = screen.getByRole("heading", { name: "Ranked domain observations" }).closest("section");
+    const domainSection = screen.getByRole("heading", { name: "Domain quan sát" }).closest("section");
     expect(domainSection).not.toBeNull();
-    fireEvent.click(within(domainSection as HTMLElement).getByRole("button", { name: "Search" }));
+    fireEvent.click(within(domainSection as HTMLElement).getByRole("button", { name: "Tìm" }));
 
     await waitFor(() => expect(listDomainIntelligence).toHaveBeenLastCalledWith({ limit: 10, offset: 0, q: "gift-secure", risk: "MALICIOUS", threat_type: "PHISHING" }));
     fireEvent.click(screen.getByRole("button", { name: "Domain page sau" }));
@@ -144,9 +144,9 @@ describe("FE6 Threat Observatory", () => {
 
     fireEvent.change(screen.getByLabelText("Tìm campaign hypothesis"), { target: { value: "prize lure" } });
     fireEvent.change(screen.getByLabelText("Lọc campaign status"), { target: { value: "confirmed" } });
-    const campaignSection = screen.getByRole("heading", { name: "Explainable hypotheses" }).closest("section");
+    const campaignSection = screen.getByRole("heading", { name: "Chiến dịch" }).closest("section");
     expect(campaignSection).not.toBeNull();
-    fireEvent.click(within(campaignSection as HTMLElement).getByRole("button", { name: "Search" }));
+    fireEvent.click(within(campaignSection as HTMLElement).getByRole("button", { name: "Tìm" }));
     await waitFor(() => expect(pageSecurityCampaigns).toHaveBeenLastCalledWith({ limit: 10, offset: 0, q: "prize lure", status: "confirmed" }));
   });
 
@@ -157,7 +157,7 @@ describe("FE6 Threat Observatory", () => {
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(campaign.hypothesis) }));
     expect(await screen.findByText("domain:gift-secure.example")).toBeInTheDocument();
     expect(screen.getByText("Signals verified")).toBeInTheDocument();
-    expect(screen.getByText("Member analyses").parentElement).toHaveTextContent("3");
+    expect(screen.getByText("Phân tích liên quan").parentElement).toHaveTextContent("3");
     expect(client.getSecurityCampaign).toHaveBeenCalledWith(campaign.campaign_id);
     expect(client.listSecurityCampaignAudit).toHaveBeenCalledWith(campaign.campaign_id);
   });

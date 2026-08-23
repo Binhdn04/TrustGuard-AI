@@ -109,7 +109,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     auth.role = "user";
     const api = securityClient();
     render(<TrustWorkspace api={api} />);
-    expect(screen.getByRole("heading", { name: "Admin access required" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cần quyền quản trị" })).toBeInTheDocument();
     expect(api.pageBrands).not.toHaveBeenCalled();
     expect(api.listAdminAudit).not.toHaveBeenCalled();
   });
@@ -121,7 +121,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     render(<TrustWorkspace api={api} />);
     expect(await screen.findByText("ACME Bank")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Create brand" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thương hiệu" }));
     fireEvent.change(screen.getByLabelText("Brand name"), { target: { value: "Example Bank" } });
     fireEvent.change(screen.getByLabelText("Official domains"), { target: { value: "bank.example, secure.bank.example" } });
     fireEvent.change(screen.getByLabelText("Brand provenance"), { target: { value: "Verified registry entry" } });
@@ -134,7 +134,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
       provenance: "Verified registry entry", effective_from: expect.stringContaining("2026-08-14"),
     })));
 
-    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
     expect(disableBrand).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm disable" }));
     await waitFor(() => expect(disableBrand).toHaveBeenCalledWith(brand.brand_id));
@@ -144,7 +144,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const createBrandVersion = vi.fn().mockResolvedValue({ ...brand, brand_id: "new-version", supersedes: brand.brand_id });
     render(<TrustWorkspace api={securityClient({ createBrandVersion })} />);
     expect(await screen.findByText("ACME Bank")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Create new version" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tạo phiên bản mới" }));
     expect(screen.getByText(/existing record is not edited/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Brand provenance"), { target: { value: "Reviewed registry update" } });
     fireEvent.click(screen.getByRole("button", { name: "Review new version" }));
@@ -159,9 +159,9 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const createWhitelist = vi.fn().mockResolvedValue(whitelist);
     const disableWhitelist = vi.fn().mockResolvedValue({ ...whitelist, lifecycle: "disabled" });
     render(<TrustWorkspace api={securityClient({ createWhitelist, disableWhitelist })} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Whitelist" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Ngoại lệ" }));
     expect(await screen.findByText("acme.example")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Create whitelist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thêm ngoại lệ" }));
     fireEvent.change(screen.getByLabelText("Whitelist indicator"), { target: { value: "safe.example" } });
     fireEvent.change(screen.getByLabelText("Whitelist scope"), { target: { value: "domain" } });
     fireEvent.change(screen.getByLabelText("Whitelist provenance"), { target: { value: "Official security bulletin" } });
@@ -169,7 +169,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review create request" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm create" }));
     await waitFor(() => expect(createWhitelist).toHaveBeenCalledWith(expect.objectContaining({ indicator: "safe.example", scope: "domain", provenance: "Official security bulletin" })));
-    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm disable" }));
     await waitFor(() => expect(disableWhitelist).toHaveBeenCalledWith(whitelist.whitelist_id));
   });
@@ -178,7 +178,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const correctSecurityMemory = vi.fn().mockResolvedValue({ ...memory, admin_verdict: "malicious" });
     const api = securityClient({ correctSecurityMemory });
     render(<TrustWorkspace api={api} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Security Memory" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Bộ nhớ" }));
     fireEvent.click(await screen.findByRole("button", { name: /ACME Bank/ }));
     expect(await screen.findByText("evidence:memory")).toBeInTheDocument();
     expect(screen.getByText(/unreviewed → malicious/)).toBeInTheDocument();
@@ -192,7 +192,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const reviewSecurityCampaign = vi.fn().mockResolvedValue({ ...campaign, reviewer_status: "confirmed", reviewer_id: "admin-1", review_note: "Signals verified", reviewed_at: "2026-08-13T09:20:00Z" });
     const api = securityClient({ reviewSecurityCampaign });
     render(<TrustWorkspace api={api} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Campaigns" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Chiến dịch" }));
     fireEvent.click(await screen.findByRole("button", { name: /Shared credential lure/ }));
     await waitFor(() => expect(api.getSecurityCampaign).toHaveBeenCalledWith(campaign.campaign_id));
     expect(api.listSecurityCampaignAudit).toHaveBeenCalledWith(campaign.campaign_id);
@@ -205,7 +205,7 @@ describe("FE8 trust lifecycle and audit isolation", () => {
   it("renders only fields present in the unified v4 audit contract", async () => {
     const listAdminAudit = vi.fn().mockResolvedValue({ contract_version: "v4", items: [unifiedAudit], total: 1, limit: 20, offset: 0 });
     render(<AuditWorkspace api={securityClient({ listAdminAudit })} />);
-    expect(await screen.findByText("campaign_confirmed")).toBeInTheDocument();
+    expect(await screen.findByText("campaign confirmed")).toBeInTheDocument();
     expect(screen.getByText("Signals verified")).toBeInTheDocument();
     expect(screen.getByText("evidence:campaign")).toBeInTheDocument();
     expect(screen.queryByText(/^before value$/i)).not.toBeInTheDocument();
