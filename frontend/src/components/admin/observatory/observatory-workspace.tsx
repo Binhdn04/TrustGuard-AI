@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Binoculars, LockKeyhole } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
@@ -127,11 +127,11 @@ export function ObservatoryWorkspace({ api = getSecurityAnalysisApi() }: { api?:
   };
 
   if (authLoading) return <p role="status" className="py-16 text-center text-sm text-muted-foreground">Đang xác minh quyền truy cập…</p>;
-  if (!isAdmin) return <div className="mx-auto max-w-xl py-12 text-center"><LockKeyhole className="mx-auto size-8 text-muted-foreground" /><h1 className="mt-3 text-xl font-semibold">Admin access required</h1><p className="mt-2 text-sm text-muted-foreground">Threat Observatory chỉ đọc dữ liệu aggregate qua admin API.</p><Link href="/" className="mt-5 inline-flex rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Về New case</Link></div>;
+  if (!isAdmin) return <div className="mx-auto max-w-xl py-12 text-center"><LockKeyhole className="mx-auto size-8 text-muted-foreground" /><h1 className="mt-3 text-xl font-semibold">Cần quyền quản trị</h1><p className="mt-2 text-sm text-muted-foreground">Bạn không có quyền xem khu vực này.</p><Link href="/" className="mt-5 inline-flex rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Về trang chính</Link></div>;
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-border/70 pb-6"><p className="micro-label text-primary">ADMIN INTELLIGENCE / AGGREGATE ONLY</p><div className="mt-2 flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><Binoculars className="size-5" /></span><div><h1 className="text-3xl font-bold tracking-[-0.025em]">Threat Observatory</h1><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Ranked domain/threat intelligence, returned risk composition và explainable campaign hypotheses. Chỉ hiển thị dữ liệu có trong aggregate contract.</p></div></div></header>
+      <header className="border-b border-border/70 pb-4"><h1 className="text-2xl font-bold tracking-[-0.025em] sm:text-3xl">Tổng quan rủi ro</h1><p className="mt-1 text-sm text-muted-foreground">Theo dõi domain, nhóm nguy cơ và chiến dịch nổi bật.</p></header>
       <div className="grid gap-6 xl:grid-cols-[minmax(28rem,1.35fr)_minmax(20rem,0.65fr)]"><DomainExplorer page={domains} query={domainQuery} loading={domainState.loading} error={domainState.error} onQueryChange={setDomainQuery} onRetry={() => void loadDomains()} /><div className="space-y-6"><RiskComposition threats={compositionThreats} threatTotal={compositionThreatTotal} memoryTotal={memoryTotal} loading={compositionState.loading} error={compositionState.error} /><ThreatExplorer page={threats} query={threatQuery} loading={threatState.loading} error={threatState.error} onQueryChange={setThreatQuery} onRetry={() => void loadThreats()} /></div></div>
       <CampaignPulse page={campaigns} query={campaignQuery} loading={campaignState.loading} error={campaignState.error} detail={detail} audit={audit} detailLoading={detailState.loading} detailError={detailState.error} onQueryChange={setCampaignQuery} onRetry={() => void loadCampaigns()} onSelect={(id) => void selectCampaign(id)} />
     </div>

@@ -45,23 +45,21 @@ export function DomainExplorer({
   return (
     <section aria-labelledby="domain-explorer-heading" className="case-panel overflow-hidden">
       <header className="border-b border-border/70 p-5">
-        <p className="micro-label">DOMAIN INTELLIGENCE</p>
-        <h2 id="domain-explorer-heading" className="mt-1 text-lg font-semibold">Ranked domain observations</h2>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">Counts, distributions và observation window do API aggregate trả về.</p>
+        <h2 id="domain-explorer-heading" className="text-lg font-semibold">Domain quan sát</h2>
       </header>
       <div className="p-5">
         <form onSubmit={submit} role="search" className="grid gap-2 md:grid-cols-[minmax(12rem,1fr)_11rem_13rem_auto]">
           <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><input aria-label="Tìm domain" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={253} placeholder="Domain…" className="w-full rounded-xl border border-input bg-background py-2.5 pl-9 pr-3 text-sm" /></div>
           <select aria-label="Lọc domain theo risk" value={query.risk ?? ""} onChange={(event) => onQueryChange({ ...query, risk: event.target.value ? event.target.value as SecurityRiskV4 : null, page: 1 })} className="rounded-xl border border-input bg-background px-3 py-2.5 text-xs"><option value="">All risks</option>{riskOptions.map((risk) => <option key={risk}>{risk}</option>)}</select>
           <select aria-label="Lọc domain theo threat" value={query.threatType ?? ""} onChange={(event) => onQueryChange({ ...query, threatType: event.target.value ? event.target.value as PotentialThreatV4 : null, page: 1 })} className="rounded-xl border border-input bg-background px-3 py-2.5 text-xs"><option value="">All threats</option>{threatOptions.map((threat) => <option key={threat}>{threat}</option>)}</select>
-          <button type="submit" className="rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground">Search</button>
+          <button type="submit" className="rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground">Tìm</button>
         </form>
 
         {loading && <p role="status" className="py-12 text-center text-sm text-muted-foreground">Đang tải domain intelligence…</p>}
         {error && !loading && <div role="alert" className="my-4 rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-800 dark:text-rose-200">{error}<button type="button" onClick={onRetry} className="ml-2 inline-flex items-center gap-1 font-bold underline"><RotateCw className="size-3.5" />Thử lại</button></div>}
         {!loading && !error && page && (
           <>
-            <div className="my-4 flex justify-between text-[11px] text-muted-foreground"><span>{page.total} domains</span><span>Page {query.page}/{totalPages}</span></div>
+            <div className="my-4 flex justify-between text-[11px] text-muted-foreground"><span>{page.total} domain</span><span>Trang {query.page}/{totalPages}</span></div>
             {page.items.length ? (
               <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Domain intelligence table">
                 <table className="w-full min-w-[760px] border-collapse text-left text-xs">
