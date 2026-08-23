@@ -1,2 +1,1 @@
 """Application observability integrations."""
-

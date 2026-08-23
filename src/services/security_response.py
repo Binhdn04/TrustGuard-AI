@@ -79,9 +79,7 @@ _ACTION_GUIDANCE: dict[SecurityRecommendedActionV4, str] = {
     SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER: "Báo cáo và chặn người gửi.",
     SecurityRecommendedActionV4.PROCEED_WITH_CAUTION: "Chỉ tiếp tục sau khi đã xác minh bằng kênh chính thức.",
     SecurityRecommendedActionV4.CLOSE_PAGE_AND_DO_NOT_RETURN: "Đóng trang và không quay lại liên kết đó.",
-    SecurityRecommendedActionV4.CHANGE_PASSWORD_FROM_TRUSTED_DEVICE: (
-        "Đổi mật khẩu từ một thiết bị đáng tin cậy."
-    ),
+    SecurityRecommendedActionV4.CHANGE_PASSWORD_FROM_TRUSTED_DEVICE: ("Đổi mật khẩu từ một thiết bị đáng tin cậy."),
     SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS: "Đăng xuất các phiên đang hoạt động trên tài khoản.",
     SecurityRecommendedActionV4.CONTACT_BANK_OR_PAYMENT_PROVIDER: (
         "Liên hệ ngay ngân hàng hoặc đơn vị thanh toán để được hỗ trợ."
@@ -272,9 +270,7 @@ class GroundedSecurityResponseService:
             "threat_type": scope.threat_type.value if scope.threat_type else None,
             "policy_version": scope.policy_version,
             "recommended_actions": [action.value for action in scope.recommended_actions],
-            "recommended_action_guidance": [
-                _ACTION_GUIDANCE[action] for action in scope.recommended_actions
-            ],
+            "recommended_action_guidance": [_ACTION_GUIDANCE[action] for action in scope.recommended_actions],
             "explanation": scope.explanation,
             "evidence": [
                 {

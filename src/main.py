@@ -26,13 +26,14 @@ from src.core.errors import PlatformError
 from src.core.logging import configure_structured_logging
 from src.core.product_boundary import SECURITY_TRIAGE_API_PREFIX
 from src.models import ErrorCode
-from src.observability.langfuse import close_langfuse_observability
+from src.observability.langfuse import close_langfuse_observability, get_langfuse_observability
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_structured_logging(settings.log_level)
+    get_langfuse_observability()
     if not settings.demo_auth_enabled and (not settings.oidc_issuer or not settings.oidc_audience):
         raise RuntimeError("OIDC_ISSUER and OIDC_AUDIENCE are required when demo auth is disabled")
     print(f"Starting {settings.app_name} in {settings.app_env} mode")

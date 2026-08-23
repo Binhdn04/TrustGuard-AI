@@ -11,12 +11,13 @@ from src.api.dependencies import (
 )
 from src.config import get_settings
 from src.core.logging import configure_structured_logging
-from src.observability.langfuse import close_langfuse_observability
+from src.observability.langfuse import close_langfuse_observability, get_langfuse_observability
 
 
 async def run() -> None:
     settings = get_settings()
     configure_structured_logging(settings.log_level)
+    get_langfuse_observability()
     if not settings.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
         raise RuntimeError("The durable worker requires PostgreSQL")
     stopping = asyncio.Event()

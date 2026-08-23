@@ -644,9 +644,7 @@ async def test_cache_ignores_superseded_candidate_versions_and_preserves_exact_r
             canonical_domain="docs.google.com",
             relationship=IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
             assurance=(
-                IdentityAssociationAssuranceV4.VERIFIED
-                if verified
-                else IdentityAssociationAssuranceV4.DISCOVERED
+                IdentityAssociationAssuranceV4.VERIFIED if verified else IdentityAssociationAssuranceV4.DISCOVERED
             ),
             confidence=0.7 if verified else 0.35,
             discovered_at=NOW + timedelta(minutes=version),

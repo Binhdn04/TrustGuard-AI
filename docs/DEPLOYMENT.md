@@ -54,12 +54,19 @@ LANGFUSE_PUBLIC_KEY=<project-public-key>
 LANGFUSE_SECRET_KEY=<project-secret-key>
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_SAMPLE_RATE=1.0
+LANGFUSE_DEBUG=false
 ```
 
 SDK chỉ gửi operation names, model/token/cost/latency, trạng thái chuẩn hóa, tags, environment, session UUID và
 user ID đã HMAC. Prompt, completion, private message, provider error, credential, OTP, token và URL payload được
 redact tại export boundary. Giảm `LANGFUSE_SAMPLE_RATE` theo volume/cost; rollback tức thời bằng
 `LANGFUSE_TRACING_ENABLED=false`. Không đưa Langfuse keys vào frontend hoặc log.
+
+Mỗi process ghi `langfuse_observability_initialized` hoặc `langfuse_observability_disabled` lúc startup với
+chỉ host, environment, sample rate và trạng thái gate (không ghi key). Root request có cặp log
+`langfuse_trace_started`/`langfuse_trace_completed`; shutdown sạch có `langfuse_shutdown_completed`. Nếu trace
+không tới Langfuse dù các log này có mặt, tạm đặt `LANGFUSE_DEBUG=true` trên đúng service rồi redeploy để xem log
+exporter của SDK; trả lại `false` sau khi điều tra vì debug log có độ ồn cao.
 
 `APP_ENV` được truyền trực tiếp vào thuộc tính environment của Langfuse: local dùng `development`, còn cả
 backend và worker trên Railway dùng `production`. Không cần cấu hình thêm `LANGFUSE_TRACING_ENVIRONMENT`.

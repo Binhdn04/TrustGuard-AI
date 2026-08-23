@@ -872,7 +872,9 @@ class SecurityScopeResponseV4(SecurityContractModel):
             if isinstance(step, dict) and isinstance(step.get("depends_on"), list):
                 step = {
                     **step,
-                    "depends_on": [dependency for dependency in step["depends_on"] if dependency not in retired_step_ids],
+                    "depends_on": [
+                        dependency for dependency in step["depends_on"] if dependency not in retired_step_ids
+                    ],
                 }
             normalized_plan.append(step)
         return {**value, "investigation_plan": normalized_plan}
