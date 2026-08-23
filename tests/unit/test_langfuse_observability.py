@@ -7,6 +7,18 @@ from src.config import Settings
 from src.observability.langfuse import LangfuseObservability, mask_private_trace_data
 
 
+class _FakeLangfuse:
+    latest_kwargs = None
+
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.shutdown_calls = 0
+        type(self).latest_kwargs = kwargs
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
 def test_langfuse_gate_requires_complete_configuration() -> None:
     with pytest.raises(ValidationError, match="LANGFUSE_PUBLIC_KEY"):
         Settings(
@@ -22,6 +34,36 @@ def test_langfuse_is_disabled_by_default() -> None:
 
     assert observability.enabled is False
     assert observability.langchain_config("security-chat") == {"run_name": "security-chat"}
+
+
+def test_langfuse_startup_log_contains_only_safe_diagnostics(monkeypatch, caplog) -> None:
+    import langfuse
+
+    monkeypatch.setattr(langfuse, "Langfuse", _FakeLangfuse)
+    settings = Settings(
+        langfuse_tracing_enabled=True,
+        langfuse_public_key="pk-private-value",
+        langfuse_secret_key="sk-private-value",
+        langfuse_base_url="https://cloud.langfuse.com",
+        langfuse_sample_rate=0.5,
+        langfuse_debug=True,
+        _env_file=None,
+    )
+
+    with caplog.at_level("INFO", logger="trustguard.observability"):
+        observability = LangfuseObservability(settings)
+
+    assert observability.enabled is True
+    assert _FakeLangfuse.latest_kwargs["debug"] is True
+    record = next(record for record in caplog.records if record.message == "langfuse_observability_initialized")
+    assert record.tracing_enabled is True
+    assert record.observability_enabled is True
+    assert record.environment == "test"
+    assert record.base_url_host == "cloud.langfuse.com"
+    assert record.sample_rate == 0.5
+    assert record.sdk_debug is True
+    assert "pk-private-value" not in caplog.text
+    assert "sk-private-value" not in caplog.text
 
 
 def test_langfuse_user_ids_are_stable_and_pseudonymous() -> None:

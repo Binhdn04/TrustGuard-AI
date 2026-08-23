@@ -3448,9 +3448,9 @@ class PostgresPlatformRepository:
                     )
                     if stored is None:
                         continue
-                    response = SecurityScopeResponseV4.model_validate_stored(_json_value(stored["response"])).model_copy(
-                        update={"status": "failed", "completed_at": now}
-                    )
+                    response = SecurityScopeResponseV4.model_validate_stored(
+                        _json_value(stored["response"])
+                    ).model_copy(update={"status": "failed", "completed_at": now})
                     sequence = await connection.fetchval(
                         "SELECT COALESCE(MAX(sequence),0)+1 FROM security_analysis_events WHERE analysis_id=$1",
                         analysis_id,

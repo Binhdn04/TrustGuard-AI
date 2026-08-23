@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlparse
 
 from src.config import Settings, get_settings
 
@@ -70,6 +71,10 @@ class LangfuseObservability:
         self._settings = settings
         self._client = None
         if not settings.langfuse_configuration_valid():
+            logger.info(
+                "langfuse_observability_disabled",
+                extra=self._diagnostic_context(),
+            )
             return
 
         # Import only after Settings has loaded configuration. Explicit
@@ -84,13 +89,33 @@ class LangfuseObservability:
                 tracing_enabled=settings.langfuse_tracing_enabled,
                 environment=settings.app_env,
                 sample_rate=settings.langfuse_sample_rate,
+                debug=settings.langfuse_debug,
                 mask_otel_spans=mask_private_trace_data,
             )
-        except Exception:  # noqa: BLE001 - optional telemetry must fail open
+            logger.info(
+                "langfuse_observability_initialized",
+                extra=self._diagnostic_context(observability_enabled=True),
+            )
+        except Exception as exc:  # noqa: BLE001 - optional telemetry must fail open
             logger.warning(
                 "langfuse_observability_disabled",
-                extra={"failure_code": "initialization_error"},
+                extra={
+                    **self._diagnostic_context(),
+                    "failure_code": "initialization_error",
+                    "failure_type": type(exc).__name__,
+                },
             )
+
+    def _diagnostic_context(self, *, observability_enabled: bool = False) -> dict[str, Any]:
+        """Return non-secret deployment diagnostics safe for Railway logs."""
+        return {
+            "tracing_enabled": self._settings.langfuse_tracing_enabled,
+            "observability_enabled": observability_enabled,
+            "environment": self._settings.app_env,
+            "base_url_host": urlparse(self._settings.langfuse_base_url).hostname or "invalid",
+            "sample_rate": self._settings.langfuse_sample_rate,
+            "sdk_debug": self._settings.langfuse_debug,
+        }
 
     @property
     def enabled(self) -> bool:
@@ -120,6 +145,8 @@ class LangfuseObservability:
 
         from langfuse import propagate_attributes
 
+        log_context = {"trace_name": name, "feature": feature}
+        logger.info("langfuse_trace_started", extra=log_context)
         with self._client.start_as_current_observation(
             name=name,
             as_type="span",
@@ -146,7 +173,12 @@ class LangfuseObservability:
                 )
                 failure = (exc, exc.__traceback__)
         if failure is not None:
+            logger.warning(
+                "langfuse_trace_failed",
+                extra={**log_context, "failure_type": type(failure[0]).__name__},
+            )
             raise failure[0].with_traceback(failure[1])
+        logger.info("langfuse_trace_completed", extra=log_context)
 
     @contextmanager
     def observation(
@@ -213,11 +245,25 @@ class LangfuseObservability:
 
     def flush(self) -> None:
         if self._client is not None:
-            self._client.flush()
+            try:
+                self._client.flush()
+                logger.info("langfuse_flush_completed")
+            except Exception as exc:  # noqa: BLE001 - optional telemetry must fail open
+                logger.warning(
+                    "langfuse_flush_failed",
+                    extra={"failure_code": "flush_error", "failure_type": type(exc).__name__},
+                )
 
     def shutdown(self) -> None:
         if self._client is not None:
-            self._client.shutdown()
+            try:
+                self._client.shutdown()
+                logger.info("langfuse_shutdown_completed")
+            except Exception as exc:  # noqa: BLE001 - optional telemetry must fail open
+                logger.warning(
+                    "langfuse_shutdown_failed",
+                    extra={"failure_code": "shutdown_error", "failure_type": type(exc).__name__},
+                )
 
 
 @lru_cache

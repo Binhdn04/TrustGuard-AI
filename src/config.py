@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_base_url: str = "https://cloud.langfuse.com"
     langfuse_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    langfuse_debug: bool = False
 
     # Security assistant runtime. AI stages default on but remain independently
     # gated as operational kill switches; policy remains deterministic.

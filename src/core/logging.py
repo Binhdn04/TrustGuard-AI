@@ -32,9 +32,18 @@ class RedactingJsonFormatter(logging.Formatter):
             "latency_ms",
             "job_id",
             "failure_code",
+            "failure_type",
             "api_contract",
             "product_profile",
             "official_verification",
+            "tracing_enabled",
+            "observability_enabled",
+            "environment",
+            "base_url_host",
+            "sample_rate",
+            "sdk_debug",
+            "feature",
+            "trace_name",
         ):
             if hasattr(record, name):
                 payload[name] = getattr(record, name)
