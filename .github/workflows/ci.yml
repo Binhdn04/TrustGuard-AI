@@ -8,7 +8,7 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64, p068]
 
     steps:
       - uses: actions/checkout@v5
@@ -29,3 +29,57 @@ jobs:
         env:
           APP_ENV: test
           OPENAI_API_KEY: test-key
+
+  clean:
+    name: Clean workflow workspace
+    needs: lint-and-test
+    if: ${{ always() }}
+    runs-on: [self-hosted, linux, x64, p068]
+
+    steps:
+      - name: Clean GitHub job temp and workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          clean_contents() {
+            local variable_name="$1"
+            local target="${!variable_name:-}"
+            local canonical_target
+            local protected_home="${HOME:-}"
+
+            if [[ -z "${target}" ]] \
+              || [[ "${target}" != /* ]] \
+              || [[ ! -d "${target}" ]] \
+              || [[ -L "${target}" ]]; then
+              echo "${variable_name} is not a safe cleanup directory; refusing to clean."
+              exit 1
+            fi
+
+            canonical_target="$(realpath -e -- "${target}")"
+            if [[ -n "${protected_home}" && -d "${protected_home}" ]]; then
+              protected_home="$(realpath -e -- "${protected_home}")"
+            fi
+
+            if [[ "${canonical_target}" == "/" ]] \
+              || [[ -n "${protected_home}" && "${canonical_target}" == "${protected_home}" ]]; then
+              echo "${variable_name} resolves to a protected directory; refusing to clean."
+              exit 1
+            fi
+
+            # Delete children only. Never delete or modify the runner install.
+            find "${canonical_target}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          }
+
+          runner_temp="$(realpath -e -- "${RUNNER_TEMP}")"
+          runner_workspace="$(dirname -- "${runner_temp}")"
+          github_workspace="$(realpath -e -- "${GITHUB_WORKSPACE}")"
+
+          if [[ "${runner_workspace}" == "/" ]] \
+            || [[ "${github_workspace}" != "${runner_workspace}/"* ]]; then
+            echo "GITHUB_WORKSPACE is outside the runner workspace; refusing to clean."
+            exit 1
+          fi
+
+          clean_contents RUNNER_TEMP
+          clean_contents GITHUB_WORKSPACE
