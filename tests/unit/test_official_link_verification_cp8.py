@@ -225,7 +225,7 @@ def test_sensitive_action_is_safe_only_when_action_chain_is_verified() -> None:
 
     assert result.risk is SecurityRiskV4.SAFE
     assert result.score == 0
-    assert result.recommended_actions == [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION]
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
 
 
 def test_sensitive_action_without_verified_endorsement_is_not_safe() -> None:

@@ -127,6 +127,16 @@ discovery/cache chỉ được công bố khi request có cả `official_source_
 domain không xác minh người gửi hoặc yêu cầu đăng nhập. Ba evidence projection này trung tính với score và
 `official_domain_verified` không phải SAFE signal.
 
+Semantic understanding không nhận quyền tính character offset. Backend tạo span candidate ổn định cho URL,
+phrase/action, clause và toàn message; model chỉ chọn span ID. Confidence hoặc span ID thiếu/sai chỉ loại đúng
+semantic candidate liên quan. URL và action hiển nhiên vẫn do rule deterministic trích xuất.
+
+Official verification v4 route ownership theo URL và endorsement theo action, không phụ thuộc sender mention.
+Registry miss khởi động resource-first discovery thay vì kết thúc ở `UNVERIFIED`; association đủ hai evidence
+family độc lập được cache có TTL bằng identity-candidate store hiện hữu. SAFE dùng chain liên quan đến hành động:
+exact resource/action endorsement đã verified có thể đủ dù sender identity còn unverified, miễn không có conflict,
+malicious evidence hoặc hành động trực tiếp phụ thuộc vào việc tin người gửi.
+
 ## Persistence and lifecycle
 
 - SQLite là local/test fallback; PostgreSQL/Alembic là production path.

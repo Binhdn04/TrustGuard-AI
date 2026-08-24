@@ -103,7 +103,7 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
     safe = assess_security_risk(enriched)
     assert safe.risk is SecurityRiskV4.SAFE
     assert SecurityRecommendedActionV4.DO_NOT_OPEN_LINK not in safe.recommended_actions
-    assert SecurityRecommendedActionV4.PROCEED_WITH_CAUTION in safe.recommended_actions
+    assert SecurityRecommendedActionV4.ALLOW_OPEN in safe.recommended_actions
 
     blacklist = SecurityEvidenceV4(
         evidence_ref=f"evidence:{'f' * 16}",

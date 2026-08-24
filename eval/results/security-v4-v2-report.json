@@ -3,7 +3,7 @@
   "dataset_sha256": "69e93b7e6161989320fce7204606387bc54a50f693d311addd780b60de232748",
   "evaluation_profile": "offline_deterministic_official_link_verification",
   "threshold_profile": "official-link-verification-release-gates-v1",
-  "generated_at": "2026-08-20T16:11:04.121012+00:00",
+  "generated_at": "2026-08-24T15:50:38.102017+00:00",
   "metrics": {
     "case_count": 12,
     "scope_accuracy": 1.0,
@@ -17,8 +17,8 @@
     "not_found_to_malicious_count": 0,
     "ssrf_bypass_count": 0,
     "max_estimated_cost_usd_per_analysis": 0.008,
-    "mean_latency_ms": 2.332,
-    "p95_latency_ms": 6.39
+    "mean_latency_ms": 4.039,
+    "p95_latency_ms": 8.756
   },
   "gates": {
     "oos_zero_calls": true,
@@ -49,11 +49,11 @@
       "claim_status": "VERIFIED",
       "resource_status": "VERIFIED",
       "resource_match_status": "EXACT_RESOURCE",
-      "risk": "INSUFFICIENT_EVIDENCE",
+      "risk": "SAFE",
       "adapter_attempts": 8,
       "network_units": 8,
       "estimated_cost_usd": 0.008,
-      "latency_ms": 6.39,
+      "latency_ms": 8.756,
       "queries": [
         "Đại học VinUni tuyển dụng chính thức",
         "Đại học VinUni tuyển dụng đăng ký ứng tuyển",
@@ -82,11 +82,11 @@
       "claim_status": "VERIFIED",
       "resource_status": "VERIFIED",
       "resource_match_status": "EXACT_RESOURCE",
-      "risk": "INSUFFICIENT_EVIDENCE",
+      "risk": "SAFE",
       "adapter_attempts": 3,
       "network_units": 3,
       "estimated_cost_usd": 0.003,
-      "latency_ms": 2.57,
+      "latency_ms": 5.483,
       "queries": [
         "Vingroup tuyển dụng chính thức"
       ],
@@ -116,7 +116,7 @@
       "adapter_attempts": 5,
       "network_units": 5,
       "estimated_cost_usd": 0.005,
-      "latency_ms": 2.398,
+      "latency_ms": 3.755,
       "queries": [
         "Vingroup tuyển dụng chính thức",
         "Vingroup tuyển dụng đăng ký ứng tuyển",
@@ -149,7 +149,7 @@
       "adapter_attempts": 0,
       "network_units": 0,
       "estimated_cost_usd": 0.0,
-      "latency_ms": 0.953,
+      "latency_ms": 2.208,
       "queries": [],
       "limitations": [],
       "scope_pass": true,
@@ -171,11 +171,11 @@
       "claim_status": "VERIFIED",
       "resource_status": "CONFLICTING",
       "resource_match_status": "DIFFERENT_RESOURCE",
-      "risk": "SUSPICIOUS",
+      "risk": "LOW_RISK",
       "adapter_attempts": 6,
       "network_units": 6,
       "estimated_cost_usd": 0.006,
-      "latency_ms": 2.405,
+      "latency_ms": 6.02,
       "queries": [
         "Vingroup tuyển dụng chính thức",
         "Vingroup tuyển dụng đăng ký ứng tuyển",
@@ -204,11 +204,11 @@
       "claim_status": null,
       "resource_status": null,
       "resource_match_status": null,
-      "risk": "SAFE",
+      "risk": "INSUFFICIENT_EVIDENCE",
       "adapter_attempts": 0,
       "network_units": 0,
       "estimated_cost_usd": 0.0,
-      "latency_ms": 0.962,
+      "latency_ms": 1.706,
       "queries": [],
       "limitations": [],
       "scope_pass": true,
@@ -234,7 +234,7 @@
       "adapter_attempts": 0,
       "network_units": 0,
       "estimated_cost_usd": 0.0,
-      "latency_ms": 0.614,
+      "latency_ms": 0.334,
       "queries": [],
       "limitations": [],
       "scope_pass": true,
@@ -260,7 +260,7 @@
       "adapter_attempts": 0,
       "network_units": 0,
       "estimated_cost_usd": 0.0,
-      "latency_ms": 1.42,
+      "latency_ms": 3.179,
       "queries": [],
       "limitations": [
         "official_source_consent_required"
@@ -288,7 +288,7 @@
       "adapter_attempts": 8,
       "network_units": 8,
       "estimated_cost_usd": 0.008,
-      "latency_ms": 2.91,
+      "latency_ms": 5.683,
       "queries": [
         "Vingroup tuyển dụng chính thức",
         "Vingroup tuyển dụng đăng ký ứng tuyển",
@@ -322,7 +322,7 @@
       "adapter_attempts": 5,
       "network_units": 5,
       "estimated_cost_usd": 0.005,
-      "latency_ms": 1.16,
+      "latency_ms": 3.218,
       "queries": [
         "Vingroup tuyển dụng chính thức",
         "Vingroup tuyển dụng đăng ký ứng tuyển",
@@ -356,7 +356,7 @@
       "adapter_attempts": 5,
       "network_units": 0,
       "estimated_cost_usd": 0.0,
-      "latency_ms": 1.8,
+      "latency_ms": 3.117,
       "queries": [
         "Vingroup tuyển dụng chính thức",
         "Vingroup tuyển dụng đăng ký ứng tuyển",
@@ -386,11 +386,11 @@
       "claim_status": "CONFLICTING",
       "resource_status": "UNVERIFIED",
       "resource_match_status": null,
-      "risk": "SUSPICIOUS",
+      "risk": "LOW_RISK",
       "adapter_attempts": 3,
       "network_units": 3,
       "estimated_cost_usd": 0.003,
-      "latency_ms": 4.405,
+      "latency_ms": 5.006,
       "queries": [
         "Vingroup tuyển dụng chính thức"
       ],

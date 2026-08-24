@@ -81,6 +81,7 @@ export const SECURITY_ACTION_LABELS: Record<SecurityRecommendedActionV4, string>
   CONTACT_BANK_IF_ALREADY_PAID: "Liên hệ ngân hàng nếu đã chuyển tiền",
   REPORT_AND_BLOCK_SENDER: "Báo cáo và chặn người gửi",
   PROCEED_WITH_CAUTION: "Tiếp tục thận trọng",
+  ALLOW_OPEN: "Có thể mở liên kết",
   CLOSE_PAGE_AND_DO_NOT_RETURN: "Đóng trang và không quay lại",
   CHANGE_PASSWORD_FROM_TRUSTED_DEVICE: "Đổi mật khẩu trên thiết bị tin cậy",
   REVOKE_ACTIVE_SESSIONS: "Thu hồi các phiên đăng nhập đang hoạt động",

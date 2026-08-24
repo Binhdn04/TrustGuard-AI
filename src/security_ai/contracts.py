@@ -54,6 +54,13 @@ class UnderstandingSourceSpan(StrictModel):
     end: int = Field(ge=0)
 
 
+class UnderstandingSpanSelection(StrictModel):
+    """Provider-selected references to backend-created span candidates."""
+
+    field_name: str = Field(min_length=1, max_length=100)
+    span_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
 class EntityUrlClaimCandidate(StrictModel):
     entity_candidate_id: str | None = Field(default=None, pattern=r"^(?:entity|phrase)_[0-9]+$")
     entity_mention_id: str | None = Field(default=None, pattern=r"^entity_[0-9]+$")
@@ -71,13 +78,10 @@ class EntityUrlClaimCandidate(StrictModel):
 
 
 class Understanding(StrictModel):
-    # Keep Python-side defaults for rules-only fixtures and backwards-compatible
-    # adapters, while making both grounding collections mandatory in the schema
-    # shown to hosted structured-output models. Without this, function calling
-    # can legally omit all grounding metadata even when semantic candidates are
-    # present, forcing the trust boundary to discard an otherwise useful result.
+    # Keep legacy source_spans for deterministic fixtures. Hosted adapters use a
+    # separate span-ID-only wire schema and merge resolves IDs into these spans.
     model_config = ConfigDict(
-        json_schema_extra={"required": ["field_confidences", "source_spans"]},
+        json_schema_extra={"required": ["field_confidences", "span_selections"]},
     )
 
     scope_decision: ScopeDecisionV4 | None = None
@@ -105,11 +109,9 @@ class Understanding(StrictModel):
     source_spans: list[UnderstandingSourceSpan] = Field(
         default_factory=list,
         max_length=50,
-        description=(
-            "At least one exact current-message span for every emitted semantic field; emit an empty array only "
-            "when no semantic candidate is emitted. Backend-grounded entity IDs are the only exception."
-        ),
+        description=("Backend-resolved spans retained for deterministic fixtures and accepted assistant context."),
     )
+    span_selections: list[UnderstandingSpanSelection] = Field(default_factory=list, max_length=50)
     derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
     understanding_version: Literal["security-understanding-v1", "security-understanding-v2"] = (
         SECURITY_UNDERSTANDING_VERSION

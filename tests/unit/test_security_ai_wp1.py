@@ -68,7 +68,7 @@ def _scope(message: str):
 def test_hosted_understanding_schema_requires_grounding_collections() -> None:
     schema = Understanding.model_json_schema()
 
-    assert {"field_confidences", "source_spans"} <= set(schema["required"])
+    assert {"field_confidences", "span_selections"} <= set(schema["required"])
 
 
 def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None:
@@ -448,11 +448,11 @@ async def test_first_vague_security_turn_gives_llm_the_policy_selected_follow_up
 
     result = await service.enrich(SecurityTriageCreateRequestV4(message=message), _scope(message))
 
-    assert model.received_summary == {
-        "security_context": None,
-        "exposure_state": "UNKNOWN",
-        "policy_selected_follow_up_slot": "action_taken",
-    }
+    assert model.received_summary is not None
+    assert model.received_summary["security_context"] is None
+    assert model.received_summary["exposure_state"] == "UNKNOWN"
+    assert model.received_summary["policy_selected_follow_up_slot"] == "action_taken"
+    assert model.received_summary["span_candidates"]
     assert result.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
     assert result.follow_up_slot is MissingInformationSlotV4.ACTION_TAKEN
     assert result.follow_up_question == "Bạn đã thực hiện hành động nào theo tin nhắn đó chưa?"

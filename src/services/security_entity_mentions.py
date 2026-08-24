@@ -195,8 +195,12 @@ def extract_entity_mentions(
         )
         if prefix is None:
             continue
-        if prefix == ("bo",) and tokens[index].group(0).casefold() not in {"bộ", "bo"}:
-            continue
+        if prefix == ("bo",):
+            if tokens[index].group(0).casefold() not in {"bộ", "bo"}:
+                continue
+            # "cán bộ" denotes a sender/role, not a ministry publisher.
+            if index > 0 and folded[index - 1] == "can":
+                continue
         end_index = index + len(prefix)
         while end_index < len(tokens) and end_index - index < 8:
             separator = message[tokens[end_index - 1].end() : tokens[end_index].start()]

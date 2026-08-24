@@ -33,6 +33,7 @@ SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
 SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
 OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v3"
 OFFICIAL_LINK_VERIFICATION_VERSION_V3 = "official-link-verification-v3"
+OFFICIAL_LINK_VERIFICATION_POLICY_VERSION_V4 = "official-link-verification-v4"
 OFFICIAL_LINK_VERIFICATION_VERSION_V1 = "official-link-verification-v1"
 RESOURCE_IDENTITY_VERSION = "resource-identity-v1"
 VERIFICATION_INTENT_VERSION = "verification-intent-v1"
@@ -89,6 +90,7 @@ class RequestedActionV4(StrEnum):
     SUBMIT_FORM = "submit_form"
     REGISTER_OR_APPLY = "register_or_apply"
     DOWNLOAD_FILE = "download_file"
+    APPLY_FOR_PASSPORT = "apply_for_passport"
 
 
 class EntityUrlRelationshipV4(StrEnum):
@@ -177,6 +179,7 @@ class IdentityEvidenceFamilyV4(StrEnum):
     EXACT_RESOURCE_ENDORSEMENT = "exact_resource_endorsement"
     TARGET_RESOURCE_MATCH = "target_resource_match"
     EXPLICIT_OWNERSHIP_CONFLICT = "explicit_ownership_conflict"
+    ACTION_ENDORSEMENT = "action_endorsement"
 
 
 class ResourceTypeV4(StrEnum):
@@ -254,6 +257,7 @@ class SecurityRecommendedActionV4(StrEnum):
     CONTACT_BANK_IF_ALREADY_PAID = "CONTACT_BANK_IF_ALREADY_PAID"
     REPORT_AND_BLOCK_SENDER = "REPORT_AND_BLOCK_SENDER"
     PROCEED_WITH_CAUTION = "PROCEED_WITH_CAUTION"
+    ALLOW_OPEN = "ALLOW_OPEN"
     CLOSE_PAGE_AND_DO_NOT_RETURN = "CLOSE_PAGE_AND_DO_NOT_RETURN"
     CHANGE_PASSWORD_FROM_TRUSTED_DEVICE = "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE"
     REVOKE_ACTIVE_SESSIONS = "REVOKE_ACTIVE_SESSIONS"
@@ -654,7 +658,10 @@ class OfficialLinkVerificationReportV4(SecurityContractModel):
     identity_associations: list[IdentityAssociationV4] = Field(default_factory=list, max_length=20)
     identity_evidence: list[IdentityEvidenceObservationV4] = Field(default_factory=list, max_length=50)
     policy_version: Literal[
-        "official-link-verification-v1", "official-link-verification-v2", "official-link-verification-v3"
+        "official-link-verification-v1",
+        "official-link-verification-v2",
+        "official-link-verification-v3",
+        "official-link-verification-v4",
     ] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
 
 
@@ -1800,6 +1807,7 @@ __all__ = [
     "OFFICIAL_LINK_VERIFICATION_VERSION",
     "OFFICIAL_LINK_VERIFICATION_VERSION_V1",
     "OFFICIAL_LINK_VERIFICATION_VERSION_V3",
+    "OFFICIAL_LINK_VERIFICATION_POLICY_VERSION_V4",
     "RESOURCE_IDENTITY_VERSION",
     "VERIFICATION_INTENT_VERSION",
     "SECURITY_ASSISTANT_RESPONSE_VERSION",

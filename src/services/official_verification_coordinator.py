@@ -162,6 +162,7 @@ _ACTION_TERMS = {
     "submit_form": ("gui bieu mau", "submit", "form"),
     "register_or_apply": ("dang ky", "ung tuyen", "register", "apply", "application"),
     "download_file": ("tai tep", "download", "file"),
+    "apply_for_passport": ("lam ho chieu", "xin ho chieu", "cap ho chieu", "passport"),
 }
 _CONTRADICTION_TERMS = (
     "canh bao gia mao",
@@ -861,6 +862,39 @@ class OfficialLinkVerificationCoordinator:
             adapter_attempts += discovery_calls
             limitations.extend(discovery_limitations)
 
+        action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
+        discovered_publisher = next(
+            (
+                item
+                for item in identity_associations
+                if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                and item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                and any(
+                    host == item.canonical_domain or host.endswith(f".{item.canonical_domain}") for host in action_hosts
+                )
+            ),
+            None,
+        )
+        if discovered_publisher is not None and publisher.status is not VerificationStatusV4.VERIFIED:
+            publisher = PublisherVerificationV4(
+                applicable=True,
+                status=VerificationStatusV4.VERIFIED,
+                reason_code="publisher_discovered_from_official_evidence",
+                evidence_refs=discovered_publisher.evidence_refs,
+                identity=OfficialIdentityV4(
+                    identity_type=OfficialIdentityTypeV4.DOMAIN,
+                    canonical_value=discovered_publisher.canonical_domain,
+                    display_value=discovered_publisher.canonical_domain,
+                    entity_name=discovered_publisher.entity_name,
+                    match_scope="host_and_subdomains",
+                    relationship="discovered_official_control",
+                    provenance="independent official-source identity evidence",
+                    policy_version="identity-discovery-v2",
+                    effective_from=discovered_publisher.verified_at,
+                    reviewed=False,
+                ),
+            )
+
         source_refs, link_evidence = self._public_evidence(
             brand,
             verifiable_identities,
@@ -889,6 +923,27 @@ class OfficialLinkVerificationCoordinator:
         )
         adapter_attempts += resource_calls
         limitations.extend(resource_limitations)
+        action_evidence_refs = [
+            page.extraction.source_ref for page in pages if _claim_dimensions(intent, page, claim_qualifiers)[1]
+        ]
+        action_evidence_refs.extend(
+            item.evidence_ref
+            for item in identity_evidence
+            if item.family is IdentityEvidenceFamilyV4.ACTION_ENDORSEMENT
+        )
+        reviewed_ownership: dict[str, list[str]] = {}
+        for identity in verifiable_identities:
+            identity_url = _identity_url(identity)
+            if identity_url is None:
+                continue
+            identity_host = (urlsplit(identity_url).hostname or "").casefold()
+            matching_refs = [
+                source.source_ref
+                for source in local_sources
+                if source.identity is not None and source.identity.identity_id == identity.identity_id
+            ]
+            if identity_host and matching_refs:
+                reviewed_ownership[identity_host] = matching_refs
         report = self._report(
             intent,
             publisher,
@@ -902,6 +957,8 @@ class OfficialLinkVerificationCoordinator:
             user_urls=user_urls,
             official_source_consent=request.consent.official_source_lookup,
             external_url_consent=request.consent.external_url_lookup,
+            action_evidence_refs=action_evidence_refs,
+            reviewed_ownership=reviewed_ownership,
         )
         self._validate_reference_closure(report)
         reported_associations = report.identity_associations
@@ -943,7 +1000,14 @@ class OfficialLinkVerificationCoordinator:
         fetch_cap: int,
         execution_context: TurnExecutionContext,
     ) -> tuple[list[IdentityAssociationV4], list[IdentityEvidenceObservationV4], int, int, int, list[str]]:
-        entity = intent.contract.organization_name
+        requested_url_map = {
+            canonical: url for url in user_urls if (canonical := _canonical_discovery_url(url)) is not None
+        }
+        requested_targets = set(requested_url_map)
+        first_target = next(iter(sorted(requested_targets)), None)
+        entity = intent.contract.organization_name or (
+            (urlsplit(first_target).hostname or "").casefold() if first_target else None
+        )
         if entity is None:
             return [], [], 0, 0, 0, []
         cached: list[IdentityCandidateV4] = []
@@ -985,8 +1049,6 @@ class OfficialLinkVerificationCoordinator:
                     )
                 )
             ]
-        requested_targets = {_canonical_discovery_url(url) for url in user_urls}
-        requested_targets.discard(None)
         cache_complete_assurances = {
             IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH,
             IdentityAssociationAssuranceV4.REJECTED,
@@ -1075,8 +1137,8 @@ class OfficialLinkVerificationCoordinator:
             stale = ["identity_stale_revalidation"] if stale_found else []
             return [], [], 0, 0, 0, [*stale, "official_web_search_unavailable"]
 
-        queries = self._identity_discovery_queries(intent)
-        candidate_urls: list[str] = []
+        queries = self._identity_discovery_queries(intent, fallback_entity=entity)
+        candidate_urls: list[str] = list(sorted(requested_targets))
         searches = calls = fetches = 0
         limitations: list[str] = ["identity_stale_revalidation"] if stale_found else []
         for query in queries[: min(3, search_cap)]:
@@ -1101,10 +1163,10 @@ class OfficialLinkVerificationCoordinator:
         # are fetched under official-source consent and every redirect remains guarded.
         fetch_urls: list[str] = []
         if external_consent:
-            for url in requested_targets:
+            for url in requested_url_map.values():
                 if url not in fetch_urls:
                     fetch_urls.append(url)
-        fetch_urls.extend(url for url in candidate_urls if url not in fetch_urls)
+        fetch_urls.extend(url for url in candidate_urls if url not in requested_targets and url not in fetch_urls)
         fetched_pages: dict[str, tuple[str, str, str]] = {}
         discovery_endorsements: dict[str, list[IdentityEvidenceObservationV4]] = {}
         pending_endorsements: dict[str, list[tuple[str, str]]] = {}
@@ -1171,7 +1233,7 @@ class OfficialLinkVerificationCoordinator:
                 elif fetched.limitation is not None:
                     recovered = False
                     if fetched.limitation in _FALLBACK_ELIGIBLE and self._extract is not None:
-                        fallback_query = self._identity_discovery_queries(intent)[0]
+                        fallback_query = self._identity_discovery_queries(intent, fallback_entity=entity)[0]
                         extracted = await self._extract.extract(
                             [url],
                             query=fallback_query,
@@ -1319,6 +1381,40 @@ class OfficialLinkVerificationCoordinator:
                 associations.append(association)
                 observations.extend(anchor)
 
+        action = intent.contract.requested_action
+        if action is not None:
+            action_observations: list[IdentityEvidenceObservationV4] = []
+            for canonical, (text, content_hash, _source_host) in fetched_pages.items():
+                if any(term in _fold(text) for term in _ACTION_TERMS[action.value]):
+                    action_observations.append(
+                        _identity_observation(
+                            IdentityEvidenceFamilyV4.ACTION_ENDORSEMENT,
+                            canonical,
+                            content_hash,
+                            now,
+                        )
+                    )
+            observations.extend(action_observations)
+            if action_observations:
+                associations = [
+                    item.model_copy(
+                        update={
+                            "evidence_refs": _unique(
+                                [
+                                    *item.evidence_refs,
+                                    *[
+                                        observation.evidence_ref
+                                        for observation in action_observations
+                                        if observation.source_host == item.canonical_domain
+                                        or observation.source_host.endswith(f".{item.canonical_domain}")
+                                    ],
+                                ]
+                            )
+                        }
+                    )
+                    for item in associations
+                ]
+
         save = getattr(self._brands, "save_identity_candidate", None)
         if save is not None:
             stored_associations: list[IdentityAssociationV4] = []
@@ -1340,8 +1436,12 @@ class OfficialLinkVerificationCoordinator:
         )
 
     @staticmethod
-    def _identity_discovery_queries(intent: GroundedVerificationIntent) -> list[str]:
-        organization = intent.contract.organization_name or ""
+    def _identity_discovery_queries(
+        intent: GroundedVerificationIntent,
+        *,
+        fallback_entity: str = "",
+    ) -> list[str]:
+        organization = intent.contract.organization_name or fallback_entity
         claim = intent.contract.claim_summary or ""
         values: list[str] = []
         if organization and claim:
@@ -1894,22 +1994,47 @@ class OfficialLinkVerificationCoordinator:
                 item
                 for item in associations
                 if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
-                and item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
-                and item.canonical_url in requested
+                and (
+                    (
+                        item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                        and item.canonical_url in requested
+                    )
+                    or (
+                        item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                        and any(
+                            (urlsplit(url).hostname or "").casefold() == item.canonical_domain
+                            or (urlsplit(url).hostname or "").casefold().endswith(f".{item.canonical_domain}")
+                            for url in requested
+                        )
+                    )
+                )
             ),
             None,
         )
         if association is None:
             return current
-        submitted = requested[association.canonical_url]
+        submitted = requested.get(association.canonical_url) or next(
+            url
+            for url in requested.values()
+            if (urlsplit(url).hostname or "").casefold() == association.canonical_domain
+            or (urlsplit(url).hostname or "").casefold().endswith(f".{association.canonical_domain}")
+        )
         match = match_resources(
             identify_resource(submitted),
             identify_resource(association.canonical_url),
         )
         return ResourceVerificationV4(
             applicable=True,
-            status=VerificationStatusV4.PARTIALLY_VERIFIED,
-            reason_code="discovered_exact_resource_endorsement_chain",
+            status=(
+                VerificationStatusV4.VERIFIED
+                if association.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                else VerificationStatusV4.PARTIALLY_VERIFIED
+            ),
+            reason_code=(
+                "discovered_official_resource_ownership_chain"
+                if association.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                else "discovered_exact_resource_endorsement_chain"
+            ),
             evidence_refs=association.evidence_refs,
             match=match,
         )
@@ -1929,26 +2054,39 @@ class OfficialLinkVerificationCoordinator:
         user_urls: Sequence[str] = (),
         official_source_consent: bool = False,
         external_url_consent: bool = False,
+        action_evidence_refs: Sequence[str] = (),
+        reviewed_ownership: dict[str, list[str]] | None = None,
     ) -> OfficialLinkVerificationReportV4:
+        action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
+        reviewed_owner = next(
+            (
+                (domain, refs)
+                for domain, refs in (reviewed_ownership or {}).items()
+                if any(host == domain or host.endswith(f".{domain}") for host in action_hosts)
+            ),
+            None,
+        )
         ownership = OfficialVerificationComponentV4(
-            applicable=bool(intent.contract.organization_name and intent.contract.action_url_indices),
+            applicable=bool(user_urls),
             status=(
-                VerificationStatusV4.UNVERIFIED
-                if intent.contract.organization_name and intent.contract.action_url_indices
+                VerificationStatusV4.VERIFIED
+                if reviewed_owner is not None
+                else VerificationStatusV4.UNVERIFIED
+                if user_urls
                 else None
             ),
             reason_code=(
-                "ownership_consent_required"
-                if intent.contract.organization_name
-                and intent.contract.action_url_indices
-                and not (official_source_consent and external_url_consent)
+                "reviewed_domain_ownership_verified"
+                if reviewed_owner is not None
+                else "ownership_consent_required"
+                if user_urls and not (official_source_consent and external_url_consent)
                 else "ownership_evidence_insufficient"
-                if intent.contract.organization_name and intent.contract.action_url_indices
+                if user_urls
                 else "not_applicable"
             ),
+            evidence_refs=reviewed_owner[1] if reviewed_owner is not None else [],
         )
         if ownership.applicable and official_source_consent and external_url_consent:
-            action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
             verified = next(
                 (
                     item
@@ -1971,9 +2109,9 @@ class OfficialLinkVerificationCoordinator:
                     }
                 )
         sender = OfficialVerificationComponentV4(
-            applicable=intent.contract.organization_name is not None,
-            status=(VerificationStatusV4.UNVERIFIED if intent.contract.organization_name is not None else None),
-            reason_code=("message_sender_not_authenticated" if intent.contract.organization_name else "not_applicable"),
+            applicable=intent.contract.requested_action is not None,
+            status=(VerificationStatusV4.UNVERIFIED if intent.contract.requested_action is not None else None),
+            reason_code=("message_sender_not_authenticated" if intent.contract.requested_action else "not_applicable"),
         )
         action = OfficialVerificationComponentV4(
             applicable=intent.contract.requested_action is not None,
@@ -1984,19 +2122,24 @@ class OfficialLinkVerificationCoordinator:
             action.applicable
             and resource.status is VerificationStatusV4.VERIFIED
             and (not claim.applicable or claim.status is VerificationStatusV4.VERIFIED)
+            and action_evidence_refs
         ):
             action = action.model_copy(
                 update={
                     "status": VerificationStatusV4.VERIFIED,
                     "reason_code": "official_action_and_resource_confirmed",
-                    "evidence_refs": list(dict.fromkeys([*claim.evidence_refs, *resource.evidence_refs])),
+                    "evidence_refs": list(
+                        dict.fromkeys([*claim.evidence_refs, *resource.evidence_refs, *action_evidence_refs])
+                    ),
                 }
             )
         statuses = [
             component.status
-            for component in (publisher, claim, resource)
+            for component in (publisher, claim, resource, action)
             if component.applicable and component.status is not None
         ]
+        if not intent.contract.action_url_indices and sender.applicable:
+            statuses.append(sender.status)
         if VerificationStatusV4.CONFLICTING in statuses:
             overall = VerificationStatusV4.CONFLICTING
             reason = "applicable_component_conflicting"
@@ -2011,13 +2154,6 @@ class OfficialLinkVerificationCoordinator:
         else:
             overall = VerificationStatusV4.UNVERIFIED
             reason = "applicable_evidence_insufficient"
-        if (
-            overall is not VerificationStatusV4.CONFLICTING
-            and ownership.status is VerificationStatusV4.VERIFIED
-            and (sender.status is VerificationStatusV4.UNVERIFIED or action.status is VerificationStatusV4.UNVERIFIED)
-        ):
-            overall = VerificationStatusV4.PARTIALLY_VERIFIED
-            reason = "official_domain_verified_sender_or_action_unverified"
         return OfficialLinkVerificationReportV4(
             schema_version="official-link-verification-v3",
             intent=intent.contract,
@@ -2034,7 +2170,7 @@ class OfficialLinkVerificationCoordinator:
             limitations=_unique(list(limitations))[:50],
             identity_associations=list(identity_associations)[:20],
             identity_evidence=list(identity_evidence)[:50],
-            policy_version="official-link-verification-v3",
+            policy_version="official-link-verification-v4",
         )
 
     @staticmethod

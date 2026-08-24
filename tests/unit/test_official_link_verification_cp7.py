@@ -18,11 +18,13 @@ from src.models import (
     IdentityRelationshipV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
+    RequestedActionV4,
     ResourceMatchStatusV4,
     ScopeDecisionV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
+    SecurityRecommendedActionV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
@@ -1090,3 +1092,45 @@ async def test_bare_url_keeps_official_report_none() -> None:
 
     assert outcome.report is None
     assert outcome.adapter_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_passport_resource_verification_is_safe_without_authenticating_sender() -> None:
+    target = "https://dichvucong.bocongan.gov.vn/?home=1"
+    authority = "https://authority.example/government-directory"
+    message = f"Cán bộ phường hướng dẫn tôi vào\n{target} để làm hộ chiếu"
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    coordinator = _coordinator(
+        repository=_BrandRepository([]),
+        search=_SearchProvider([_hit(target), _hit(authority)]),
+        fetcher=_HtmlFetcher(
+            {
+                target: (
+                    "<html><body>dichvucong.bocongan.gov.vn — Cổng dịch vụ công hướng dẫn làm hộ chiếu.</body></html>"
+                ),
+                authority: (f"<html><body>Danh bạ dịch vụ công chính thức: {target} làm hộ chiếu.</body></html>"),
+            }
+        ),
+    )
+
+    outcome = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
+    assert outcome.report is not None
+    report = outcome.report
+    assert scope.scope_decision is ScopeDecisionV4.IN_SCOPE
+    assert scope.security_context is not None
+    assert scope.security_context.requested_action is RequestedActionV4.APPLY_FOR_PASSPORT
+    assert report.publisher_verification.status is VerificationStatusV4.VERIFIED
+    assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+
+    completed = assess_security_risk(
+        apply_official_verification_outcome(scope, outcome),
+        official_verification_enforced=True,
+    )
+    assert completed.risk.value == "SAFE"
+    assert completed.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]

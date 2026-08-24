@@ -21,6 +21,7 @@ const actionTitles: Record<RequestedActionV4, string> = {
   submit_form: "Yêu cầu điền biểu mẫu",
   register_or_apply: "Đăng ký hoặc nộp đơn trực tuyến",
   download_file: "Yêu cầu tải xuống tệp",
+  apply_for_passport: "Làm hộ chiếu trực tuyến",
 };
 
 const scenarioTitles: Partial<Record<SecurityScenarioV4, string>> = {

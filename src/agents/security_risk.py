@@ -161,27 +161,36 @@ def _association_is_unverified_target(scope: SecurityScopeResponseV4, evidence: 
 
 def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     report = scope.official_verification
-    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED:
+    if report is None or report.overall_status is VerificationStatusV4.CONFLICTING:
         return False
     if any(
-        association.assurance is not IdentityAssociationAssuranceV4.VERIFIED
+        association.assurance
+        in {IdentityAssociationAssuranceV4.CONFLICTING, IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH}
         for association in report.identity_associations
     ):
         return False
-    applicable = [
-        component
-        for component in (
-            report.publisher_verification,
-            report.claim_verification,
-            report.resource_verification,
-            report.action_endorsement_verification,
+    if report.schema_version in {"official-link-verification-v1", "official-link-verification-v2"}:
+        legacy_components = [
+            component
+            for component in (
+                report.publisher_verification,
+                report.claim_verification,
+                report.resource_verification,
+                report.action_endorsement_verification,
+            )
+            if component.applicable
+        ]
+        return bool(legacy_components) and all(
+            component.status is VerificationStatusV4.VERIFIED for component in legacy_components
         )
-        if component.applicable
-    ]
-    return (
-        bool(applicable)
-        and not report.limitations
-        and all(component.status is VerificationStatusV4.VERIFIED for component in applicable)
+    required = [report.resource_verification]
+    if report.action_endorsement_verification.applicable:
+        required.append(report.action_endorsement_verification)
+    context = scope.security_context
+    if not (context and context.urls) and report.sender_verification.applicable:
+        required.append(report.sender_verification)
+    return bool(required) and all(
+        component.applicable and component.status is VerificationStatusV4.VERIFIED for component in required
     )
 
 
@@ -238,8 +247,10 @@ def _actions(
         # provider/policy conflict. Do not contradict that verdict with an
         # unconditional instruction to avoid the verified link.
         actions.append(
-            SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
-            if risk is SecurityRiskV4.SAFE or familiarity_low_risk
+            SecurityRecommendedActionV4.ALLOW_OPEN
+            if risk is SecurityRiskV4.SAFE
+            else SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
+            if familiarity_low_risk
             else SecurityRecommendedActionV4.DO_NOT_OPEN_LINK
         )
     if context.credential_request and risk is not SecurityRiskV4.SAFE:

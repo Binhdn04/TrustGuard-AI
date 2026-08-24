@@ -26,9 +26,9 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v6, false-positive policy |
 | User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
-| Admin/HITL | structured report resolution/remediation, reviewed add/disable blacklist lifecycle, trust/Memory remediation, immutable audit |
-| AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |
-| Official verification | publisher/claim/resource compatibility plus domain ownership/sender identity/action endorsement, identity discovery v2, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, typed neutral evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
+| Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
+| AI | optional understanding/planning/explanation; backend span candidates + model-selected IDs; per-candidate fail-soft grounding; suggestion-only Admin Copilot |
+| Official verification | publisher/claim/resource compatibility plus URL-routed domain ownership/sender identity/action endorsement, resource-first identity discovery, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, action-relevant SAFE policy, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | UI MVP tiếng Việt; một navigation/sidebar; user có Kiểm tra/Lịch sử, còn Hồ sơ/Cài đặt nằm trong menu avatar; admin có thêm Duyệt bảo mật và Tin cậy & chặn; whitelist/blacklist thao tác trực tiếp với trạng thái/audit; route Observatory/Audit cũ redirect về Trust workspace |
 | Schema | Alembic through `0021_security_blacklist_v4` (one head) |
@@ -90,8 +90,9 @@ public capability.
 5. Chạy Official Link Verification theo `shadow -> visible -> enforced -> visible -> off`, lưu observation window
    và rollback evidence cho từng stage.
 6. Validate reviewed CP10 evidence bằng tooling trong [TESTING.md](TESTING.md), sau đó Tech Lead và Security Lead review.
-7. Validate identity candidate TTL/revalidation, PostgreSQL versioning, RBAC promotion và exact-resource endorsement
-   trong cùng hosted rollout windows; không dùng auto-verified association để tự kết luận `SAFE`.
+7. Validate identity candidate TTL/revalidation, PostgreSQL versioning, RBAC promotion, exact-resource endorsement
+   và action-relevant SAFE behavior trong cùng hosted rollout windows; auto-verified evidence chỉ áp dụng cho đúng
+   resource/action đã kiểm chứng, không mở rộng thành brand trust.
 8. Review/apply platform manifest, quan sát familiarity ở `visible`, rồi kiểm tra Radar coverage/cache/p95/429 và
    Google Forms/shared-content regressions trước khi bật `enforced`.
 9. Deploy code MVP hiện tại, chạy smoke OAuth bằng user/admin thật và xác minh report → whitelist/blacklist →

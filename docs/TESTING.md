@@ -70,7 +70,7 @@ populate a passing evidence file from offline fixtures or unit-test output.
 - UI Duyệt bảo mật bao phủ confirm-safe, confirm-malicious, rejected/dismissed, remediation pending/success/failure
   và bước xác nhận blacklist riêng; UI Tin cậy & chặn bao phủ create/disable/history/error states;
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
-- AI grounding/fallback/prompt injection/budget/deadline;
+- AI span-ID grounding, per-candidate fail-soft validation, fallback/prompt injection/budget/deadline;
 - frontend risk/follow-up presentation, polling, history/filter, safe assistant Markdown, latest-URL page capture lifecycle
   và admin workflow;
 - identity discovery query hygiene, literal-title queries, consent/SSRF/budget, non-terminal discovered-cache
@@ -80,6 +80,8 @@ populate a passing evidence file from offline fixtures or unit-test output.
 - bounded sender attribution không dùng registry riêng, attribution không tự tạo impersonation, two-consent
   ownership/cache, ba component domain/sender/action, neutral evidence projection, sensitive-login precedence,
   synthesis không suy rộng ownership và frontend compatibility với report cũ.
+- URL-driven ownership applicability, action-driven endorsement applicability, registry-miss resource discovery,
+  passport-service regression, sender-independent SAFE khi exact resource/action đã verified và `ALLOW_OPEN`.
 
 ## Manual scenarios
 

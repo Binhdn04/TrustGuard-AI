@@ -98,9 +98,9 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
         </div>
       )}
       {report.domain_ownership_verification?.status === "VERIFIED"
-        && (report.sender_verification?.status === "UNVERIFIED" || report.action_endorsement_verification?.status === "UNVERIFIED") && (
+        && report.action_endorsement_verification?.status === "UNVERIFIED" && (
         <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
-          Tên miền chính thức đã được xác minh, nhưng người gửi hoặc yêu cầu hành động chưa được xác minh. Không nhập mật khẩu hay OTP chỉ dựa trên tin nhắn.
+          Tên miền chính thức đã được xác minh, nhưng yêu cầu hành động chưa được xác minh. Không nhập mật khẩu hay OTP chỉ dựa trên tin nhắn.
         </p>
       )}
       {verifiedResourceAssociations.length > 0 && (

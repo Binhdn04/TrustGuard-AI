@@ -331,6 +331,15 @@ _DOWNLOAD_FILE_TERMS = (
     "download file",
     "download attachment",
 )
+_PASSPORT_APPLICATION_TERMS = (
+    "làm hộ chiếu",
+    "lam ho chieu",
+    "xin hộ chiếu",
+    "xin ho chieu",
+    "cấp hộ chiếu",
+    "cap ho chieu",
+    "apply for a passport",
+)
 
 _FORM_CONTEXT_TERMS = (
     *_SUBMIT_FORM_TERMS,
@@ -370,6 +379,7 @@ _ACTION_SOURCE_TERMS = {
     RequestedActionV4.SUBMIT_FORM: _SUBMIT_FORM_TERMS,
     RequestedActionV4.REGISTER_OR_APPLY: _REGISTER_APPLY_TERMS,
     RequestedActionV4.DOWNLOAD_FILE: _DOWNLOAD_FILE_TERMS,
+    RequestedActionV4.APPLY_FOR_PASSPORT: _PASSPORT_APPLICATION_TERMS,
 }
 
 _TOPIC_SOURCE_TERMS = (
@@ -455,6 +465,8 @@ def _neutral_context_reasons(text: str) -> list[str]:
 
 
 def _explicit_requested_action(text: str) -> RequestedActionV4 | None:
+    if _contains_any(text, _PASSPORT_APPLICATION_TERMS):
+        return RequestedActionV4.APPLY_FOR_PASSPORT
     if _contains_any(text, _INSTALL_APP_TERMS):
         return RequestedActionV4.INSTALL_APP
     if _contains_any(text, _SHARE_SCREEN_TERMS):

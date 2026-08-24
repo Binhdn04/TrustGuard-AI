@@ -93,11 +93,11 @@ async def test_hybrid_understanding_drives_risk_and_persists_redacted_context(cl
     assert body["assistant_context"]["source_spans"]
     assert body["security_context"]["urls"] == []
     assert model.conversation_summary is not None
-    assert json.loads(model.conversation_summary) == {
-        "security_context": None,
-        "exposure_state": "UNKNOWN",
-        "policy_selected_follow_up_slot": "action_taken",
-    }
+    summary = json.loads(model.conversation_summary)
+    assert summary["security_context"] is None
+    assert summary["exposure_state"] == "UNKNOWN"
+    assert summary["policy_selected_follow_up_slot"] == "action_taken"
+    assert summary["span_candidates"]
     stored = conversation.json()["summary"]["assistant_context"]
     assert stored == body["assistant_context"]
     assert message not in conversation.text

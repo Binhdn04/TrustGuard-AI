@@ -41,6 +41,7 @@ from src.services.security_entity_mentions import (
     extract_entity_mentions,
     extract_recovery_phrases,
 )
+from src.services.security_span_candidates import SemanticSpanCandidate, generate_semantic_span_candidates
 
 GazetteerLoader = Callable[[], Awaitable[list[BrandRecordV4]]]
 
@@ -101,6 +102,33 @@ def _valid_spans(message: str, output: Understanding) -> dict[str, list[Assistan
         )
         valid.setdefault(span.field_name, []).append(converted)
     return valid
+
+
+def _resolve_span_selections(
+    output: Understanding,
+    candidates: list[SemanticSpanCandidate],
+) -> tuple[Understanding, set[str]]:
+    """Resolve provider-selected IDs while retaining legacy fixture spans."""
+    by_id = {item.span_id: item for item in candidates}
+    resolved = list(output.source_spans)
+    invalid_fields: set[str] = set()
+    for selection in output.span_selections:
+        selected = [by_id.get(span_id) for span_id in selection.span_ids]
+        if not selection.span_ids or any(item is None for item in selected):
+            invalid_fields.add(selection.field_name)
+            continue
+        valid = [item for item in selected if item is not None]
+        best_specificity = max(item.specificity for item in valid)
+        for item in valid:
+            if item.specificity == best_specificity:
+                resolved.append(
+                    UnderstandingSourceSpan(
+                        field_name=selection.field_name,
+                        start=item.start,
+                        end=item.end,
+                    )
+                )
+    return output.model_copy(update={"source_spans": resolved}), invalid_fields
 
 
 def _literal_url_spans(message: str) -> list[tuple[int, int]]:
@@ -350,8 +378,13 @@ def merge_semantic_understanding(
     *,
     model_version: str,
     entity_candidates: list[EntityMentionCandidate] | None = None,
+    span_candidates: list[SemanticSpanCandidate] | None = None,
 ) -> SecurityScopeResponseV4:
     """Ground and merge AI candidates without weakening deterministic signals."""
+    output, invalid_span_fields = _resolve_span_selections(
+        output,
+        span_candidates or generate_semantic_span_candidates(message, entity_candidates),
+    )
     output, invalid_candidate_fields = _ground_backend_entity_references(
         message,
         output,
@@ -370,6 +403,8 @@ def merge_semantic_understanding(
     rejected_field_failures: dict[str, set[str]] = {
         field_name: {"invalid_reference"} for field_name in invalid_candidate_fields
     }
+    for field_name in invalid_span_fields:
+        rejected_field_failures.setdefault(field_name, set()).add("invalid_source_span")
 
     def accept(field_name: str, present: bool) -> bool:
         if not present:
@@ -592,6 +627,8 @@ class SecuritySemanticUnderstandingService:
         if phrase_candidates:
             summary_payload["phrase_candidates"] = [item.as_prompt_data() for item in phrase_candidates]
         entity_candidates = [*organization_candidates, *phrase_candidates]
+        span_candidates = generate_semantic_span_candidates(request.message, entity_candidates)
+        summary_payload["span_candidates"] = [item.as_prompt_data(request.message) for item in span_candidates]
         conversation_summary = json.dumps(
             summary_payload,
             ensure_ascii=False,
@@ -610,6 +647,7 @@ class SecuritySemanticUnderstandingService:
             result.output,
             model_version=result.model,
             entity_candidates=entity_candidates,
+            span_candidates=span_candidates,
         )
         return apply_adaptive_conversation_policy(
             request.message,

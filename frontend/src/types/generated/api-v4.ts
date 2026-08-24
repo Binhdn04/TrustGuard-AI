@@ -41,7 +41,8 @@ export type RequestedActionV4 =
   | "scan_qr"
   | "submit_form"
   | "register_or_apply"
-  | "download_file";
+  | "download_file"
+  | "apply_for_passport";
 
 export type VerificationTopicV4 =
   | "recruitment" | "promotion" | "event" | "course" | "survey"
@@ -55,7 +56,7 @@ export type OfficialIdentityTypeV4 =
 export type OfficialIdentityMatchScopeV4 = "exact" | "host_and_subdomains" | "bounded_phrase";
 export type IdentityRelationshipV4 = "official_controlled" | "parent_organization" | "endorsed_third_party_service";
 export type IdentityAssociationAssuranceV4 = "discovered" | "verified" | "conflicting" | "promoted" | "rejected" | "confirmed_mismatch";
-export type IdentityEvidenceFamilyV4 = "entity_self_identification" | "independent_entity_link" | "parent_declaration" | "candidate_corroboration" | "exact_resource_endorsement" | "target_resource_match" | "explicit_ownership_conflict";
+export type IdentityEvidenceFamilyV4 = "entity_self_identification" | "independent_entity_link" | "parent_declaration" | "candidate_corroboration" | "exact_resource_endorsement" | "target_resource_match" | "explicit_ownership_conflict" | "action_endorsement";
 export type ResourceTypeV4 = "url" | "google_form" | "microsoft_form" | "file" | "other";
 export type ResourceMatchStatusV4 = "EXACT_RESOURCE" | "EXACT_CANONICAL_URL" | "DIFFERENT_RESOURCE" | "UNRESOLVED";
 
@@ -80,6 +81,7 @@ export type SecurityRecommendedActionV4 =
   | "CONTACT_BANK_IF_ALREADY_PAID"
   | "REPORT_AND_BLOCK_SENDER"
   | "PROCEED_WITH_CAUTION"
+  | "ALLOW_OPEN"
   | "CLOSE_PAGE_AND_DO_NOT_RETURN"
   | "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE"
   | "REVOKE_ACTIVE_SESSIONS"
@@ -310,7 +312,7 @@ export interface OfficialLinkVerificationReportV4 {
   limitations: string[];
   identity_associations?: IdentityAssociationV4[];
   identity_evidence?: IdentityEvidenceObservationV4[];
-  policy_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3";
+  policy_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3" | "official-link-verification-v4";
 }
 
 export interface IdentityEvidenceObservationV4 {

@@ -63,6 +63,7 @@ _ACTION_QUERY_TERMS = {
     RequestedActionV4.SUBMIT_FORM: "gửi biểu mẫu",
     RequestedActionV4.REGISTER_OR_APPLY: "đăng ký ứng tuyển",
     RequestedActionV4.DOWNLOAD_FILE: "tải tệp",
+    RequestedActionV4.APPLY_FOR_PASSPORT: "làm hộ chiếu",
 }
 _URL_RELEVANT_ACTIONS = {
     RequestedActionV4.LOGIN,
@@ -71,6 +72,7 @@ _URL_RELEVANT_ACTIONS = {
     RequestedActionV4.SUBMIT_FORM,
     RequestedActionV4.REGISTER_OR_APPLY,
     RequestedActionV4.DOWNLOAD_FILE,
+    RequestedActionV4.APPLY_FOR_PASSPORT,
 }
 
 
