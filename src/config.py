@@ -52,8 +52,9 @@ class Settings(BaseSettings):
     security_page_capture_viewport_height: int = Field(default=720, ge=480, le=1080)
     security_page_capture_jpeg_quality: int = Field(default=72, ge=40, le=90)
     security_official_verification_mode: Literal["off", "shadow", "visible", "enforced"] = "visible"
+    security_domain_familiarity_mode: Literal["off", "visible", "enforced"] = "off"
     security_admin_copilot_rate_limit_per_minute: int = Field(default=5, ge=1, le=60)
-    security_ai_max_calls_per_turn: int = Field(default=4, ge=1, le=4)
+    security_ai_max_calls_per_turn: int = Field(default=8, ge=1, le=12)
     security_ai_timeout_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
     security_ai_turn_deadline_seconds: float = Field(default=60.0, gt=0.0, le=120.0)
     security_ai_max_retries: int = Field(default=0, ge=0, le=2)
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
     virustotal_api_key: str = ""
+    cloudflare_radar_api_token: str = ""
     reputation_secondary_enabled: bool = True
     reputation_max_network_calls: int = Field(default=4, ge=1, le=20)
     google_safe_browsing_api_key: str = ""
@@ -83,7 +85,7 @@ class Settings(BaseSettings):
     reputation_max_attempts: int = Field(default=2, ge=1, le=5)
     reputation_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
     reputation_secondary_call_budget: int = Field(default=1, ge=0, le=5)
-    security_investigation_max_external_calls: int = Field(default=8, ge=1, le=100)
+    security_investigation_max_external_calls: int = Field(default=16, ge=1, le=100)
     security_investigation_max_retries: int = Field(default=1, ge=0, le=3)
     security_investigation_deadline_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
     security_conversation_retention_days: int = Field(default=30, ge=1, le=365)
@@ -144,6 +146,10 @@ class Settings(BaseSettings):
             "official_link_verification": self.security_official_verification_mode != "off",
             "official_web_search_ready": (
                 self.security_official_verification_mode != "off" and bool(self.tavily_api_key.strip())
+            ),
+            "domain_familiarity": self.security_domain_familiarity_mode != "off",
+            "domain_popularity_lookup_ready": (
+                self.security_domain_familiarity_mode != "off" and bool(self.cloudflare_radar_api_token.strip())
             ),
         }
 

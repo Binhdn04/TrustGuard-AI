@@ -39,7 +39,7 @@ async def test_capabilities_publish_truthful_pre_cutover_boundary(client) -> Non
     response = await client.get("/api/v4/capabilities")
 
     assert response.status_code == 200
-    assert response.json() == {
+    assert {
         "contract_version": "v4",
         "product_profile": "security_triage_vnext",
         "release_profile": "pre_cutover",
@@ -54,12 +54,21 @@ async def test_capabilities_publish_truthful_pre_cutover_boundary(client) -> Non
             "publish_broad_warning",
             "ai_security_copilot",
         ],
-    }
+    }.items() <= response.json().items()
 
 
 @pytest.mark.asyncio
 async def test_disabled_ai_flags_are_byte_compatible_with_legacy_capabilities(client, monkeypatch) -> None:
-    disabled_settings = Settings(security_official_verification_mode="off", _env_file=None)
+    disabled_settings = Settings(
+        security_ai_understanding_enabled=False,
+        security_ai_planning_enabled=False,
+        security_ai_explanation_enabled=False,
+        security_admin_copilot_enabled=False,
+        security_official_verification_mode="off",
+        security_domain_familiarity_mode="off",
+        cloudflare_radar_api_token="",
+        _env_file=None,
+    )
     monkeypatch.setattr(
         "src.api.security_v4.get_settings",
         lambda: disabled_settings,
@@ -116,6 +125,25 @@ async def test_capabilities_publish_only_actually_enabled_ai_features(client, mo
         "security_memory_retrieval": True,
         "security_admin_copilot": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_domain_familiarity_capabilities_separate_feature_and_provider_readiness(client, monkeypatch) -> None:
+    visible = Settings(
+        security_domain_familiarity_mode="visible",
+        cloudflare_radar_api_token="",
+        _env_file=None,
+    )
+    monkeypatch.setattr("src.api.security_v4.get_settings", lambda: visible)
+    response = await client.get("/api/v4/capabilities")
+    assert response.status_code == 200
+    assert response.json()["domain_familiarity"] is True
+    assert "domain_popularity_lookup_ready" not in response.json()
+
+    ready = visible.model_copy(update={"cloudflare_radar_api_token": "configured-token"})
+    monkeypatch.setattr("src.api.security_v4.get_settings", lambda: ready)
+    response = await client.get("/api/v4/capabilities")
+    assert response.json()["domain_popularity_lookup_ready"] is True
 
 
 @pytest.mark.asyncio

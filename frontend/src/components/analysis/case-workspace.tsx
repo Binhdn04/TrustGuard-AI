@@ -22,6 +22,7 @@ import { AnalysisReportForm } from "./analysis-report-form";
 import { CaseSignalMap } from "./case-signal-map";
 import { ConversationPanel } from "./conversation-panel";
 import { EvidenceDeck } from "./evidence-deck";
+import { DomainIdentitySummary } from "./domain-identity-summary";
 import { InvestigationTimelineV4 } from "./investigation-timeline-v4";
 import { OfficialVerificationPanel } from "./official-verification-panel";
 import { PageCapturePanel } from "./page-capture-panel";
@@ -127,6 +128,7 @@ function ActionPanel({
               mode={mode}
               showSimpleTechnicalDetails={mode !== "simple"}
             />
+            {mode === "simple" && <DomainIdentitySummary viewModel={completed} mode="simple" />}
             {mode === "simple" && (
               <PageCapturePanel
                 analysisId={latest!.analysis_id}
@@ -195,6 +197,7 @@ function ActionPanel({
               </details>
             ) : (
               <>
+                <DomainIdentitySummary viewModel={completed} mode="analyst" />
                 <OfficialVerificationPanel viewModel={completed} mode="analyst" />
                 <PageCapturePanel
                   analysisId={latest!.analysis_id}

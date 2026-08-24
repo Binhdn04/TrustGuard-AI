@@ -104,6 +104,7 @@ export type SecurityInvestigationToolV4 =
   | "redirect_resolver"
   | "rdap"
   | "url_reputation"
+  | "domain_familiarity"
   | "brand_match"
   | "whitelist_lookup"
   | "security_memory_lookup";
@@ -118,7 +119,8 @@ export type SecurityEvidenceTypeV4 =
   | "url_reputation"
   | "brand_match"
   | "whitelist"
-  | "reviewed_security_memory";
+  | "reviewed_security_memory"
+  | "domain_familiarity";
 
 export type TrustLifecycleV4 = "active" | "disabled";
 export type WhitelistScopeV4 = "domain" | "url" | "contact";
@@ -203,6 +205,8 @@ export interface SecurityCapabilitiesResponseV4 {
   official_link_verification?: true;
   official_web_search_ready?: true;
   security_page_capture?: true;
+  domain_familiarity?: true;
+  domain_popularity_lookup_ready?: true;
 }
 
 export interface DerivedQueryProvenanceV4 {
@@ -461,6 +465,23 @@ export interface SecurityEvidenceV4 {
   observed_at: string;
   confidence: number | null;
   provenance_ref: string | null;
+  domain_familiarity?: DomainFamiliarityDetailsV4 | null;
+}
+
+export type DomainFamiliarityClassificationV4 =
+  | "reviewed_first_party"
+  | "reviewed_platform_service"
+  | "ranked_domain";
+
+export interface DomainFamiliarityDetailsV4 {
+  observed_host: string;
+  registrable_domain: string;
+  classification: DomainFamiliarityClassificationV4;
+  platform_name: string | null;
+  shared_platform: boolean;
+  popularity_rank: number | null;
+  popularity_bucket: number | null;
+  dataset_window_end: string | null;
 }
 
 export interface SecurityToolErrorV4 {

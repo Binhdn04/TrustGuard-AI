@@ -9,6 +9,7 @@ from src.models import (
     SECURITY_RISK_POLICY_VERSION_V2,
     SECURITY_RISK_POLICY_VERSION_V3,
     SECURITY_RISK_POLICY_VERSION_V4,
+    SECURITY_RISK_POLICY_VERSION_V5,
     ExposureStateV4,
     IdentityAssociationAssuranceV4,
     PotentialThreatV4,
@@ -57,6 +58,12 @@ _SENSITIVE_ACTIONS = {
     RequestedActionV4.TRANSFER_MONEY,
     RequestedActionV4.PAY_FEE,
     RequestedActionV4.PROVIDE_PERSONAL_INFORMATION,
+    RequestedActionV4.INSTALL_APP,
+    RequestedActionV4.SHARE_SCREEN,
+    RequestedActionV4.SCAN_QR,
+    RequestedActionV4.SUBMIT_FORM,
+    RequestedActionV4.REGISTER_OR_APPLY,
+    RequestedActionV4.DOWNLOAD_FILE,
 }
 _INCIDENT_EXPOSURES = {
     ExposureStateV4.LINK_OPENED,
@@ -185,7 +192,12 @@ def _has_sensitive_action(scope: SecurityScopeResponseV4) -> bool:
     )
 
 
-def _actions(scope: SecurityScopeResponseV4, risk: SecurityRiskV4) -> list[SecurityRecommendedActionV4]:
+def _actions(
+    scope: SecurityScopeResponseV4,
+    risk: SecurityRiskV4,
+    *,
+    familiarity_low_risk: bool = False,
+) -> list[SecurityRecommendedActionV4]:
     context = scope.security_context
     if context is None:
         return [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION]
@@ -220,7 +232,7 @@ def _actions(scope: SecurityScopeResponseV4, risk: SecurityRiskV4) -> list[Secur
         # unconditional instruction to avoid the verified link.
         actions.append(
             SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
-            if risk is SecurityRiskV4.SAFE
+            if risk is SecurityRiskV4.SAFE or familiarity_low_risk
             else SecurityRecommendedActionV4.DO_NOT_OPEN_LINK
         )
     if context.credential_request:
@@ -258,6 +270,7 @@ def assess_security_risk(
     *,
     memory_enabled: bool = False,
     official_verification_enforced: bool = False,
+    familiarity_enforced: bool = False,
 ) -> SecurityScopeResponseV4:
     """Apply the versioned v4 policy without claim-stance or prose inputs."""
     context = scope.security_context
@@ -290,6 +303,11 @@ def assess_security_risk(
     safe_refs: list[str] = []
     reviewed_risk_refs: list[str] = []
     reviewed_suppressions: list[SecurityEvidenceV4] = []
+    platform_familiarity = [
+        item
+        for item in scope.evidence
+        if item.type.value == "domain_familiarity" and item.signal == "reviewed_platform_service"
+    ]
     weak_contributions: list[_Contribution] = []
     residual_official_mismatch = False
     for item in scope.evidence:
@@ -309,9 +327,16 @@ def assess_security_risk(
             strong_refs.append(item.evidence_ref)
         if item.type.value == "url_reputation" and signal_parts & _MALICIOUS_REPUTATION_SIGNALS:
             strong_refs.append(item.evidence_ref)
-        if signal_parts & _SAFE_SIGNALS:
+        if signal_parts & _SAFE_SIGNALS and not (familiarity_enforced and item.signal.casefold() == "official_match"):
             safe_refs.append(item.evidence_ref)
         points = max((_WEAK_SIGNAL_POINTS.get(signal, 0) for signal in signal_parts), default=0)
+        if (
+            familiarity_enforced
+            and item.type.value == "brand_match"
+            and "domain_mismatch" in signal_parts
+            and any(_target_matches(reviewed.target, item.target) for reviewed in platform_familiarity)
+        ):
+            points = 0
         if has_whitelist and item.type.value in {"local_url_rule", "rdap"}:
             points = 0
         if points and official_verification_enforced:
@@ -426,6 +451,33 @@ def assess_security_risk(
         risk = SecurityRiskV4.SAFE
     else:
         risk = _risk_for_score(score)
+    familiarity_refs = [
+        item.evidence_ref
+        for item in scope.evidence
+        if item.type.value == "domain_familiarity"
+        and (
+            item.signal in {"reviewed_first_party_domain", "popular_top_100", "popular_top_10000"}
+            or (
+                item.signal == "reviewed_platform_service"
+                and scope.official_verification is not None
+                and scope.official_verification.resource_verification.status
+                in {VerificationStatusV4.VERIFIED, VerificationStatusV4.PARTIALLY_VERIFIED}
+            )
+        )
+    ]
+    if (
+        familiarity_enforced
+        and risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
+        and score == 0
+        and familiarity_refs
+        and not scope.errors
+        and not official_conflicting
+        and not identity_conflicting
+        and not identity_confirmed_mismatch
+        and context.requested_action in {None, RequestedActionV4.OPEN_LINK}
+        and not _has_sensitive_action(scope)
+    ):
+        risk = SecurityRiskV4.LOW_RISK
     if identity_confirmed_mismatch and risk in {
         SecurityRiskV4.INSUFFICIENT_EVIDENCE,
         SecurityRiskV4.LOW_RISK,
@@ -436,6 +488,9 @@ def assess_security_risk(
     # Registration/mismatch-style evidence alone is explicitly non-malicious.
     if contributions and not official_conflicting and sum(item.points for item in contributions) == weak_external:
         risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS
+    familiarity_low_risk = bool(
+        familiarity_enforced and risk is SecurityRiskV4.LOW_RISK and score == 0 and familiarity_refs
+    )
 
     refs = list(
         dict.fromkeys(
@@ -443,6 +498,7 @@ def assess_security_risk(
             + strong_refs
             + safe_refs
             + reviewed_risk_refs
+            + (familiarity_refs if familiarity_enforced and risk is SecurityRiskV4.LOW_RISK else [])
             + ([item.evidence_ref for item in reviewed_suppressions] if memory_enabled else [])
         )
     )
@@ -477,7 +533,9 @@ def assess_security_risk(
         confidence=round(min(confidence, 0.95), 2),
         threat_type=context.potential_threat,
         policy_version=(
-            SECURITY_RISK_POLICY_VERSION_V4
+            SECURITY_RISK_POLICY_VERSION_V5
+            if familiarity_enforced
+            else SECURITY_RISK_POLICY_VERSION_V4
             if context.entity_url_claims or identity_confirmed_mismatch or ai_understanding_fallback
             else (
                 SECURITY_RISK_POLICY_VERSION_V3
@@ -485,7 +543,7 @@ def assess_security_risk(
                 else (SECURITY_RISK_POLICY_VERSION_V2 if memory_enabled else SECURITY_RISK_POLICY_VERSION)
             )
         ),
-        recommended_actions=_actions(scope, risk),
+        recommended_actions=_actions(scope, risk, familiarity_low_risk=familiarity_low_risk),
         explanation=_explanation(risk, grounded),
         explanation_evidence_refs=refs,
     )

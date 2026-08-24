@@ -24,6 +24,7 @@ SECURITY_RISK_POLICY_VERSION = "security-risk-v1"
 SECURITY_RISK_POLICY_VERSION_V2 = "security-risk-v2"
 SECURITY_RISK_POLICY_VERSION_V3 = "security-risk-v3"
 SECURITY_RISK_POLICY_VERSION_V4 = "security-risk-v4"
+SECURITY_RISK_POLICY_VERSION_V5 = "security-risk-v5"
 SECURITY_UNDERSTANDING_VERSION_V1 = "security-understanding-v1"
 SECURITY_UNDERSTANDING_VERSION_V2 = "security-understanding-v2"
 SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
@@ -302,6 +303,7 @@ class SecurityInvestigationToolV4(StrEnum):
     REDIRECT_RESOLVER = "redirect_resolver"
     RDAP = "rdap"
     URL_REPUTATION = "url_reputation"
+    DOMAIN_FAMILIARITY = "domain_familiarity"
     BRAND_MATCH = "brand_match"
     WHITELIST_LOOKUP = "whitelist_lookup"
     SECURITY_MEMORY_LOOKUP = "security_memory_lookup"
@@ -331,6 +333,38 @@ class SecurityEvidenceTypeV4(StrEnum):
     BRAND_MATCH = "brand_match"
     WHITELIST = "whitelist"
     REVIEWED_SECURITY_MEMORY = "reviewed_security_memory"
+    DOMAIN_FAMILIARITY = "domain_familiarity"
+
+
+class DomainFamiliarityClassificationV4(StrEnum):
+    REVIEWED_FIRST_PARTY = "reviewed_first_party"
+    REVIEWED_PLATFORM_SERVICE = "reviewed_platform_service"
+    RANKED_DOMAIN = "ranked_domain"
+
+
+class DomainFamiliarityDetailsV4(SecurityContractModel):
+    observed_host: str = Field(min_length=1, max_length=253)
+    registrable_domain: str = Field(min_length=1, max_length=253)
+    classification: DomainFamiliarityClassificationV4
+    platform_name: str | None = Field(default=None, max_length=200)
+    shared_platform: bool = False
+    popularity_rank: int | None = Field(default=None, ge=1)
+    popularity_bucket: int | None = Field(default=None, ge=1)
+    dataset_window_end: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_classification_fields(self) -> Self:
+        if self.classification is DomainFamiliarityClassificationV4.REVIEWED_PLATFORM_SERVICE:
+            if not self.shared_platform or self.platform_name is None:
+                raise ValueError("reviewed platform familiarity requires platform_name and shared_platform")
+        elif self.shared_platform:
+            raise ValueError("shared_platform is only valid for reviewed platform services")
+        if self.classification is DomainFamiliarityClassificationV4.RANKED_DOMAIN:
+            if self.popularity_rank is None and self.popularity_bucket is None:
+                raise ValueError("ranked familiarity requires rank or bucket")
+        elif self.popularity_rank is not None or self.popularity_bucket is not None:
+            raise ValueError("popularity values are only valid for ranked familiarity")
+        return self
 
 
 class TrustLifecycleV4(StrEnum):
@@ -378,6 +412,14 @@ class SecurityEvidenceV4(SecurityContractModel):
     observed_at: datetime
     confidence: float | None = Field(default=None, ge=0, le=1)
     provenance_ref: str | None = None
+    domain_familiarity: DomainFamiliarityDetailsV4 | None = None
+
+    @model_validator(mode="after")
+    def validate_domain_familiarity_details(self) -> Self:
+        is_familiarity = self.type is SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY
+        if is_familiarity != (self.domain_familiarity is not None):
+            raise ValueError("domain_familiarity details must appear only on domain familiarity evidence")
+        return self
 
 
 class SecurityToolErrorV4(SecurityContractModel):
@@ -435,6 +477,8 @@ class OfficialIdentityV4(SecurityContractModel):
 
     @model_validator(mode="after")
     def validate_interval(self) -> Self:
+        if self.relationship == "platform_service" and self.identity_type is not OfficialIdentityTypeV4.DOMAIN:
+            raise ValueError("platform_service identities must use identity_type=domain")
         if self.effective_until is not None:
             if self.effective_from is None or self.effective_until <= self.effective_from:
                 raise ValueError("identity effective_until must be after effective_from")
@@ -825,9 +869,10 @@ class SecurityScopeResponseV4(SecurityContractModel):
     score: int | None = Field(default=None, ge=0, le=100)
     confidence: float | None = Field(default=None, ge=0, le=1)
     threat_type: PotentialThreatV4 | None = None
-    policy_version: Literal["security-risk-v1", "security-risk-v2", "security-risk-v3", "security-risk-v4"] | None = (
-        None
-    )
+    policy_version: (
+        Literal["security-risk-v1", "security-risk-v2", "security-risk-v3", "security-risk-v4", "security-risk-v5"]
+        | None
+    ) = None
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -1011,6 +1056,8 @@ class SecurityCapabilitiesResponseV4(SecurityContractModel):
     official_link_verification: Literal[True] | None = None
     official_web_search_ready: Literal[True] | None = None
     security_page_capture: Literal[True] | None = None
+    domain_familiarity: Literal[True] | None = None
+    domain_popularity_lookup_ready: Literal[True] | None = None
 
 
 class SecurityPageCaptureRequestV4(SecurityContractModel):
@@ -1382,6 +1429,8 @@ class SecurityAdminAuditPageV4(SecurityContractModel):
 
 
 __all__ = [
+    "DomainFamiliarityClassificationV4",
+    "DomainFamiliarityDetailsV4",
     "CONTRACT_VERSION_V4",
     "OFFICIAL_LINK_VERIFICATION_VERSION",
     "OFFICIAL_LINK_VERIFICATION_VERSION_V1",
@@ -1395,6 +1444,7 @@ __all__ = [
     "SECURITY_RISK_POLICY_VERSION_V2",
     "SECURITY_RISK_POLICY_VERSION_V3",
     "SECURITY_RISK_POLICY_VERSION_V4",
+    "SECURITY_RISK_POLICY_VERSION_V5",
     "SECURITY_UNDERSTANDING_VERSION",
     "SECURITY_UNDERSTANDING_VERSION_V1",
     "SECURITY_UNDERSTANDING_VERSION_V2",

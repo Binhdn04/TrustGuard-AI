@@ -10,11 +10,16 @@ from urllib.parse import urlsplit, urlunsplit
 
 from src.agents.nodes.planning import step_id_for
 from src.agents.nodes.rules import normalize_url
+from src.agents.tools.domains import canonicalize_registrable_domain
 from src.models import (
     BrandRecordV4,
+    DomainFamiliarityClassificationV4,
+    DomainFamiliarityDetailsV4,
     EntityUrlRelationshipV4,
     InvestigationStepV4,
     OfficialIdentityMatchScopeV4,
+    OfficialIdentityTypeV4,
+    OfficialIdentityV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
@@ -63,6 +68,7 @@ def _evidence(
     target: str | None = None,
     confidence: float | None = None,
     provenance_ref: str | None = None,
+    domain_familiarity: DomainFamiliarityDetailsV4 | None = None,
 ) -> SecurityEvidenceV4:
     return SecurityEvidenceV4(
         evidence_ref=_ref(kind.value, source, target or "", signal),
@@ -74,6 +80,7 @@ def _evidence(
         observed_at=observed_at,
         confidence=confidence,
         provenance_ref=provenance_ref,
+        domain_familiarity=domain_familiarity,
     )
 
 
@@ -128,6 +135,8 @@ def _target_owner(
     brand_owners: dict[str, tuple[str, str]] = {}
     for brand in brands:
         for identity in runtime_official_identities(brand, observed_at):
+            if identity.relationship == "platform_service":
+                continue
             candidate = canonical_whitelist_url(identity.canonical_value)
             identity_host = (urlsplit(candidate or f"//{identity.canonical_value}").hostname or "").casefold()
             matched = (
@@ -158,6 +167,73 @@ def _target_owner(
                 policy = getattr(entry, "policy_version", "source-registry")
                 source_owners[_fold(publisher)] = (publisher, f"source:{source_id}:{policy}")
     return next(iter(source_owners.values())) if len(source_owners) == 1 else None
+
+
+def _reviewed_familiarity_evidence(
+    urls: list[str],
+    brands: list[BrandRecordV4],
+    observed_at: datetime,
+) -> list[SecurityEvidenceV4]:
+    evidence: list[SecurityEvidenceV4] = []
+    for url in urls:
+        host = (urlsplit(url).hostname or "").casefold().rstrip(".")
+        if not host:
+            continue
+        matches: list[tuple[int, BrandRecordV4, OfficialIdentityV4]] = []
+        for brand in brands:
+            for identity in runtime_official_identities(brand, observed_at):
+                if not identity.reviewed or identity.identity_type not in {
+                    OfficialIdentityTypeV4.PRIMARY_WEBSITE,
+                    OfficialIdentityTypeV4.DOMAIN,
+                }:
+                    continue
+                identity_host = identity.canonical_value.casefold().rstrip(".")
+                if identity.match_scope is OfficialIdentityMatchScopeV4.HOST_AND_SUBDOMAINS:
+                    matched = _is_domain_or_subdomain(host, identity_host)
+                else:
+                    matched = host == identity_host
+                if matched:
+                    matches.append((len(identity_host.split(".")), brand, identity))
+        if not matches:
+            continue
+        _, brand, identity = max(matches, key=lambda item: item[0])
+        is_platform = identity.relationship == "platform_service"
+        classification = (
+            DomainFamiliarityClassificationV4.REVIEWED_PLATFORM_SERVICE
+            if is_platform
+            else DomainFamiliarityClassificationV4.REVIEWED_FIRST_PARTY
+        )
+        signal = "reviewed_platform_service" if is_platform else "reviewed_first_party_domain"
+        try:
+            registrable = canonicalize_registrable_domain(host)
+        except ValueError:
+            continue
+        details = DomainFamiliarityDetailsV4(
+            observed_host=host,
+            registrable_domain=registrable,
+            classification=classification,
+            platform_name=identity.entity_name if is_platform else None,
+            shared_platform=is_platform,
+        )
+        evidence.append(
+            _evidence(
+                SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY,
+                "brand-registry",
+                signal,
+                (
+                    f"{host} là dịch vụ nền tảng đã được review của {identity.entity_name}; "
+                    "nền tảng quen thuộc không bảo chứng publisher hoặc nội dung cụ thể."
+                    if is_platform
+                    else f"{host} khớp domain first-party đã được review của {brand.name}."
+                ),
+                observed_at,
+                target=host,
+                confidence=1.0,
+                provenance_ref=f"brand:{brand.brand_id}:{identity.policy_version}",
+                domain_familiarity=details,
+            )
+        )
+    return evidence
 
 
 class BrandMatcher:
@@ -296,11 +372,13 @@ class SecurityTrustService:
         *,
         matcher: BrandMatcher | None = None,
         source_registry: ReviewedSourceIdentityRegistry | None = None,
+        domain_familiarity_enabled: bool = False,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._repository = repository
         self._matcher = matcher or BrandMatcher(source_registry)
         self._clock = clock
+        self._domain_familiarity_enabled = domain_familiarity_enabled
 
     async def enrich(
         self, request: SecurityTriageCreateRequestV4, scope: SecurityScopeResponseV4
@@ -345,6 +423,8 @@ class SecurityTrustService:
         ]
         brands = await self._repository.list_active_brands(now) if brand_indexes else []
         brand, evidence = self._matcher.match(request, scope, brands, now) if brand_indexes else (None, [])
+        if brand_indexes and self._domain_familiarity_enabled:
+            evidence.extend(_reviewed_familiarity_evidence(scope.security_context.urls, brands, now))
         for index in brand_indexes:
             plan[index] = plan[index].model_copy(
                 update={

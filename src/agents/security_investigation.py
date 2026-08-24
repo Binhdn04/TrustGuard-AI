@@ -10,16 +10,20 @@ from urllib.parse import urlsplit
 
 from src.agents.nodes.planning import step_id_for
 from src.agents.nodes.rules import build_rule_check_node
+from src.agents.tools.domains import canonicalize_registrable_domain
 from src.agents.tools.models import DnsResolutionEnvelope, NormalizedToolResult, ToolErrorCode, ToolResultStatus
 from src.agents.tools.protocols import (
     BlacklistRepository,
     DnsEvidenceProvider,
+    DomainFamiliarityProvider,
     RdapProvider,
     RedirectResolver,
     ToolExecutionLedger,
     UrlReputationCascade,
 )
 from src.models import (
+    DomainFamiliarityClassificationV4,
+    DomainFamiliarityDetailsV4,
     Evidence,
     InvestigationStepV4,
     SecurityContextV4,
@@ -86,6 +90,7 @@ def _evidence(
     target: str | None = None,
     confidence: float | None = None,
     provenance_ref: str | None = None,
+    domain_familiarity: DomainFamiliarityDetailsV4 | None = None,
 ) -> SecurityEvidenceV4:
     return SecurityEvidenceV4(
         evidence_ref=_evidence_ref(kind.value, source, target, signal),
@@ -97,6 +102,7 @@ def _evidence(
         observed_at=observed_at,
         confidence=confidence,
         provenance_ref=provenance_ref,
+        domain_familiarity=domain_familiarity,
     )
 
 
@@ -124,6 +130,7 @@ def build_policy_constrained_investigation_plan(
     context: SecurityContextV4,
     *,
     external_url_lookup: bool,
+    domain_familiarity_enabled: bool = False,
 ) -> list[InvestigationStepV4]:
     """Create a safe plan exclusively from normalized SecurityContext targets."""
     plan: list[InvestigationStepV4] = []
@@ -136,6 +143,7 @@ def build_policy_constrained_investigation_plan(
     )
     plan.append(context_step)
     seen_domains: set[str] = set()
+    seen_familiarity_domains: set[str] = set()
     for url in context.urls:
         local = _step(
             SecurityInvestigationToolV4.LOCAL_URL_RULES,
@@ -199,6 +207,23 @@ def build_policy_constrained_investigation_plan(
                     status_reason=external_reason,
                 )
             )
+        if domain_familiarity_enabled:
+            try:
+                registrable = canonicalize_registrable_domain(host)
+            except ValueError:
+                registrable = None
+            if registrable is not None and registrable not in seen_familiarity_domains:
+                plan.append(
+                    _step(
+                        SecurityInvestigationToolV4.DOMAIN_FAMILIARITY,
+                        registrable,
+                        "domain_popularity_context",
+                        depends_on=[blacklist.step_id],
+                        status=external_status,
+                        status_reason=external_reason,
+                    )
+                )
+                seen_familiarity_domains.add(registrable)
     needs_trust_routing = bool(context.urls or context.claimed_entity) or context.scenario in {
         SecurityScenarioV4.RECRUITMENT,
         SecurityScenarioV4.PROMOTION_PRIZE,
@@ -335,6 +360,8 @@ class SecurityInvestigationService:
         redirect: RedirectResolver | None = None,
         rdap: RdapProvider | None = None,
         reputation: UrlReputationCascade | None = None,
+        domain_familiarity: DomainFamiliarityProvider | None = None,
+        domain_familiarity_enabled: bool = False,
         execution_ledger: ToolExecutionLedger | None = None,
         planning_enabled: bool = False,
         assistant_model: SecurityAssistantModel | None = None,
@@ -351,6 +378,8 @@ class SecurityInvestigationService:
         self._redirect = redirect
         self._rdap = rdap
         self._reputation = reputation
+        self._domain_familiarity = domain_familiarity
+        self._domain_familiarity_enabled = domain_familiarity_enabled
         self._execution_ledger = execution_ledger
         self._planning_enabled = planning_enabled
         self._assistant_model = assistant_model
@@ -373,6 +402,7 @@ class SecurityInvestigationService:
         plan = build_policy_constrained_investigation_plan(
             context,
             external_url_lookup=request.consent.external_url_lookup,
+            domain_familiarity_enabled=self._domain_familiarity_enabled,
         )
         evidence = [self._context_evidence(context)]
         errors: list[SecurityToolErrorV4] = []
@@ -502,6 +532,7 @@ class SecurityInvestigationService:
                     SecurityInvestigationToolV4.REDIRECT_RESOLVER,
                     SecurityInvestigationToolV4.RDAP,
                     SecurityInvestigationToolV4.URL_REPUTATION,
+                    SecurityInvestigationToolV4.DOMAIN_FAMILIARITY,
                 }
                 and not request.consent.external_url_lookup
             ):
@@ -603,7 +634,20 @@ class SecurityInvestigationService:
             plan[index] = item.model_copy(
                 update={"status": SecurityInvestigationStepStatusV4.COMPLETED, "status_reason": "tool_completed"}
             )
-            produced, produced_limitations = self._provider_evidence(item, envelope)
+            observed_host = None
+            if item.tool is SecurityInvestigationToolV4.DOMAIN_FAMILIARITY:
+                for url in context.urls:
+                    try:
+                        if canonicalize_registrable_domain(url) == item.target:
+                            observed_host = (urlsplit(url).hostname or item.target).casefold()
+                            break
+                    except ValueError:
+                        continue
+            produced, produced_limitations = self._provider_evidence(
+                item,
+                envelope,
+                observed_host=observed_host,
+            )
             evidence.extend(produced)
             limitations.extend(produced_limitations)
 
@@ -678,6 +722,8 @@ class SecurityInvestigationService:
             return lambda: self._rdap.lookup(step.target)
         if step.tool is SecurityInvestigationToolV4.URL_REPUTATION and self._reputation is not None:
             return lambda: self._reputation.assess(step.target, high_risk=high_risk)
+        if step.tool is SecurityInvestigationToolV4.DOMAIN_FAMILIARITY and self._domain_familiarity is not None:
+            return lambda: self._domain_familiarity.lookup(step.target)
         return None
 
     def _provider_name(self, step: InvestigationStepV4) -> str:
@@ -686,6 +732,7 @@ class SecurityInvestigationService:
             SecurityInvestigationToolV4.REDIRECT_RESOLVER: self._redirect,
             SecurityInvestigationToolV4.RDAP: self._rdap,
             SecurityInvestigationToolV4.URL_REPUTATION: self._reputation,
+            SecurityInvestigationToolV4.DOMAIN_FAMILIARITY: self._domain_familiarity,
         }[step.tool]
         return str(getattr(adapter, "provider", adapter.__class__.__name__))
 
@@ -727,7 +774,8 @@ class SecurityInvestigationService:
     ) -> tuple[ToolEnvelope | None, int]:
         used = 0
         last: ToolEnvelope | None = None
-        for _attempt in range(min(self._max_retries + 1, budget_remaining)):
+        attempt_limit = 1 if step.tool is SecurityInvestigationToolV4.DOMAIN_FAMILIARITY else self._max_retries + 1
+        for _attempt in range(min(attempt_limit, budget_remaining)):
             remaining = deadline_at - monotonic()
             if remaining <= 0:
                 return None, used
@@ -779,6 +827,7 @@ class SecurityInvestigationService:
             SecurityInvestigationToolV4.REDIRECT_RESOLVER: ToolName.REDIRECT_RESOLVER,
             SecurityInvestigationToolV4.RDAP: ToolName.RDAP,
             SecurityInvestigationToolV4.URL_REPUTATION: ToolName.URL_REPUTATION,
+            SecurityInvestigationToolV4.DOMAIN_FAMILIARITY: ToolName.DOMAIN_FAMILIARITY,
         }[step.tool]
         return NormalizedToolResult(
             status=ToolResultStatus.FAILED,
@@ -796,6 +845,8 @@ class SecurityInvestigationService:
         self,
         step: InvestigationStepV4,
         envelope: ToolEnvelope,
+        *,
+        observed_host: str | None = None,
     ) -> tuple[list[SecurityEvidenceV4], list[str]]:
         result = envelope.result
         if result is None:
@@ -877,6 +928,38 @@ class SecurityInvestigationService:
                     provenance_ref=provenance,
                 )
             ], limitations
+        if step.tool is SecurityInvestigationToolV4.DOMAIN_FAMILIARITY:
+            if not result.matched:
+                return [], ["Không có dữ liệu familiarity cho domain; no-hit không phải tín hiệu unsafe."]
+            rank = result.popularity_rank
+            bucket = result.popularity_bucket
+            if rank is not None and rank <= 100:
+                signal = "popular_top_100"
+            elif (rank is not None and rank <= 10_000) or (bucket is not None and bucket <= 10_000):
+                signal = "popular_top_10000"
+            else:
+                signal = "ranked_domain"
+            details = DomainFamiliarityDetailsV4(
+                observed_host=observed_host or result.registrable_domain,
+                registrable_domain=result.registrable_domain,
+                classification=DomainFamiliarityClassificationV4.RANKED_DOMAIN,
+                popularity_rank=rank,
+                popularity_bucket=bucket,
+                dataset_window_end=result.dataset_window_end,
+            )
+            return [
+                _evidence(
+                    SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY,
+                    usage.provider,
+                    signal,
+                    "Domain xuất hiện trong dữ liệu xếp hạng phổ biến; độ phổ biến không bảo chứng nội dung.",
+                    result.observed_at,
+                    target=result.registrable_domain,
+                    confidence=0.8,
+                    provenance_ref=provenance,
+                    domain_familiarity=details,
+                )
+            ], []
         return [], []
 
     async def aclose(self) -> None:
@@ -886,6 +969,7 @@ class SecurityInvestigationService:
             self._redirect,
             self._rdap,
             self._reputation,
+            self._domain_familiarity,
             self._blacklist,
             self._execution_ledger,
         ):

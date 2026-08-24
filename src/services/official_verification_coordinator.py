@@ -403,6 +403,8 @@ def _identity_url(identity: OfficialIdentityV4) -> str | None:
 
 
 def _local_source(identity: OfficialIdentityV4) -> OfficialSourceReferenceV4 | None:
+    if identity.relationship == "platform_service":
+        return None
     candidate = _identity_url(identity)
     if candidate is None:
         return None
@@ -620,6 +622,10 @@ class OfficialLinkVerificationCoordinator:
         )
         brand = resolution.brand if resolution.status is BrandResolutionStatus.RESOLVED else None
         identities = tuple(identity for identity in resolution.identities if identity.reviewed)
+        platform_identities = tuple(identity for identity in identities if identity.relationship == "platform_service")
+        verifiable_identities = tuple(
+            identity for identity in identities if identity.relationship != "platform_service"
+        )
         limitations: list[str] = []
         local_sources = [source for identity in identities if (source := _local_source(identity)) is not None]
         publisher = self._publisher_component(
@@ -652,7 +658,16 @@ class OfficialLinkVerificationCoordinator:
                 return
             if normalized.canonical_url in candidate_keys:
                 return
-            for identity in identities:
+            for platform_identity in platform_identities:
+                try:
+                    platform_assessment = assess_final_page_identity(url, [platform_identity])
+                except UrlNormalizationError:
+                    continue
+                if platform_assessment.status is FinalPageIdentityStatus.ACCEPTED:
+                    # A more-specific reviewed shared platform must not inherit
+                    # first-party source status from a broader parent domain.
+                    return
+            for identity in verifiable_identities:
                 try:
                     assessment = assess_final_page_identity(url, [identity])
                 except UrlNormalizationError:
@@ -662,7 +677,9 @@ class OfficialLinkVerificationCoordinator:
                     candidates.append(_Candidate(normalized.fetch_url, normalized.canonical_url, identity))
                     return
 
-        local_candidate_urls = [value for identity in identities if (value := _identity_url(identity)) is not None]
+        local_candidate_urls = [
+            value for identity in verifiable_identities if (value := _identity_url(identity)) is not None
+        ]
         queries = self._queries.build(intent)
         online_verification_needed = (
             intent.contract.claim_summary is not None or intent.contract.topic is not None or bool(user_urls)
@@ -694,7 +711,7 @@ class OfficialLinkVerificationCoordinator:
                 if page is not None:
                     pages.append(page)
 
-        if identities and online_verification_needed and request.consent.official_source_lookup:
+        if verifiable_identities and online_verification_needed and request.consent.official_source_lookup:
             if self._search is not None and queries:
                 for index, query in enumerate(queries[:_MAX_SEARCH_ATTEMPTS]):
                     result = await self._search.search_one(
@@ -741,7 +758,7 @@ class OfficialLinkVerificationCoordinator:
                     user_urls,
                     claim_qualifiers,
                 )
-        elif identities and online_verification_needed:
+        elif verifiable_identities and online_verification_needed:
             limitations.append("official_source_consent_required")
 
         discovery_persistence_available = all(
@@ -768,7 +785,7 @@ class OfficialLinkVerificationCoordinator:
             ) = await self._discover_identity_associations(
                 intent,
                 user_urls,
-                identities,
+                verifiable_identities,
                 pages,
                 now,
                 official_consent=request.consent.official_source_lookup,
@@ -784,7 +801,7 @@ class OfficialLinkVerificationCoordinator:
 
         source_refs, link_evidence = self._public_evidence(
             brand,
-            identities,
+            verifiable_identities,
             local_sources,
             pages,
         )

@@ -458,6 +458,7 @@ async def create_security_analysis_v4(
         responses=responses,
         official_verification_rollout=get_official_verification_rollout_stage(),
         memory_lookup_resolver=resolve_memory_lookup if settings.security_memory_retrieval_enabled else None,
+        familiarity_enforced=settings.security_domain_familiarity_mode == "enforced",
     )
     try:
         observability = get_langfuse_observability()

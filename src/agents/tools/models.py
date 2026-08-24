@@ -38,6 +38,7 @@ class ToolName(StrEnum):
     REDIRECT_RESOLVER = "redirect_resolver"
     RDAP = "rdap"
     FACT_CHECK_CORPUS = "fact_check_corpus"
+    DOMAIN_FAMILIARITY = "domain_familiarity"
 
 
 class ToolResultStatus(StrEnum):
@@ -164,6 +165,21 @@ class UrlReputationCascadeResult(ToolContractModel):
     verdict: Verdict
     provider_conflict: bool
     policy_version: str
+
+
+class DomainFamiliarityResult(ToolContractModel):
+    registrable_domain: str
+    matched: bool
+    popularity_rank: int | None = Field(default=None, ge=1)
+    popularity_bucket: int | None = Field(default=None, ge=1)
+    dataset_window_end: datetime | None = None
+    observed_at: datetime
+
+    @model_validator(mode="after")
+    def validate_ranking(self) -> Self:
+        if self.matched != (self.popularity_rank is not None or self.popularity_bucket is not None):
+            raise ValueError("matched ranking requires rank or bucket and no-hit cannot contain either")
+        return self
 
 
 class DnsResolutionResult(ToolContractModel):

@@ -1,0 +1,52 @@
+{
+  "manifest_version": "reviewed-platforms-v1",
+  "policy_version": "reviewed-platform-familiarity-v1",
+  "effective_from": "2026-08-24T00:00:00Z",
+  "reviewer_requirement": "security_admin",
+  "brands": [
+    {
+      "name": "Google",
+      "aliases": ["Google"],
+      "primary_domain": "google.com",
+      "provenance": "https://about.google/brand-resource-center/; https://support.google.com/docs/",
+      "platform_services": [
+        {"domain": "docs.google.com", "name": "Google Docs", "provenance": "https://support.google.com/docs/"},
+        {"domain": "forms.google.com", "name": "Google Forms", "provenance": "https://support.google.com/docs/topic/9055404"},
+        {"domain": "forms.gle", "name": "Google Forms", "provenance": "https://support.google.com/docs/topic/9055404"},
+        {"domain": "youtube.com", "name": "YouTube", "provenance": "https://www.youtube.com/howyoutubeworks/"}
+      ]
+    },
+    {
+      "name": "Microsoft",
+      "aliases": ["Microsoft"],
+      "primary_domain": "microsoft.com",
+      "provenance": "https://www.microsoft.com/; https://support.microsoft.com/forms",
+      "platform_services": [
+        {"domain": "forms.office.com", "name": "Microsoft Forms", "provenance": "https://support.microsoft.com/forms"},
+        {"domain": "forms.microsoft.com", "name": "Microsoft Forms", "provenance": "https://support.microsoft.com/forms"},
+        {"domain": "forms.cloud.microsoft", "name": "Microsoft Forms", "provenance": "https://support.microsoft.com/forms"},
+        {"domain": "linkedin.com", "name": "LinkedIn", "provenance": "https://news.microsoft.com/announcement/microsoft-to-acquire-linkedin/"}
+      ]
+    },
+    {
+      "name": "Meta",
+      "aliases": ["Meta"],
+      "primary_domain": "meta.com",
+      "provenance": "https://about.meta.com/company-info/",
+      "platform_services": [
+        {"domain": "facebook.com", "name": "Facebook", "provenance": "https://about.meta.com/company-info/"},
+        {"domain": "instagram.com", "name": "Instagram", "provenance": "https://about.meta.com/company-info/"},
+        {"domain": "whatsapp.com", "name": "WhatsApp", "provenance": "https://about.meta.com/company-info/"}
+      ]
+    },
+    {
+      "name": "OpenAI",
+      "aliases": ["OpenAI", "ChatGPT"],
+      "primary_domain": "openai.com",
+      "provenance": "https://openai.com/; https://help.openai.com/",
+      "platform_services": [
+        {"domain": "chatgpt.com", "name": "ChatGPT", "provenance": "https://openai.com/chatgpt/overview/"}
+      ]
+    }
+  ]
+}

@@ -47,6 +47,7 @@ class SecurityTriagePipeline:
         official_verification_rollout: OfficialVerificationRolloutStage | None = None,
         memory_lookup: SecurityMemoryLookupTool | None = None,
         memory_lookup_resolver: MemoryLookupResolver | None = None,
+        familiarity_enforced: bool = False,
     ) -> None:
         if (investigation is None) == (investigation_resolver is None):
             raise ValueError("provide exactly one investigation service or resolver")
@@ -63,6 +64,7 @@ class SecurityTriagePipeline:
         self._official_verification_rollout = official_verification_rollout
         self._memory_lookup = memory_lookup
         self._memory_lookup_resolver = memory_lookup_resolver
+        self._familiarity_enforced = familiarity_enforced
 
     async def process(
         self,
@@ -104,6 +106,7 @@ class SecurityTriagePipeline:
                     scoped,
                     memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
                     official_verification_enforced=self._risk_v3_enforced,
+                    familiarity_enforced=self._familiarity_enforced,
                 )
                 self._update_risk_observation(observation, scoped)
             if progress is not None:
@@ -186,6 +189,7 @@ class SecurityTriagePipeline:
                     scoped,
                     memory_enabled=bool(memory_lookup and memory_lookup.enabled and owner_id),
                     official_verification_enforced=self._risk_v3_enforced,
+                    familiarity_enforced=self._familiarity_enforced,
                 )
                 self._update_risk_observation(observation, scoped)
             if progress is not None:

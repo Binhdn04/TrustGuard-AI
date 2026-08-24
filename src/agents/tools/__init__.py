@@ -8,6 +8,7 @@ from src.agents.tools.advanced import (
 )
 from src.agents.tools.cache import CachedValue, VersionedMemoryCache
 from src.agents.tools.dns import SafeDnsEvidenceResolver
+from src.agents.tools.domain_familiarity import CloudflareRadarDomainFamiliarityProvider
 from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import (
@@ -25,6 +26,7 @@ from src.agents.tools.models import (
     DnsResolutionEnvelope,
     DnsResolutionError,
     DnsResolutionResult,
+    DomainFamiliarityResult,
     EmbeddingBatch,
     EmbeddingVector,
     ExtractedWebEvidence,
@@ -50,6 +52,7 @@ from src.agents.tools.protocols import (
     BlacklistRepository,
     ClaimRetriever,
     DnsEvidenceProvider,
+    DomainFamiliarityProvider,
     DomainIntelligence,
     FactCheckCorpus,
     RdapProvider,
@@ -76,6 +79,9 @@ __all__ = [
     "CacheStatus",
     "ClaimRetriever",
     "DomainIntelligence",
+    "DomainFamiliarityProvider",
+    "DomainFamiliarityResult",
+    "CloudflareRadarDomainFamiliarityProvider",
     "DnsEvidenceProvider",
     "DnsResolutionEnvelope",
     "DnsResolutionError",

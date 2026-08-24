@@ -54,6 +54,9 @@ populate a passing evidence file from offline fixtures or unit-test output.
 - credential/OTP, financial, recruitment, promotion và impersonation threats;
 - consent, DNS/RDAP/redirect/reputation failure, timeout và SSRF;
 - whitelist precedence, provider no-hit, mismatch và deterministic thresholds;
+- familiarity PSL/IDNA, Radar rank/bucket/no-hit/cache/timeout/429/circuit, consent và zero-call OOS;
+- reviewed `platform_service` most-specific precedence, no content-owner inference, no official fetch/exact-resource
+  verification; familiarity v5 không tạo `SAFE` và threat/sensitive context luôn giữ precedence;
 - conversation ownership/version/resume/retention/conflict;
 - admin RBAC, report/appeal conflict, action idempotency và audit;
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
@@ -86,6 +89,10 @@ Chỉ dùng reserved `.test` domains.
 | Reviewed exact third-party resource | `endorsed_third_party_service`; không mở trust cho partner domain |
 | Explicit ownership conflict | Auto mismatch tối thiểu low risk; reviewer confirmation tối thiểu suspicious |
 | Association quá 7 ngày | Không được dùng; consented request kế tiếp tạo version revalidation mới |
+| Reviewed first-party / Radar top-10K, score 0 | Có thể `LOW_RISK`, không `SAFE`; `PROCEED_WITH_CAUTION` |
+| Google Forms/shared platform chưa xác minh owner | Platform known; exact resource `UNVERIFIED`, không `SAFE` |
+| Popular platform có threat hit hoặc credential/payment | Threat/context precedence; familiarity không suppress |
+| Radar no-hit hoặc bucket >10K | Không negative evidence; không promote verdict |
 
 `MALICIOUS` cần confirmed evidence hoặc nhiều chỉ báo độc lập mạnh. Report phải ghi commit, dataset/version,
 environment và command; không copy số liệu test cũ.
