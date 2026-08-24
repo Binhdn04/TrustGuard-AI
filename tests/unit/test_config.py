@@ -51,11 +51,13 @@ def test_live_provider_profile_requires_only_security_v4_providers() -> None:
     settings = Settings(
         live_providers_required=True,
         virustotal_api_key="virus-total",
+        bkns_whois_api_key="",
         openai_api_key="",
         _env_file=None,
     )
 
     assert settings.openai_api_key == ""
+    assert settings.bkns_whois_api_key == ""
 
 
 @pytest.mark.parametrize(

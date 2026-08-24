@@ -41,7 +41,9 @@ async def _assess(message: str, *, blacklist: list[str] | None = None):
 async def test_high_risk_security_fixtures(message: str, expected: SecurityRiskV4) -> None:
     result = await _assess(message)
     assert result.risk is expected
-    assert result.policy_version == "security-risk-v1"
+    assert result.policy_version == (
+        "security-risk-v6" if result.security_context and result.security_context.claimed_entity else "security-risk-v1"
+    )
     assert result.explanation_evidence_refs
 
 
@@ -106,6 +108,28 @@ async def test_isolated_domain_signal_is_never_malicious(signal: str) -> None:
     payload["evidence"] = [evidence]
     result = assess_security_risk(type(investigated).model_validate(payload))
     assert result.risk in {SecurityRiskV4.LOW_RISK, SecurityRiskV4.SUSPICIOUS}
+
+
+@pytest.mark.asyncio
+async def test_bkns_recent_registration_uses_the_existing_fifteen_point_rdap_rule() -> None:
+    request = SecurityTriageCreateRequestV4(message="Kiểm tra link https://example.vn")
+    investigated = await SecurityInvestigationService().investigate(
+        request, SecurityTriageScopeService().assess(request)
+    )
+    evidence = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{'2' * 16}",
+        type=SecurityEvidenceTypeV4.RDAP,
+        source="bkns-whois/v2",
+        target="example.vn",
+        signal="recent_registration",
+        description="Registration metadata marks the domain as recently created.",
+        observed_at=NOW,
+    )
+    payload = investigated.model_dump()
+    payload["evidence"] = [evidence]
+    result = assess_security_risk(type(investigated).model_validate(payload))
+    assert result.score == 15
+    assert result.risk is SecurityRiskV4.LOW_RISK
 
 
 @pytest.mark.asyncio

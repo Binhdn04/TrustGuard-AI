@@ -203,7 +203,7 @@ Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Tron
 | `SECURITY_AI_MAX_CALLS_PER_TURN` | `8` | Tổng call budget cho một turn (tối đa 12). |
 | `SECURITY_AI_TIMEOUT_SECONDS` | `15` | Timeout mỗi AI call. |
 | `SECURITY_AI_TURN_DEADLINE_SECONDS` | `60` | Deadline chung cho understanding, planning và explanation. |
-| `SECURITY_AI_MAX_RETRIES` | `0` | Không retry tự động để một stage không chiếm ngân sách của stage sau. |
+| `SECURITY_AI_MAX_RETRIES` | `1` | Retry một lần khi provider lỗi, timeout hoặc trả structured output không hợp lệ; retry vẫn tính vào turn budget. |
 | `ANALYSIS_DEADLINE_SECONDS` | `60` | Deadline end-to-end, bao gồm AI và provider tools. |
 
 ### Investigation providers
@@ -211,6 +211,7 @@ Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Tron
 | Biến | Mặc định | Ý nghĩa |
 |---|---:|---|
 | `VIRUSTOTAL_API_KEY` | rỗng | Bật URL reputation provider. |
+| `BKNS_WHOIS_API_KEY` | rỗng | Optional: dùng BKNS WHOIS v2 trực tiếp cho `.vn` và fallback khi IANA không công bố RDAP service. |
 | `PROVIDER_TIMEOUT_SECONDS` | `10` | Timeout adapter bên ngoài. |
 | `SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS` | `16` | Network-call budget của một analysis. |
 | `SECURITY_INVESTIGATION_MAX_RETRIES` | `1` | Retry budget. |

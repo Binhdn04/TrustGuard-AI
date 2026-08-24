@@ -18,8 +18,8 @@ from src.agents.security_investigation import SecurityInvestigationService
 from src.agents.security_trust import SecurityTrustService
 from src.agents.tools import (
     CloudflareRadarDomainFamiliarityProvider,
+    DomainRegistrationProvider,
     GuardedRedirectResolver,
-    NormalizedRdapProvider,
     ProductionUrlReputationCascade,
     SafeDnsEvidenceResolver,
     VirusTotalUrlProvider,
@@ -385,7 +385,10 @@ def get_security_investigation_service() -> SecurityInvestigationService:
         blacklist=blacklist,
         dns=SafeDnsEvidenceResolver(),
         redirect=GuardedRedirectResolver(timeout=min(settings.provider_timeout_seconds, 5.0)),
-        rdap=NormalizedRdapProvider(timeout=min(settings.provider_timeout_seconds, 5.0)),
+        rdap=DomainRegistrationProvider(
+            settings.bkns_whois_api_key,
+            timeout=min(settings.provider_timeout_seconds, 5.0),
+        ),
         reputation=reputation,
         domain_familiarity=domain_familiarity,
         domain_familiarity_enabled=settings.security_domain_familiarity_mode != "off",

@@ -169,16 +169,21 @@ async def test_runtime_cancels_inflight_call_at_turn_deadline() -> None:
 @pytest.mark.asyncio
 async def test_openai_adapter_accounts_configured_token_cost() -> None:
     class StructuredClient:
-        def with_structured_output(self, schema, method, include_raw):
-            assert schema is Understanding
-            assert method == "function_calling"
+        def with_structured_output(self, schema, method, include_raw, strict):
+            confidence_schema = schema.model_json_schema()["properties"]["field_confidences"]
+            assert confidence_schema["type"] == "array"
+            assert method == "json_schema"
             assert include_raw is True
+            assert strict is True
             return self
 
         async def ainvoke(self, payload):
             assert "security_message_understanding" in payload
             return {
-                "parsed": {"sender_intent": "credential_theft"},
+                "parsed": {
+                    "sender_intent": "credential_theft",
+                    "field_confidences": [{"field_name": "sender_intent", "confidence": 0.9}],
+                },
                 "raw": SimpleNamespace(
                     usage_metadata={"input_tokens": 1_000, "output_tokens": 250},
                     response_metadata={"model_name": "priced-model-2026-08-01"},
@@ -198,6 +203,7 @@ async def test_openai_adapter_accounts_configured_token_cost() -> None:
     assert response.usage.output_tokens == 250
     assert response.usage.cost_usd == pytest.approx(0.004)
     assert response.model == "priced-model-2026-08-01"
+    assert response.output.field_confidences == {"sender_intent": 0.9}
 
 
 def test_understanding_treats_unknown_optional_candidates_as_omitted() -> None:
@@ -247,6 +253,7 @@ def test_security_ai_stages_default_on_but_require_a_provider(monkeypatch) -> No
         "SECURITY_AI_EXPLANATION_ENABLED",
         "SECURITY_ADMIN_COPILOT_ENABLED",
         "SECURITY_OFFICIAL_VERIFICATION_MODE",
+        "SECURITY_AI_MAX_RETRIES",
         "OPENAI_API_KEY",
         "TAVILY_API_KEY",
     ):
@@ -259,5 +266,6 @@ def test_security_ai_stages_default_on_but_require_a_provider(monkeypatch) -> No
     assert settings.security_memory_retrieval_enabled is False
     assert settings.security_admin_copilot_enabled is True
     assert settings.security_official_verification_mode == "visible"
+    assert settings.security_ai_max_retries == 1
     assert settings.enabled_security_capabilities()["official_link_verification"] is True
     assert settings.enabled_security_capabilities()["official_web_search_ready"] is False

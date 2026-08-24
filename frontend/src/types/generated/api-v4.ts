@@ -120,7 +120,8 @@ export type SecurityEvidenceTypeV4 =
   | "brand_match"
   | "whitelist"
   | "reviewed_security_memory"
-  | "domain_familiarity";
+  | "domain_familiarity"
+  | "official_verification";
 
 export type TrustLifecycleV4 = "active" | "disabled";
 export type WhitelistScopeV4 = "domain" | "url" | "contact";
@@ -287,11 +288,14 @@ export interface ClaimVerificationV4 extends OfficialVerificationComponentV4 { t
 export interface ResourceVerificationV4 extends OfficialVerificationComponentV4 { match: ResourceMatchV4 | null; }
 
 export interface OfficialLinkVerificationReportV4 {
-  schema_version: "official-link-verification-v1" | "official-link-verification-v2";
+  schema_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3";
   intent: VerificationIntentV4;
   publisher_verification: PublisherVerificationV4;
   claim_verification: ClaimVerificationV4;
   resource_verification: ResourceVerificationV4;
+  domain_ownership_verification?: OfficialVerificationComponentV4;
+  sender_verification?: OfficialVerificationComponentV4;
+  action_endorsement_verification?: OfficialVerificationComponentV4;
   overall_status: VerificationStatusV4;
   reason_code: string;
   source_refs: OfficialSourceReferenceV4[];
@@ -299,7 +303,7 @@ export interface OfficialLinkVerificationReportV4 {
   limitations: string[];
   identity_associations?: IdentityAssociationV4[];
   identity_evidence?: IdentityEvidenceObservationV4[];
-  policy_version: "official-link-verification-v1" | "official-link-verification-v2";
+  policy_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3";
 }
 
 export interface IdentityEvidenceObservationV4 {

@@ -176,8 +176,6 @@ _IMPERSONATION_ENTITIES = (
     ("hr yêu cầu", "HR"),
     ("nhà tuyển dụng", "nhà tuyển dụng"),
 )
-_IMPERSONATION_ACTION_TERMS = ("yêu cầu", "yeu cau", "thông báo", "thong bao", "gửi", "gui", "liên hệ")
-
 _SPORTS_TERMS = (
     "world cup",
     "vô địch",
@@ -605,12 +603,14 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
     if context.scenario is SecurityScenarioV4.RECRUITMENT:
         return (
             PotentialThreatV4.RECRUITMENT_IMPERSONATION
-            if context.claimed_entity == "Vingroup"
+            if context.impersonation_signals
             else PotentialThreatV4.RECRUITMENT_SCAM
         )
     if context.scenario is SecurityScenarioV4.PROMOTION_PRIZE:
         return (
-            PotentialThreatV4.BRAND_IMPERSONATION if context.claimed_entity else PotentialThreatV4.PROMOTION_PRIZE_SCAM
+            PotentialThreatV4.BRAND_IMPERSONATION
+            if context.impersonation_signals
+            else PotentialThreatV4.PROMOTION_PRIZE_SCAM
         )
     if context.scenario is SecurityScenarioV4.CHARITY:
         return PotentialThreatV4.CHARITY_IMPERSONATION_SCAM
@@ -631,7 +631,7 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
     if context.scenario is SecurityScenarioV4.REFUND and context.requested_action is RequestedActionV4.PAY_FEE:
         return PotentialThreatV4.ADVANCE_FEE_SCAM
     if context.scenario in {SecurityScenarioV4.PAYMENT, SecurityScenarioV4.REFUND}:
-        if context.claimed_entity:
+        if context.impersonation_signals:
             return PotentialThreatV4.IMPERSONATION_FINANCIAL_SCAM
         return PotentialThreatV4.FINANCIAL_SCAM
     if context.credential_request or context.otp_request:
@@ -686,11 +686,9 @@ def extract_security_context(message: str) -> SecurityContextV4:
     else:
         scenario = SecurityScenarioV4.UNKNOWN
 
-    impersonation_signals: list[str] = []
-    if entity is not None:
-        impersonation_signals.append("claimed_organization")
-        if _contains_any(text, _IMPERSONATION_ACTION_TERMS):
-            impersonation_signals.append("organization_requests_action")
+    # Entity attribution is a claim to verify, not evidence of impersonation.
+    # Only explicit impersonation wording is a deterministic impersonation signal.
+    impersonation_signals = ["explicit_impersonation"] if _contains_any(text, _IMPERSONATION_TERMS) else []
 
     amount_match = _AMOUNT_RE.search(message)
     context = SecurityContextV4(

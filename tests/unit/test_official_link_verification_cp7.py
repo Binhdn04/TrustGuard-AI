@@ -50,6 +50,7 @@ from src.services.official_verification_transport import (
 )
 from src.services.platform_wave2 import SourceRegistryEntry, SourceTier, VersionedSourceRegistry
 from src.services.security_pipeline import SecurityTriagePipeline
+from src.services.security_response import policy_grounded_assistant_response
 from src.services.security_triage import SecurityTriageScopeService
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -217,6 +218,83 @@ def _positive_page(link: str = USER_FORM) -> str:
         f"Ứng viên hãy đăng ký và apply tại <a href='{link}'>Application form</a>."
         "</article></body></html>"
     )
+
+
+@pytest.mark.asyncio
+async def test_discovered_official_domain_keeps_sender_and_login_action_unverified_and_cached() -> None:
+    target = "https://chinhphu.vn/dang-nhap"
+    corroboration = "https://authority.example/government-directory"
+    message = f"Chính phủ gửi liên kết {target} và yêu cầu đăng nhập."
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    repository = _BrandRepository([])
+    search = _SearchProvider([_hit(target), _hit(corroboration)])
+    fetcher = _HtmlFetcher(
+        {
+            target: "<html><body>Cổng thông tin điện tử Chính phủ Việt Nam.</body></html>",
+            corroboration: (f"<html><body>Danh bạ Chính phủ Việt Nam: trang chính thức {target}</body></html>"),
+        }
+    )
+    coordinator = _coordinator(repository=repository, search=search, fetcher=fetcher)
+
+    first = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
+    assert first.report is not None
+    assert first.report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert first.report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+    assert first.report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    assert first.report.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
+
+    staged = apply_official_verification_outcome(scope, first)
+    completed = assess_security_risk(staged, official_verification_enforced=True)
+    response = policy_grounded_assistant_response(completed)
+    assert completed.risk.value == "INSUFFICIENT_EVIDENCE"
+    assert completed.policy_version == "security-risk-v6"
+    assert {
+        item.signal for item in completed.evidence if item.type is SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION
+    } == {
+        "official_domain_verified",
+        "sender_identity_unverified",
+        "action_endorsement_unverified",
+    }
+    assert "chinhphu.vn" in response.summary
+    assert "chưa đủ bằng chứng" in response.summary
+    assert "mật khẩu hoặc OTP" in response.summary
+
+    search.calls.clear()
+    second = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
+    assert second.identity_cache_hits > 0
+    assert search.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "consent",
+    [
+        {"official_source_lookup": False, "external_url_lookup": True},
+        {"official_source_lookup": True, "external_url_lookup": False},
+    ],
+)
+async def test_domain_discovery_requires_both_consents_without_provider_calls(consent) -> None:
+    target = "https://chinhphu.vn/dang-nhap"
+    request = SecurityTriageCreateRequestV4(
+        message=f"Chính phủ yêu cầu đăng nhập tại {target}",
+        consent=consent,
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    search = _SearchProvider([_hit(target)])
+    fetcher = _HtmlFetcher({target: "<html><body>Chính phủ Việt Nam</body></html>"})
+
+    outcome = await _coordinator(brands=[], search=search, fetcher=fetcher).coordinate(
+        request, scope, execution_context=TurnExecutionContext()
+    )
+
+    assert outcome.report is not None
+    assert outcome.report.domain_ownership_verification.status is VerificationStatusV4.UNVERIFIED
+    assert search.calls == []
+    assert fetcher.calls == []
 
 
 def _coordinator(

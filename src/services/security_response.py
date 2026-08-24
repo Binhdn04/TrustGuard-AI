@@ -15,6 +15,7 @@ from src.models import (
     SecurityRecommendedActionV4,
     SecurityRiskV4,
     SecurityScopeResponseV4,
+    VerificationStatusV4,
 )
 from src.security_ai.contracts import AssistantOperation, AssistantSynthesis, SecurityAssistantModel
 from src.security_ai.runtime import SecurityAssistantRuntime
@@ -40,6 +41,7 @@ _AI_FAILURE_REASON_LABELS = {
     "unsafe_url": "phản hồi AI chứa liên kết không được phép tái hiện",
     "technical_metric": "phản hồi AI chứa điểm số hoặc chỉ số kỹ thuật không được phép",
     "missing_top_reasons": "phản hồi AI thiếu lý do có trích dẫn bằng chứng",
+    "official_verification_overreach": "phản hồi AI suy rộng kết quả xác minh chính thức",
     "invalid_response_contract": "phản hồi AI không thỏa hợp đồng phản hồi cuối",
 }
 _FOLLOW_UP_OFFER = (
@@ -97,6 +99,18 @@ _ACTION_GUIDANCE: dict[SecurityRecommendedActionV4, str] = {
 }
 
 _SIGNAL_GUIDANCE: tuple[tuple[frozenset[str], str], ...] = (
+    (
+        frozenset({"official_domain_verified"}),
+        "Tên miền được nêu đã được xác minh thuộc quyền kiểm soát chính thức của tổ chức.",
+    ),
+    (
+        frozenset({"sender_identity_unverified"}),
+        "Tin nhắn chưa có đủ bằng chứng xác thực danh tính người gửi.",
+    ),
+    (
+        frozenset({"action_endorsement_unverified"}),
+        "Nguồn chính thức chưa xác nhận đúng yêu cầu đăng nhập hoặc hành động trong tin nhắn.",
+    ),
     (frozenset({"otp_request", "share_otp"}), "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."),
     (
         frozenset({"credential_request", "credential_path", "share_credentials", "login"}),
@@ -134,6 +148,7 @@ class SynthesisGroundingFailure(StrEnum):
     TECHNICAL_METRIC = "technical_metric"
     MISSING_TOP_REASONS = "missing_top_reasons"
     INVALID_RESPONSE_CONTRACT = "invalid_response_contract"
+    OFFICIAL_VERIFICATION_OVERREACH = "official_verification_overreach"
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +191,20 @@ def _grounded_plain_reasons(scope: SecurityScopeResponseV4) -> list[AssistantRea
 def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     assert scope.risk is not None
     summary = _RISK_GUIDANCE[scope.risk]
+    evidence_by_signal = {item.signal: item for item in scope.evidence if item.type.value == "official_verification"}
+    ownership = evidence_by_signal.get("official_domain_verified")
+    sender = evidence_by_signal.get("sender_identity_unverified")
+    action = evidence_by_signal.get("action_endorsement_unverified")
+    verification_sentences: list[str] = []
+    if ownership is not None and ownership.target:
+        verification_sentences.append(f"{ownership.target} đã được xác minh là tên miền chính thức.")
+    if sender is not None or action is not None:
+        verification_sentences.append(
+            "Tuy nhiên, chưa đủ bằng chứng xác nhận người gửi và yêu cầu đăng nhập trong tin nhắn."
+        )
+        verification_sentences.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
+    if verification_sentences:
+        summary = " ".join([*verification_sentences, summary])
     if scope.recommended_actions:
         summary = f"{summary} {_ACTION_GUIDANCE[scope.recommended_actions[0]]}"
     return summary
@@ -220,6 +249,18 @@ def check_grounded_ai_response(
         for text in [synthesis.summary, *(reason.text for reason in synthesis.top_reasons)]
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.TECHNICAL_METRIC)
+    combined = " ".join(texts).casefold()
+    signals = {item.signal for item in scope.evidence if item.type.value == "official_verification"}
+    if (
+        ("tên miền chính thức" in combined or "domain chính thức" in combined)
+        and "đã được xác minh" in combined
+        and "official_domain_verified" not in signals
+    ) or (
+        re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", combined) is not None
+        and scope.official_verification is not None
+        and scope.official_verification.sender_verification.status is not VerificationStatusV4.VERIFIED
+    ):
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
     if available_refs and not synthesis.top_reasons:
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_TOP_REASONS)
     try:
@@ -329,6 +370,19 @@ class GroundedSecurityResponseService:
                 for item in scope.evidence
             ],
             "limitations": list(scope.limitations),
+            "official_verification": (
+                {
+                    "domain_ownership_verification": scope.official_verification.domain_ownership_verification.model_dump(
+                        mode="json"
+                    ),
+                    "sender_verification": scope.official_verification.sender_verification.model_dump(mode="json"),
+                    "action_endorsement_verification": (
+                        scope.official_verification.action_endorsement_verification.model_dump(mode="json")
+                    ),
+                }
+                if scope.official_verification is not None
+                else None
+            ),
         }
 
 

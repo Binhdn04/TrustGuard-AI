@@ -41,13 +41,13 @@ flowchart TD
     Scope -->|Need info| FollowUp[Focused follow-up]
     Scope -->|In scope| Planner[Allowlisted planner]
     Planner --> Local[Rules + approved blacklist]
-    Planner --> Network[DNS + redirect + RDAP + reputation + consented domain ranking]
+    Planner --> Network[DNS + redirect + RDAP/BKNS registration + reputation + consented domain ranking]
     Planner --> Trust[Brand + target identity + whitelist]
     Trust --> Familiarity[Reviewed first-party / shared-platform familiarity]
     Local --> Evidence[Typed evidence]
     Network --> Evidence
     Familiarity --> Evidence
-    Evidence --> Risk[Deterministic risk v1-v5]
+    Evidence --> Risk[Deterministic risk v1-v6]
     Risk --> Response[Grounded response]
     Response --> Store[(SQLite local / PostgreSQL production)]
     Store --> Events[Polling/WebSocket replay]
@@ -76,6 +76,9 @@ validate request/version → scope/context → boundary hoặc investigation
 - Frontend chỉ render Markdown giới hạn trong phản hồi chatbot (nhấn mạnh, danh sách, inline code và HTTP(S) link)
   thành React element; không dùng raw HTML. Nội dung người dùng không được diễn giải như Markdown.
 - External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
+- Domain registration giữ một public evidence/tool type `rdap`: `.vn` dùng BKNS WHOIS v2 khi có key; domain khác
+  dùng IANA RDAP và chỉ fallback BKNS khi IANA không công bố RDAP service. BKNS no-hit/lỗi/timeout không chứng minh
+  domain an toàn; registrant, nameserver và raw provider payload không đi vào contract hoặc persistence.
 - SSRF guard chặn private/local/metadata target và revalidate từng redirect.
 - Page capture tự chạy ở frontend cho URL cuối cùng (URL mới nhất) sau khi case có kết quả, owner-scoped theo URL
   index và gửi consent mới cho từng request. Chromium dùng context tạm không cookie/download/service worker,
@@ -103,6 +106,12 @@ Ownership của domain và parent relationship vẫn cần hai evidence family t
 được hiển thị `partially_verified`, có TTL 7 ngày, không ghi vào `BrandRecordV4` và không tự tạo kết luận `SAFE`.
 Chỉ admin review mới promote thành immutable brand version; third-party endorsement luôn giới hạn ở exact
 URL/resource.
+
+Report v3 tách domain ownership, sender identity và action endorsement thành ba component độc lập. Việc entity
+được nhắc trước “gửi/yêu cầu/thông báo” chỉ tạo grounded claim, không phải impersonation signal. Ownership
+discovery/cache chỉ được công bố khi request có cả `official_source_lookup` và `external_url_lookup`; verified
+domain không xác minh người gửi hoặc yêu cầu đăng nhập. Ba evidence projection này trung tính với score và
+`official_domain_verified` không phải SAFE signal.
 
 ## Persistence and lifecycle
 

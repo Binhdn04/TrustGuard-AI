@@ -76,6 +76,28 @@ _CLAIMED_SITE_RE = re.compile(
     r"|\bcổng\s+thông\s+tin\s+(?:chính\s+thức\s+)?của\b",
     re.IGNORECASE,
 )
+_ATTRIBUTION_VERBS = {
+    "gui",
+    "yeu cau",
+    "thong bao",
+}
+_ATTRIBUTION_REJECTED_TOKENS = {
+    "anh",
+    "assistant",
+    "ban",
+    "bo",
+    "he thong",
+    "ho",
+    "huong dan",
+    "lenh",
+    "prompt",
+    "nguoi gui",
+    "nguoi",
+    "chi",
+    "system",
+    "toi",
+}
+_ATTRIBUTION_BOUNDARY_WORDS = {"duoc", "nhan", "rang", "tin", "tu"}
 
 
 def _fold(value: str) -> str:
@@ -173,6 +195,8 @@ def extract_entity_mentions(
         )
         if prefix is None:
             continue
+        if prefix == ("bo",) and tokens[index].group(0).casefold() not in {"bộ", "bo"}:
+            continue
         end_index = index + len(prefix)
         while end_index < len(tokens) and end_index - index < 8:
             separator = message[tokens[end_index - 1].end() : tokens[end_index].start()]
@@ -182,6 +206,37 @@ def extract_entity_mentions(
                 break
             end_index += 1
         spans.append((tokens[index].start(), tokens[end_index - 1].end()))
+
+    # Recover a bounded sender/actor immediately before an attribution verb.
+    # This is deliberately lexical rather than a free-form NER rule: it only
+    # accepts title-cased/acronym subjects, stops at clause boundaries, and
+    # rejects pronouns plus common prompt-injection vocabulary.
+    for verb in _ATTRIBUTION_VERBS:
+        verb_tokens = tuple(verb.split())
+        for index in range(len(tokens) - len(verb_tokens) + 1):
+            if tuple(folded[index : index + len(verb_tokens)]) != verb_tokens or index == 0:
+                continue
+            start_index = index - 1
+            while start_index > 0 and index - start_index < 6:
+                separator = message[tokens[start_index - 1].end() : tokens[start_index].start()]
+                if (
+                    any(char in separator for char in ".!?;,:\n")
+                    or _is_boundary(folded, start_index - 1)
+                    or folded[start_index - 1] in _ATTRIBUTION_BOUNDARY_WORDS
+                ):
+                    break
+                start_index -= 1
+            candidate_tokens = folded[start_index:index]
+            candidate_text = message[tokens[start_index].start() : tokens[index - 1].end()].strip()
+            folded_candidate = " ".join(candidate_tokens)
+            first = candidate_text[:1]
+            title_or_acronym = bool(first and first.isupper()) or candidate_text.isupper()
+            if (
+                title_or_acronym
+                and folded_candidate not in _ATTRIBUTION_REJECTED_TOKENS
+                and not any(token in _ATTRIBUTION_REJECTED_TOKENS for token in candidate_tokens)
+            ):
+                spans.append((tokens[start_index].start(), tokens[index - 1].end()))
 
     # Prefer the outermost organization phrase when prefixes are nested, e.g.
     # "Bệnh viện Đại học Y" rather than a second "Đại học Y" candidate.

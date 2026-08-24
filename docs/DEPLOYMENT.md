@@ -32,9 +32,11 @@ CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
 SECURITY_RELEASE_PROFILE=pre_cutover
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 LIVE_PROVIDERS_REQUIRED=false
+BKNS_WHOIS_API_KEY=
 SECURITY_PAGE_CAPTURE_ENABLED=false
 SECURITY_DOMAIN_FAMILIARITY_MODE=off
 SECURITY_AI_MAX_CALLS_PER_TURN=8
+SECURITY_AI_MAX_RETRIES=1
 SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS=16
 # CLOUDFLARE_RADAR_API_TOKEN=<optional-secret>
 ```
@@ -42,6 +44,10 @@ SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS=16
 Backend đặt `RUN_DURABLE_WORKER=false`; worker đặt `RUN_DURABLE_WORKER=true`. Frontend cần API URL và
 OIDC Authorization Code + PKCE. Không đưa demo token vào hosted build. Chỉ thêm AI/provider secrets khi
 capability được duyệt. Google Web Risk, Google Fact Check, Jina, flash model và ChromaDB không thuộc setup.
+
+`BKNS_WHOIS_API_KEY` là optional và không thuộc `LIVE_PROVIDERS_REQUIRED`. Khi có key, runtime dùng
+[BKNS WHOIS API v2](https://whois.bkns.vn/vi/docs) cho registrable domain kết thúc bằng `.vn`, và làm fallback
+cho domain khác chỉ khi IANA không công bố RDAP service. Khi để rỗng, toàn bộ domain giữ hành vi IANA RDAP hiện tại.
 
 ### Auth0 USER / Security Admin
 
@@ -182,7 +188,8 @@ async. Official-link verification mặc định `visible`, dùng
 `SECURITY_OFFICIAL_VERIFICATION_MODE=off|shadow|visible|enforced` và
 phải đi theo thứ tự `off → shadow → visible → enforced`; Tavily/OpenAI không phải điều kiện startup cho stage
 này. Web search vẫn yêu cầu `official_source_lookup=true` riêng trên từng request. Frontend mặc định gửi giá trị
-này cùng `external_url_lookup=true`, nhưng backend vẫn giữ hai gate độc lập. Kiểm tra riêng capabilities
+này cùng `external_url_lookup=true`, và domain ownership discovery/cache chỉ được công bố khi request có cả hai;
+backend vẫn kiểm tra từng gate trước provider tương ứng. Kiểm tra riêng capabilities
 `official_link_verification`, `official_web_search_ready`, evaluation,
 latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang `cutover` sau hosted smoke, backup/restore và
 load rehearsal.

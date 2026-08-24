@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from langchain_openai import ChatOpenAI
+from pydantic import Field
 
 from src.security_ai.contracts import (
     AdminReviewDraft,
@@ -13,6 +14,7 @@ from src.security_ai.contracts import (
     ModelUsage,
     PlanPriority,
     SecurityAssistantModel,
+    StrictModel,
     Understanding,
 )
 
@@ -22,9 +24,9 @@ Write every user-facing free-text field, especially follow_up_question, in natur
 Use NEED_MORE_INFO when the message plausibly concerns security but lacks enough context to identify the
 risky action or situation. In that case, phrase exactly one concise question for the policy-selected slot.
 For every scope, scenario, action, exposure, intent, technique, or security-signal candidate,
-include its exact field name in field_confidences and provide at least one exact start/end character span
-with the same field_name into the current message. Always emit both grounding collections; use an empty
-object and empty array only when you emit no semantic candidate. For scope_decision, span the exact phrase
+include its exact field name and confidence as an entry in the field_confidences array, and provide at least
+one exact start/end character span with the same field_name into the current message. Always emit both
+grounding collections; use empty arrays only when you emit no semantic candidate. For scope_decision, span the exact phrase
 that shows a security-relevant action or situation, or the exact phrase requesting a general fact check.
 If the current message has no exact phrase supporting the scope decision, omit scope_decision. Organization spans
 are created by the backend: select claimed_entity_candidate_id from organization_candidates or, only
@@ -55,6 +57,10 @@ that exist in the supplied evidence. Never invent evidence, signals, citations, 
 actions, policies, or procedural advice. Write the summary, reasons, uncertainties and follow-up offer in
 natural Vietnamese. Speak like a calm, friendly safety advisor to a non-technical user. Start with a clear
 plain-language conclusion, briefly explain why it matters, then state the most important supplied action.
+When official_verification is supplied, describe domain ownership, sender identity, and action endorsement
+as independent dimensions. A verified official domain never verifies the message sender or the requested
+login/action. If ownership is verified while sender or action is unverified, state both facts and advise the
+user not to enter a password or OTP based only on the message.
 Use short sentences and translate technical signals into everyday language. Do not put scores, confidence,
 percentages, policy names, evidence IDs, provider counts, or other statistics in the summary or top reasons.
 Do not dump raw fields or codes. Do not reproduce suspicious URLs. Return no reasoning."""
@@ -66,6 +72,19 @@ disposition, action, campaign, fact, URL, citation, or policy. Use only the supp
 and admin-action values. Every grounded rationale must cite one or more evidence_ref values supplied in the
 case. Write all free-text suggestion fields in natural Vietnamese. Do not reproduce URLs, private text,
 prompts, hidden reasoning, credentials, or raw evidence."""
+
+
+class _OpenAIFieldConfidence(StrictModel):
+    """Strict wire shape; Structured Outputs cannot emit arbitrary object keys."""
+
+    field_name: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+    confidence: float = Field(ge=0, le=1)
+
+
+class _OpenAIUnderstanding(Understanding):
+    """OpenAI-compatible schema converted back at the adapter boundary."""
+
+    field_confidences: list[_OpenAIFieldConfidence] = Field(default_factory=list, max_length=50)  # type: ignore[assignment]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,16 +134,29 @@ class OpenAISecurityAssistant(SecurityAssistantModel):
         # adapter and no chain-of-thought is requested or retained.
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         model_input = [("system", system_instructions), ("human", serialized)] if system_instructions else serialized
+        wire_schema = _OpenAIUnderstanding if schema is Understanding else schema
         result = await client.with_structured_output(
-            schema,
-            method="function_calling",
+            wire_schema,
+            method="json_schema",
             include_raw=True,
+            strict=True,
         ).ainvoke(model_input)
         parsed_value = result.get("parsed")
         if parsed_value is None:
             parsing_error = result.get("parsing_error")
             raise ValueError(f"OpenAI structured output could not be parsed: {parsing_error}")
-        parsed = schema.model_validate(parsed_value)
+        if schema is Understanding:
+            wire_value = (
+                parsed_value.model_dump(mode="python")
+                if isinstance(parsed_value, _OpenAIUnderstanding)
+                else dict(parsed_value)
+            )
+            wire_value["field_confidences"] = {
+                item["field_name"]: item["confidence"] for item in wire_value.get("field_confidences", [])
+            }
+            parsed = schema.model_validate(wire_value)
+        else:
+            parsed = schema.model_validate(parsed_value)
         raw = result.get("raw")
         metadata = getattr(raw, "usage_metadata", None) or {}
         response_metadata = getattr(raw, "response_metadata", None) or {}

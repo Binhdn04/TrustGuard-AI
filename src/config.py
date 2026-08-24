@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     security_ai_max_calls_per_turn: int = Field(default=8, ge=1, le=12)
     security_ai_timeout_seconds: float = Field(default=15.0, gt=0.0, le=15.0)
     security_ai_turn_deadline_seconds: float = Field(default=60.0, gt=0.0, le=120.0)
-    security_ai_max_retries: int = Field(default=0, ge=0, le=2)
+    security_ai_max_retries: int = Field(default=1, ge=0, le=2)
     security_ai_small_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_synthesis_model: str = Field(default="gpt-4o-mini", min_length=1)
     security_ai_small_input_cost_per_million_usd: float = Field(default=0.15, gt=0.0)
@@ -67,6 +67,7 @@ class Settings(BaseSettings):
 
     # Provider adapters
     provider_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    bkns_whois_api_key: str = ""
     virustotal_api_key: str = ""
     cloudflare_radar_api_token: str = ""
     reputation_secondary_enabled: bool = True

@@ -6,9 +6,11 @@ from src.agents.tools.advanced import (
     canonicalize_evidence_url,
     reciprocal_rank_fusion,
 )
+from src.agents.tools.bkns import BknsWhoisProvider
 from src.agents.tools.cache import CachedValue, VersionedMemoryCache
 from src.agents.tools.dns import SafeDnsEvidenceResolver
 from src.agents.tools.domain_familiarity import CloudflareRadarDomainFamiliarityProvider
+from src.agents.tools.domain_registration import DomainRegistrationProvider
 from src.agents.tools.domains import canonicalize_registrable_domain, canonicalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.fakes import (
@@ -79,6 +81,7 @@ __all__ = [
     "CacheStatus",
     "ClaimRetriever",
     "DomainIntelligence",
+    "DomainRegistrationProvider",
     "DomainFamiliarityProvider",
     "DomainFamiliarityResult",
     "CloudflareRadarDomainFamiliarityProvider",
@@ -119,6 +122,7 @@ __all__ = [
     "GuardedRedirectResolver",
     "RdapDomainIntelligence",
     "NormalizedRdapProvider",
+    "BknsWhoisProvider",
     "VersionedMemoryCache",
     "CircuitBreaker",
     "CircuitOpenError",
