@@ -55,6 +55,16 @@ describe("OIDC Authorization Code + PKCE", () => {
     expect(transaction.codeVerifier).not.toBe(authorizationUrl.searchParams.get("code_challenge"));
   });
 
+  it("opens Universal Login in signup mode without changing the PKCE flow", async () => {
+    const authorizationUrl = new URL(
+      await createOidcAuthorizationRequest("/", { screenHint: "signup" }),
+    );
+
+    expect(authorizationUrl.searchParams.get("screen_hint")).toBe("signup");
+    expect(authorizationUrl.searchParams.get("response_type")).toBe("code");
+    expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
   it("rejects a callback with the wrong state before contacting the token endpoint", async () => {
     await createOidcAuthorizationRequest("/");
     const fetcher = vi.fn();
@@ -78,7 +88,7 @@ describe("OIDC Authorization Code + PKCE", () => {
       sub: "oidc-user-1",
       name: "Security Reviewer",
       email: "reviewer@example.com",
-      roles: ["security_admin"],
+      "https://api.example/roles": ["security_admin"],
       nonce: transaction.nonce,
       exp: Math.floor(Date.now() / 1000) + 600,
     });

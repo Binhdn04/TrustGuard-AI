@@ -26,7 +26,7 @@ REDIS_URL=${{redis.REDIS_URL}}
 DATABASE_ENCRYPTION_KEY=<secret-at-least-32-characters>
 OIDC_ISSUER=https://<tenant>/
 OIDC_AUDIENCE=<api-audience>
-OIDC_ROLES_CLAIM=roles
+OIDC_ROLES_CLAIM=<api-audience>/roles
 OIDC_ADMIN_ROLE=security_admin
 CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
 SECURITY_RELEASE_PROFILE=pre_cutover
@@ -38,6 +38,67 @@ SECURITY_PAGE_CAPTURE_ENABLED=false
 Backend đặt `RUN_DURABLE_WORKER=false`; worker đặt `RUN_DURABLE_WORKER=true`. Frontend cần API URL và
 OIDC Authorization Code + PKCE. Không đưa demo token vào hosted build. Chỉ thêm AI/provider secrets khi
 capability được duyệt. Google Web Risk, Google Fact Check, Jina, flash model và ChromaDB không thuộc setup.
+
+### Auth0 USER / Security Admin
+
+Role contract của ứng dụng chỉ có `user` và `security_admin`. `user` là least-privilege mặc định cho mọi tài
+khoản public signup; chỉ operator được gán role Auth0 `security_admin`. Frontend dùng role để trình bày navigation,
+nhưng access token đã được FastAPI xác minh mới là authorization boundary. Không bật demo auth để xử lý sự cố
+production.
+
+1. Trong **Applications → APIs**, tạo API với Identifier ổn định, ví dụ
+   `https://api.trustguard.example`, signing algorithm `RS256`, access-token lifetime 900 giây và Allow Offline
+   Access. Bật RBAC; không bật Add Permissions in Access Token vì release này authorize theo role hai cấp.
+2. Trong **Applications → Applications**, tạo Single Page Application dùng Universal Login. Bật Authorization
+   Code và Refresh Token grant, Refresh Token Rotation/reuse detection, idle lifetime 24 giờ và absolute lifetime
+   7 ngày. Database connection phải cho phép signup.
+3. Sau khi Railway đã cấp domain, allow-list chính xác, không dùng wildcard:
+   - callback: `https://<frontend-domain>/auth/callback`;
+   - logout: `https://<frontend-domain>/login`;
+   - Allowed Web Origins và Allowed Origins (CORS): `https://<frontend-domain>`.
+4. Trong **User Management → Roles**, tạo `security_admin`. Chỉ gán role này thủ công cho reviewer/admin đã
+   được duyệt; không tự cấp theo email hoặc domain.
+5. Tạo Post Login Action dưới đây, thay `ROLE_CLAIM` bằng đúng `<api-audience>/roles`, deploy Action và kéo nó
+   vào Login Flow:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const ROLE_CLAIM = "https://api.trustguard.example/roles";
+  const assignedRoles = event.authorization?.roles ?? [];
+  const applicationRoles = assignedRoles.includes("security_admin")
+    ? ["security_admin"]
+    : ["user"];
+
+  api.accessToken.setCustomClaim(ROLE_CLAIM, applicationRoles);
+  api.idToken.setCustomClaim(ROLE_CLAIM, applicationRoles);
+};
+```
+
+Access-token claim điều khiển backend; ID-token claim chỉ điều khiển UI. Nếu claim thiếu, không nhận diện được hoặc
+không chứa `security_admin`, ứng dụng hạ quyền xuống `user`. Sau khi cấp/gỡ admin role, yêu cầu người dùng đăng nhập
+lại để thay đổi có hiệu lực ngay; nếu không, access token cũ có thể còn hợp lệ tối đa 15 phút.
+
+### Railway OIDC variables
+
+Gắn `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_ROLES_CLAIM` và `OIDC_ADMIN_ROLE` vào cả backend và worker vì cả hai
+khởi động với production settings. Chỉ backend nhận public traffic và thực hiện JWT verification. Frontend đặt:
+
+```dotenv
+NEXT_PUBLIC_API_URL=https://${{backend.RAILWAY_PUBLIC_DOMAIN}}
+NEXT_PUBLIC_OIDC_ISSUER=https://<tenant>.auth0.com/
+NEXT_PUBLIC_OIDC_CLIENT_ID=<spa-client-id>
+NEXT_PUBLIC_OIDC_AUDIENCE=<api-audience>
+NEXT_PUBLIC_OIDC_REDIRECT_URI=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}/auth/callback
+NEXT_PUBLIC_OIDC_ROLES_CLAIM=<api-audience>/roles
+NEXT_PUBLIC_OIDC_ADMIN_ROLE=security_admin
+NEXT_PUBLIC_OIDC_SCOPE=openid profile email offline_access
+NEXT_PUBLIC_OIDC_LOGOUT_URL=https://<tenant>.auth0.com/v2/logout?client_id=<spa-client-id>&returnTo=<url-encoded-frontend-login>
+```
+
+Không đặt `NEXT_PUBLIC_DEMO_USER_TOKEN` hoặc `NEXT_PUBLIC_DEMO_ADMIN_TOKEN` trên hosted service. `NEXT_PUBLIC_*`
+được đóng vào Next.js bundle trong Docker build, nên thay đổi biến phải redeploy frontend. Authorization/token
+endpoint overrides để trống khi dùng endpoint chuẩn suy ra từ issuer. `CORS_ORIGINS` của backend phải là
+`https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`.
 
 Page capture mặc định tắt. Chỉ bật `SECURITY_PAGE_CAPTURE_ENABLED=true` khi backend Chromium đã được giới hạn
 egress khỏi private/metadata/service network; Docker image cài Chromium cho API target. Frontend tự yêu cầu ảnh
