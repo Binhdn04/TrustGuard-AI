@@ -31,7 +31,7 @@ class InvocationMetric:
 
 @dataclass(slots=True)
 class TurnBudget:
-    max_calls: int = 4
+    max_calls: int = 8
     calls: int = 0
     synthesis_calls: int = 0
     input_tokens: int = 0

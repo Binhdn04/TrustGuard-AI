@@ -41,12 +41,13 @@ flowchart TD
     Scope -->|Need info| FollowUp[Focused follow-up]
     Scope -->|In scope| Planner[Allowlisted planner]
     Planner --> Local[Rules + approved blacklist]
-    Planner --> Network[DNS + redirect + RDAP + reputation]
+    Planner --> Network[DNS + redirect + RDAP + reputation + consented domain ranking]
     Planner --> Trust[Brand + target identity + whitelist]
+    Trust --> Familiarity[Reviewed first-party / shared-platform familiarity]
     Local --> Evidence[Typed evidence]
     Network --> Evidence
-    Trust --> Evidence
-    Evidence --> Risk[Deterministic risk v1/v2]
+    Familiarity --> Evidence
+    Evidence --> Risk[Deterministic risk v1-v5]
     Risk --> Response[Grounded response]
     Response --> Store[(SQLite local / PostgreSQL production)]
     Store --> Events[Polling/WebSocket replay]
@@ -83,6 +84,9 @@ validate request/version → scope/context → boundary hoặc investigation
   trước đó và ảnh không đi vào evidence, conversation hay database.
 - Whitelist có provenance và chạy trước negative scoring.
 - Provider no-hit/error/timeout, domain age hoặc mismatch riêng lẻ không đủ tạo `MALICIOUS`.
+- Domain familiarity là trục riêng với publisher và exact resource. Reviewed platform chỉ xác nhận platform owner;
+  popularity chỉ mô tả usage. Hai nguồn này không bao giờ trực tiếp tạo `SAFE`, không giảm threat/context score và
+  shared platform không xác minh form/video/post/file do người dùng tạo.
 - User reads luôn owner-scoped; admin routes yêu cầu `security_admin`.
 - Không lưu raw private message, URL query token, OTP hoặc credential trong memory/audit.
 - Admin Copilot chỉ suggestion; action thật cần reviewer, note, evidence và audit.

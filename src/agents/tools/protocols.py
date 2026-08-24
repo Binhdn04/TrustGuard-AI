@@ -7,6 +7,7 @@ from src.models import BlacklistLookupEntry, ClaimEvidence, DomainIntelligenceRe
 
 from .models import (
     DnsResolutionEnvelope,
+    DomainFamiliarityResult,
     FactCheckSearchResult,
     NormalizedToolResult,
     RedirectResolutionResult,
@@ -38,6 +39,10 @@ class DnsEvidenceProvider(Protocol):
 
 class RdapProvider(Protocol):
     async def lookup(self, domain: str) -> NormalizedToolResult[DomainIntelligenceResult]: ...
+
+
+class DomainFamiliarityProvider(Protocol):
+    async def lookup(self, domain: str) -> NormalizedToolResult[DomainFamiliarityResult]: ...
 
 
 class FactCheckCorpus(Protocol):

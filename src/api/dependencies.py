@@ -17,6 +17,7 @@ from fastapi import Depends, Header, Request
 from src.agents.security_investigation import SecurityInvestigationService
 from src.agents.security_trust import SecurityTrustService
 from src.agents.tools import (
+    CloudflareRadarDomainFamiliarityProvider,
     GuardedRedirectResolver,
     NormalizedRdapProvider,
     ProductionUrlReputationCascade,
@@ -278,7 +279,12 @@ def get_security_trust_repository():
 
 @lru_cache
 def get_security_trust_service() -> SecurityTrustService:
-    return SecurityTrustService(get_security_trust_repository(), source_registry=_source_registry)
+    settings = get_settings()
+    return SecurityTrustService(
+        get_security_trust_repository(),
+        source_registry=_source_registry,
+        domain_familiarity_enabled=settings.security_domain_familiarity_mode != "off",
+    )
 
 
 @lru_cache
@@ -359,6 +365,7 @@ def get_security_investigation_service() -> SecurityInvestigationService:
         else SQLiteBlacklistRepository(settings.security_database_path)
     )
     reputation = None
+    domain_familiarity = None
     if settings.virustotal_api_key:
         primary = VirusTotalUrlProvider(
             settings.virustotal_api_key,
@@ -369,12 +376,19 @@ def get_security_investigation_service() -> SecurityInvestigationService:
             allow_secondary=False,
             max_network_calls=settings.reputation_max_network_calls,
         )
+    if settings.security_domain_familiarity_mode != "off" and settings.cloudflare_radar_api_token:
+        domain_familiarity = CloudflareRadarDomainFamiliarityProvider(
+            settings.cloudflare_radar_api_token,
+            timeout=min(settings.provider_timeout_seconds, 3.0),
+        )
     return SecurityInvestigationService(
         blacklist=blacklist,
         dns=SafeDnsEvidenceResolver(),
         redirect=GuardedRedirectResolver(timeout=min(settings.provider_timeout_seconds, 5.0)),
         rdap=NormalizedRdapProvider(timeout=min(settings.provider_timeout_seconds, 5.0)),
         reputation=reputation,
+        domain_familiarity=domain_familiarity,
+        domain_familiarity_enabled=settings.security_domain_familiarity_mode != "off",
         execution_ledger=blacklist,
         planning_enabled=settings.security_ai_planning_enabled,
         assistant_model=get_security_assistant_model(),
@@ -472,6 +486,7 @@ async def start_durable_worker() -> None:
                 ),
                 official_verification_rollout=get_official_verification_rollout_stage(),
                 memory_lookup=memory_lookup,
+                familiarity_enforced=settings.security_domain_familiarity_mode == "enforced",
             )
 
         security_handler = SecurityV4JobHandler(

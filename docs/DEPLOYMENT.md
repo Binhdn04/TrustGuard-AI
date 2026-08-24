@@ -33,6 +33,10 @@ SECURITY_RELEASE_PROFILE=pre_cutover
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 LIVE_PROVIDERS_REQUIRED=false
 SECURITY_PAGE_CAPTURE_ENABLED=false
+SECURITY_DOMAIN_FAMILIARITY_MODE=off
+SECURITY_AI_MAX_CALLS_PER_TURN=8
+SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS=16
+# CLOUDFLARE_RADAR_API_TOKEN=<optional-secret>
 ```
 
 Backend đặt `RUN_DURABLE_WORKER=false`; worker đặt `RUN_DURABLE_WORKER=true`. Frontend cần API URL và
@@ -182,6 +186,21 @@ này cùng `external_url_lookup=true`, nhưng backend vẫn giữ hai gate độ
 `official_link_verification`, `official_web_search_ready`, evaluation,
 latency/cost/error và rollback sau mỗi stage. Chỉ đổi profile sang `cutover` sau hosted smoke, backup/restore và
 load rehearsal.
+
+Domain familiarity rollout độc lập theo `off → visible → enforced`. `visible` phát reviewed/Radar evidence nhưng
+không đổi risk; `enforced` bật `security-risk-v5`, chỉ có thể đưa case score 0, action `OPEN_LINK`/không action và
+không có conflict/sensitive context lên `LOW_RISK`. Radar dùng consent `external_url_lookup`, timeout tối đa 3 giây,
+không retry 429 trong request và không phải điều kiện startup. Kiểm tra capability `domain_familiarity` và
+`domain_popularity_lookup_ready`. Apply reviewed platform data bằng admin API sau review (dry-run mặc định):
+
+```bash
+TRUSTGUARD_ADMIN_TOKEN=<security-admin-token> uv run python scripts/seed_reviewed_platforms.py \
+  --base-url https://<backend-domain>
+# thêm --apply sau khi review output
+```
+
+Rollback `enforced → visible → off` không cần migration. Brand versions đã apply là audit data bất biến; disable
+hoặc supersede qua admin API, không xóa record.
 
 Khi official-link verification có incident, rollback `enforced → visible → off`; thay đổi này không yêu cầu
 database downgrade. Với incident khác: tắt flag mới bật, rollback application image, giữ schema. Không tự động downgrade/drop/restore

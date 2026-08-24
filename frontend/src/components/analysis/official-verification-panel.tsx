@@ -10,10 +10,10 @@ import type {
 import { CopySafeValue } from "./copy-safe-value";
 
 const STATUS: Record<VerificationStatusV4, { label: string; className: string }> = {
-  VERIFIED: { label: "Da xac minh", className: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  PARTIALLY_VERIFIED: { label: "Xac minh mot phan", className: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300" },
-  UNVERIFIED: { label: "Chua xac minh", className: "border-border bg-muted text-muted-foreground" },
-  CONFLICTING: { label: "Thong tin mau thuan", className: "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300" },
+  VERIFIED: { label: "Đã xác minh", className: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+  PARTIALLY_VERIFIED: { label: "Xác minh một phần", className: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+  UNVERIFIED: { label: "Chưa xác minh quan hệ chính thức", className: "border-border bg-muted text-muted-foreground" },
+  CONFLICTING: { label: "Thông tin mâu thuẫn", className: "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300" },
 };
 
 function StatusBadge({ status }: { status: VerificationStatusV4 }) {
@@ -67,13 +67,16 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
         <div className="flex items-start gap-2">
           <Icon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
           <div>
-            <p className="micro-label">Official link verification</p>
-            <h3 id="official-verification-heading" className="mt-1 text-sm font-semibold">{status.label}</h3>
+            <p className="micro-label">Official verification</p>
+            <h3 id="official-verification-heading" className="mt-1 text-sm font-semibold">Xác minh quan hệ chính thức</h3>
           </div>
         </div>
         <StatusBadge status={report.overall_status} />
       </div>
-      <p className="mt-3 text-xs leading-5 text-muted-foreground">Ket luan: <code>{report.reason_code}</code>. Trang chi hien thi ket qua API, khong tu suy dien URL la an toan.</p>
+      <p className="mt-3 text-xs leading-5 text-muted-foreground">
+        Kết quả này mô tả quan hệ publisher/tài nguyên với nguồn chính thức; không tự suy diễn URL là an toàn.
+        {mode === "analyst" && <> Reason: <code>{report.reason_code}</code>.</>}
+      </p>
       {verifiedResourceAssociations.length > 0 && (
         <p className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-xs leading-5 text-emerald-800 dark:text-emerald-200">
           Da tu dong xac nhan chuoi endorsement cho dung tai nguyen nay; ket qua khong mo rong thanh tin cay cho toan bo domain.

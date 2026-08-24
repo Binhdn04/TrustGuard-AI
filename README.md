@@ -200,7 +200,7 @@ Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Tron
 | `OPENAI_API_KEY` | rỗng | Credential của AI provider. |
 | `SECURITY_AI_SMALL_MODEL` | `gpt-4o-mini` | Understanding và planning model. |
 | `SECURITY_AI_SYNTHESIS_MODEL` | `gpt-4o-mini` | Response/copilot synthesis model. |
-| `SECURITY_AI_MAX_CALLS_PER_TURN` | `4` | Tổng call budget cho một turn. |
+| `SECURITY_AI_MAX_CALLS_PER_TURN` | `8` | Tổng call budget cho một turn (tối đa 12). |
 | `SECURITY_AI_TIMEOUT_SECONDS` | `15` | Timeout mỗi AI call. |
 | `SECURITY_AI_TURN_DEADLINE_SECONDS` | `60` | Deadline chung cho understanding, planning và explanation. |
 | `SECURITY_AI_MAX_RETRIES` | `0` | Không retry tự động để một stage không chiếm ngân sách của stage sau. |
@@ -212,7 +212,7 @@ Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Tron
 |---|---:|---|
 | `VIRUSTOTAL_API_KEY` | rỗng | Bật URL reputation provider. |
 | `PROVIDER_TIMEOUT_SECONDS` | `10` | Timeout adapter bên ngoài. |
-| `SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS` | `8` | Network-call budget của một analysis. |
+| `SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS` | `16` | Network-call budget của một analysis. |
 | `SECURITY_INVESTIGATION_MAX_RETRIES` | `1` | Retry budget. |
 | `SECURITY_INVESTIGATION_DEADLINE_SECONDS` | `20` | Deadline của investigation. |
 | `LIVE_PROVIDERS_REQUIRED` | `false` | Fail fast nếu provider bắt buộc chưa được cấu hình. |

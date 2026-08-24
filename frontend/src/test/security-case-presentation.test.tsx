@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ActionRiskPanel } from "@/components/analysis/action-risk-panel";
 import { CaseSignalMap } from "@/components/analysis/case-signal-map";
 import { EvidenceDeck } from "@/components/analysis/evidence-deck";
+import { DomainIdentitySummary } from "@/components/analysis/domain-identity-summary";
 import { InvestigationTimelineV4 } from "@/components/analysis/investigation-timeline-v4";
 import { SimpleAnalystToggle } from "@/components/analysis/simple-analyst-toggle";
 import {
@@ -95,5 +96,36 @@ describe("FE4 security case presentation", () => {
     expect(screen.getAllByText("evidence:aaaaaaaaaaaaaaaa").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Depends on:/).some((item) => item.textContent?.includes("step-aaaaaaaaaaaa"))).toBe(true);
     expect(screen.queryByText(/PCAP|ASN|geolocation/i)).not.toBeInTheDocument();
+  });
+
+  it("separates a known shared platform from publisher and exact-resource verification", () => {
+    const result = completedSecurityCase({
+      evidence: [{
+        evidence_ref: "evidence:dddddddddddddddd",
+        type: "domain_familiarity",
+        source: "brand-registry",
+        target: "forms.google.com",
+        signal: "reviewed_platform_service",
+        description: "Reviewed Google Forms platform.",
+        observed_at: "2026-08-24T00:00:00Z",
+        confidence: 1,
+        provenance_ref: "brand:google:reviewed-platform-familiarity-v1",
+        domain_familiarity: {
+          observed_host: "forms.google.com",
+          registrable_domain: "google.com",
+          classification: "reviewed_platform_service",
+          platform_name: "Google Forms",
+          shared_platform: true,
+          popularity_rank: null,
+          popularity_bucket: null,
+          dataset_window_end: null,
+        },
+      }],
+      official_verification: null,
+    });
+    render(<DomainIdentitySummary viewModel={mapSecurityCaseViewModel(result)} mode="simple" />);
+    expect(screen.getByText(/Nền tảng đã review: Google Forms/)).toBeInTheDocument();
+    expect(screen.getByText("Nền tảng quen thuộc không bảo chứng nội dung.")).toBeInTheDocument();
+    expect(screen.getByText("Chưa xác minh tài nguyên cụ thể")).toBeInTheDocument();
   });
 });

@@ -37,11 +37,13 @@ function viewModel(status: VerificationStatusV4) { return mapSecurityCaseViewMod
 
 describe("CP9 official link verification presentation", () => {
   it.each([
-    ["VERIFIED", "Da xac minh"], ["PARTIALLY_VERIFIED", "Xac minh mot phan"],
-    ["UNVERIFIED", "Chua xac minh"], ["CONFLICTING", "Thong tin mau thuan"],
+    ["VERIFIED", "Đã xác minh"], ["PARTIALLY_VERIFIED", "Xác minh một phần"],
+    ["UNVERIFIED", "Chưa xác minh quan hệ chính thức"], ["CONFLICTING", "Thông tin mâu thuẫn"],
   ] as const)("renders %s in simple view with API actions", (status, label) => {
     render(<OfficialVerificationPanel viewModel={viewModel(status)} mode="simple" />);
-    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(label)).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Xác minh quan hệ chính thức" })).toBeInTheDocument();
+    expect(screen.queryByText(/overall_/)).not.toBeInTheDocument();
     expect(screen.getByText("Buoc an toan tiep theo")).toBeInTheDocument();
   });
 

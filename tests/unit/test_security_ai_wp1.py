@@ -174,9 +174,7 @@ def test_semantic_grounding_reports_missing_confidence_and_invalid_span_separate
 
     assert any("missing_confidence" in item and "scope_decision" in item for item in merged.limitations)
     assert any("invalid_source_span" in item and "scenario" in item for item in merged.limitations)
-    rejected = [
-        record for record in caplog.records if record.getMessage() == "security_ai_semantic_field_rejected"
-    ]
+    rejected = [record for record in caplog.records if record.getMessage() == "security_ai_semantic_field_rejected"]
     assert {(record.field_name, record.failure_code) for record in rejected} == {
         ("scope_decision", "missing_confidence"),
         ("scenario", "invalid_source_span"),

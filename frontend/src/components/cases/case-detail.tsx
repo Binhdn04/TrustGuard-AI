@@ -11,6 +11,7 @@ import { AnalysisLimitations } from "@/components/analysis/analysis-limitations"
 import { AnalysisReportForm } from "@/components/analysis/analysis-report-form";
 import { CaseSignalMap } from "@/components/analysis/case-signal-map";
 import { EvidenceDeck } from "@/components/analysis/evidence-deck";
+import { DomainIdentitySummary } from "@/components/analysis/domain-identity-summary";
 import { InvestigationTimelineV4 } from "@/components/analysis/investigation-timeline-v4";
 import { SimpleAnalystToggle } from "@/components/analysis/simple-analyst-toggle";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
@@ -232,6 +233,7 @@ export function CaseDetail({
         <div className="grid gap-5 xl:grid-cols-[minmax(22rem,0.85fr)_minmax(28rem,1.15fr)]">
           <div className="space-y-5">
             {result.risk && <div className="case-panel p-5"><ActionRiskPanel viewModel={viewModel} mode={mode} /></div>}
+            <DomainIdentitySummary viewModel={viewModel} mode={mode} />
             <ResumedContextCardOrIssue conversation={conversation} busy={resumeBusy} issue={resumeIssue} mode={mode} onResume={resume} />
             {result.risk && (mode === "simple" ? (
               <details className="group/report case-panel overflow-hidden">

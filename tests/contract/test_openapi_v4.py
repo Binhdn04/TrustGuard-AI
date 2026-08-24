@@ -24,4 +24,8 @@ def test_openapi_exposes_v4_as_a_separate_security_contract() -> None:
     assert components["SecurityTriageCreateRequestV4"]["properties"]["execution_mode"]["default"] == "inline"
     assert "kind" in components["SecurityAnalysisEventV4"]["properties"]
     assert "reviewed_security_memory" in components["SecurityEvidenceTypeV4"]["enum"]
+    assert "domain_familiarity" in components["SecurityEvidenceTypeV4"]["enum"]
+    assert "DomainFamiliarityDetailsV4" in components
+    evidence = components["SecurityEvidenceV4"]["properties"]
+    assert evidence["domain_familiarity"]["anyOf"][0]["$ref"].endswith("/DomainFamiliarityDetailsV4")
     assert "security_memory_lookup" in components["SecurityInvestigationToolV4"]["enum"]

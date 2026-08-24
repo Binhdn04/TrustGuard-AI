@@ -109,6 +109,7 @@ from src.models.security_v4 import (
     SECURITY_RISK_POLICY_VERSION_V2,
     SECURITY_RISK_POLICY_VERSION_V3,
     SECURITY_RISK_POLICY_VERSION_V4,
+    SECURITY_RISK_POLICY_VERSION_V5,
     SECURITY_UNDERSTANDING_VERSION,
     SECURITY_UNDERSTANDING_VERSION_V1,
     SECURITY_UNDERSTANDING_VERSION_V2,
@@ -125,6 +126,8 @@ from src.models.security_v4 import (
     BrandRecordV4,
     ClaimVerificationV4,
     DerivedQueryProvenanceV4,
+    DomainFamiliarityClassificationV4,
+    DomainFamiliarityDetailsV4,
     EntityUrlClaimV4,
     EntityUrlRelationshipV4,
     ExposureStateV4,
@@ -232,6 +235,8 @@ from src.models.security_v4 import (
 )
 
 __all__ = [
+    "DomainFamiliarityClassificationV4",
+    "DomainFamiliarityDetailsV4",
     "CONTRACT_VERSION",
     "CONTRACT_VERSION_V3",
     "SCORING_VERSION",
@@ -351,6 +356,7 @@ __all__ = [
     "SECURITY_RISK_POLICY_VERSION_V2",
     "SECURITY_RISK_POLICY_VERSION_V3",
     "SECURITY_RISK_POLICY_VERSION_V4",
+    "SECURITY_RISK_POLICY_VERSION_V5",
     "SECURITY_ASSISTANT_RESPONSE_VERSION",
     "SECURITY_UNDERSTANDING_VERSION",
     "SECURITY_UNDERSTANDING_VERSION_V1",

@@ -50,6 +50,11 @@ export function EvidenceDeck({
                   <div className="flex justify-between gap-3"><dt>Target</dt><dd className="max-w-[70%] break-all text-right font-mono text-foreground">{item.target ?? "—"}</dd></div>
                   <div className="flex justify-between gap-3"><dt>Observed</dt><dd className="text-right text-foreground"><time dateTime={item.observed_at}>{new Date(item.observed_at).toLocaleString("vi-VN")}</time></dd></div>
                   <div className="flex justify-between gap-3"><dt>Confidence</dt><dd className="text-right font-mono text-foreground">{item.confidence ?? "—"}</dd></div>
+                  {item.domain_familiarity && <>
+                    <div className="flex justify-between gap-3"><dt>Familiarity</dt><dd className="text-right font-mono text-foreground">{item.domain_familiarity.classification}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>Registrable domain</dt><dd className="text-right font-mono text-foreground">{item.domain_familiarity.registrable_domain}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>Rank / bucket</dt><dd className="text-right font-mono text-foreground">{item.domain_familiarity.popularity_rank ?? "—"} / {item.domain_familiarity.popularity_bucket ?? "—"}</dd></div>
+                  </>}
                   <div className="flex justify-between gap-3"><dt>Evidence ref</dt><dd className="max-w-[70%] break-all text-right font-mono text-foreground">{item.evidence_ref}</dd></div>
                   {item.provenance_ref && <div className="flex justify-between gap-3"><dt>Provenance</dt><dd className="inline-flex max-w-[70%] items-start gap-1 break-all text-right font-mono text-foreground"><ExternalLink className="mt-0.5 size-3 shrink-0" />{item.provenance_ref}</dd></div>}
                 </dl>
