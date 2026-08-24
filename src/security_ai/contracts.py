@@ -71,6 +71,15 @@ class EntityUrlClaimCandidate(StrictModel):
 
 
 class Understanding(StrictModel):
+    # Keep Python-side defaults for rules-only fixtures and backwards-compatible
+    # adapters, while making both grounding collections mandatory in the schema
+    # shown to hosted structured-output models. Without this, function calling
+    # can legally omit all grounding metadata even when semantic candidates are
+    # present, forcing the trust boundary to discard an otherwise useful result.
+    model_config = ConfigDict(
+        json_schema_extra={"required": ["field_confidences", "source_spans"]},
+    )
+
     scope_decision: ScopeDecisionV4 | None = None
     sender_intent: str | None = None
     social_engineering_techniques: list[str] = Field(default_factory=list, max_length=20)
@@ -85,8 +94,22 @@ class Understanding(StrictModel):
     missing_information: list[str] = Field(default_factory=list)
     follow_up_slot: MissingInformationSlotV4 | None = None
     follow_up_question: str | None = Field(default=None, max_length=500)
-    field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(default_factory=dict, max_length=50)
-    source_spans: list[UnderstandingSourceSpan] = Field(default_factory=list, max_length=50)
+    field_confidences: dict[str, Annotated[float, Field(ge=0, le=1)]] = Field(
+        default_factory=dict,
+        max_length=50,
+        description=(
+            "Confidence keyed by every emitted semantic field name; emit an empty object only when no semantic "
+            "candidate is emitted."
+        ),
+    )
+    source_spans: list[UnderstandingSourceSpan] = Field(
+        default_factory=list,
+        max_length=50,
+        description=(
+            "At least one exact current-message span for every emitted semantic field; emit an empty array only "
+            "when no semantic candidate is emitted. Backend-grounded entity IDs are the only exception."
+        ),
+    )
     derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
     understanding_version: Literal["security-understanding-v1", "security-understanding-v2"] = (
         SECURITY_UNDERSTANDING_VERSION

@@ -168,7 +168,7 @@ Toàn bộ giá trị mẫu nằm trong [.env.example](.env.example) và [fronte
 | `DEMO_ADMIN_TOKEN` | `dev-admin-token` | Bearer token của local Security Admin. |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | rỗng | Bắt buộc khi demo auth tắt. |
 | `OIDC_JWKS_URL` | issuer JWKS | Optional override cho JWKS endpoint. |
-| `OIDC_ROLES_CLAIM` | `roles` | Claim chứa roles. |
+| `OIDC_ROLES_CLAIM` | `roles` | Claim chứa roles; Auth0 production dùng claim namespaced `<audience>/roles`. |
 | `OIDC_ADMIN_ROLE` | `security_admin` | Role được ánh xạ sang Security Admin. |
 | `USER_RATE_LIMIT_PER_MINUTE` | `120` | Limit riêng cho user. |
 | `ADMIN_RATE_LIMIT_PER_MINUTE` | `60` | Limit riêng cho admin. |
@@ -182,6 +182,7 @@ NEXT_PUBLIC_OIDC_ISSUER=https://your-tenant.auth0.com/
 NEXT_PUBLIC_OIDC_CLIENT_ID=your-public-spa-client-id
 NEXT_PUBLIC_OIDC_AUDIENCE=https://api.example.com
 NEXT_PUBLIC_OIDC_REDIRECT_URI=https://app.example.com/auth/callback
+NEXT_PUBLIC_OIDC_ROLES_CLAIM=https://api.example.com/roles
 ```
 
 ### Security AI feature flags

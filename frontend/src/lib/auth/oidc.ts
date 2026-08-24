@@ -36,6 +36,10 @@ interface OidcTransaction {
   createdAt: number;
 }
 
+export interface OidcAuthorizationOptions {
+  screenHint?: "signup";
+}
+
 interface TokenResponse {
   access_token?: unknown;
   id_token?: unknown;
@@ -146,7 +150,10 @@ function safeReturnTo(value: string | null | undefined): string {
   return value;
 }
 
-export async function createOidcAuthorizationRequest(returnTo = "/"): Promise<string> {
+export async function createOidcAuthorizationRequest(
+  returnTo = "/",
+  options: OidcAuthorizationOptions = {},
+): Promise<string> {
   const config = getOidcConfig();
   if (!config) throw new Error("OIDC chưa được cấu hình cho frontend.");
 
@@ -172,6 +179,7 @@ export async function createOidcAuthorizationRequest(returnTo = "/"): Promise<st
   url.searchParams.set("code_challenge", await codeChallenge(transaction.codeVerifier));
   url.searchParams.set("code_challenge_method", "S256");
   if (config.audience) url.searchParams.set("audience", config.audience);
+  if (options.screenHint) url.searchParams.set("screen_hint", options.screenHint);
   return url.toString();
 }
 

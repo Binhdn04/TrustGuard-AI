@@ -22,7 +22,9 @@ Write every user-facing free-text field, especially follow_up_question, in natur
 Use NEED_MORE_INFO when the message plausibly concerns security but lacks enough context to identify the
 risky action or situation. In that case, phrase exactly one concise question for the policy-selected slot.
 For every scope, scenario, action, exposure, intent, technique, or security-signal candidate,
-provide confidence and an exact start/end character span into the current message. Organization spans
+include its exact field name in field_confidences and provide at least one exact start/end character span
+with the same field_name into the current message. Always emit both grounding collections; use an empty
+object and empty array only when you emit no semantic candidate. Organization spans
 are created by the backend: select claimed_entity_candidate_id from organization_candidates or, only
 when that list is empty, from phrase_candidates. Never calculate or emit an entity offset. A phrase
 candidate is only a recovery anchor; select it only when its text denotes the sender or claimed

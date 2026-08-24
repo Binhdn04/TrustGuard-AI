@@ -33,13 +33,15 @@ NEXT_PUBLIC_OIDC_CLIENT_ID=your-public-spa-client-id
 NEXT_PUBLIC_OIDC_AUDIENCE=https://api.trustguard.example
 NEXT_PUBLIC_OIDC_REDIRECT_URI=https://app.trustguard.example/auth/callback
 NEXT_PUBLIC_OIDC_LOGOUT_URL=https://your-tenant.auth0.com/v2/logout?client_id=...&returnTo=...
+NEXT_PUBLIC_OIDC_ROLES_CLAIM=https://api.trustguard.example/roles
 ```
 
 Đăng ký redirect URI `/auth/callback`, logout URL và web origin tương ứng ở Identity Provider. Frontend tạo
 `state`, `nonce`, PKCE verifier/challenge, đổi authorization code lấy token và giữ OIDC session theo browser tab.
-Refresh-token rotation được dùng nếu provider cấp refresh token. Role đọc từ ID-token chỉ điều khiển presentation;
-backend vẫn xác minh chữ ký access token và RBAC cho mọi API call. Các endpoint authorize/token và tên role claim
-có thể override bằng các biến được liệt kê trong `.env.example`.
+Refresh-token rotation được dùng nếu provider cấp refresh token. Auth0 Post Login Action phải phát cùng claim
+namespaced vào access token và ID token. Role đọc từ ID-token chỉ điều khiển presentation; backend vẫn xác minh chữ
+ký access token và RBAC cho mọi API call. Các endpoint authorize/token và tên role claim có thể override bằng các
+biến được liệt kê trong `.env.example`.
 
 ## Product surface
 

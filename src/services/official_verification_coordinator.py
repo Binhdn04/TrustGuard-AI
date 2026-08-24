@@ -1059,7 +1059,43 @@ class OfficialLinkVerificationCoordinator:
                                     # search hits while staying inside the same fetch cap.
                                     fetch_urls.insert(fetch_cursor, outbound)
                 elif fetched.limitation is not None:
-                    limitations.append(f"identity_fetch_{fetched.limitation.value}")
+                    recovered = False
+                    if fetched.limitation in _FALLBACK_ELIGIBLE and self._extract is not None:
+                        fallback_query = self._identity_discovery_queries(intent)[0]
+                        extracted = await self._extract.extract(
+                            [url],
+                            query=fallback_query,
+                            execution_context=execution_context,
+                        )
+                        calls += extracted.tool_calls_used
+                        if extracted.status is VerificationTransportStatus.SUCCESS:
+                            requested_key = _canonical_discovery_url(url)
+                            for document in extracted.documents:
+                                canonical = _canonical_discovery_url(document.url)
+                                if canonical is None:
+                                    continue
+                                fetched_pages[canonical] = (
+                                    document.content,
+                                    hashlib.sha256(document.content.encode()).hexdigest(),
+                                    (urlsplit(canonical).hostname or "").casefold(),
+                                )
+                                recovered = True
+                                if canonical in requested_targets and requested_key is not None:
+                                    for source_url, source_hash in pending_endorsements.get(requested_key, []):
+                                        discovery_endorsements.setdefault(canonical, []).append(
+                                            _identity_observation(
+                                                IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT,
+                                                source_url,
+                                                source_hash,
+                                                now,
+                                            )
+                                        )
+                        elif extracted.limitation is not None:
+                            limitations.append(f"identity_extract_{extracted.limitation.value}")
+                        else:
+                            limitations.append("identity_extract_no_hit")
+                    if not recovered:
+                        limitations.append(f"identity_fetch_{fetched.limitation.value}")
         else:
             limitations.append("official_fetch_unavailable")
 

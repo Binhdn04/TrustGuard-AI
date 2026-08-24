@@ -65,6 +65,12 @@ def _scope(message: str):
     return SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
 
 
+def test_hosted_understanding_schema_requires_grounding_collections() -> None:
+    schema = Understanding.model_json_schema()
+
+    assert {"field_confidences", "source_spans"} <= set(schema["required"])
+
+
 def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None:
     message = "ck lẹ 2 củ để giữ suất"
     scoped = _scope(message)

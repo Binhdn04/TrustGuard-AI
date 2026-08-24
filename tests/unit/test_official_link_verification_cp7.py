@@ -746,6 +746,22 @@ async def test_no_hit_error_and_timeout_do_not_change_existing_risk(limitation) 
     )
 
 
+@pytest.mark.asyncio
+async def test_identity_discovery_extract_fallback_recovers_blocked_html_fetch() -> None:
+    request, scope = _request_scope(external_consent=True)
+    extract = _ExtractProvider(f"Vingroup official recruitment {USER_FORM}")
+    outcome = await _coordinator(
+        brands=[],
+        search=_SearchProvider([_hit()]),
+        fetcher=_HtmlFetcher(failure=VerificationTransportLimitation.PROVIDER_ERROR),
+        extract=extract,
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert extract.calls
+    assert "identity_fetch_provider_error" not in outcome.limitations
+    assert any(item.canonical_url == OFFICIAL_JOBS for item in outcome.report.identity_associations)
+
+
 def test_comparison_validator_rejects_fabricated_ids_urls_and_link_roles() -> None:
     valid = VerificationComparisonOutput(
         source_ids=["source:1111111111111111"],
