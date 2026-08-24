@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Awaitable, Callable
 
 from src.agents.nodes.extraction import extract_urls
@@ -52,9 +53,16 @@ _BOUNDARY_MESSAGE = (
     "hoặc tiền; hệ thống không xác minh tin tức hay kiến thức phổ thông."
 )
 _FALLBACK_LIMITATION = "AI semantic understanding không khả dụng; kết quả chỉ dùng rule cục bộ."
-_UNGROUNDED_LIMITATION = "AI semantic field thiếu confidence hoặc source span hợp lệ đã bị loại"
 _CONFLICT_LIMITATION = "AI semantic understanding xung đột với rule signal; rule được giữ nguyên."
 _BOUNDARY_CONFLICT_LIMITATION = "AI và rule xung đột về phạm vi; cần thêm thông tin trước khi điều tra."
+_GROUNDING_FAILURE_LABELS = {
+    "missing_confidence": "thiếu confidence",
+    "low_confidence": "confidence dưới ngưỡng 0.80",
+    "missing_source_span": "thiếu source span",
+    "invalid_source_span": "source span không hợp lệ",
+    "invalid_reference": "tham chiếu candidate hoặc URL không hợp lệ",
+}
+_GROUNDING_FAILURE_ORDER = tuple(_GROUNDING_FAILURE_LABELS)
 _LOCAL_CONVERSATION_REASONS = {"assistant_capabilities", "assistant_greeting"}
 _LITERAL_ORGANIZATION_PREFIXES = (
     "bệnh viện ",
@@ -73,6 +81,8 @@ _LITERAL_ORGANIZATION_PREFIXES = (
     "hospital ",
     "bank ",
 )
+
+logger = logging.getLogger("trustguard.security_ai")
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -263,6 +273,50 @@ def _grounded(
     return output.field_confidences.get(field_name, 0) >= _MIN_GROUNDED_CONFIDENCE and bool(spans.get(field_name))
 
 
+def _grounding_failures(
+    field_name: str,
+    output: Understanding,
+    spans: dict[str, list[AssistantSourceSpanV4]],
+) -> set[str]:
+    failures: set[str] = set()
+    if field_name not in output.field_confidences:
+        failures.add("missing_confidence")
+    elif output.field_confidences[field_name] < _MIN_GROUNDED_CONFIDENCE:
+        failures.add("low_confidence")
+
+    candidate_spans = [span for span in output.source_spans if span.field_name == field_name]
+    if not candidate_spans:
+        failures.add("missing_source_span")
+    elif not spans.get(field_name):
+        failures.add("invalid_source_span")
+    return failures
+
+
+def _append_grounding_limitations(
+    limitations: list[str],
+    rejected_fields: dict[str, set[str]],
+) -> list[str]:
+    updated = list(limitations)
+    for failure_code in _GROUNDING_FAILURE_ORDER:
+        fields = sorted(field for field, failures in rejected_fields.items() if failure_code in failures)
+        if not fields:
+            continue
+        updated.append(
+            "AI semantic field đã bị loại do "
+            f"{_GROUNDING_FAILURE_LABELS[failure_code]} ({failure_code}): {', '.join(fields)}."
+        )
+        for field_name in fields:
+            logger.warning(
+                "security_ai_semantic_field_rejected",
+                extra={
+                    "operation": AssistantOperation.UNDERSTAND.value,
+                    "field_name": field_name,
+                    "failure_code": failure_code,
+                },
+            )
+    return _unique(updated)
+
+
 def _has_security_information(context: SecurityContextV4) -> bool:
     return bool(
         context.urls
@@ -313,7 +367,9 @@ def merge_semantic_understanding(
     spans = _valid_spans(message, output)
     output = _add_literal_claimed_entity_grounding(message, output, spans)
     accepted_fields: set[str] = set()
-    rejected_impact_fields: set[str] = set(invalid_candidate_fields)
+    rejected_field_failures: dict[str, set[str]] = {
+        field_name: {"invalid_reference"} for field_name in invalid_candidate_fields
+    }
 
     def accept(field_name: str, present: bool) -> bool:
         if not present:
@@ -321,7 +377,7 @@ def merge_semantic_understanding(
         if _grounded(field_name, output, spans):
             accepted_fields.add(field_name)
             return True
-        rejected_impact_fields.add(field_name)
+        rejected_field_failures.setdefault(field_name, set()).update(_grounding_failures(field_name, output, spans))
         return False
 
     accepted_scope = output.scope_decision if accept("scope_decision", output.scope_decision is not None) else None
@@ -351,7 +407,7 @@ def merge_semantic_understanding(
                         )
                     )
                 else:
-                    rejected_impact_fields.add("entity_url_claims")
+                    rejected_field_failures.setdefault("entity_url_claims", set()).add("invalid_reference")
     scenario = (
         output.scenario
         if accept("scenario", output.scenario is not None and output.scenario is not SecurityScenarioV4.UNKNOWN)
@@ -429,8 +485,8 @@ def merge_semantic_understanding(
         model_version=model_version,
     )
     limitations = list(scope.limitations)
-    if rejected_impact_fields:
-        limitations.append(f"{_UNGROUNDED_LIMITATION}: {', '.join(sorted(rejected_impact_fields))}.")
+    if rejected_field_failures:
+        limitations = _append_grounding_limitations(limitations, rejected_field_failures)
     if conflicts:
         limitations.append(_CONFLICT_LIMITATION)
 

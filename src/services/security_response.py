@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
+from dataclasses import dataclass
+from enum import StrEnum
 
 from src.models import (
     SECURITY_ASSISTANT_RESPONSE_VERSION,
@@ -17,8 +20,9 @@ from src.security_ai.contracts import AssistantOperation, AssistantSynthesis, Se
 from src.security_ai.runtime import SecurityAssistantRuntime
 
 _UNSAFE_LINK_TEXT = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
-_TECHNICAL_SUMMARY_TEXT = re.compile(
-    r"(?:\b(?:risk score|confidence|policy|evidence_ref)\b|điểm(?: số)?|độ tin cậy|\b\d+(?:[.,]\d+)?\s*(?:%|/100))",
+_TECHNICAL_METRIC_TEXT = re.compile(
+    r"(?:\b(?:risk score|confidence|policy|evidence_ref)\b|\bđiểm\s+(?:số|rủi ro)\b|độ tin cậy|"
+    r"\b\d+(?:[.,]\d+)?\s*(?:%|/100))",
     re.IGNORECASE,
 )
 _AI_SYNTHESIS_LIMITATION = (
@@ -32,6 +36,11 @@ _AI_FAILURE_REASON_LABELS = {
     "timeout": "provider quá thời gian chờ",
     "turn_deadline_exceeded": "lượt phân tích vượt deadline",
     "grounding_rejected": "phản hồi AI không vượt qua kiểm tra grounding",
+    "unknown_evidence_ref": "phản hồi AI trích dẫn bằng chứng không tồn tại",
+    "unsafe_url": "phản hồi AI chứa liên kết không được phép tái hiện",
+    "technical_metric": "phản hồi AI chứa điểm số hoặc chỉ số kỹ thuật không được phép",
+    "missing_top_reasons": "phản hồi AI thiếu lý do có trích dẫn bằng chứng",
+    "invalid_response_contract": "phản hồi AI không thỏa hợp đồng phản hồi cuối",
 }
 _FOLLOW_UP_OFFER = (
     "Nếu bạn đã mở liên kết, nhập mật khẩu, gửi OTP hoặc chuyển tiền, hãy nói cho mình biết loại hành động "
@@ -116,6 +125,22 @@ _SIGNAL_GUIDANCE: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"punycode_domain", "promotion_lure_domain"}), "Tên miền có đặc điểm thường cần kiểm tra kỹ."),
 )
 
+logger = logging.getLogger("trustguard.security_ai")
+
+
+class SynthesisGroundingFailure(StrEnum):
+    UNKNOWN_EVIDENCE_REF = "unknown_evidence_ref"
+    UNSAFE_URL = "unsafe_url"
+    TECHNICAL_METRIC = "technical_metric"
+    MISSING_TOP_REASONS = "missing_top_reasons"
+    INVALID_RESPONSE_CONTRACT = "invalid_response_contract"
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesisGroundingCheck:
+    response: AssistantResponseV4 | None
+    failure: SynthesisGroundingFailure | None = None
+
 
 def _immediate_steps(scope: SecurityScopeResponseV4) -> list[AssistantImmediateStepV4]:
     assert scope.policy_version is not None
@@ -173,11 +198,11 @@ def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> Assist
 template_assistant_response = policy_grounded_assistant_response
 
 
-def grounded_ai_response(
+def check_grounded_ai_response(
     scope: SecurityScopeResponseV4,
     synthesis: AssistantSynthesis,
-) -> AssistantResponseV4 | None:
-    """Reject ungrounded citations, procedural inventions, and link reproduction."""
+) -> SynthesisGroundingCheck:
+    """Return a grounded response or a non-sensitive rejection reason."""
     available_refs = {item.evidence_ref for item in scope.evidence}
     cited_refs = {ref for reason in synthesis.top_reasons for ref in reason.evidence_refs}
     texts = [
@@ -186,34 +211,44 @@ def grounded_ai_response(
         *synthesis.uncertainties,
         *([synthesis.follow_up_offer] if synthesis.follow_up_offer else []),
     ]
-    if (
-        cited_refs - available_refs
-        or any(_UNSAFE_LINK_TEXT.search(text) for text in texts)
-        or any(
-            _TECHNICAL_SUMMARY_TEXT.search(text)
-            for text in [synthesis.summary, *(reason.text for reason in synthesis.top_reasons)]
-        )
+    if cited_refs - available_refs:
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.UNKNOWN_EVIDENCE_REF)
+    if any(_UNSAFE_LINK_TEXT.search(text) for text in texts):
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.UNSAFE_URL)
+    if any(
+        _TECHNICAL_METRIC_TEXT.search(text)
+        for text in [synthesis.summary, *(reason.text for reason in synthesis.top_reasons)]
     ):
-        return None
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.TECHNICAL_METRIC)
     if available_refs and not synthesis.top_reasons:
-        return None
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_TOP_REASONS)
     try:
-        return AssistantResponseV4(
-            summary=synthesis.summary,
-            top_reasons=[
-                AssistantReasonV4(text=reason.text, evidence_refs=reason.evidence_refs)
-                for reason in synthesis.top_reasons
-            ],
-            # Uncertainty and procedural fields remain deterministic even when
-            # prose synthesis succeeds.
-            uncertainties=list(scope.limitations)[:20],
-            immediate_steps=_immediate_steps(scope),
-            follow_up_offer=_FOLLOW_UP_OFFER,
-            response_version=SECURITY_ASSISTANT_RESPONSE_VERSION,
-            generation_mode=AssistantGenerationModeV4.AI,
+        return SynthesisGroundingCheck(
+            AssistantResponseV4(
+                summary=synthesis.summary,
+                top_reasons=[
+                    AssistantReasonV4(text=reason.text, evidence_refs=reason.evidence_refs)
+                    for reason in synthesis.top_reasons
+                ],
+                # Uncertainty and procedural fields remain deterministic even when
+                # prose synthesis succeeds.
+                uncertainties=list(scope.limitations)[:20],
+                immediate_steps=_immediate_steps(scope),
+                follow_up_offer=_FOLLOW_UP_OFFER,
+                response_version=SECURITY_ASSISTANT_RESPONSE_VERSION,
+                generation_mode=AssistantGenerationModeV4.AI,
+            )
         )
     except ValueError:
-        return None
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.INVALID_RESPONSE_CONTRACT)
+
+
+def grounded_ai_response(
+    scope: SecurityScopeResponseV4,
+    synthesis: AssistantSynthesis,
+) -> AssistantResponseV4 | None:
+    """Compatibility wrapper returning only the accepted grounded response."""
+    return check_grounded_ai_response(scope, synthesis).response
 
 
 class GroundedSecurityResponseService:
@@ -242,9 +277,20 @@ class GroundedSecurityResponseService:
             lambda: self._model.synthesize(self._synthesis_payload(scope)),
             AssistantSynthesis,
         )
-        grounded = grounded_ai_response(scope, result.output) if result.output is not None else None
+        checked = check_grounded_ai_response(scope, result.output) if result.output is not None else None
+        grounded = checked.response if checked is not None else None
         if grounded is None:
-            reason = result.error or "grounding_rejected"
+            reason = result.error or (
+                checked.failure.value if checked is not None and checked.failure is not None else "grounding_rejected"
+            )
+            if result.error is None:
+                logger.warning(
+                    "security_ai_grounding_rejected",
+                    extra={
+                        "operation": AssistantOperation.SYNTHESIZE.value,
+                        "failure_code": reason,
+                    },
+                )
             return self._with_ai_limitation(scope, response, reason=reason)
         return scope.model_copy(update={"assistant_response": grounded})
 
@@ -288,6 +334,9 @@ class GroundedSecurityResponseService:
 
 __all__ = [
     "GroundedSecurityResponseService",
+    "SynthesisGroundingCheck",
+    "SynthesisGroundingFailure",
+    "check_grounded_ai_response",
     "grounded_ai_response",
     "policy_grounded_assistant_response",
     "template_assistant_response",

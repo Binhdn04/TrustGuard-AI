@@ -30,3 +30,27 @@ def test_structured_log_keeps_only_safe_v4_dimensions() -> None:
     assert payload["product_profile"] == "security_triage_vnext"
     assert "compatibility_usage" not in payload
     assert "body" not in payload
+
+
+def test_structured_log_keeps_safe_ai_grounding_dimensions_without_raw_content() -> None:
+    record = logging.LogRecord(
+        "trustguard.security_ai",
+        logging.WARNING,
+        __file__,
+        1,
+        "security_ai_semantic_field_rejected",
+        (),
+        None,
+    )
+    record.operation = "understand"
+    record.field_name = "scope_decision"
+    record.failure_code = "missing_source_span"
+    record.raw_response = "private model output"
+
+    payload = json.loads(RedactingJsonFormatter().format(record))
+
+    assert payload["operation"] == "understand"
+    assert payload["field_name"] == "scope_decision"
+    assert payload["failure_code"] == "missing_source_span"
+    assert "raw_response" not in payload
+    assert "private model output" not in json.dumps(payload)
