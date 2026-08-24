@@ -13,7 +13,12 @@ from src.models import (
 )
 from src.security_ai.contracts import AssistantSynthesis, ModelResponse, SynthesisReason
 from src.security_ai.runtime import SecurityAssistantRuntime
-from src.services.security_response import GroundedSecurityResponseService, grounded_ai_response
+from src.services.security_response import (
+    GroundedSecurityResponseService,
+    SynthesisGroundingFailure,
+    check_grounded_ai_response,
+    grounded_ai_response,
+)
 from src.services.security_triage import SecurityTriageScopeService
 
 
@@ -55,11 +60,35 @@ def test_grounding_verifier_rejects_hallucinated_refs_and_urls() -> None:
             )
         ],
     )
+    natural_destination = AssistantSynthesis(
+        summary="Liên kết này cần được xem xét thận trọng.",
+        top_reasons=[
+            SynthesisReason(
+                text="Điểm đến cuối của liên kết cần được kiểm tra.",
+                evidence_refs=["evidence:0123456789abcdef"],
+            )
+        ],
+    )
 
     assert grounded_ai_response(scoped, invented) is None
     assert grounded_ai_response(scoped, linked) is None
     assert grounded_ai_response(scoped, statistical) is None
     assert grounded_ai_response(scoped, statistical_reason) is None
+    assert grounded_ai_response(scoped, natural_destination) is not None
+
+    assert check_grounded_ai_response(scoped, invented).failure is SynthesisGroundingFailure.UNKNOWN_EVIDENCE_REF
+    assert check_grounded_ai_response(scoped, linked).failure is SynthesisGroundingFailure.UNSAFE_URL
+    assert check_grounded_ai_response(scoped, statistical).failure is SynthesisGroundingFailure.TECHNICAL_METRIC
+
+
+def test_grounding_verifier_reports_missing_reasons_separately() -> None:
+    scoped = _risk_result()
+    synthesis = AssistantSynthesis(summary="Nội dung này cần được xem xét thận trọng.")
+
+    checked = check_grounded_ai_response(scoped, synthesis)
+
+    assert checked.response is None
+    assert checked.failure is SynthesisGroundingFailure.MISSING_TOP_REASONS
 
 
 class _ValidSynthesisModel:
@@ -109,19 +138,24 @@ async def test_ai_response_keeps_actions_and_uncertainties_deterministic() -> No
 
 
 @pytest.mark.asyncio
-async def test_invalid_synthesis_keeps_a_policy_grounded_answer() -> None:
-    result = await GroundedSecurityResponseService(
-        ai_enabled=True,
-        model=_MalformedSynthesisModel(),
-        runtime=SecurityAssistantRuntime(max_retries=0),
-    ).enrich(_risk_result())
+async def test_invalid_synthesis_keeps_a_policy_grounded_answer(caplog) -> None:
+    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+        result = await GroundedSecurityResponseService(
+            ai_enabled=True,
+            model=_MalformedSynthesisModel(),
+            runtime=SecurityAssistantRuntime(max_retries=0),
+        ).enrich(_risk_result())
 
     response = result.assistant_response
     assert response is not None
     assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
     assert response.top_reasons[0].evidence_refs == ["evidence:0123456789abcdef"]
     assert any("bằng chứng và hành động đã kiểm chứng" in item for item in result.limitations)
-    assert any("grounding_rejected" in item for item in result.limitations)
+    assert any("unknown_evidence_ref" in item for item in result.limitations)
+    record = next(item for item in caplog.records if item.getMessage() == "security_ai_grounding_rejected")
+    assert record.operation == "synthesize"
+    assert record.failure_code == "unknown_evidence_ref"
+    assert "Unsupported claim" not in record.getMessage()
 
 
 @pytest.mark.asyncio

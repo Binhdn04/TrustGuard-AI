@@ -149,8 +149,40 @@ def test_ungrounded_or_low_confidence_signals_are_discarded() -> None:
 
     assert merged.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
     assert merged.security_context is None
-    assert any("source span" in item for item in merged.limitations)
-    assert any("payment_request, scenario, scope_decision" in item for item in merged.limitations)
+    assert any("low_confidence" in item and "scope_decision" in item for item in merged.limitations)
+    assert any(
+        "missing_source_span" in item and "payment_request, scenario, scope_decision" in item
+        for item in merged.limitations
+    )
+
+
+def test_semantic_grounding_reports_missing_confidence_and_invalid_span_separately(caplog) -> None:
+    message = "Tin nhắn này hơi kỳ"
+    scoped = _scope(message)
+    output = Understanding(
+        scope_decision=ScopeDecisionV4.IN_SCOPE,
+        scenario=SecurityScenarioV4.PAYMENT,
+        field_confidences={"scenario": 0.99},
+        source_spans=[
+            UnderstandingSourceSpan(field_name="scope_decision", start=0, end=len(message)),
+            UnderstandingSourceSpan(field_name="scenario", start=len(message), end=len(message) + 5),
+        ],
+    )
+
+    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+        merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert any("missing_confidence" in item and "scope_decision" in item for item in merged.limitations)
+    assert any("invalid_source_span" in item and "scenario" in item for item in merged.limitations)
+    rejected = [
+        record for record in caplog.records if record.getMessage() == "security_ai_semantic_field_rejected"
+    ]
+    assert {(record.field_name, record.failure_code) for record in rejected} == {
+        ("scope_decision", "missing_confidence"),
+        ("scenario", "invalid_source_span"),
+    }
+    assert {record.operation for record in rejected} == {"understand"}
+    assert all(message not in record.getMessage() for record in rejected)
 
 
 def test_literal_claimed_entity_is_grounded_when_model_omits_metadata() -> None:

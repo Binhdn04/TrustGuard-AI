@@ -44,6 +44,9 @@ class RedactingJsonFormatter(logging.Formatter):
             "sdk_debug",
             "feature",
             "trace_name",
+            "operation",
+            "field_name",
+            "attempts",
         ):
             if hasattr(record, name):
                 payload[name] = getattr(record, name)
