@@ -20,10 +20,13 @@ from src.models import (
     OfficialLinkReferenceV4,
     OfficialLinkVerificationReportV4,
     OfficialSourceReferenceV4,
+    OfficialVerificationComponentV4,
     PublisherVerificationV4,
+    RequestedActionV4,
     ResourceVerificationV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
+    SecurityRecommendedActionV4,
     SecurityRiskV4,
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
@@ -167,9 +170,9 @@ def test_verified_suppresses_only_same_target_reviewed_brand_mismatch() -> None:
         official_verification_enforced=True,
     )
 
-    assert legacy.policy_version == "security-risk-v1"
+    assert legacy.policy_version == "security-risk-v6"
     assert legacy.risk is SecurityRiskV4.LOW_RISK
-    assert enforced.policy_version == "security-risk-v3"
+    assert enforced.policy_version == "security-risk-v6"
     assert enforced.risk is SecurityRiskV4.SAFE
     assert enforced.score < legacy.score
     assert wrong_provenance.score == legacy.score
@@ -201,15 +204,51 @@ def test_verified_never_hides_strong_reputation_or_blacklist(kind, signal) -> No
     assert result.score >= 95
 
 
-def test_verified_never_hides_sensitive_action() -> None:
+def test_sensitive_action_is_safe_only_when_action_chain_is_verified() -> None:
     _, scoped = _scope("Vingroup asks me to login and share password at https://jobs.vingroup.net")
+    base_report = _report(VerificationStatusV4.VERIFIED)
+    report = base_report.model_copy(
+        update={
+            "intent": base_report.intent.model_copy(update={"requested_action": RequestedActionV4.LOGIN}),
+            "action_endorsement_verification": OfficialVerificationComponentV4(
+                applicable=True,
+                status=VerificationStatusV4.VERIFIED,
+                reason_code="official_action_and_resource_confirmed",
+                evidence_refs=[SOURCE_REF],
+            ),
+        }
+    )
     result = assess_security_risk(
-        _with_report(scoped, _report(VerificationStatusV4.VERIFIED)),
+        _with_report(scoped, report),
         official_verification_enforced=True,
     )
 
-    assert result.risk is not SecurityRiskV4.SAFE
-    assert result.score >= 35
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.score == 0
+    assert result.recommended_actions == [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION]
+
+
+def test_sensitive_action_without_verified_endorsement_is_not_safe() -> None:
+    _, scoped = _scope("Vingroup asks me to login at https://jobs.vingroup.net")
+    base_report = _report(VerificationStatusV4.VERIFIED)
+    report = base_report.model_copy(
+        update={
+            "intent": base_report.intent.model_copy(update={"requested_action": RequestedActionV4.LOGIN}),
+            "action_endorsement_verification": OfficialVerificationComponentV4(
+                applicable=True,
+                status=VerificationStatusV4.UNVERIFIED,
+                reason_code="official_action_not_confirmed",
+            ),
+            "overall_status": VerificationStatusV4.PARTIALLY_VERIFIED,
+        }
+    )
+
+    result = assess_security_risk(
+        _with_report(scoped, report),
+        official_verification_enforced=True,
+    )
+
+    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
 
 
 def test_verified_never_hides_reviewed_malicious_memory() -> None:
@@ -349,7 +388,7 @@ async def test_enforced_provider_unavailable_falls_back_without_safe_upgrade() -
     staged = await stage.run(request, scoped, execution_context=TurnExecutionContext())
     result = assess_security_risk(staged, official_verification_enforced=stage.risk_v3_enforced)
 
-    assert result.policy_version == "security-risk-v3"
+    assert result.policy_version == "security-risk-v6"
     assert result.risk is not SecurityRiskV4.SAFE
     assert "official_web_search_unavailable" in result.limitations
 

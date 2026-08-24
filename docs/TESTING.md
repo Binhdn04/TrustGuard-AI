@@ -67,6 +67,9 @@ populate a passing evidence file from offline fixtures or unit-test output.
   revalidation, guarded short-link chains, neutral-anchor exact-resource links, 7-day stale revalidation,
   one-source exact-resource endorsement, self-endorsement rejection, relationship evidence anchors,
   SQLite/PostgreSQL versioning, admin RBAC/terminal decisions/promotion và Trust candidate queue.
+- bounded sender attribution không dùng registry riêng, attribution không tự tạo impersonation, two-consent
+  ownership/cache, ba component domain/sender/action, neutral evidence projection, sensitive-login precedence,
+  synthesis không suy rộng ownership và frontend compatibility với report cũ.
 
 ## Manual scenarios
 

@@ -53,6 +53,11 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
     (item) => item.assurance === "verified" && item.relationship === "endorsed_third_party_service",
   );
   const status = STATUS[report.overall_status];
+  const verificationLayers = [
+    ["Domain ownership", report.domain_ownership_verification],
+    ["Sender identity", report.sender_verification],
+    ["Action endorsement", report.action_endorsement_verification],
+  ] as const;
   const Icon = report.overall_status === "VERIFIED"
     ? BadgeCheck
     : report.overall_status === "CONFLICTING"
@@ -77,6 +82,26 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
         Kết quả này mô tả quan hệ publisher/tài nguyên với nguồn chính thức; không tự suy diễn URL là an toàn.
         {mode === "analyst" && <> Reason: <code>{report.reason_code}</code>.</>}
       </p>
+      {verificationLayers.some(([, component]) => component?.applicable) && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {verificationLayers.map(([label, component]) => (
+            <div key={label} className="rounded-xl border border-border bg-background/55 p-3">
+              <p className="text-xs font-semibold">{label}</p>
+              <div className="mt-2">
+                {component?.applicable && component.status
+                  ? <StatusBadge status={component.status} />
+                  : <span className="text-[10px] uppercase text-muted-foreground">Không áp dụng</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {report.domain_ownership_verification?.status === "VERIFIED"
+        && (report.sender_verification?.status === "UNVERIFIED" || report.action_endorsement_verification?.status === "UNVERIFIED") && (
+        <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
+          Tên miền chính thức đã được xác minh, nhưng người gửi hoặc yêu cầu hành động chưa được xác minh. Không nhập mật khẩu hay OTP chỉ dựa trên tin nhắn.
+        </p>
+      )}
       {verifiedResourceAssociations.length > 0 && (
         <p className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-xs leading-5 text-emerald-800 dark:text-emerald-200">
           Da tu dong xac nhan chuoi endorsement cho dung tai nguyen nay; ket qua khong mo rong thanh tin cay cho toan bo domain.

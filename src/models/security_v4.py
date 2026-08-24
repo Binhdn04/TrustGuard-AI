@@ -25,11 +25,13 @@ SECURITY_RISK_POLICY_VERSION_V2 = "security-risk-v2"
 SECURITY_RISK_POLICY_VERSION_V3 = "security-risk-v3"
 SECURITY_RISK_POLICY_VERSION_V4 = "security-risk-v4"
 SECURITY_RISK_POLICY_VERSION_V5 = "security-risk-v5"
+SECURITY_RISK_POLICY_VERSION_V6 = "security-risk-v6"
 SECURITY_UNDERSTANDING_VERSION_V1 = "security-understanding-v1"
 SECURITY_UNDERSTANDING_VERSION_V2 = "security-understanding-v2"
 SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
 SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
-OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v2"
+OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v3"
+OFFICIAL_LINK_VERIFICATION_VERSION_V3 = "official-link-verification-v3"
 OFFICIAL_LINK_VERIFICATION_VERSION_V1 = "official-link-verification-v1"
 RESOURCE_IDENTITY_VERSION = "resource-identity-v1"
 VERIFICATION_INTENT_VERSION = "verification-intent-v1"
@@ -334,6 +336,7 @@ class SecurityEvidenceTypeV4(StrEnum):
     WHITELIST = "whitelist"
     REVIEWED_SECURITY_MEMORY = "reviewed_security_memory"
     DOMAIN_FAMILIARITY = "domain_familiarity"
+    OFFICIAL_VERIFICATION = "official_verification"
 
 
 class DomainFamiliarityClassificationV4(StrEnum):
@@ -576,13 +579,28 @@ class ResourceVerificationV4(OfficialVerificationComponentV4):
 
 
 class OfficialLinkVerificationReportV4(SecurityContractModel):
-    schema_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = (
-        OFFICIAL_LINK_VERIFICATION_VERSION_V1
-    )
+    schema_version: Literal[
+        "official-link-verification-v1", "official-link-verification-v2", "official-link-verification-v3"
+    ] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
     intent: VerificationIntentV4
     publisher_verification: PublisherVerificationV4
     claim_verification: ClaimVerificationV4
     resource_verification: ResourceVerificationV4
+    domain_ownership_verification: OfficialVerificationComponentV4 = Field(
+        default_factory=lambda: OfficialVerificationComponentV4(
+            applicable=False, status=None, reason_code="not_applicable"
+        )
+    )
+    sender_verification: OfficialVerificationComponentV4 = Field(
+        default_factory=lambda: OfficialVerificationComponentV4(
+            applicable=False, status=None, reason_code="not_applicable"
+        )
+    )
+    action_endorsement_verification: OfficialVerificationComponentV4 = Field(
+        default_factory=lambda: OfficialVerificationComponentV4(
+            applicable=False, status=None, reason_code="not_applicable"
+        )
+    )
     overall_status: VerificationStatusV4
     reason_code: str = Field(pattern=r"^[a-z0-9_]+$")
     source_refs: list[OfficialSourceReferenceV4] = Field(default_factory=list, max_length=20)
@@ -590,9 +608,9 @@ class OfficialLinkVerificationReportV4(SecurityContractModel):
     limitations: list[str] = Field(default_factory=list, max_length=50)
     identity_associations: list[IdentityAssociationV4] = Field(default_factory=list, max_length=20)
     identity_evidence: list[IdentityEvidenceObservationV4] = Field(default_factory=list, max_length=50)
-    policy_version: Literal["official-link-verification-v1", "official-link-verification-v2"] = (
-        OFFICIAL_LINK_VERIFICATION_VERSION_V1
-    )
+    policy_version: Literal[
+        "official-link-verification-v1", "official-link-verification-v2", "official-link-verification-v3"
+    ] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
 
 
 class IdentityCandidateV4(IdentityAssociationV4):
@@ -870,7 +888,14 @@ class SecurityScopeResponseV4(SecurityContractModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     threat_type: PotentialThreatV4 | None = None
     policy_version: (
-        Literal["security-risk-v1", "security-risk-v2", "security-risk-v3", "security-risk-v4", "security-risk-v5"]
+        Literal[
+            "security-risk-v1",
+            "security-risk-v2",
+            "security-risk-v3",
+            "security-risk-v4",
+            "security-risk-v5",
+            "security-risk-v6",
+        ]
         | None
     ) = None
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
@@ -1434,6 +1459,7 @@ __all__ = [
     "CONTRACT_VERSION_V4",
     "OFFICIAL_LINK_VERIFICATION_VERSION",
     "OFFICIAL_LINK_VERIFICATION_VERSION_V1",
+    "OFFICIAL_LINK_VERIFICATION_VERSION_V3",
     "RESOURCE_IDENTITY_VERSION",
     "VERIFICATION_INTENT_VERSION",
     "SECURITY_ASSISTANT_RESPONSE_VERSION",
@@ -1445,6 +1471,7 @@ __all__ = [
     "SECURITY_RISK_POLICY_VERSION_V3",
     "SECURITY_RISK_POLICY_VERSION_V4",
     "SECURITY_RISK_POLICY_VERSION_V5",
+    "SECURITY_RISK_POLICY_VERSION_V6",
     "SECURITY_UNDERSTANDING_VERSION",
     "SECURITY_UNDERSTANDING_VERSION_V1",
     "SECURITY_UNDERSTANDING_VERSION_V2",

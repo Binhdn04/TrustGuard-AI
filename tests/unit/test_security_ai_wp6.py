@@ -234,7 +234,7 @@ async def test_security_risk_v2_uses_malicious_memory_and_false_positive_only_su
 
 
 @pytest.mark.asyncio
-async def test_disabled_lookup_is_byte_compatible_and_keeps_risk_v1() -> None:
+async def test_disabled_lookup_is_byte_compatible_and_uses_current_risk_policy() -> None:
     scope = await _investigated()
     unchanged = await SecurityMemoryLookupTool(_Candidates(), enabled=False).enrich(scope, owner_id="owner-a")
     result = assess_security_risk(unchanged)

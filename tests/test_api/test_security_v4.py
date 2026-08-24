@@ -89,8 +89,8 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     assert body["security_context"]["potential_threat"] == "RECRUITMENT_SCAM"
     assert body["limitations"] == []
     assert body["risk"] == "HIGH_RISK"
-    assert body["score"] == 83
-    assert body["policy_version"] == "security-risk-v1"
+    assert body["score"] == 65
+    assert body["policy_version"] == "security-risk-v6"
     assert body["threat_type"] == "RECRUITMENT_SCAM"
     assert body["explanation_evidence_refs"] == [body["evidence"][0]["evidence_ref"]]
     record = next(item for item in caplog.records if item.getMessage() == "http_request_completed")

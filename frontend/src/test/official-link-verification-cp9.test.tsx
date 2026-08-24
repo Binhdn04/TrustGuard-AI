@@ -91,4 +91,26 @@ describe("CP9 official link verification presentation", () => {
     expect(screen.getByText(/khong xac nhan toan bo domain/i)).toBeInTheDocument();
     expect(screen.getByText("verified")).toBeInTheDocument();
   });
+
+  it("shows ownership, sender, and action as independent verification layers", () => {
+    const value = report("PARTIALLY_VERIFIED");
+    value.schema_version = "official-link-verification-v3";
+    value.policy_version = "official-link-verification-v3";
+    value.domain_ownership_verification = {
+      applicable: true, status: "VERIFIED", reason_code: "independent_domain_ownership_verified", evidence_refs: [],
+    };
+    value.sender_verification = {
+      applicable: true, status: "UNVERIFIED", reason_code: "message_sender_not_authenticated", evidence_refs: [],
+    };
+    value.action_endorsement_verification = {
+      applicable: true, status: "UNVERIFIED", reason_code: "official_action_not_confirmed", evidence_refs: [],
+    };
+
+    render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="simple" />);
+
+    expect(screen.getByText("Domain ownership")).toBeInTheDocument();
+    expect(screen.getByText("Sender identity")).toBeInTheDocument();
+    expect(screen.getByText("Action endorsement")).toBeInTheDocument();
+    expect(screen.getByText(/Không nhập mật khẩu hay OTP/i)).toBeInTheDocument();
+  });
 });

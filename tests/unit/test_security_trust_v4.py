@@ -195,7 +195,7 @@ async def test_reviewed_owner_mismatch_overrides_target_whitelist() -> None:
     assert "Bach Mai Hospital" in mismatch.description
     assert result.risk is SecurityRiskV4.SUSPICIOUS
     assert result.score == 40
-    assert result.policy_version == "security-risk-v4"
+    assert result.policy_version == "security-risk-v6"
 
 
 @pytest.mark.asyncio

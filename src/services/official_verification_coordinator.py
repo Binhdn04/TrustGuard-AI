@@ -30,12 +30,15 @@ from src.models import (
     OfficialLinkReferenceV4,
     OfficialLinkVerificationReportV4,
     OfficialSourceReferenceV4,
+    OfficialVerificationComponentV4,
     PublisherVerificationV4,
     ResourceIdentityV4,
     ResourceMatchStatusV4,
     ResourceMatchV4,
     ResourceVerificationV4,
     ScopeDecisionV4,
+    SecurityEvidenceTypeV4,
+    SecurityEvidenceV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
@@ -347,6 +350,65 @@ def apply_official_verification_outcome(
     ]
     if verified_hosts and report.publisher_verification.status is VerificationStatusV4.UNVERIFIED:
         limitations.append(_SCOPED_RESOURCE_LIMITATION)
+
+    verification_evidence: list[SecurityEvidenceV4] = []
+    ownership = report.domain_ownership_verification
+    sender = report.sender_verification
+    action = report.action_endorsement_verification
+    verified_domain = next(
+        (
+            item.canonical_domain
+            for item in report.identity_associations
+            if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+            and item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+            and bool(set(item.evidence_refs) & set(ownership.evidence_refs))
+        ),
+        None,
+    )
+    projected = (
+        (
+            ownership,
+            "official_domain_verified",
+            verified_domain,
+            (
+                f"Tên miền {verified_domain} đã được xác minh thuộc quyền kiểm soát chính thức của "
+                f"{report.intent.organization_name}."
+                if verified_domain
+                else "Quan hệ sở hữu tên miền chính thức đã được xác minh."
+            ),
+            VerificationStatusV4.VERIFIED,
+        ),
+        (
+            sender,
+            "sender_identity_unverified",
+            report.intent.organization_name,
+            "Tin nhắn không cung cấp bằng chứng xác thực đủ để xác nhận danh tính người gửi.",
+            VerificationStatusV4.UNVERIFIED,
+        ),
+        (
+            action,
+            "action_endorsement_unverified",
+            report.intent.requested_action.value if report.intent.requested_action else None,
+            "Nguồn chính thức chưa xác nhận đúng yêu cầu hành động hoặc tài nguyên đăng nhập trong tin nhắn.",
+            VerificationStatusV4.UNVERIFIED,
+        ),
+    )
+    for component, signal, target, description, expected_status in projected:
+        if component.applicable and component.status is expected_status:
+            verification_evidence.append(
+                SecurityEvidenceV4(
+                    evidence_ref=_ref("evidence", report.policy_version, signal, target or "unknown"),
+                    type=SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
+                    source="official_verification",
+                    target=target,
+                    signal=signal,
+                    description=description,
+                    observed_at=scope.created_at,
+                    confidence=1.0 if expected_status is VerificationStatusV4.VERIFIED else None,
+                )
+            )
+    known_refs = {item.evidence_ref for item in evidence}
+    evidence.extend(item for item in verification_evidence if item.evidence_ref not in known_refs)
     return scope.model_copy(
         update={
             "official_verification": report,
@@ -837,6 +899,9 @@ class OfficialLinkVerificationCoordinator:
             limitations,
             identity_associations,
             identity_evidence,
+            user_urls=user_urls,
+            official_source_consent=request.consent.official_source_lookup,
+            external_url_consent=request.consent.external_url_lookup,
         )
         self._validate_reference_closure(report)
         reported_associations = report.identity_associations
@@ -934,7 +999,35 @@ class OfficialLinkVerificationCoordinator:
             (requested_targets and requested_targets <= completed_cached_urls)
             or (not requested_targets and bool(completed_cached_urls))
         ):
-            return list(cached), [obs for item in cached for obs in item.observations], 0, 0, 0, ["identity_cache_hit"]
+            visible_cached = (
+                cached
+                if official_consent and external_consent
+                else [item for item in cached if item.relationship is not IdentityRelationshipV4.OFFICIAL_CONTROLLED]
+            )
+            visible_urls = {
+                item.canonical_url for item in visible_cached if item.assurance in cache_complete_assurances
+            }
+            if visible_cached and (
+                (requested_targets and requested_targets <= visible_urls) or (not requested_targets and visible_urls)
+            ):
+                return (
+                    list(visible_cached),
+                    [obs for item in visible_cached for obs in item.observations],
+                    0,
+                    0,
+                    0,
+                    ["identity_cache_hit"],
+                )
+
+        if not official_consent or not external_consent:
+            consent_limitations = []
+            if not official_consent:
+                consent_limitations.append("official_source_consent_required")
+            if not external_consent:
+                consent_limitations.append("external_url_consent_required")
+            if stale_found:
+                consent_limitations.insert(0, "identity_stale_revalidation")
+            return [], [], 0, 0, 0, consent_limitations
 
         direct_associations: list[IdentityCandidateV4] = []
         for target in requested_targets:
@@ -1214,7 +1307,7 @@ class OfficialLinkVerificationCoordinator:
                 anchor.append(
                     _identity_observation(IdentityEvidenceFamilyV4.TARGET_RESOURCE_MATCH, canonical, target[1], now)
                 )
-            if anchor:
+            if any(item.family is IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT for item in anchor):
                 association = self._association_from_observations(
                     entity,
                     canonical,
@@ -1832,7 +1925,73 @@ class OfficialLinkVerificationCoordinator:
         limitations: Sequence[str],
         identity_associations: Sequence[IdentityAssociationV4] = (),
         identity_evidence: Sequence[IdentityEvidenceObservationV4] = (),
+        *,
+        user_urls: Sequence[str] = (),
+        official_source_consent: bool = False,
+        external_url_consent: bool = False,
     ) -> OfficialLinkVerificationReportV4:
+        ownership = OfficialVerificationComponentV4(
+            applicable=bool(intent.contract.organization_name and intent.contract.action_url_indices),
+            status=(
+                VerificationStatusV4.UNVERIFIED
+                if intent.contract.organization_name and intent.contract.action_url_indices
+                else None
+            ),
+            reason_code=(
+                "ownership_consent_required"
+                if intent.contract.organization_name
+                and intent.contract.action_url_indices
+                and not (official_source_consent and external_url_consent)
+                else "ownership_evidence_insufficient"
+                if intent.contract.organization_name and intent.contract.action_url_indices
+                else "not_applicable"
+            ),
+        )
+        if ownership.applicable and official_source_consent and external_url_consent:
+            action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
+            verified = next(
+                (
+                    item
+                    for item in identity_associations
+                    if item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                    and item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                    and any(
+                        host == item.canonical_domain or host.endswith(f".{item.canonical_domain}")
+                        for host in action_hosts
+                    )
+                ),
+                None,
+            )
+            if verified is not None:
+                ownership = ownership.model_copy(
+                    update={
+                        "status": VerificationStatusV4.VERIFIED,
+                        "reason_code": "independent_domain_ownership_verified",
+                        "evidence_refs": verified.evidence_refs,
+                    }
+                )
+        sender = OfficialVerificationComponentV4(
+            applicable=intent.contract.organization_name is not None,
+            status=(VerificationStatusV4.UNVERIFIED if intent.contract.organization_name is not None else None),
+            reason_code=("message_sender_not_authenticated" if intent.contract.organization_name else "not_applicable"),
+        )
+        action = OfficialVerificationComponentV4(
+            applicable=intent.contract.requested_action is not None,
+            status=(VerificationStatusV4.UNVERIFIED if intent.contract.requested_action is not None else None),
+            reason_code=("official_action_not_confirmed" if intent.contract.requested_action else "not_applicable"),
+        )
+        if (
+            action.applicable
+            and resource.status is VerificationStatusV4.VERIFIED
+            and (not claim.applicable or claim.status is VerificationStatusV4.VERIFIED)
+        ):
+            action = action.model_copy(
+                update={
+                    "status": VerificationStatusV4.VERIFIED,
+                    "reason_code": "official_action_and_resource_confirmed",
+                    "evidence_refs": list(dict.fromkeys([*claim.evidence_refs, *resource.evidence_refs])),
+                }
+            )
         statuses = [
             component.status
             for component in (publisher, claim, resource)
@@ -1852,12 +2011,22 @@ class OfficialLinkVerificationCoordinator:
         else:
             overall = VerificationStatusV4.UNVERIFIED
             reason = "applicable_evidence_insufficient"
+        if (
+            overall is not VerificationStatusV4.CONFLICTING
+            and ownership.status is VerificationStatusV4.VERIFIED
+            and (sender.status is VerificationStatusV4.UNVERIFIED or action.status is VerificationStatusV4.UNVERIFIED)
+        ):
+            overall = VerificationStatusV4.PARTIALLY_VERIFIED
+            reason = "official_domain_verified_sender_or_action_unverified"
         return OfficialLinkVerificationReportV4(
-            schema_version="official-link-verification-v2",
+            schema_version="official-link-verification-v3",
             intent=intent.contract,
             publisher_verification=publisher,
             claim_verification=claim,
             resource_verification=resource,
+            domain_ownership_verification=ownership,
+            sender_verification=sender,
+            action_endorsement_verification=action,
             overall_status=overall,
             reason_code=reason,
             source_refs=list(sources)[:20],
@@ -1865,7 +2034,7 @@ class OfficialLinkVerificationCoordinator:
             limitations=_unique(list(limitations))[:50],
             identity_associations=list(identity_associations)[:20],
             identity_evidence=list(identity_evidence)[:50],
-            policy_version="official-link-verification-v2",
+            policy_version="official-link-verification-v3",
         )
 
     @staticmethod
@@ -1876,6 +2045,9 @@ class OfficialLinkVerificationCoordinator:
         cited = set(report.publisher_verification.evidence_refs)
         cited.update(report.claim_verification.evidence_refs)
         cited.update(report.resource_verification.evidence_refs)
+        cited.update(report.domain_ownership_verification.evidence_refs)
+        cited.update(report.sender_verification.evidence_refs)
+        cited.update(report.action_endorsement_verification.evidence_refs)
         if cited - available:
             raise ValueError("official verification evidence-reference closure failed")
         source_ids = {source.source_ref for source in report.source_refs}

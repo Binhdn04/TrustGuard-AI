@@ -109,7 +109,7 @@ def test_otp_account_verification_context() -> None:
     assert context.otp_request is True
     assert context.requested_action is RequestedActionV4.SHARE_OTP
     assert context.potential_threat is PotentialThreatV4.PHISHING
-    assert "organization_requests_action" in context.impersonation_signals
+    assert context.impersonation_signals == []
 
 
 def test_financial_transfer_context() -> None:

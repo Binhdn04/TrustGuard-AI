@@ -166,6 +166,19 @@ def test_old_context_risk_and_brand_json_remain_readable() -> None:
     assert BrandRecordV4.model_validate_json(old_brand.model_dump_json()).official_domains == ["example.edu"]
 
 
+def test_old_official_report_defaults_new_verification_layers_to_not_applicable() -> None:
+    payload = _report().model_dump(mode="json")
+    payload.pop("domain_ownership_verification", None)
+    payload.pop("sender_verification", None)
+    payload.pop("action_endorsement_verification", None)
+
+    restored = OfficialLinkVerificationReportV4.model_validate(payload)
+
+    assert restored.domain_ownership_verification.reason_code == "not_applicable"
+    assert restored.sender_verification.applicable is False
+    assert restored.action_endorsement_verification.status is None
+
+
 def test_understanding_reads_v1_and_new_contracts_emit_v2() -> None:
     old_provider_output = Understanding(understanding_version="security-understanding-v1")
     old_public_context = AssistantContextV4(
@@ -257,7 +270,7 @@ def test_none_report_is_omitted_and_component_applicability_is_not_unverified() 
 
 
 @pytest.mark.asyncio
-async def test_cp2_runtime_emits_v2_but_does_not_enable_verification_or_risk_v3(client) -> None:
+async def test_cp2_runtime_emits_context_v2_without_enabling_official_verification(client) -> None:
     response = await client.post(
         "/api/v4/analyses",
         headers={"Authorization": "Bearer dev-user-token"},
@@ -267,5 +280,5 @@ async def test_cp2_runtime_emits_v2_but_does_not_enable_verification_or_risk_v3(
     assert response.status_code == 200
     body = response.json()
     assert body["security_context"]["schema_version"] == "security-context-v2"
-    assert body["policy_version"] in {"security-risk-v1", "security-risk-v2"}
+    assert body["policy_version"] == "security-risk-v6"
     assert "official_verification" not in body

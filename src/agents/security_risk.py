@@ -10,6 +10,7 @@ from src.models import (
     SECURITY_RISK_POLICY_VERSION_V3,
     SECURITY_RISK_POLICY_VERSION_V4,
     SECURITY_RISK_POLICY_VERSION_V5,
+    SECURITY_RISK_POLICY_VERSION_V6,
     ExposureStateV4,
     IdentityAssociationAssuranceV4,
     PotentialThreatV4,
@@ -160,7 +161,12 @@ def _association_is_unverified_target(scope: SecurityScopeResponseV4, evidence: 
 
 def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     report = scope.official_verification
-    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED or report.identity_associations:
+    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED:
+        return False
+    if any(
+        association.assurance is not IdentityAssociationAssuranceV4.VERIFIED
+        for association in report.identity_associations
+    ):
         return False
     applicable = [
         component
@@ -168,6 +174,7 @@ def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
             report.publisher_verification,
             report.claim_verification,
             report.resource_verification,
+            report.action_endorsement_verification,
         )
         if component.applicable
     ]
@@ -235,15 +242,15 @@ def _actions(
             if risk is SecurityRiskV4.SAFE or familiarity_low_risk
             else SecurityRecommendedActionV4.DO_NOT_OPEN_LINK
         )
-    if context.credential_request:
+    if context.credential_request and risk is not SecurityRiskV4.SAFE:
         actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_CREDENTIALS)
         actions.append(SecurityRecommendedActionV4.CHANGE_PASSWORD_IF_ALREADY_SHARED)
-    if context.otp_request:
+    if context.otp_request and risk is not SecurityRiskV4.SAFE:
         actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_OTP)
-    if context.payment_request:
+    if context.payment_request and risk is not SecurityRiskV4.SAFE:
         actions.append(SecurityRecommendedActionV4.DO_NOT_TRANSFER_MONEY)
         actions.append(SecurityRecommendedActionV4.CONTACT_BANK_IF_ALREADY_PAID)
-    if context.claimed_entity or context.impersonation_signals:
+    if (context.claimed_entity or context.impersonation_signals) and risk is not SecurityRiskV4.SAFE:
         actions.append(SecurityRecommendedActionV4.VERIFY_VIA_OFFICIAL_CHANNEL)
     if risk in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
         actions.append(SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER)
@@ -280,24 +287,38 @@ def assess_security_risk(
     context_ref = context_evidence.evidence_ref if context_evidence else ""
     has_whitelist = any(item.signal.casefold() == "approved_whitelist" for item in scope.evidence)
     contributions: list[_Contribution] = []
-    if context.credential_request:
+    action_chain_verified = official_verification_enforced and _complete_official_verification(scope)
+    # These context combinations remain protective fallback signals when no
+    # verification chain exists. A complete official action chain neutralizes
+    # them: the action itself is not evidence of risk.
+    if context.credential_request and not action_chain_verified:
         contributions.append(_Contribution(35, context_ref))
-    if context.otp_request:
+    if context.otp_request and not action_chain_verified:
         contributions.append(_Contribution(40, context_ref))
-    if context.payment_request:
+    if context.payment_request and not action_chain_verified:
         contributions.append(_Contribution(35, context_ref))
     if context.urgency:
         contributions.append(_Contribution(15, context_ref))
     if context.impersonation_signals and not has_whitelist:
         contributions.append(_Contribution(18, context_ref))
-    if context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT and (
-        context.credential_request or context.otp_request or context.payment_request
+    if (
+        not action_chain_verified
+        and context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+        and (context.credential_request or context.otp_request or context.payment_request)
     ):
         contributions.append(_Contribution(20, context_ref))
-    if context.scenario.value in {"recruitment", "promotion_prize"} and (
-        context.payment_request or context.credential_request
+    if (
+        not action_chain_verified
+        and context.scenario.value in {"recruitment", "promotion_prize"}
+        and (context.payment_request or context.credential_request)
     ):
         contributions.append(_Contribution(10, context_ref))
+    if (
+        not action_chain_verified
+        and context.payment_request
+        and context.scenario.value in {"investment", "online_task", "refund"}
+    ):
+        contributions.append(_Contribution(15, context_ref))
 
     strong_refs: list[str] = []
     safe_refs: list[str] = []
@@ -429,7 +450,6 @@ def assess_security_risk(
     elif (
         official_verification_enforced
         and _complete_official_verification(scope)
-        and not _has_sensitive_action(scope)
         and not scope.errors
         and not strong_refs
         and not reviewed_risk_refs
@@ -485,6 +505,25 @@ def assess_security_risk(
         risk = SecurityRiskV4.SUSPICIOUS
     elif identity_conflicting and risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE:
         risk = SecurityRiskV4.LOW_RISK
+    action_verification_incomplete = bool(
+        official_verification_enforced
+        and scope.official_verification is not None
+        and scope.official_verification.action_endorsement_verification.applicable
+        and scope.official_verification.action_endorsement_verification.status is not VerificationStatusV4.VERIFIED
+        and scope.official_verification.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
+    )
+    if (
+        action_verification_incomplete
+        and not weak_external
+        and not strong_refs
+        and not reviewed_risk_refs
+        and not identity_confirmed_mismatch
+        and not identity_conflicting
+        and not residual_official_mismatch
+    ):
+        # Verified entity/resource but missing action endorsement is a coverage
+        # gap, not affirmative evidence that the requested action is risky.
+        risk = SecurityRiskV4.INSUFFICIENT_EVIDENCE
     # Registration/mismatch-style evidence alone is explicitly non-malicious.
     if contributions and not official_conflicting and sum(item.points for item in contributions) == weak_external:
         risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS
@@ -502,6 +541,18 @@ def assess_security_risk(
             + ([item.evidence_ref for item in reviewed_suppressions] if memory_enabled else [])
         )
     )
+    refs.extend(
+        item.evidence_ref
+        for item in scope.evidence
+        if item.type.value == "official_verification"
+        and item.signal
+        in {
+            "official_domain_verified",
+            "sender_identity_unverified",
+            "action_endorsement_unverified",
+        }
+    )
+    refs = list(dict.fromkeys(refs))
     grounded = [item for item in scope.evidence if item.evidence_ref in refs]
     if not grounded and scope.evidence:
         grounded = [scope.evidence[0]]
@@ -533,15 +584,17 @@ def assess_security_risk(
         confidence=round(min(confidence, 0.95), 2),
         threat_type=context.potential_threat,
         policy_version=(
-            SECURITY_RISK_POLICY_VERSION_V5
+            SECURITY_RISK_POLICY_VERSION_V6
+            if context.claimed_entity
+            else SECURITY_RISK_POLICY_VERSION_V5
             if familiarity_enforced
             else SECURITY_RISK_POLICY_VERSION_V4
             if context.entity_url_claims or identity_confirmed_mismatch or ai_understanding_fallback
-            else (
-                SECURITY_RISK_POLICY_VERSION_V3
-                if official_verification_enforced
-                else (SECURITY_RISK_POLICY_VERSION_V2 if memory_enabled else SECURITY_RISK_POLICY_VERSION)
-            )
+            else SECURITY_RISK_POLICY_VERSION_V3
+            if official_verification_enforced
+            else SECURITY_RISK_POLICY_VERSION_V2
+            if memory_enabled
+            else SECURITY_RISK_POLICY_VERSION
         ),
         recommended_actions=_actions(scope, risk, familiarity_low_risk=familiarity_low_risk),
         explanation=_explanation(risk, grounded),

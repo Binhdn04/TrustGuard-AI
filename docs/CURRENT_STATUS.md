@@ -18,15 +18,15 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 |---|---|
 | Boundary | `/api/v4` only; v2/v3 không mount/OpenAPI |
 | Scope | structured context, focused follow-up, recovery-first incident path |
-| Investigation | rules, blacklist, DNS, redirects, RDAP, VirusTotal, optional Cloudflare Radar domain ranking, consent/budget/deadline/SSRF |
-| Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v5, false-positive policy |
+| Investigation | rules, blacklist, DNS, IANA RDAP + optional BKNS WHOIS v2 routing, VirusTotal, optional Cloudflare Radar domain ranking, consent/budget/deadline/SSRF |
+| Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v6, false-positive policy |
 | User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; suggestion-only Admin Copilot |
-| Official verification | publisher/claim/resource verification plus identity discovery v2, literal-title search, one-source exact-resource endorsement, guarded redirects, 7-day terminal-aware cache, typed ownership evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
+| Official verification | publisher/claim/resource compatibility plus domain ownership/sender identity/action endorsement, identity discovery v2, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, typed neutral evidence, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
-| Frontend | Security Chat với case-context follow-up, Markdown giới hạn an toàn, ba trục domain/platform–publisher–exact resource, tự chụp URL mới nhất trong RAM; Simple/Analyst views, history, Observatory, Review Room, Trust candidate queue/Audit |
+| Frontend | Security Chat với case-context follow-up, Markdown giới hạn an toàn, ba lớp domain ownership–sender identity–action endorsement cùng các trục compatibility cũ, tự chụp URL mới nhất trong RAM; Simple/Analyst views, history, Observatory, Review Room, Trust candidate queue/Audit |
 | Schema | Alembic through `0019_security_identity_discovery` (one head) |
 
 ## Partial and pending
@@ -39,6 +39,8 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 - Domain familiarity mặc định `off`; reviewed-platform manifest/admin seed tooling đã có nhưng cần Security Admin
   review/apply trên staging. Radar cache/timeout/429 và inline/worker parity vẫn cần hosted smoke trước `enforced`.
 - Chưa có hosted OIDC/PostgreSQL/Redis/VirusTotal evidence với credential thật.
+- BKNS WHOIS v2 đã có adapter/routing/cache/privacy/error automated coverage; key là optional và vẫn cần live-provider
+  smoke cho `.vn`, RDAP capability fallback, rate limit và timeout trước production rollout.
 - Chưa có production backup/restore, load, lease-loss và Redis-outage rehearsal.
 - `0018_remove_vector_compat` cần backup và staging rehearsal trên database cũ.
 - `0019_security_identity_discovery` additive vẫn cần staging migration/persistence parity smoke trên PostgreSQL.
