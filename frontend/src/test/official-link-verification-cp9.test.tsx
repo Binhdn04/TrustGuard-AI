@@ -44,19 +44,19 @@ describe("CP9 official link verification presentation", () => {
     expect(screen.getAllByText(label)).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Xác minh quan hệ chính thức" })).toBeInTheDocument();
     expect(screen.queryByText(/overall_/)).not.toBeInTheDocument();
-    expect(screen.getByText("Buoc an toan tiep theo")).toBeInTheDocument();
+    expect(screen.getByText("Bước an toàn tiếp theo")).toBeInTheDocument();
   });
 
   it("shows analyst evidence and canonical chain without clickable URLs", () => {
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
     const { container } = render(<OfficialVerificationPanel viewModel={viewModel("CONFLICTING")} mode="analyst" />);
-    expect(screen.getByText("Publisher verification")).toBeInTheDocument();
-    expect(screen.getByText("Resource / canonical chain (text only)")).toBeInTheDocument();
+    expect(screen.getByText("Xác minh đơn vị phát hành")).toBeInTheDocument();
+    expect(screen.getByText("Chuỗi tài nguyên / URL chuẩn hóa (chỉ văn bản)")).toBeInTheDocument();
     expect(screen.getByText(/search_provider_unavailable/)).toBeInTheDocument();
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(screen.getAllByText(suspiciousUrl).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "Copy submitted URL" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sao chép URL đã gửi" }));
     expect(clipboard.writeText).toHaveBeenCalledWith(suspiciousUrl);
   });
 
@@ -64,7 +64,7 @@ describe("CP9 official link verification presentation", () => {
     const value = report("UNVERIFIED");
     value.claim_verification = { applicable: false, status: null, reason_code: "claim_not_present", evidence_refs: [], topic: null };
     render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="analyst" />);
-    expect(screen.getByText("Claim verification").parentElement).toHaveTextContent("Khong ap dung");
+    expect(screen.getByText("Xác minh nội dung").parentElement).toHaveTextContent("Không áp dụng");
   });
 
   it("shows automatically verified associations as exact-resource scoped", () => {
@@ -86,10 +86,10 @@ describe("CP9 official link verification presentation", () => {
 
     render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="analyst" />);
 
-    expect(screen.getByText("Resource-scoped identity associations")).toBeInTheDocument();
-    expect(screen.getByText(/Da tu dong xac nhan chuoi endorsement/i)).toBeInTheDocument();
-    expect(screen.getByText(/khong xac nhan toan bo domain/i)).toBeInTheDocument();
-    expect(screen.getByText("verified")).toBeInTheDocument();
+    expect(screen.getByText("Liên kết danh tính theo tài nguyên")).toBeInTheDocument();
+    expect(screen.getByText(/Đã tự động xác nhận chuỗi chứng thực/i)).toBeInTheDocument();
+    expect(screen.getByText(/không xác nhận toàn bộ domain/i)).toBeInTheDocument();
+    expect(screen.getByText("Đã xác minh")).toBeInTheDocument();
   });
 
   it("shows ownership, sender, and action as independent verification layers", () => {
@@ -108,9 +108,9 @@ describe("CP9 official link verification presentation", () => {
 
     render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="simple" />);
 
-    expect(screen.getByText("Domain ownership")).toBeInTheDocument();
-    expect(screen.getByText("Sender identity")).toBeInTheDocument();
-    expect(screen.getByText("Action endorsement")).toBeInTheDocument();
+    expect(screen.getByText("Quyền sở hữu domain")).toBeInTheDocument();
+    expect(screen.getByText("Danh tính người gửi")).toBeInTheDocument();
+    expect(screen.getByText("Xác nhận hành động")).toBeInTheDocument();
     expect(screen.getByText(/Không nhập mật khẩu hay OTP/i)).toBeInTheDocument();
   });
 });

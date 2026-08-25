@@ -16,6 +16,10 @@ npm run build
 npm run test:e2e
 ```
 
+Verification gần nhất của workspace ngày 2026-08-25: Ruff đạt; backend `629 passed`; Alembic có một head
+`0021_security_blacklist_v4`; frontend `115 passed`; lint, typecheck và cutover đều đạt. Đây là snapshot có ngày,
+không thay thế kết quả CI hoặc lần chạy lại trên commit chuẩn bị deploy.
+
 Evaluation:
 
 ```bash
@@ -59,6 +63,12 @@ populate a passing evidence file from offline fixtures or unit-test output.
   verification; familiarity v5 không tạo `SAFE` và threat/sensitive context luôn giữ precedence;
 - conversation ownership/version/resume/retention/conflict;
 - admin RBAC, report/appeal conflict, action idempotency và audit;
+- blacklist v4 list/proposal/review/add/disable/re-add, SQLite restart parity và report-linked remediation;
+- từng report resolution, explicit Memory/whitelist side effect, blacklist pending cho tới review thứ hai và failed propagation;
+- report/action audit giữ actor, timestamp, structured remediation reference và `admin_action_id` kể cả khi
+  blacklist action bị reject hoặc execute thất bại;
+- UI Duyệt bảo mật bao phủ confirm-safe, confirm-malicious, rejected/dismissed, remediation pending/success/failure
+  và bước xác nhận blacklist riêng; UI Tin cậy & chặn bao phủ create/disable/history/error states;
 - reviewed memory owner isolation, poisoning controls, corrections và campaigns;
 - AI grounding/fallback/prompt injection/budget/deadline;
 - frontend risk/follow-up presentation, polling, history/filter, safe assistant Markdown, latest-URL page capture lifecycle
@@ -88,6 +98,11 @@ Chỉ dùng reserved `.test` domains.
 | Prompt injection yêu cầu bỏ policy | Policy/tool boundary không đổi |
 | Multi-turn stale version | Conflict; không trộn owner/case |
 | Duplicate admin decision | Một terminal transition, không duplicate side effect |
+| Report chưa review hoặc bị reject/dismiss | Không thay đổi risk/score và không tạo reviewed Memory/whitelist/blacklist evidence |
+| Admin xác nhận false positive và thêm whitelist | Report/audit trỏ đúng whitelist; lần phân tích sau vẫn chạy pipeline và có approved-whitelist evidence |
+| Admin xác nhận malicious và đề xuất blacklist | Report ở `pending` cho tới quyết định action thứ hai; chỉ action approved/executed mới tạo active blacklist |
+| Blacklist action bị reject hoặc execution fail | Không tạo active blacklist; report remediation là `failed` và vẫn giữ action reference để audit |
+| Phân tích lại domain đã blacklist | Pipeline vẫn chạy; approved-blacklist evidence có thể đưa verdict lên `MALICIOUS` theo policy |
 | Search hit identity đơn lẻ | Chỉ `discovered`, 0 risk point, không `SAFE` |
 | Reviewed exact third-party resource | `endorsed_third_party_service`; không mở trust cho partner domain |
 | Explicit ownership conflict | Auto mismatch tối thiểu low risk; reviewer confirmation tối thiểu suspicious |
@@ -99,3 +114,18 @@ Chỉ dùng reserved `.test` domains.
 
 `MALICIOUS` cần confirmed evidence hoặc nhiều chỉ báo độc lập mạnh. Report phải ghi commit, dataset/version,
 environment và command; không copy số liệu test cũ.
+
+## MVP hosted smoke trước release
+
+Automated SQLite/API tests xác minh logic, nhưng không thay thế smoke trên deployment thật. Sau khi deploy backend,
+worker và frontend, dùng hai danh tính OAuth riêng và lưu bằng chứng đã làm sạch:
+
+1. User đăng nhập, tạo analysis và gửi report; user không gọi được admin API.
+2. Admin đăng nhập, thấy report trong Duyệt bảo mật và chọn một resolution/remediation có cấu trúc.
+3. Với whitelist, xác minh record active, provenance/report reference, re-analysis evidence và unified audit.
+4. Với blacklist, xác minh report chỉ tạo proposal pending; approve ở bước review thứ hai mới tạo record active;
+   sau đó re-analysis có approved-blacklist evidence và audit liên kết report/action/actor/time.
+5. Lặp lại với rejected/dismissed report và rejected blacklist action; xác minh không có trust/risk side effect.
+6. Logout từng role, xác minh session local/demo bị xóa nếu dùng local và hosted logout quay về login đúng cấu hình.
+
+Không ghi access token, raw private message, OTP, credential hoặc URL query nhạy cảm vào ảnh/log/evidence.

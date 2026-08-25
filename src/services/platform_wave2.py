@@ -612,6 +612,13 @@ class MemoryWave2Repository:
     executed_blacklist: set[str] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    async def _hydrate_actions(self) -> None:
+        load = getattr(self.action_sink, "list_security_admin_actions", None)
+        if load is None:
+            return
+        for item in await load():
+            self.actions.setdefault(item.action_id, item)
+
     async def create_appeal(
         self, analysis_id: UUID, owner_id: str, request: AppealCreateRequestV3, evidence: list[Evidence]
     ) -> AppealReceiptV3:
@@ -712,6 +719,7 @@ class MemoryWave2Repository:
         target: str | None,
         evidence: list[Evidence],
     ) -> AdminActionRecordV3:
+        await self._hydrate_actions()
         canonical = _canonical_action_target(action, target) if target else None
         async with self._lock:
             existing = next(
@@ -723,6 +731,7 @@ class MemoryWave2Repository:
                     and item.campaign_id == campaign_id
                     and item.action is action
                     and item.target == canonical
+                    and item.status is AdminActionStatus.PENDING_REVIEW
                 ),
                 None,
             )
@@ -741,26 +750,37 @@ class MemoryWave2Repository:
         )
         async with self._lock:
             self.actions[record.action_id] = record
+        save = getattr(self.action_sink, "save_security_admin_action", None)
+        if save is not None:
+            await save(record)
         return record.model_copy(deep=True)
 
     async def list_admin_actions(
         self, status: AdminActionStatus | None, limit: int, offset: int
     ) -> tuple[list[AdminActionRecordV3], int]:
+        await self._hydrate_actions()
         rows = [item for item in self.actions.values() if status is None or item.status is status]
         rows.sort(key=lambda item: item.proposed_at, reverse=True)
         return [item.model_copy(deep=True) for item in rows[offset : offset + limit]], len(rows)
 
     async def get_admin_action(self, action_id: UUID) -> AdminActionRecordV3 | None:
+        await self._hydrate_actions()
         item = self.actions.get(action_id)
         return item.model_copy(deep=True) if item else None
 
     async def list_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        load = getattr(self.action_sink, "list_security_admin_action_audit", None)
+        if load is not None:
+            persisted = await load(action_id)
+            if persisted:
+                return persisted
         rows = [item for item in self.audit if item.get("action_id") == action_id]
         return [AdminActionAuditRecordV3.model_validate(item) for item in rows]
 
     async def decide_admin_action(
         self, action_id: UUID, decision: ReviewDecision, note: str, reviewer_id: str
     ) -> AdminActionDecisionResponseV3 | None:
+        await self._hydrate_actions()
         async with self._lock:
             item = self.actions.get(action_id)
             if item is None:
@@ -774,7 +794,10 @@ class MemoryWave2Repository:
             if decision is ReviewDecision.APPROVED:
                 executed_at = now
                 try:
-                    if item.action is ReviewedAction.ADD_TO_BLACKLIST:
+                    if item.action in {
+                        ReviewedAction.ADD_TO_BLACKLIST,
+                        ReviewedAction.DISABLE_BLACKLIST,
+                    }:
                         if self.action_sink is not None:
                             linked_analysis_id = item.security_analysis_id or item.analysis_id
                             await self.action_sink.apply_decision(
@@ -786,11 +809,10 @@ class MemoryWave2Repository:
                                 note=note,
                                 domains=[item.target],
                             )
-                        else:
+                        elif item.action is ReviewedAction.ADD_TO_BLACKLIST:
                             self.executed_blacklist.add(item.target)
-                        status = AdminActionStatus.EXECUTED
-                    elif item.action is ReviewedAction.DISABLE_BLACKLIST and self.action_sink is None:
-                        self.executed_blacklist.discard(item.target)
+                        else:
+                            self.executed_blacklist.discard(item.target)
                         status = AdminActionStatus.EXECUTED
                     else:
                         status = AdminActionStatus.FAILED
@@ -823,7 +845,14 @@ class MemoryWave2Repository:
                     "note": note,
                 }
             )
-            return AdminActionDecisionResponseV3(
+            action_audit = AdminActionAuditRecordV3.model_validate(self.audit[-1])
+        save_action = getattr(self.action_sink, "save_security_admin_action", None)
+        if save_action is not None:
+            await save_action(reviewed)
+        save_audit = getattr(self.action_sink, "save_security_admin_action_audit", None)
+        if save_audit is not None:
+            await save_audit(action_audit)
+        return AdminActionDecisionResponseV3(
                 action_id=action_id,
                 decision_id=decision_id,
                 action=item.action,

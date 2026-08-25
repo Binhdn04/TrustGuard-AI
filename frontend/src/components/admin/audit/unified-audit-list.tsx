@@ -1,5 +1,6 @@
 import { ChevronDown, FileClock, Search } from "lucide-react";
 
+import { securityLabel } from "@/lib/presentation/security-labels";
 import type { SecurityAdminAuditPageV4, SecurityAuditResourceV4 } from "@/types/generated/api-v4";
 
 export interface UnifiedAuditQuery {
@@ -17,6 +18,7 @@ const resourceLabels: Record<SecurityAuditResourceV4, string> = {
   appeal: "Khiếu nại",
   copilot: "Gợi ý hỗ trợ",
   identity_candidate: "Danh tính",
+  blacklist: "Danh sách chặn",
 };
 
 export function UnifiedAuditList({
@@ -41,7 +43,7 @@ export function UnifiedAuditList({
       <h2 id="unified-audit-heading" className="text-lg font-semibold">Sự kiện quản trị</h2>
       <div className="grid gap-2 sm:grid-cols-[auto_1fr]">
         <select
-          aria-label="Lọc audit theo resource"
+          aria-label="Lọc lịch sử theo loại tài nguyên"
           value={query.resourceType}
           onChange={(event) => onQueryChange({
             ...query,
@@ -56,10 +58,10 @@ export function UnifiedAuditList({
           ))}
         </select>
         <label className="relative">
-          <span className="sr-only">Lọc audit theo action</span>
+          <span className="sr-only">Lọc lịch sử theo hành động</span>
           <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
           <input
-            aria-label="Lọc audit theo action"
+            aria-label="Lọc lịch sử theo hành động"
             value={query.action}
             onChange={(event) => onQueryChange({ ...query, action: event.target.value, page: 1 })}
             placeholder="Tìm hành động…"
@@ -89,7 +91,7 @@ export function UnifiedAuditList({
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase">
                       {resourceLabels[event.resource_type]}
                     </span>
-                    <strong>{event.action.replaceAll("_", " ")}</strong>
+                    <strong>{securityLabel(event.action)}</strong>
                     <time className="text-[10px] text-muted-foreground" dateTime={event.occurred_at}>
                       {new Date(event.occurred_at).toLocaleString("vi-VN")}
                     </time>
@@ -101,7 +103,7 @@ export function UnifiedAuditList({
                       <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" aria-hidden="true" />
                     </summary>
                     <div className="mt-2 space-y-2 text-[10px] text-muted-foreground">
-                      <p className="break-all font-mono">Resource {event.resource_id} · Actor {event.actor_id}</p>
+                      <p className="break-all font-mono">Mã tài nguyên {event.resource_id} · Người thực hiện {event.actor_id}</p>
                       {event.evidence_refs.length > 0 && (
                         <ul className="space-y-1">
                           {event.evidence_refs.map((ref) => <li key={ref} className="break-all font-mono">{ref}</li>)}
@@ -124,9 +126,9 @@ export function UnifiedAuditList({
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{page?.total ?? 0} sự kiện</span>
         <span className="flex items-center gap-2">
-          <button aria-label="Audit page trước" disabled={query.page <= 1 || loading} onClick={() => onQueryChange({ ...query, page: query.page - 1 })} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">←</button>
+          <button aria-label="Trang lịch sử trước" disabled={query.page <= 1 || loading} onClick={() => onQueryChange({ ...query, page: query.page - 1 })} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">←</button>
           {query.page}/{lastPage}
-          <button aria-label="Audit page sau" disabled={query.page >= lastPage || loading} onClick={() => onQueryChange({ ...query, page: query.page + 1 })} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">→</button>
+          <button aria-label="Trang lịch sử sau" disabled={query.page >= lastPage || loading} onClick={() => onQueryChange({ ...query, page: query.page + 1 })} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">→</button>
         </span>
       </div>
     </section>

@@ -51,7 +51,7 @@ export function CaseLibrary({
       if (generation === requestGeneration.current) setPage(response);
     } catch (loadError) {
       if (generation === requestGeneration.current) {
-        setError(loadError instanceof Error ? loadError.message : "Không thể tải case history.");
+        setError(loadError instanceof Error ? loadError.message : "Không thể tải lịch sử kiểm tra.");
       }
     } finally {
       if (generation === requestGeneration.current) setLoading(false);
@@ -79,7 +79,7 @@ export function CaseLibrary({
       <div aria-live="polite" className="mt-6">
         {loading && (
           <div role="status" className="grid min-h-48 place-items-center rounded-2xl border border-border bg-card">
-            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-5 animate-spin" />Đang tải case</span>
+            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-5 animate-spin" />Đang tải lịch sử kiểm tra</span>
           </div>
         )}
         {error && !loading && (
@@ -100,7 +100,7 @@ export function CaseLibrary({
               </div>
             )}
             {page.total > 0 && (
-              <nav aria-label="Phân trang case" className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <nav aria-label="Phân trang lịch sử kiểm tra" className="mt-5 flex flex-wrap items-center justify-center gap-2">
                 <button type="button" disabled={query.page <= 1} onClick={() => changeQuery({ ...query, page: query.page - 1 })} className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold disabled:opacity-40"><ChevronLeft className="size-4" />Trang trước</button>
                 {visiblePages.map((item, index) => item === "ellipsis" ? (
                   <span key={`ellipsis-${index}`} aria-hidden="true" className="px-1 text-sm text-muted-foreground">…</span>

@@ -6,6 +6,7 @@ import type {
   SecurityRiskV4,
   SecurityScopeResponseV4,
 } from "@/types/generated/api-v4";
+import { riskLabel } from "@/lib/presentation/security-labels";
 
 export type SecurityPresentationMode = "simple" | "analyst";
 export type CaseSignalNodeKind = "context" | "target" | "action" | "threat" | "step" | "evidence" | "decision";
@@ -87,13 +88,13 @@ export const SECURITY_ACTION_LABELS: Record<SecurityRecommendedActionV4, string>
   PRESERVE_MESSAGE_FOR_REPORTING: "Lưu lại tin nhắn để báo cáo",
 };
 
-const RISK_PRESENTATION: Record<SecurityRiskV4, { label: string; tone: SecurityCaseViewModel["risk"]["tone"] }> = {
-  SAFE: { label: "Chưa phát hiện rủi ro", tone: "safe" },
-  LOW_RISK: { label: "Rủi ro thấp", tone: "safe" },
-  SUSPICIOUS: { label: "Đáng ngờ", tone: "caution" },
-  HIGH_RISK: { label: "Rủi ro cao", tone: "danger" },
-  MALICIOUS: { label: "Nguy hiểm", tone: "danger" },
-  INSUFFICIENT_EVIDENCE: { label: "Chưa đủ bằng chứng", tone: "neutral" },
+const RISK_TONE: Record<SecurityRiskV4, SecurityCaseViewModel["risk"]["tone"]> = {
+  SAFE: "safe",
+  LOW_RISK: "safe",
+  SUSPICIOUS: "caution",
+  HIGH_RISK: "danger",
+  MALICIOUS: "danger",
+  INSUFFICIENT_EVIDENCE: "neutral",
 };
 
 function targetId(target: string): string {
@@ -259,8 +260,8 @@ export function mapSecurityCaseViewModel(
   }
 
   const riskPresentation = result.risk
-    ? RISK_PRESENTATION[result.risk]
-    : { label: "Chưa có verdict", tone: "neutral" as const };
+    ? { label: riskLabel(result.risk), tone: RISK_TONE[result.risk] }
+    : { label: riskLabel(null), tone: "neutral" as const };
 
   const assistant = result.assistant_response ?? null;
   const assistantActions = assistant?.immediate_steps ?? [];

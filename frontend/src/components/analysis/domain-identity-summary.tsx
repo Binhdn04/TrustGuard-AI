@@ -1,6 +1,7 @@
 import { Building2, FileQuestion, Globe2 } from "lucide-react";
 
 import type { SecurityCaseViewModel, SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
+import { securityLabel } from "@/lib/presentation/security-labels";
 
 function verificationLabel(status: string | null | undefined, applicable = true): string {
   if (!applicable) return "Không áp dụng";
@@ -24,12 +25,12 @@ export function DomainIdentitySummary({ viewModel, mode }: {
   const firstParty = familiarity.find((item) => item.details.classification === "reviewed_first_party");
   const ranked = familiarity.find((item) => item.details.classification === "ranked_domain");
   const domainSummary = platform
-    ? `Nền tảng đã review: ${platform.details.platform_name} (${platform.details.observed_host})`
+    ? `Nền tảng đã duyệt: ${platform.details.platform_name} (${platform.details.observed_host})`
     : firstParty
-      ? `Tên miền first-party đã review: ${firstParty.details.observed_host}`
+      ? `Tên miền chính chủ đã duyệt: ${firstParty.details.observed_host}`
       : ranked
-        ? `Tên miền có dữ liệu xếp hạng${ranked.details.popularity_rank ? ` #${ranked.details.popularity_rank}` : ranked.details.popularity_bucket ? `, bucket ${ranked.details.popularity_bucket}` : ""}`
-        : "Chưa có dữ liệu familiarity cho tên miền";
+        ? `Tên miền có dữ liệu xếp hạng${ranked.details.popularity_rank ? ` #${ranked.details.popularity_rank}` : ranked.details.popularity_bucket ? `, nhóm ${ranked.details.popularity_bucket}` : ""}`
+        : "Chưa có dữ liệu mức độ quen thuộc cho tên miền";
   const report = viewModel.officialVerification;
   const publisher = report?.publisher_verification;
   const resource = report?.resource_verification;
@@ -42,9 +43,9 @@ export function DomainIdentitySummary({ viewModel, mode }: {
       Icon: Globe2,
     },
     {
-      title: "Danh tính publisher",
-      value: publisher ? verificationLabel(publisher.status, publisher.applicable) : "Chưa có dữ liệu xác minh publisher",
-      detail: publisher?.identity?.entity_name ?? "Không suy diễn publisher từ chủ sở hữu nền tảng.",
+      title: "Danh tính đơn vị phát hành",
+      value: publisher ? verificationLabel(publisher.status, publisher.applicable) : "Chưa có dữ liệu xác minh đơn vị phát hành",
+      detail: publisher?.identity?.entity_name ?? "Không suy diễn đơn vị phát hành từ chủ sở hữu nền tảng.",
       reason: publisher?.reason_code,
       Icon: Building2,
     },
@@ -55,7 +56,7 @@ export function DomainIdentitySummary({ viewModel, mode }: {
         : viewModel.context?.urls.length
           ? "Chưa xác minh tài nguyên cụ thể"
           : "Không áp dụng",
-      detail: resource?.match?.status ? `Resource match: ${resource.match.status}` : "Familiarity không xác minh form, video, post hoặc file cụ thể.",
+      detail: resource?.match?.status ? `Đối chiếu tài nguyên: ${securityLabel(resource.match.status)}` : "Mức độ quen thuộc không xác minh biểu mẫu, video, bài đăng hoặc tệp cụ thể.",
       reason: resource?.reason_code,
       Icon: FileQuestion,
     },
@@ -63,7 +64,7 @@ export function DomainIdentitySummary({ viewModel, mode }: {
 
   return (
     <section aria-labelledby="domain-identity-summary-heading" className="rounded-2xl border border-border bg-card p-4">
-      <p className="micro-label">Security context</p>
+      <p className="micro-label">Ngữ cảnh bảo mật</p>
       <h3 id="domain-identity-summary-heading" className="mt-1 text-sm font-semibold">Ba lớp cần phân biệt</h3>
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         {axes.map(({ title, value, detail, reason, Icon }) => (

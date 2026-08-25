@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
@@ -375,10 +376,54 @@ class TrustLifecycleV4(StrEnum):
     DISABLED = "disabled"
 
 
+class SecurityBlacklistLifecycleV4(StrEnum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+class SecurityBlacklistActionV4(StrEnum):
+    ADD = "add_to_blacklist"
+    DISABLE = "disable_blacklist"
+
+
+class SecurityBlacklistActionStatusV4(StrEnum):
+    PENDING_REVIEW = "pending_review"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+    FAILED = "failed"
+
+
+class SecurityBlacklistReviewDecisionV4(StrEnum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class WhitelistScopeV4(StrEnum):
     DOMAIN = "domain"
     URL = "url"
     CONTACT = "contact"
+
+
+class SecurityReportResolutionV4(StrEnum):
+    CONFIRM_SAFE = "confirm_safe"
+    MARK_FALSE_POSITIVE = "mark_false_positive"
+    CONFIRM_MALICIOUS = "confirm_malicious"
+    NEEDS_MORE_INFORMATION = "needs_more_information"
+    NO_CHANGE = "no_change"
+
+
+class SecurityReportRemediationActionV4(StrEnum):
+    NONE = "none"
+    UPDATE_MEMORY = "update_memory"
+    ADD_TO_WHITELIST = "add_to_whitelist"
+    PROPOSE_BLACKLIST = "propose_blacklist"
+
+
+class SecurityReportRemediationStatusV4(StrEnum):
+    NOT_REQUESTED = "not_requested"
+    PENDING = "pending"
+    EXECUTED = "executed"
+    FAILED = "failed"
 
 
 class SecurityMemoryAdminVerdictV4(StrEnum):
@@ -740,6 +785,103 @@ class WhitelistPageV4(SecurityContractModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
     offset: int = Field(ge=0)
+
+
+class SecurityBlacklistProposalRequestV4(SecurityContractModel):
+    canonical_domain: str = Field(min_length=1, max_length=253)
+    reason: str = Field(min_length=1, max_length=5000)
+    evidence_refs: list[str] = Field(min_length=1, max_length=100)
+    provenance: str = Field(min_length=1, max_length=1000)
+    source_analysis_id: UUID | None = None
+    source_report_id: UUID | None = None
+
+    @field_validator("canonical_domain")
+    @classmethod
+    def normalize_proposal_domain(cls, value: str) -> str:
+        return SecurityReportBlacklistProposalV4.require_canonical_domain(value)
+
+    @model_validator(mode="after")
+    def require_analysis_for_report(self) -> Self:
+        if self.source_report_id is not None and self.source_analysis_id is None:
+            raise ValueError("source_report_id requires source_analysis_id")
+        return self
+
+
+class SecurityBlacklistDisableRequestV4(SecurityContractModel):
+    reason: str = Field(min_length=1, max_length=5000)
+    evidence_refs: list[str] = Field(min_length=1, max_length=100)
+    provenance: str = Field(min_length=1, max_length=1000)
+
+
+class SecurityBlacklistRecordV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    blacklist_id: UUID
+    canonical_domain: str = Field(min_length=1, max_length=253)
+    lifecycle: SecurityBlacklistLifecycleV4
+    enabling_action_id: UUID | None = None
+    disabling_action_id: UUID | None = None
+    reason: str = Field(min_length=1, max_length=5000)
+    provenance: str = Field(min_length=1, max_length=1000)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    created_at: datetime
+    updated_at: datetime
+    version: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> Self:
+        if self.updated_at < self.created_at:
+            raise ValueError("blacklist updated_at cannot precede created_at")
+        if self.lifecycle is SecurityBlacklistLifecycleV4.ACTIVE and self.disabling_action_id is not None:
+            raise ValueError("active blacklist record cannot contain disabling_action_id")
+        return self
+
+
+class SecurityBlacklistPageV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    items: list[SecurityBlacklistRecordV4]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class SecurityBlacklistActionProposalV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    action_id: UUID
+    action: SecurityBlacklistActionV4
+    canonical_domain: str
+    status: SecurityBlacklistActionStatusV4
+    source_analysis_id: UUID | None = None
+    source_report_id: UUID | None = None
+    proposed_at: datetime
+
+
+class SecurityBlacklistDecisionRequestV4(SecurityContractModel):
+    decision: SecurityBlacklistReviewDecisionV4
+    note: str = Field(min_length=1, max_length=5000)
+
+
+class SecurityBlacklistDecisionResponseV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    action_id: UUID
+    action: SecurityBlacklistActionV4
+    status: SecurityBlacklistActionStatusV4
+    record: SecurityBlacklistRecordV4 | None = None
+    reviewed_at: datetime
+    executed_at: datetime | None = None
+    execution_error: str | None = None
+
+
+class SecurityBlacklistAuditRecordV4(SecurityContractModel):
+    contract_version: Literal["v4"] = CONTRACT_VERSION_V4
+    decision_id: UUID
+    action_id: UUID
+    decision: SecurityBlacklistReviewDecisionV4
+    action: SecurityBlacklistActionV4
+    status: SecurityBlacklistActionStatusV4
+    note: str
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    decided_at: datetime
+    execution_error: str | None = None
 
 
 class SecurityTriageCreateRequestV4(SecurityContractModel):
@@ -1108,12 +1250,84 @@ class SecurityReportCreateRequestV4(SecurityContractModel):
     comment: str | None = Field(default=None, max_length=5000)
 
 
+class SecurityReportBlacklistProposalV4(SecurityContractModel):
+    canonical_domain: str = Field(min_length=1, max_length=253)
+    reason: str = Field(min_length=1, max_length=5000)
+    evidence_refs: list[str] = Field(min_length=1, max_length=100)
+    provenance: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("canonical_domain")
+    @classmethod
+    def require_canonical_domain(cls, value: str) -> str:
+        candidate = value.casefold().rstrip(".")
+        if value != candidate or "://" in value or "/" in value or "@" in value:
+            raise ValueError("canonical_domain must be a lowercase hostname without URL syntax")
+        try:
+            ascii_domain = value.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ValueError("canonical_domain must be valid IDNA") from exc
+        if ascii_domain != value:
+            raise ValueError("canonical_domain must use its canonical ASCII IDNA form")
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("canonical_domain must be a domain hostname, not an IP address")
+        labels = value.split(".")
+        if len(labels) < 2 or any(
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or not all(character.isalnum() or character == "-" for character in label)
+            for label in labels
+        ):
+            raise ValueError("canonical_domain must be a valid domain hostname")
+        return value
+
+
+class SecurityReportRemediationReferenceV4(SecurityContractModel):
+    whitelist_id: UUID | None = None
+    memory_id: UUID | None = None
+    admin_action_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_single_reference(self) -> Self:
+        references = (self.whitelist_id, self.memory_id, self.admin_action_id)
+        if sum(value is not None for value in references) != 1:
+            raise ValueError("remediation reference requires exactly one target id")
+        return self
+
+
+class SecurityReportRemediationUpdateV4(SecurityContractModel):
+    status: Literal[
+        SecurityReportRemediationStatusV4.EXECUTED,
+        SecurityReportRemediationStatusV4.FAILED,
+    ]
+    reference: SecurityReportRemediationReferenceV4 | None = None
+    note: str = Field(min_length=1, max_length=5000)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def require_executed_reference(self) -> Self:
+        if self.status is SecurityReportRemediationStatusV4.EXECUTED and self.reference is None:
+            raise ValueError("executed remediation requires a target reference")
+        return self
+
+
 class SecurityReportRecordV4(SecurityReportCreateRequestV4):
     contract_version: Literal["v4"] = CONTRACT_VERSION_V4
     report_id: UUID = Field(default_factory=uuid4)
     analysis_id: UUID
     status: ReportStatus = ReportStatus.SUBMITTED
     decision: ReportReviewDecision | None = None
+    resolution: SecurityReportResolutionV4 | None = None
+    remediation_action: SecurityReportRemediationActionV4 = SecurityReportRemediationActionV4.NONE
+    whitelist_entry: WhitelistCreateRequestV4 | None = None
+    blacklist_proposal: SecurityReportBlacklistProposalV4 | None = None
+    remediation_status: SecurityReportRemediationStatusV4 = SecurityReportRemediationStatusV4.NOT_REQUESTED
+    remediation_reference: SecurityReportRemediationReferenceV4 | None = None
     reviewer_id: str | None = None
     review_note: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -1126,12 +1340,112 @@ class SecurityReportRecordV4(SecurityReportCreateRequestV4):
             raise ValueError("processed report requires decision, reviewer, note and timestamp")
         if self.status is not ReportStatus.PROCESSED and any(value is not None for value in review_fields):
             raise ValueError("unprocessed report cannot contain review fields")
+        if self.status is not ReportStatus.PROCESSED:
+            if self.resolution is not None or self.remediation_action is not SecurityReportRemediationActionV4.NONE:
+                raise ValueError("unprocessed report cannot contain a resolution or remediation action")
+            if self.whitelist_entry is not None or self.blacklist_proposal is not None:
+                raise ValueError("unprocessed report cannot contain remediation input")
+            if self.remediation_status is not SecurityReportRemediationStatusV4.NOT_REQUESTED:
+                raise ValueError("unprocessed report cannot contain remediation progress")
+            if self.remediation_reference is not None:
+                raise ValueError("unprocessed report cannot contain a remediation reference")
+            return self
+        legacy_approved_record = (
+            self.decision is ReportReviewDecision.APPROVED
+            and self.resolution is None
+            and self.remediation_action is SecurityReportRemediationActionV4.NONE
+            and self.whitelist_entry is None
+            and self.blacklist_proposal is None
+            and self.remediation_status is SecurityReportRemediationStatusV4.NOT_REQUESTED
+            and self.remediation_reference is None
+        )
+        if not legacy_approved_record:
+            SecurityReportDecisionRequestV4(
+                decision=self.decision,
+                resolution=self.resolution,
+                remediation_action=self.remediation_action,
+                whitelist_entry=self.whitelist_entry,
+                blacklist_proposal=self.blacklist_proposal,
+                note=self.review_note,
+            )
+        if self.remediation_action is SecurityReportRemediationActionV4.NONE:
+            if self.remediation_status is not SecurityReportRemediationStatusV4.NOT_REQUESTED:
+                raise ValueError("report without remediation must remain not_requested")
+            if self.remediation_reference is not None:
+                raise ValueError("report without remediation cannot contain a reference")
+        elif self.remediation_status is SecurityReportRemediationStatusV4.NOT_REQUESTED:
+            raise ValueError("requested remediation requires a progress status")
+        if (
+            self.remediation_status is SecurityReportRemediationStatusV4.EXECUTED
+            and self.remediation_reference is None
+        ):
+            raise ValueError("executed remediation requires a target reference")
+        if self.remediation_reference is not None:
+            reference_by_action = {
+                SecurityReportRemediationActionV4.UPDATE_MEMORY: self.remediation_reference.memory_id,
+                SecurityReportRemediationActionV4.ADD_TO_WHITELIST: self.remediation_reference.whitelist_id,
+                SecurityReportRemediationActionV4.PROPOSE_BLACKLIST: self.remediation_reference.admin_action_id,
+            }
+            if reference_by_action.get(self.remediation_action) is None:
+                raise ValueError("remediation reference must match the requested action")
         return self
 
 
 class SecurityReportDecisionRequestV4(SecurityContractModel):
     decision: ReportReviewDecision
+    resolution: SecurityReportResolutionV4 | None = None
+    remediation_action: SecurityReportRemediationActionV4 = SecurityReportRemediationActionV4.NONE
+    whitelist_entry: WhitelistCreateRequestV4 | None = None
+    blacklist_proposal: SecurityReportBlacklistProposalV4 | None = None
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
     note: str = Field(min_length=1, max_length=5000)
+
+    def audit_evidence_refs(self) -> list[str]:
+        proposal_refs = self.blacklist_proposal.evidence_refs if self.blacklist_proposal is not None else []
+        return list(dict.fromkeys([*self.evidence_refs, *proposal_refs]))
+
+    @model_validator(mode="after")
+    def validate_resolution_and_remediation(self) -> Self:
+        if self.decision is not ReportReviewDecision.APPROVED:
+            if self.resolution is not None:
+                raise ValueError("rejected or dismissed report cannot contain a resolution")
+            if self.remediation_action is not SecurityReportRemediationActionV4.NONE:
+                raise ValueError("rejected or dismissed report cannot request remediation")
+        elif self.resolution is None:
+            raise ValueError("approved report requires a resolution")
+
+        if self.remediation_action is SecurityReportRemediationActionV4.ADD_TO_WHITELIST:
+            if self.resolution not in {
+                SecurityReportResolutionV4.CONFIRM_SAFE,
+                SecurityReportResolutionV4.MARK_FALSE_POSITIVE,
+            }:
+                raise ValueError("whitelist remediation requires a safe or false-positive resolution")
+            if self.whitelist_entry is None:
+                raise ValueError("whitelist remediation requires indicator, scope, provenance and effective time")
+        elif self.whitelist_entry is not None:
+            raise ValueError("whitelist_entry is only valid for add_to_whitelist remediation")
+
+        if self.remediation_action is SecurityReportRemediationActionV4.PROPOSE_BLACKLIST:
+            if self.resolution is not SecurityReportResolutionV4.CONFIRM_MALICIOUS:
+                raise ValueError("blacklist remediation requires a malicious resolution")
+            if self.blacklist_proposal is None:
+                raise ValueError("blacklist remediation requires domain, reason, evidence and provenance")
+        elif self.blacklist_proposal is not None:
+            raise ValueError("blacklist_proposal is only valid for propose_blacklist remediation")
+
+        if self.remediation_action is SecurityReportRemediationActionV4.UPDATE_MEMORY and self.resolution in {
+            SecurityReportResolutionV4.NEEDS_MORE_INFORMATION,
+            SecurityReportResolutionV4.NO_CHANGE,
+        }:
+            raise ValueError("non-conclusive resolution cannot update Security Memory")
+        if self.resolution in {
+            SecurityReportResolutionV4.NEEDS_MORE_INFORMATION,
+            SecurityReportResolutionV4.NO_CHANGE,
+        } and self.remediation_action is not SecurityReportRemediationActionV4.NONE:
+            raise ValueError("non-conclusive resolution cannot request remediation")
+        if len(self.audit_evidence_refs()) > 100:
+            raise ValueError("combined report decision evidence_refs cannot exceed 100 items")
+        return self
 
 
 class SecurityReportAdminRecordV4(SecurityReportRecordV4):
@@ -1432,6 +1746,31 @@ class SecurityAuditResourceV4(StrEnum):
     APPEAL = "appeal"
     COPILOT = "copilot"
     IDENTITY_CANDIDATE = "identity_candidate"
+    BLACKLIST = "blacklist"
+
+
+class SecurityReportAuditDetailsV4(SecurityContractModel):
+    decision: ReportReviewDecision
+    resolution: SecurityReportResolutionV4 | None = None
+    remediation_action: SecurityReportRemediationActionV4
+    remediation_status: SecurityReportRemediationStatusV4
+    remediation_reference: SecurityReportRemediationReferenceV4 | None = None
+    whitelist_entry: WhitelistCreateRequestV4 | None = None
+    blacklist_proposal: SecurityReportBlacklistProposalV4 | None = None
+
+    @classmethod
+    def from_record(cls, record: SecurityReportRecordV4) -> Self:
+        if record.decision is None:
+            raise ValueError("report audit details require a reviewed decision")
+        return cls(
+            decision=record.decision,
+            resolution=record.resolution,
+            remediation_action=record.remediation_action,
+            remediation_status=record.remediation_status,
+            remediation_reference=record.remediation_reference,
+            whitelist_entry=record.whitelist_entry,
+            blacklist_proposal=record.blacklist_proposal,
+        )
 
 
 class SecurityAdminAuditEventV4(SecurityContractModel):
@@ -1443,6 +1782,7 @@ class SecurityAdminAuditEventV4(SecurityContractModel):
     note: str | None = Field(default=None, max_length=5000)
     occurred_at: datetime
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    report_details: SecurityReportAuditDetailsV4 | None = None
 
 
 class SecurityAdminAuditPageV4(SecurityContractModel):
@@ -1540,10 +1880,22 @@ __all__ = [
     "SecurityChatResponseV4",
     "SecurityChatRouteV4",
     "TrustLifecycleV4",
+    "SecurityBlacklistLifecycleV4",
+    "SecurityBlacklistActionV4",
+    "SecurityBlacklistActionStatusV4",
+    "SecurityBlacklistReviewDecisionV4",
     "WhitelistCreateRequestV4",
     "WhitelistRecordV4",
     "WhitelistPageV4",
     "WhitelistScopeV4",
+    "SecurityBlacklistProposalRequestV4",
+    "SecurityBlacklistDisableRequestV4",
+    "SecurityBlacklistRecordV4",
+    "SecurityBlacklistPageV4",
+    "SecurityBlacklistActionProposalV4",
+    "SecurityBlacklistDecisionRequestV4",
+    "SecurityBlacklistDecisionResponseV4",
+    "SecurityBlacklistAuditRecordV4",
     "SecurityScopeResponseV4",
     "SecurityTriageCreateRequestV4",
     "SecurityToolErrorV4",
@@ -1551,10 +1903,16 @@ __all__ = [
     "VerificationStatusV4",
     "VerificationTopicV4",
     "SecurityReportCreateRequestV4",
+    "SecurityReportBlacklistProposalV4",
     "SecurityReportRecordV4",
     "SecurityReportDecisionRequestV4",
     "SecurityReportAdminRecordV4",
     "SecurityReportPageV4",
+    "SecurityReportResolutionV4",
+    "SecurityReportRemediationActionV4",
+    "SecurityReportRemediationStatusV4",
+    "SecurityReportRemediationReferenceV4",
+    "SecurityReportRemediationUpdateV4",
     "SecurityAppealCreateRequestV4",
     "SecurityAppealRecordV4",
     "SecurityAppealDecisionRequestV4",
@@ -1584,6 +1942,7 @@ __all__ = [
     "SecurityThreatIntelligenceV4",
     "SecurityThreatIntelligencePageV4",
     "SecurityAuditResourceV4",
+    "SecurityReportAuditDetailsV4",
     "SecurityAdminAuditEventV4",
     "SecurityAdminAuditPageV4",
 ]

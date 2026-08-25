@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BadgeCheck, LockKeyhole, Workflow } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 
 import { ApiError } from "@/lib/api/api-error";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { useAuth } from "@/lib/auth-context";
-import { cn } from "@/lib/utils";
 import type {
   SecurityAppealStatusV4,
   SecurityAdminCopilotResponseV4,
@@ -16,23 +15,15 @@ import type {
   SecurityScopeResponseV4,
 } from "@/types/generated/api-v4";
 
-import { ActionExecutionPanel, type AdminActionApi } from "./action-execution-panel";
 import { CaseReviewPanel } from "./case-review-panel";
-import { DecisionPanel, type FeedbackDecision } from "./decision-panel";
+import { DecisionPanel, type FeedbackDecisionSubmission } from "./decision-panel";
 import { feedbackKey, ReviewQueue, type FeedbackKind, type FeedbackReviewItem } from "./review-queue";
 
 const PAGE_SIZE = 10;
 
-export function ReviewRoom({
-  securityApi = getSecurityAnalysisApi(),
-  actionApi,
-}: {
-  securityApi?: SecurityAnalysisApi;
-  actionApi?: AdminActionApi;
-}) {
+export function ReviewRoom({ securityApi = getSecurityAnalysisApi() }: { securityApi?: SecurityAnalysisApi }) {
   const { user, isLoading: authLoading } = useAuth();
   const isAdmin = user?.role === "security_admin";
-  const [surface, setSurface] = useState<"feedback" | "actions">("feedback");
   const [kind, setKind] = useState<FeedbackKind>("report");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
@@ -49,7 +40,7 @@ export function ReviewRoom({
   const generation = useRef({ queue: 0, detail: 0 });
 
   const loadQueue = useCallback(async () => {
-    if (!isAdmin || surface !== "feedback") return;
+    if (!isAdmin) return;
     const current = ++generation.current.queue;
     setQueueState({ loading: true, error: null });
     try {
@@ -62,9 +53,9 @@ export function ReviewRoom({
       }
       if (generation.current.queue === current) setQueueState({ loading: false, error: null });
     } catch (caught) {
-      if (generation.current.queue === current) setQueueState({ loading: false, error: caught instanceof Error ? caught.message : "Không thể tải feedback queue." });
+      if (generation.current.queue === current) setQueueState({ loading: false, error: caught instanceof Error ? caught.message : "Không thể tải hàng đợi phản hồi." });
     }
-  }, [isAdmin, kind, page, query, securityApi, status, surface]);
+  }, [isAdmin, kind, page, query, securityApi, status]);
 
   useEffect(() => { void Promise.resolve().then(loadQueue); }, [loadQueue]);
 
@@ -80,14 +71,14 @@ export function ReviewRoom({
       const result = await securityApi.getAdminAnalysis(item.record.analysis_id);
       if (generation.current.detail === current) { setAnalysis(result); setCaseState({ loading: false, error: null }); }
     } catch (caught) {
-      if (generation.current.detail === current) setCaseState({ loading: false, error: caught instanceof Error ? caught.message : "Không thể tải structured case." });
+      if (generation.current.detail === current) setCaseState({ loading: false, error: caught instanceof Error ? caught.message : "Không thể tải hồ sơ có cấu trúc." });
     }
   };
 
   const loadCopilot = async (refresh: boolean) => {
     if (!analysis || copilotState.loading) return;
     if (!securityApi.draftAdminCopilot) {
-      setCopilotState({ loading: false, error: "Admin Copilot is unavailable in this client." });
+      setCopilotState({ loading: false, error: "Admin Copilot hiện không khả dụng trên giao diện này." });
       return;
     }
     const analysisId = analysis.analysis_id;
@@ -97,26 +88,68 @@ export function ReviewRoom({
       if (analysis.analysis_id === analysisId) setCopilot(suggestion);
       setCopilotState({ loading: false, error: null });
     } catch (caught) {
-      setCopilotState({ loading: false, error: caught instanceof Error ? caught.message : "Unable to load Admin Copilot suggestion." });
+      setCopilotState({ loading: false, error: caught instanceof Error ? caught.message : "Không thể tải gợi ý của Admin Copilot." });
     }
   };
 
-  const submitFeedbackDecision = async (decision: FeedbackDecision, note: string) => {
+  const submitFeedbackDecision = async (submission: FeedbackDecisionSubmission) => {
     if (!selected || !analysis || decisionState.busy) return;
     setDecisionState({ busy: true, blocked: false, error: null });
     try {
       if (selected.kind === "report") {
-        const record = await securityApi.decideAdminReport(selected.record.report_id, { decision: decision as "approved" | "rejected" | "dismissed", note });
+        if (submission.kind !== "report") return;
+        const record = await securityApi.decideAdminReport(selected.record.report_id, submission.request);
         setSelected({ kind: "report", record });
       } else {
-        const record = await securityApi.decideAdminAppeal(selected.record.appeal_id, { outcome: decision as "uphold" | "overturn" | "inconclusive", note });
+        if (submission.kind !== "appeal") return;
+        const record = await securityApi.decideAdminAppeal(selected.record.appeal_id, { outcome: submission.decision, note: submission.note });
         setSelected({ kind: "appeal", record });
       }
       setDecisionState({ busy: false, blocked: false, error: null });
       await loadQueue();
     } catch (caught) {
       const conflict = caught instanceof ApiError && caught.status === 409;
-      setDecisionState({ busy: false, blocked: conflict, error: conflict ? "Record đã được reviewer khác xử lý. Hàng đợi vừa được tải lại; không gửi lại quyết định." : caught instanceof Error ? caught.message : "Không thể ghi quyết định." });
+      setDecisionState({ busy: false, blocked: conflict, error: conflict ? "Hồ sơ đã được người duyệt khác xử lý. Hàng đợi vừa được tải lại; không gửi lại quyết định." : caught instanceof Error ? caught.message : "Không thể ghi quyết định." });
+      if (conflict) await loadQueue();
+    }
+  };
+
+  const decideLinkedBlacklist = async (actionId: string, decision: "approved" | "rejected") => {
+    if (!selected || selected.kind !== "report" || decisionState.busy) return;
+    if (!securityApi.decideBlacklistAction) {
+      setDecisionState({ busy: false, blocked: false, error: "Client hiện tại chưa hỗ trợ quyết định danh sách chặn v4." });
+      return;
+    }
+    setDecisionState({ busy: true, blocked: false, error: null });
+    try {
+      const result = await securityApi.decideBlacklistAction(actionId, {
+        decision,
+        note: `${decision === "approved" ? "Xác nhận thực thi" : "Từ chối"} đề xuất chặn từ báo cáo ${selected.record.report_id}: ${selected.record.review_note ?? "đã rà soát bằng chứng"}`,
+      });
+      const remediationStatus = result.status === "executed" ? "executed" : "failed";
+      setSelected({
+        kind: "report",
+        record: {
+          ...selected.record,
+          remediation_status: remediationStatus,
+          remediation_reference: { admin_action_id: actionId },
+        },
+      });
+      setDecisionState({
+        busy: false,
+        blocked: false,
+        error: result.status === "failed" ? result.execution_error ?? "Thực thi hành động chặn thất bại." : null,
+      });
+      await loadQueue();
+    } catch (caught) {
+      const conflict = caught instanceof ApiError && caught.status === 409;
+      setDecisionState({
+        busy: false,
+        blocked: conflict,
+        error: conflict
+          ? "Action đã được người duyệt khác xử lý. Hàng đợi vừa được tải lại; không gửi lại quyết định."
+          : caught instanceof Error ? caught.message : "Không thể xử lý đề xuất chặn.",
+      });
       if (conflict) await loadQueue();
     }
   };
@@ -131,19 +164,12 @@ export function ReviewRoom({
 
   return (
     <div className="space-y-6">
-      <header className="border-b border-border/70 pb-4"><h1 className="text-2xl font-bold tracking-[-0.025em] sm:text-3xl">Duyệt bảo mật</h1><p className="mt-1 text-sm text-muted-foreground">Xử lý báo cáo, khiếu nại và hành động chờ duyệt.</p></header>
-      <div className="inline-grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label="Review Room surface">
-        <button type="button" role="tab" aria-selected={surface === "feedback"} onClick={() => setSurface("feedback")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "feedback" ? "bg-background shadow-sm" : "text-muted-foreground")}><BadgeCheck className="size-4" />Báo cáo & khiếu nại</button>
-        <button type="button" role="tab" aria-selected={surface === "actions"} onClick={() => setSurface("actions")} className={cn("inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold", surface === "actions" ? "bg-background shadow-sm" : "text-muted-foreground")}><Workflow className="size-4" />Hành động chờ duyệt</button>
-      </div>
-
-      {surface === "feedback" ? (
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(18rem,0.62fr)_minmax(32rem,1.55fr)_minmax(17rem,0.58fr)]">
+      <header className="border-b border-border/70 pb-4"><h1 className="text-2xl font-bold tracking-[-0.025em] sm:text-3xl">Duyệt bảo mật</h1><p className="mt-1 text-sm text-muted-foreground">Đưa ra kết luận có cấu trúc và chọn hướng khắc phục rõ ràng cho báo cáo hoặc khiếu nại.</p></header>
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(18rem,0.62fr)_minmax(32rem,1.55fr)_minmax(17rem,0.58fr)]">
           <ReviewQueue kind={kind} items={items} selectedKey={selected ? feedbackKey(selected) : null} query={query} status={status} loading={queueState.loading} error={queueState.error} page={page} total={total} pageSize={PAGE_SIZE} onKindChange={switchKind} onQueryChange={(value) => { setQuery(value); setPage(1); }} onStatusChange={(value) => { setStatus(value); setPage(1); }} onSelect={(item) => void selectFeedback(item)} onPageChange={setPage} onRetry={() => void loadQueue()} />
           <CaseReviewPanel feedback={selected} analysis={analysis} loading={caseState.loading} error={caseState.error} copilot={copilot} copilotLoading={copilotState.loading} copilotError={copilotState.error} onCopilot={(refresh) => void loadCopilot(refresh)} />
-          <DecisionPanel key={selected ? feedbackKey(selected) : "empty"} feedback={selected} caseReady={analysis !== null && !caseState.loading && !caseState.error && !decisionState.blocked} busy={decisionState.busy} error={decisionState.error} onSubmit={submitFeedbackDecision} />
-        </div>
-      ) : <ActionExecutionPanel api={actionApi ?? securityApi as AdminActionApi} />}
+          <DecisionPanel key={selected ? feedbackKey(selected) : "empty"} feedback={selected} analysis={analysis} caseReady={analysis !== null && !caseState.loading && !caseState.error && !decisionState.blocked} busy={decisionState.busy} error={decisionState.error} onSubmit={submitFeedbackDecision} onBlacklistDecision={decideLinkedBlacklist} />
+      </div>
     </div>
   );
 }

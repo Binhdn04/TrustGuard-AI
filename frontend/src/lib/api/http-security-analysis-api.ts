@@ -17,6 +17,14 @@ import type {
   SecurityAppealDecisionRequestV4,
   SecurityAppealPageV4,
   SecurityAppealRecordV4,
+  SecurityBlacklistActionProposalV4,
+  SecurityBlacklistAuditRecordV4,
+  SecurityBlacklistDecisionRequestV4,
+  SecurityBlacklistDecisionResponseV4,
+  SecurityBlacklistDisableRequestV4,
+  SecurityBlacklistPageV4,
+  SecurityBlacklistProposalRequestV4,
+  SecurityBlacklistRecordV4,
   SecurityCampaignAuditRecordV4,
   SecurityCampaignDecisionRequestV4,
   SecurityCampaignPageV4,
@@ -60,6 +68,7 @@ import type {
   SecurityAnalysisApi,
   SecurityAnalysisPageQuery,
   SecurityAppealPageQuery,
+  SecurityBlacklistPageQuery,
   SecurityCampaignPageQuery,
   SecurityChatContext,
   SecurityDomainIntelligenceQuery,
@@ -426,6 +435,44 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     return readJson<T>(response);
+  }
+
+  async pageBlacklist(query: SecurityBlacklistPageQuery = {}): Promise<SecurityBlacklistPageV4> {
+    return this.get<SecurityBlacklistPageV4>(withQuery("admin/blacklist/page", query));
+  }
+
+  async getBlacklist(blacklistId: string): Promise<SecurityBlacklistRecordV4> {
+    return this.get<SecurityBlacklistRecordV4>(`admin/blacklist/${encodeURIComponent(blacklistId)}`);
+  }
+
+  async proposeBlacklist(request: SecurityBlacklistProposalRequestV4): Promise<SecurityBlacklistActionProposalV4> {
+    return this.post<SecurityBlacklistActionProposalV4>("admin/blacklist/proposals", request);
+  }
+
+  async proposeDisableBlacklist(
+    blacklistId: string,
+    request: SecurityBlacklistDisableRequestV4,
+  ): Promise<SecurityBlacklistActionProposalV4> {
+    return this.post<SecurityBlacklistActionProposalV4>(
+      `admin/blacklist/${encodeURIComponent(blacklistId)}/disable-proposals`,
+      request,
+    );
+  }
+
+  async decideBlacklistAction(
+    actionId: string,
+    request: SecurityBlacklistDecisionRequestV4,
+  ): Promise<SecurityBlacklistDecisionResponseV4> {
+    return this.post<SecurityBlacklistDecisionResponseV4>(
+      `admin/blacklist/actions/${encodeURIComponent(actionId)}/decision`,
+      request,
+    );
+  }
+
+  async listBlacklistAudit(blacklistId: string): Promise<SecurityBlacklistAuditRecordV4[]> {
+    return this.get<SecurityBlacklistAuditRecordV4[]>(
+      `admin/blacklist/${encodeURIComponent(blacklistId)}/audit`,
+    );
   }
 
   private async request(url: string, options: RequestInit): Promise<Response> {

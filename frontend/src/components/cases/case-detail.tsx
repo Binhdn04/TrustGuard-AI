@@ -21,21 +21,22 @@ import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types"
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
 import { ApiError } from "@/lib/api/api-error";
 import { mapSecurityCaseViewModel, type SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
+import { securityLabel, statusLabel } from "@/lib/presentation/security-labels";
 import type { SecurityAnalysisEventV4, SecurityConversationV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
 import { ResumedContextCard } from "./resumed-context-card";
 
 function unavailableMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null;
-  if (error.status === 403) return "Bạn không có quyền mở conversation này. Hãy bắt đầu một case mới nếu cần tiếp tục.";
-  if (error.status === 404) return "Conversation đã hết hạn hoặc không còn tồn tại. Case vẫn ở chế độ chỉ đọc; bạn có thể bắt đầu case mới.";
+  if (error.status === 403) return "Bạn không có quyền mở cuộc trò chuyện này. Hãy bắt đầu một lượt kiểm tra mới nếu cần tiếp tục.";
+  if (error.status === 404) return "Cuộc trò chuyện đã hết hạn hoặc không còn tồn tại. Kết quả vẫn ở chế độ chỉ đọc; bạn có thể bắt đầu lượt kiểm tra mới.";
   return null;
 }
 
 function caseLoadMessage(error: unknown): string {
-  if (error instanceof ApiError && error.status === 403) return "Bạn không có quyền mở analysis này.";
-  if (error instanceof ApiError && error.status === 404) return "Analysis không tồn tại hoặc không còn khả dụng.";
-  return error instanceof Error ? error.message : "Không thể tải case.";
+  if (error instanceof ApiError && error.status === 403) return "Bạn không có quyền mở lượt kiểm tra này.";
+  if (error instanceof ApiError && error.status === 404) return "Lượt kiểm tra không tồn tại hoặc không còn khả dụng.";
+  return error instanceof Error ? error.message : "Không thể tải lượt kiểm tra.";
 }
 
 export function CaseDetail({
@@ -116,11 +117,11 @@ export function CaseDetail({
       if (conversationResult.status === "fulfilled") {
         setConversation(conversationResult.value);
         if (conversationResult.value.status !== "active") {
-          setResumeIssue("Conversation đã hết hạn. Case vẫn ở chế độ chỉ đọc; hãy bắt đầu case mới để tiếp tục.");
+          setResumeIssue("Cuộc trò chuyện đã hết hạn. Kết quả vẫn ở chế độ chỉ đọc; hãy bắt đầu lượt kiểm tra mới để tiếp tục.");
         }
       } else {
         setConversation(null);
-        setResumeIssue(unavailableMessage(conversationResult.reason) ?? "Không thể tải structured conversation context.");
+        setResumeIssue(unavailableMessage(conversationResult.reason) ?? "Không thể tải ngữ cảnh cuộc trò chuyện có cấu trúc.");
       }
       if (analysis.status === "queued" || analysis.status === "running") monitor(analysis.analysis_id, activeGeneration);
     } catch (loadError) {
@@ -180,15 +181,15 @@ export function CaseDetail({
         try {
           const refreshed = await api.getConversation(conversation.conversation_id);
           if (activeGeneration === generation.current) setConversation(refreshed);
-          setResumeIssue("Case đã được cập nhật ở một lượt khác. Context version mới đã được tải; hãy kiểm tra rồi gửi lại follow-up.");
+          setResumeIssue("Lượt kiểm tra đã được cập nhật ở nơi khác. Phiên bản ngữ cảnh mới đã được tải; hãy kiểm tra rồi gửi lại thông tin bổ sung.");
         } catch (refreshError) {
           setConversation(null);
-          setResumeIssue(unavailableMessage(refreshError) ?? "Không thể làm mới conversation sau version conflict. Hãy bắt đầu case mới.");
+          setResumeIssue(unavailableMessage(refreshError) ?? "Không thể làm mới cuộc trò chuyện sau xung đột phiên bản. Hãy bắt đầu lượt kiểm tra mới.");
         }
       } else {
         const unavailable = unavailableMessage(resumeError);
         if (unavailable) setConversation(null);
-        setResumeIssue(unavailable ?? (resumeError instanceof Error ? resumeError.message : "Không thể tiếp tục case."));
+        setResumeIssue(unavailable ?? (resumeError instanceof Error ? resumeError.message : "Không thể tiếp tục lượt kiểm tra."));
       }
       setResumeBusy(false);
       return false;
@@ -204,11 +205,11 @@ export function CaseDetail({
       <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
         <div role="alert" className="case-panel p-6 text-center">
           <FileQuestion className="mx-auto size-7 text-muted-foreground" />
-          <h1 className="mt-3 text-xl font-semibold">Không thể mở case</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{error ?? "Case không tồn tại."}</p>
+          <h1 className="mt-3 text-xl font-semibold">Không thể mở lượt kiểm tra</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">{error ?? "Lượt kiểm tra không tồn tại."}</p>
           <div className="mt-5 flex flex-wrap justify-center gap-3">
             <button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-semibold"><RotateCw className="size-4" />Thử lại</button>
-            <Link href="/" className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"><Plus className="size-4" />Bắt đầu case mới</Link>
+            <Link href="/" className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"><Plus className="size-4" />Bắt đầu lượt kiểm tra mới</Link>
           </div>
         </div>
       </div>
@@ -220,11 +221,11 @@ export function CaseDetail({
       <header className="flex flex-col justify-between gap-4 border-b border-border/70 pb-5 sm:flex-row sm:items-end">
         <div>
           <Link href="/history" className="inline-flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />Lịch sử</Link>
-          {mode === "analyst" && <p className="micro-label mt-4 text-primary">CASE DETAIL / {result.analysis_id.slice(0, 8)}</p>}
+          {mode === "analyst" && <p className="micro-label mt-4 text-primary">CHI TIẾT KIỂM TRA / {result.analysis_id.slice(0, 8)}</p>}
           <h1 className={mode === "simple" ? "mt-4 text-2xl font-semibold tracking-[-0.025em]" : "mt-1 text-2xl font-semibold tracking-[-0.025em]"}>
-            {mode === "simple" ? "Chi tiết cuộc trò chuyện" : "Security investigation record"}
+            {mode === "simple" ? "Chi tiết cuộc trò chuyện" : "Hồ sơ kiểm tra bảo mật"}
           </h1>
-          {mode === "analyst" && <p className="mt-1 text-xs text-muted-foreground">{result.status} · {result.scope_decision} · <time dateTime={result.created_at}>{new Date(result.created_at).toLocaleString("vi-VN")}</time></p>}
+          {mode === "analyst" && <p className="mt-1 text-xs text-muted-foreground">{statusLabel(result.status)} · {securityLabel(result.scope_decision)} · <time dateTime={result.created_at}>{new Date(result.created_at).toLocaleString("vi-VN")}</time></p>}
         </div>
         <div className="flex flex-wrap gap-2"><SimpleAnalystToggle mode={mode} onChange={setMode} /><Link href="/" className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold"><Plus className="size-3.5" />Cuộc trò chuyện mới</Link></div>
       </header>
@@ -253,7 +254,7 @@ export function CaseDetail({
                 Xem dữ liệu kiểm tra chi tiết
                 <ChevronDown className="size-4 transition-transform group-open/investigation:rotate-180" aria-hidden="true" />
               </summary>
-              <section aria-label="Investigation details" className="space-y-7 border-t border-border/70 p-5">
+              <section aria-label="Chi tiết kiểm tra" className="space-y-7 border-t border-border/70 p-5">
                 <CaseSignalMap nodes={viewModel.signalNodes} edges={viewModel.signalEdges} mode={mode} />
                 <InvestigationTimelineV4 lifecycle={viewModel.lifecycle} steps={viewModel.steps} errors={viewModel.errors} mode={mode} />
                 <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
@@ -261,7 +262,7 @@ export function CaseDetail({
               </section>
             </details>
           ) : (
-            <section aria-label="Investigation details" className="case-panel space-y-7 p-5">
+            <section aria-label="Chi tiết kiểm tra" className="case-panel space-y-7 p-5">
               <CaseSignalMap nodes={viewModel.signalNodes} edges={viewModel.signalEdges} mode={mode} />
               <InvestigationTimelineV4 lifecycle={viewModel.lifecycle} steps={viewModel.steps} errors={viewModel.errors} mode={mode} />
               <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
@@ -272,7 +273,7 @@ export function CaseDetail({
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
           <section className="case-panel p-5">
-            {mode === "analyst" && <p className="micro-label">Scope result</p>}
+            {mode === "analyst" && <p className="micro-label">Kết quả phạm vi</p>}
             <h2 className={mode === "simple" ? "text-lg font-semibold" : "mt-2 text-lg font-semibold"}>{result.scope_decision === "NEED_MORE_INFO" ? "Cần thêm thông tin" : "Ngoài phạm vi Security Triage"}</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{result.follow_up_question ?? result.boundary_message ?? "API chưa trả thông điệp bổ sung."}</p>
           </section>
@@ -299,10 +300,10 @@ function ResumedContextCardOrIssue({
   if (conversation) return <ResumedContextCard conversation={conversation} busy={busy} issue={issue} mode={mode} onResume={onResume} />;
   return (
     <section aria-labelledby="resume-unavailable-heading" className="case-panel p-5">
-      {mode === "analyst" && <p className="micro-label">PRIVACY-SAFE RESUME</p>}
+      {mode === "analyst" && <p className="micro-label">TIẾP TỤC AN TOÀN VỀ RIÊNG TƯ</p>}
       <h2 id="resume-unavailable-heading" className={mode === "simple" ? "text-base font-semibold" : "mt-2 text-base font-semibold"}>Không thể tiếp tục cuộc trò chuyện</h2>
       <p role="alert" className="mt-2 text-sm leading-6 text-muted-foreground">{issue ?? "Thông tin cuộc trò chuyện không còn khả dụng."}</p>
-      <Link href="/" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"><Plus className="size-4" />Bắt đầu case mới</Link>
+      <Link href="/" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"><Plus className="size-4" />Bắt đầu lượt kiểm tra mới</Link>
     </section>
   );
 }

@@ -14,10 +14,10 @@ import { SecurityChatComposer } from "./security-chat-composer";
 
 function transportLabel(transport: AnalysisTransportState): string {
   switch (transport) {
-    case "connected": return "Live stream";
+    case "connected": return "Luồng trực tiếp";
     case "connecting": return "Đang kết nối";
     case "reconnecting": return "Đang kết nối lại";
-    case "polling_fallback": return "Polling fallback";
+    case "polling_fallback": return "Chuyển sang thăm dò định kỳ";
     default: return "Chưa kết nối";
   }
 }
@@ -47,9 +47,9 @@ export function ConversationPanel({
     <section aria-labelledby="conversation-heading" className="case-panel flex min-h-[36rem] flex-col overflow-hidden">
       <header className="flex items-center justify-between border-b border-border/70 px-4 py-3.5">
         <div>
-          {mode === "analyst" && <p className="micro-label">01 / Conversation</p>}
+          {mode === "analyst" && <p className="micro-label">01 / Trò chuyện</p>}
           <h2 id="conversation-heading" className={mode === "simple" ? "text-sm font-semibold" : "mt-1 text-sm font-semibold"}>
-            {mode === "simple" ? "Trò chuyện với trợ lý" : "Intake & follow-up"}
+            {mode === "simple" ? "Trò chuyện với trợ lý" : "Tiếp nhận và hỏi thêm"}
           </h2>
         </div>
         {busy && (
@@ -64,7 +64,7 @@ export function ConversationPanel({
         {turns.map((turn, index) => (
           <article key={turn.id} className="space-y-3">
             <div className="ml-auto max-w-[92%] rounded-2xl rounded-br-sm bg-foreground px-4 py-3 text-sm leading-6 text-background">
-              {mode === "analyst" && <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">Input {index + 1}</p>}
+              {mode === "analyst" && <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">NỘI DUNG {index + 1}</p>}
               <LinkedMessage value={turn.message} />
             </div>
             {turn.chatResponse && (
@@ -123,7 +123,7 @@ export function ConversationPanel({
             <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4" />Không thể hoàn tất đánh giá</p>
             <p className="mt-1 text-xs leading-5">{error}</p>
             <button type="button" onClick={onRetry} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-4">
-              <RotateCcw className="size-3.5" />Thử lại case này
+              <RotateCcw className="size-3.5" />Thử lại trường hợp này
             </button>
           </div>
         )}

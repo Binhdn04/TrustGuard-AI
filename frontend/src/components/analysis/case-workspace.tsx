@@ -12,6 +12,7 @@ import {
   type SecurityPresentationMode,
 } from "@/lib/mappers/security-case-view-model";
 import { cn } from "@/lib/utils";
+import { statusLabel } from "@/lib/presentation/security-labels";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
@@ -55,15 +56,15 @@ function InvestigationPanel({
   return (
     <section aria-labelledby="investigation-heading" className="case-panel min-h-[36rem] overflow-hidden">
       <header className="border-b border-border/70 px-4 py-3.5">
-        <p className="micro-label">02 / Investigation</p>
-        <h2 id="investigation-heading" className="mt-1 text-sm font-semibold">Signals & evidence</h2>
+        <p className="micro-label">02 / Điều tra</p>
+        <h2 id="investigation-heading" className="mt-1 text-sm font-semibold">Tín hiệu và bằng chứng</h2>
       </header>
       <div className="space-y-6 p-4">
         {busy && (
           <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
             <p className="flex items-center gap-2 text-sm font-semibold"><Activity className="size-4 text-primary" />Đang chờ kết quả điều tra</p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              Chỉ hiển thị step và evidence sau khi API trả về; không mô phỏng DNS, redirect hoặc provider call.
+              Chỉ hiển thị bước và bằng chứng sau khi API trả về; không mô phỏng DNS, chuyển hướng hoặc lệnh gọi nhà cung cấp.
             </p>
           </div>
         )}
@@ -83,9 +84,9 @@ function InvestigationPanel({
         {!busy && latest?.scope_decision !== "IN_SCOPE" && (
           <div className="rounded-xl border border-dashed border-border p-5 text-center">
             <FileSearch className="mx-auto size-5 text-muted-foreground" />
-            <p className="mt-2 text-sm font-semibold">Chưa mở investigation</p>
+            <p className="mt-2 text-sm font-semibold">Chưa mở điều tra</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Case cần nằm trong phạm vi và đủ context trước khi có investigation output.
+              Trường hợp cần nằm trong phạm vi và đủ ngữ cảnh trước khi có kết quả điều tra.
             </p>
           </div>
         )}
@@ -115,9 +116,9 @@ function ActionPanel({
   return (
     <section aria-labelledby="action-heading" className="case-panel min-h-[36rem] overflow-hidden">
       <header className="border-b border-border/70 px-4 py-3.5">
-        {mode === "analyst" && <p className="micro-label">03 / Action</p>}
+        {mode === "analyst" && <p className="micro-label">03 / Hành động</p>}
         <h2 id="action-heading" className={mode === "simple" ? "text-sm font-semibold" : "mt-1 text-sm font-semibold"}>
-          {mode === "simple" ? "Kết luận và hướng dẫn" : "Decision & next steps"}
+          {mode === "simple" ? "Kết luận và hướng dẫn" : "Quyết định và bước tiếp theo"}
         </h2>
       </header>
       <div className="space-y-4 p-4">
@@ -215,7 +216,7 @@ function ActionPanel({
             <p className="mt-2 text-sm font-semibold">{busy ? "Đang chờ kết quả" : "Chưa có hướng dẫn"}</p>
             {mode === "analyst" && (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Frontend không tự tính verdict, score hoặc hành động khi API chưa trả kết luận.
+                Frontend không tự tính kết luận, điểm số hoặc hành động khi API chưa trả kết quả.
               </p>
             )}
           </div>
@@ -258,7 +259,7 @@ export function CaseWorkspace({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMode(preferences.defaultPresentation);
   }, [preferences.defaultPresentation]);
-  const analysisLabel = latest?.analysis_id ? latest.analysis_id.slice(0, 8) : "pending";
+  const analysisLabel = latest?.analysis_id ? latest.analysis_id.slice(0, 8) : "đang chờ";
   const viewModel = useMemo(
     () => latest ? mapSecurityCaseViewModel(latest, lifecycleEvents) : null,
     [latest, lifecycleEvents],
@@ -270,13 +271,13 @@ export function CaseWorkspace({
     <div className="space-y-4">
       <header className="flex flex-col justify-between gap-4 border-b border-border/70 pb-4 sm:flex-row sm:items-end">
         <div>
-          {mode === "analyst" && <p className="micro-label text-primary">ACTIVE CASE / {analysisLabel}</p>}
+          {mode === "analyst" && <p className="micro-label text-primary">TRƯỜNG HỢP ĐANG MỞ / {analysisLabel}</p>}
           <h1 className={cn("text-2xl font-semibold tracking-[-0.025em] sm:text-3xl", mode === "analyst" && "mt-2")}>
-            {mode === "simple" ? "Trợ lý an toàn số" : "Security investigation workspace"}
+            {mode === "simple" ? "Trợ lý an toàn số" : "Không gian điều tra bảo mật"}
           </h1>
           {mode === "analyst" && (
             <p className="mt-1 text-sm text-muted-foreground">
-              {latest ? `${latest.status} · ${latest.scope_decision}` : "Đang tạo case từ nội dung intake"}
+              {latest ? `${statusLabel(latest.status)} · ${statusLabel(latest.scope_decision)}` : "Đang tạo trường hợp từ nội dung tiếp nhận"}
             </p>
           )}
         </div>
@@ -294,7 +295,7 @@ export function CaseWorkspace({
         </div>
       </header>
 
-      <div className={cn("grid rounded-xl border border-border bg-card p-1 lg:hidden", mode === "simple" ? "grid-cols-2" : "grid-cols-3")} role="tablist" aria-label="Khu vực case">
+      <div className={cn("grid rounded-xl border border-border bg-card p-1 lg:hidden", mode === "simple" ? "grid-cols-2" : "grid-cols-3")} role="tablist" aria-label="Khu vực trường hợp">
         {panels.map((panel) => (
           <button
             key={panel.id}

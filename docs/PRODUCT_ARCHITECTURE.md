@@ -28,7 +28,12 @@ Risk:  SAFE | LOW_RISK | SUSPICIOUS | HIGH_RISK | MALICIOUS | INSUFFICIENT_EVIDE
 Analysis response gồm scope, conversation ID/version, structured context, investigation plan/status,
 typed evidence, normalized errors, risk/confidence/threat type, policy version, recommendations, grounded
 explanation và limitations. API v4 bao phủ analyses, conversations/chat, events/WebSocket, reports/appeals,
-admin review/actions, brand/whitelist, Security Memory, campaigns, intelligence, audit và capabilities.
+admin review/actions, blacklist lifecycle v4, brand/whitelist, Security Memory, campaigns, intelligence, audit và capabilities.
+
+Frontend MVP dùng một navigation/sidebar thích ứng theo role. User thấy Kiểm tra và Lịch sử; Hồ sơ/Cài đặt nằm
+trong menu avatar góc phải và vẫn dùng route `/profile`. `security_admin` thấy thêm Duyệt bảo mật và Tin cậy &
+chặn. Các route Observatory/Audit cũ redirect về Trust workspace. Brand, identity candidate, Memory, campaign và
+intelligence vẫn là capability backend/nâng cao, không phải bề mặt điều hướng chính của MVP.
 
 ## Runtime architecture
 
@@ -93,6 +98,15 @@ validate request/version → scope/context → boundary hoặc investigation
 - User reads luôn owner-scoped; admin routes yêu cầu `security_admin`.
 - Không lưu raw private message, URL query token, OTP hoặc credential trong memory/audit.
 - Admin Copilot chỉ suggestion; action thật cần reviewer, note, evidence và audit.
+- Report decision chỉ thực thi remediation được admin chọn rõ. Memory/whitelist ghi reference vào report; blacklist
+  chỉ tạo proposal `pending_review`, và chỉ approved reviewed action mới add/disable entry. Rejected/failed action
+  chuyển remediation của report sang `failed`, vẫn giữ `admin_action_id` để truy vết và không được trình bày như
+  đã chặn thành công.
+- Lần phân tích sau vẫn chạy pipeline đầy đủ. Chỉ whitelist/blacklist đang active hoặc reviewed Memory phù hợp mới
+  trở thành evidence; report chưa review hoặc bị reject/dismiss không được dùng như risk signal.
+- Whitelist, familiarity và official identity là ba khái niệm độc lập: whitelist là ngoại lệ có provenance;
+  familiarity xác nhận platform/usage đã review; official identity đánh giá domain ownership, sender identity và
+  action endorsement. Một nguồn không được dùng thay thế hoặc suy rộng cho nguồn còn lại.
 
 Identity discovery là phần mở rộng provider-neutral của official-link verification, không phải pipeline mới.
 Official-link verification đã được triển khai hoàn chỉnh trong runtime `/api/v4`; trạng thái release và
@@ -123,6 +137,9 @@ domain không xác minh người gửi hoặc yêu cầu đăng nhập. Ba evide
 - Migration `0018_remove_vector_compat` xóa fact-check/source-discovery/vector storage cũ và không downgrade.
 - Migration `0019_security_identity_discovery` thêm candidate versions, immutable typed observations và immutable
   reviewer decisions riêng cho Security v4; SQLite fallback có schema tương đương.
+- Migration `0020_report_audit_details` lưu structured report resolution/remediation trong immutable feedback audit.
+- Migration `0021_security_blacklist_v4` cho phép proposal mới sau lifecycle terminal, giữ duy nhất một proposal
+  pending theo action/target và thêm `blacklist` vào unified audit; SQLite migration v6 lưu proposal/review qua restart.
 
 ## Code map
 

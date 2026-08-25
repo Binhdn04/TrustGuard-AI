@@ -17,7 +17,6 @@ from src.models import (
     ErrorCode,
     MissingInformationSlotV4,
     PotentialThreatV4,
-    ReportReviewDecision,
     ReportStatus,
     ScopeDecisionV4,
     SecurityAdminAuditEventV4,
@@ -32,8 +31,14 @@ from src.models import (
     SecurityConversationSummaryV4,
     SecurityConversationV4,
     SecurityReportAdminRecordV4,
+    SecurityReportAuditDetailsV4,
     SecurityReportCreateRequestV4,
+    SecurityReportDecisionRequestV4,
     SecurityReportRecordV4,
+    SecurityReportRemediationActionV4,
+    SecurityReportRemediationReferenceV4,
+    SecurityReportRemediationStatusV4,
+    SecurityReportRemediationUpdateV4,
     SecurityRiskV4,
     SecurityScenarioV4,
     SecurityScopeResponseV4,
@@ -684,15 +689,14 @@ class SecurityAnalysisService:
     async def decide_report(
         self,
         report_id: UUID,
-        decision: ReportReviewDecision,
-        note: str,
+        request: SecurityReportDecisionRequestV4,
         principal: Principal,
     ) -> SecurityReportAdminRecordV4:
         require_security_admin(principal)
         now = datetime.now(UTC)
         decide = getattr(self._repository, "decide_security_report", None)
         if decide is not None:
-            record = await decide(report_id, decision, note, principal.user_id, now)
+            record = await decide(report_id, request, principal.user_id, now)
             if record is None:
                 raise PlatformError(
                     status_code=404,
@@ -718,12 +722,22 @@ class SecurityAnalysisService:
                     message="Security report was already processed.",
                     retryable=False,
                 )
-            updated = current.model_copy(
-                update={
+            updated = SecurityReportRecordV4.model_validate(
+                {
+                    **current.model_dump(),
                     "status": ReportStatus.PROCESSED,
-                    "decision": decision,
+                    "decision": request.decision,
+                    "resolution": request.resolution,
+                    "remediation_action": request.remediation_action,
+                    "whitelist_entry": request.whitelist_entry,
+                    "blacklist_proposal": request.blacklist_proposal,
+                    "remediation_status": (
+                        SecurityReportRemediationStatusV4.NOT_REQUESTED
+                        if request.remediation_action is SecurityReportRemediationActionV4.NONE
+                        else SecurityReportRemediationStatusV4.PENDING
+                    ),
                     "reviewer_id": principal.user_id,
-                    "review_note": note,
+                    "review_note": request.note,
                     "reviewed_at": now,
                 }
             )
@@ -732,13 +746,144 @@ class SecurityAnalysisService:
                 SecurityAdminAuditEventV4(
                     resource_type=SecurityAuditResourceV4.REPORT,
                     resource_id=report_id,
-                    action=f"report_{decision.value}",
+                    action=f"report_{request.decision.value}",
                     actor_id=principal.user_id,
-                    note=note,
+                    note=request.note,
                     occurred_at=now,
+                    evidence_refs=request.audit_evidence_refs(),
+                    report_details=SecurityReportAuditDetailsV4.from_record(updated),
                 )
             )
         return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=owner_id)
+
+    async def record_report_remediation(
+        self,
+        report_id: UUID,
+        request: SecurityReportRemediationUpdateV4,
+        principal: Principal,
+    ) -> SecurityReportAdminRecordV4:
+        require_security_admin(principal)
+        now = datetime.now(UTC)
+        complete = getattr(self._repository, "complete_security_report_remediation", None)
+        if complete is not None:
+            record = await complete(report_id, request, principal.user_id, now)
+            if record is None:
+                raise PlatformError(
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security report was not found.",
+                    retryable=False,
+                )
+            return record
+        async with self._lock:
+            stored = self._reports.get(report_id)
+            if stored is None:
+                raise PlatformError(
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security report was not found.",
+                    retryable=False,
+                )
+            owner_id, current = stored
+            if current.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+                raise PlatformError(
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security report remediation is not pending.",
+                    retryable=False,
+                )
+            updated = SecurityReportRecordV4.model_validate(
+                {
+                    **current.model_dump(),
+                    "remediation_status": request.status,
+                    "remediation_reference": request.reference,
+                }
+            )
+            self._reports[report_id] = (owner_id, updated)
+            self._admin_audit.append(
+                SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.REPORT,
+                    resource_id=report_id,
+                    action=f"report_remediation_{request.status.value}",
+                    actor_id=principal.user_id,
+                    note=request.note,
+                    occurred_at=now,
+                    evidence_refs=request.evidence_refs,
+                    report_details=SecurityReportAuditDetailsV4.from_record(updated),
+                )
+            )
+        return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=owner_id)
+
+    async def link_report_remediation(
+        self,
+        report_id: UUID,
+        reference: SecurityReportRemediationReferenceV4,
+        note: str,
+        evidence_refs: list[str],
+        principal: Principal,
+    ) -> SecurityReportAdminRecordV4:
+        """Attach a reviewed-action proposal while remediation remains pending."""
+        require_security_admin(principal)
+        now = datetime.now(UTC)
+        link = getattr(self._repository, "link_security_report_remediation", None)
+        if link is not None:
+            record = await link(report_id, reference, note, evidence_refs, principal.user_id, now)
+            if record is None:
+                raise PlatformError(
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security report was not found.",
+                    retryable=False,
+                )
+            return record
+        async with self._lock:
+            stored = self._reports.get(report_id)
+            if stored is None:
+                raise PlatformError(
+                    status_code=404,
+                    code=ErrorCode.NOT_FOUND,
+                    message="Security report was not found.",
+                    retryable=False,
+                )
+            owner_id, current = stored
+            if current.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+                raise PlatformError(
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security report remediation is not pending.",
+                    retryable=False,
+                )
+            updated = SecurityReportRecordV4.model_validate(
+                {**current.model_dump(), "remediation_reference": reference}
+            )
+            self._reports[report_id] = (owner_id, updated)
+            self._admin_audit.append(
+                SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.REPORT,
+                    resource_id=report_id,
+                    action="report_remediation_proposed",
+                    actor_id=principal.user_id,
+                    note=note,
+                    occurred_at=now,
+                    evidence_refs=evidence_refs,
+                    report_details=SecurityReportAuditDetailsV4.from_record(updated),
+                )
+            )
+        return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=owner_id)
+
+    async def report_for_admin_action(
+        self, action_id: UUID, principal: Principal
+    ) -> SecurityReportAdminRecordV4 | None:
+        records = await self.list_reports_admin(principal)
+        return next(
+            (
+                item
+                for item in records
+                if item.remediation_reference is not None
+                and item.remediation_reference.admin_action_id == action_id
+            ),
+            None,
+        )
 
     async def list_appeals_admin(
         self, principal: Principal, *, status: AppealStatus | None = None

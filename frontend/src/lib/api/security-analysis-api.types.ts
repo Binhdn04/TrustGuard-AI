@@ -21,6 +21,15 @@ import type {
   SecurityAppealRecordV4,
   SecurityAppealStatusV4,
   SecurityAuditResourceV4,
+  SecurityBlacklistActionProposalV4,
+  SecurityBlacklistAuditRecordV4,
+  SecurityBlacklistDecisionRequestV4,
+  SecurityBlacklistDecisionResponseV4,
+  SecurityBlacklistDisableRequestV4,
+  SecurityBlacklistLifecycleV4,
+  SecurityBlacklistPageV4,
+  SecurityBlacklistProposalRequestV4,
+  SecurityBlacklistRecordV4,
   SecurityCampaignAuditRecordV4,
   SecurityCampaignDecisionRequestV4,
   SecurityCampaignPageV4,
@@ -125,6 +134,11 @@ export interface SecurityAppealPageQuery extends SecurityPaginationQuery {
   q?: string;
 }
 
+export interface SecurityBlacklistPageQuery extends SecurityPaginationQuery {
+  lifecycle?: SecurityBlacklistLifecycleV4;
+  q?: string;
+}
+
 export interface SecurityChatContext {
   conversationId: string;
   conversationVersion: number;
@@ -170,6 +184,12 @@ export interface SecurityAnalysisApi {
   listWhitelist(): Promise<WhitelistRecordV4[]>;
   pageWhitelist(query?: SecurityTrustPageQuery): Promise<WhitelistPageV4>;
   disableWhitelist(whitelistId: string): Promise<WhitelistRecordV4>;
+  pageBlacklist?(query?: SecurityBlacklistPageQuery): Promise<SecurityBlacklistPageV4>;
+  getBlacklist?(blacklistId: string): Promise<SecurityBlacklistRecordV4>;
+  proposeBlacklist?(request: SecurityBlacklistProposalRequestV4): Promise<SecurityBlacklistActionProposalV4>;
+  proposeDisableBlacklist?(blacklistId: string, request: SecurityBlacklistDisableRequestV4): Promise<SecurityBlacklistActionProposalV4>;
+  decideBlacklistAction?(actionId: string, request: SecurityBlacklistDecisionRequestV4): Promise<SecurityBlacklistDecisionResponseV4>;
+  listBlacklistAudit?(blacklistId: string): Promise<SecurityBlacklistAuditRecordV4[]>;
   listSecurityMemory(): Promise<SecurityMemoryRecordV4[]>;
   pageSecurityMemory(query?: SecurityMemoryPageQuery): Promise<SecurityMemoryPageV4>;
   correctSecurityMemory(memoryId: string, request: SecurityMemoryCorrectionRequestV4): Promise<SecurityMemoryRecordV4>;

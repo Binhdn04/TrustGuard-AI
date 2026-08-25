@@ -1,6 +1,7 @@
 import { AlertTriangle, Ban, CheckCircle2, ChevronDown, CircleHelp, ShieldAlert } from "lucide-react";
 
 import type { SecurityCaseViewModel, SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
+import { securityLabel } from "@/lib/presentation/security-labels";
 import { cn } from "@/lib/utils";
 
 const toneStyle: Record<SecurityCaseViewModel["risk"]["tone"], string> = {
@@ -39,7 +40,7 @@ export function ActionRiskPanel({
       <div className="overflow-hidden rounded-2xl border border-foreground/15 bg-foreground text-background">
         {mode === "analyst" && (
           <div className="border-b border-background/15 px-4 py-3">
-            <p className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-60">Primary recommendation</p>
+            <p className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-60">Khuyến nghị quan trọng nhất</p>
           </div>
         )}
         <div className="p-4">
@@ -49,7 +50,7 @@ export function ActionRiskPanel({
               {mode === "analyst" && <p className="mt-2 font-mono text-[10px] opacity-60">{primaryAction.code} · {primaryAction.policyRef ?? "—"}</p>}
             </>
           ) : (
-            <p className="text-sm text-background/70">API chưa trả recommended action.</p>
+            <p className="text-sm text-background/70">API chưa trả hành động khuyến nghị.</p>
           )}
         </div>
         {supportingActions.length > 0 && (
@@ -69,7 +70,7 @@ export function ActionRiskPanel({
         <div className="flex items-start gap-3">
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-background/75"><RiskIcon risk={viewModel.risk.value} /></span>
           <div className="min-w-0 flex-1">
-            {mode === "analyst" && <p className="micro-label text-current">Risk verdict</p>}
+            {mode === "analyst" && <p className="micro-label text-current">Kết luận rủi ro</p>}
             <h2 id="risk-heading" className={mode === "simple" ? "text-xl font-bold" : "mt-1 text-xl font-bold"}>{viewModel.risk.label}</h2>
             {mode === "analyst" && viewModel.risk.explanation && (
               <p className="mt-2 text-sm leading-6 text-foreground">{viewModel.risk.explanation}</p>
@@ -79,12 +80,12 @@ export function ActionRiskPanel({
         {mode === "analyst" && (
           <>
             <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-current/15 pt-3 text-xs">
-              <div><dt>Risk score</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.score ?? "—"}{viewModel.risk.score !== null && "/100"}</dd></div>
-              <div><dt>Confidence</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.confidence ?? "—"}</dd></div>
+              <div><dt>Điểm rủi ro</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.score ?? "—"}{viewModel.risk.score !== null && "/100"}</dd></div>
+              <div><dt>Mức chắc chắn</dt><dd className="mt-0.5 text-base font-bold">{viewModel.risk.confidence === null ? "—" : `${Math.round(viewModel.risk.confidence * 100)}%`}</dd></div>
             </dl>
             <dl className="mt-3 space-y-1 border-t border-current/15 pt-3 text-[11px]">
-              <div className="flex justify-between gap-3"><dt>Threat type</dt><dd className="text-right font-mono">{viewModel.risk.threatType ?? "—"}</dd></div>
-              <div className="flex justify-between gap-3"><dt>Policy</dt><dd className="text-right font-mono">{viewModel.policyVersion ?? "—"}</dd></div>
+              <div className="flex justify-between gap-3"><dt>Loại nguy cơ</dt><dd className="text-right">{securityLabel(viewModel.risk.threatType, "—")}</dd></div>
+              <div className="flex justify-between gap-3"><dt>Chính sách</dt><dd className="text-right font-mono">{viewModel.policyVersion ?? "—"}</dd></div>
             </dl>
           </>
         )}
@@ -122,7 +123,7 @@ export function SimpleRiskTechnicalDetails({
         </div>
       </dl>
       <dl className="space-y-1 border-t border-current/15 pt-2 text-[11px]">
-        <div className="flex justify-between gap-3"><dt>Loại nguy cơ</dt><dd className="text-right font-mono">{viewModel.risk.threatType ?? "—"}</dd></div>
+        <div className="flex justify-between gap-3"><dt>Loại nguy cơ</dt><dd className="text-right">{securityLabel(viewModel.risk.threatType, "—")}</dd></div>
         <div className="flex justify-between gap-3"><dt>Chính sách</dt><dd className="text-right font-mono">{viewModel.policyVersion ?? "—"}</dd></div>
       </dl>
     </div>

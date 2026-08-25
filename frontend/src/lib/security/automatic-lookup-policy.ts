@@ -6,7 +6,7 @@ export const AUTOMATIC_LOOKUP_CONSENT = {
 } as const satisfies SecurityConsentV4;
 
 export const AUTOMATIC_LOOKUP_DISCLOSURE =
-  "Khi gửi, TrustGuard có thể kiểm tra liên kết bằng dịch vụ bảo mật.";
+  "Khi gửi, AI PROTECT có thể kiểm tra liên kết bằng dịch vụ bảo mật.";
 
 export const OFFICIAL_SOURCE_LOOKUP_DISCLOSURE =
   "Có thể đối chiếu nguồn công khai; không gửi mật khẩu, OTP hoặc token.";

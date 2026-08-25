@@ -21,7 +21,7 @@ export default function LoginPage() {
     setTimeout(() => {
       login({
         id: role === "user" ? "u_1" : "a_1",
-        name: role === "user" ? "Người dùng Test" : "Security Admin",
+        name: role === "user" ? "Người dùng thử nghiệm" : "Quản trị viên bảo mật",
         email: role === "user" ? "user@example.com" : "admin@aiprotect.vn",
         role: role,
       });
@@ -77,7 +77,7 @@ export default function LoginPage() {
           <span className="w-full border-t border-border" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-background px-2 text-muted-foreground">Demo MVP Login (Bỏ qua mật khẩu)</span>
+          <span className="bg-background px-2 text-muted-foreground">Đăng nhập demo MVP (bỏ qua mật khẩu)</span>
         </div>
       </div>}
 
@@ -91,7 +91,7 @@ export default function LoginPage() {
           )}
         >
           <UserCheck className="w-5 h-5 mr-2 text-primary" />
-          <span className="text-sm font-medium">Quyền User</span>
+          <span className="text-sm font-medium">Quyền người dùng</span>
         </button>
         <button
           onClick={() => mockLogin("security_admin")}
@@ -102,7 +102,7 @@ export default function LoginPage() {
           )}
         >
           <ShieldAlert className="w-5 h-5 mr-2 text-amber-500" />
-          <span className="text-sm font-medium">Quyền Admin</span>
+          <span className="text-sm font-medium">Quyền quản trị bảo mật</span>
         </button>
       </div>}
 

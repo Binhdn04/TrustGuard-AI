@@ -161,7 +161,12 @@ describe("HttpSecurityAnalysisApi", () => {
     await api.disableBrand("brand/id");
     await api.correctSecurityMemory("memory/id", { verdict: "false_positive", note: "Reviewed" });
     await api.reviewSecurityCampaign("campaign/id", { decision: "confirmed", note: "Correlated" });
-    await api.decideAdminReport("report/id", { decision: "approved", note: "Confirmed" });
+    await api.decideAdminReport("report/id", {
+      decision: "approved",
+      resolution: "no_change",
+      remediation_action: "none",
+      note: "Confirmed",
+    });
     await api.decideAdminAppeal("appeal/id", { outcome: "overturn", note: "New evidence" });
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
@@ -216,6 +221,50 @@ describe("HttpSecurityAnalysisApi", () => {
       status: 403,
       details: { reason: "role" },
     });
+  });
+
+  it("uses the reviewed v4 blacklist endpoints", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(ok()));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new HttpSecurityAnalysisApi("http://backend.test", () => "admin-token");
+
+    await api.pageBlacklist({ q: "fraud example", lifecycle: "active", limit: 10, offset: 20 });
+    await api.getBlacklist("blacklist/id");
+    await api.proposeBlacklist({
+      canonical_domain: "fraud.example",
+      reason: "Reviewed malicious domain",
+      provenance: "report:42",
+      evidence_refs: ["evidence:credential-form"],
+    });
+    await api.proposeDisableBlacklist("blacklist/id", {
+      reason: "False positive",
+      provenance: "admin review",
+      evidence_refs: ["evidence:appeal"],
+    });
+    await api.decideBlacklistAction("action/id", { decision: "approved", note: "Evidence reviewed" });
+    await api.listBlacklistAudit("blacklist/id");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://backend.test/api/v4/admin/blacklist/page?q=fraud+example&lifecycle=active&limit=10&offset=20",
+      "http://backend.test/api/v4/admin/blacklist/blacklist%2Fid",
+      "http://backend.test/api/v4/admin/blacklist/proposals",
+      "http://backend.test/api/v4/admin/blacklist/blacklist%2Fid/disable-proposals",
+      "http://backend.test/api/v4/admin/blacklist/actions/action%2Fid/decision",
+      "http://backend.test/api/v4/admin/blacklist/blacklist%2Fid/audit",
+    ]);
+    expect(fetchMock.mock.calls[2][1]).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        canonical_domain: "fraud.example",
+        reason: "Reviewed malicious domain",
+        provenance: "report:42",
+        evidence_refs: ["evidence:credential-form"],
+      }),
+    }));
+    expect(fetchMock.mock.calls[4][1]).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ decision: "approved", note: "Evidence reviewed" }),
+    }));
   });
 
   it("fails clearly when the frontend build has no API URL", async () => {

@@ -1,5 +1,5 @@
-import { AuditWorkspace } from "@/components/admin/audit/audit-workspace";
+import { redirect } from "next/navigation";
 
 export default function AdminAuditPage() {
-  return <AuditWorkspace />;
+  redirect("/admin/trust");
 }

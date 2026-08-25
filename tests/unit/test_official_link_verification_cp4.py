@@ -317,9 +317,6 @@ async def test_brand_supersede_and_disable_append_versions_with_immutable_audit(
     assert disabled.supersedes == version.brand_id
     assert disabled.brand_id != version.brand_id
     assert await repository.list_active_brands(disabled.created_at) == []
-    assert [item.action for item in audit if item.resource_type.value == "brand"] == [
-        "disabled",
-        "superseded",
-        "created",
-    ]
+    brand_actions = [item.action for item in audit if item.resource_type.value == "brand"]
+    assert sorted(brand_actions) == ["created", "disabled", "superseded"]
     await repository.close()

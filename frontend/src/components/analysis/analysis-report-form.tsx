@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AnalysisReportResponse } from "@/types/analysis";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
+import { statusLabel } from "@/lib/presentation/security-labels";
 
 export function AnalysisReportForm({ analysisId, securityApi }: { analysisId: string; securityApi: SecurityAnalysisApi }) {
   const [reason, setReason] = useState("Kết quả hoặc bằng chứng chưa phù hợp");
@@ -50,16 +51,11 @@ export function AnalysisReportForm({ analysisId, securityApi }: { analysisId: st
   }
 
   if (report) {
-    const statusLabels: Record<string, string> = {
-      submitted: "Đã gửi",
-      reviewing: "Đang xem xét",
-      processed: "Đã xử lý",
-    };
     return (
       <div className="mx-auto max-w-3xl rounded-xl border border-border bg-card p-5">
         <h2 className="text-sm font-bold">Báo cáo kết quả</h2>
         <p className="mt-2 text-sm">Bạn đã gửi báo cáo cho phân tích này.</p>
-        <p className="mt-1 text-sm font-medium">Trạng thái: <span className="text-blue-600">{statusLabels[report.status] || report.status}</span></p>
+        <p className="mt-1 text-sm font-medium">Trạng thái: <span className="text-blue-600">{statusLabel(report.status)}</span></p>
       </div>
     );
   }

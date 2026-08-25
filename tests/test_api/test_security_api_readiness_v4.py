@@ -242,10 +242,30 @@ async def test_admin_can_review_v4_report_and_appeal_with_immutable_audit(client
         appeals = await client.get("/api/v4/admin/appeals", headers=ADMIN_HEADERS)
         detail_denied = await client.get(f"/api/v4/admin/analyses/{analysis_id}", headers=USER_HEADERS)
         detail = await client.get(f"/api/v4/admin/analyses/{analysis_id}", headers=ADMIN_HEADERS)
+        missing_resolution = await client.post(
+            f"/api/v4/admin/reports/{report.json()['report_id']}/decision",
+            headers=ADMIN_HEADERS,
+            json={"decision": "approved", "note": "Missing structured resolution"},
+        )
         report_decision = await client.post(
             f"/api/v4/admin/reports/{report.json()['report_id']}/decision",
             headers=ADMIN_HEADERS,
-            json={"decision": "approved", "note": "Confirmed by reviewer"},
+            json={
+                "decision": "approved",
+                "resolution": "no_change",
+                "remediation_action": "none",
+                "evidence_refs": ["evidence:reviewed-report"],
+                "note": "Confirmed by reviewer",
+            },
+        )
+        report_duplicate = await client.post(
+            f"/api/v4/admin/reports/{report.json()['report_id']}/decision",
+            headers=ADMIN_HEADERS,
+            json={
+                "decision": "approved",
+                "resolution": "no_change",
+                "note": "Retry must not duplicate the decision or audit",
+            },
         )
         appeal_decision = await client.post(
             f"/api/v4/admin/appeals/{appeal.json()['appeal_id']}/decision",
@@ -272,12 +292,22 @@ async def test_admin_can_review_v4_report_and_appeal_with_immutable_audit(client
     assert "owner_id" not in detail.json()
     assert reports.json()["total"] == 1
     assert appeals.json()["total"] == 1
+    assert missing_resolution.status_code == 422
     assert report_decision.json()["status"] == "processed"
     assert report_decision.json()["decision"] == "approved"
+    assert report_decision.json()["resolution"] == "no_change"
+    assert report_decision.json()["remediation_action"] == "none"
+    assert report_decision.json()["remediation_status"] == "not_requested"
+    assert report_duplicate.status_code == 409
     assert appeal_decision.json()["status"] == "resolved"
     assert appeal_decision.json()["outcome"] == "overturn"
     assert duplicate.status_code == 409
     assert {item["resource_type"] for item in audit.json()["items"]} == {"report", "appeal"}
+    report_audit = next(item for item in audit.json()["items"] if item["resource_type"] == "report")
+    assert report_audit["report_details"]["resolution"] == "no_change"
+    assert report_audit["report_details"]["remediation_action"] == "none"
+    assert report_audit["report_details"]["remediation_status"] == "not_requested"
+    assert report_audit["evidence_refs"] == ["evidence:reviewed-report"]
 
 
 @pytest.mark.asyncio
