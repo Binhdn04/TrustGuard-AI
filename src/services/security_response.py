@@ -113,10 +113,8 @@ _SIGNAL_GUIDANCE: tuple[tuple[frozenset[str], str], ...] = (
         "Nguồn chính thức chưa xác nhận đúng yêu cầu đăng nhập hoặc hành động trong tin nhắn.",
     ),
     (frozenset({"otp_request", "share_otp"}), "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."),
-    (
-        frozenset({"credential_request", "credential_path", "share_credentials", "login"}),
-        "Nội dung yêu cầu thông tin đăng nhập hoặc dẫn bạn tới bước đăng nhập.",
-    ),
+    (frozenset({"credential_request", "share_credentials"}), "Người gửi yêu cầu bạn cung cấp thông tin đăng nhập."),
+    (frozenset({"login"}), "Nội dung đề cập một bước đăng nhập; chỉ tiếp tục qua kênh chính thức."),
     (
         frozenset({"payment_request", "transfer_money", "pay_fee"}),
         "Người gửi yêu cầu bạn chuyển tiền hoặc thanh toán.",
@@ -462,6 +460,7 @@ class GroundedSecurityResponseService:
             "confidence": scope.confidence,
             "threat_type": scope.threat_type.value if scope.threat_type else None,
             "policy_version": scope.policy_version,
+            "policy_metadata": scope.policy_metadata.model_dump(mode="json") if scope.policy_metadata else None,
             "recommended_actions": [action.value for action in scope.recommended_actions],
             "recommended_action_guidance": [_ACTION_GUIDANCE[action] for action in scope.recommended_actions],
             "explanation": scope.explanation,

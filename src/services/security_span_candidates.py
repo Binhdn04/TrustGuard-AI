@@ -20,12 +20,14 @@ class SemanticSpanCandidate:
     end: int
     kind: str
     specificity: int
+    provenance: str = "backend_candidate"
 
     def as_prompt_data(self, message: str) -> dict[str, object]:
         return {
             "id": self.span_id,
             "text": message[self.start : self.end],
             "kind": self.kind,
+            "provenance": self.provenance,
         }
 
 
@@ -102,6 +104,7 @@ def generate_semantic_span_candidates(
             end=bounds[1],
             kind=metadata[0],
             specificity=metadata[1],
+            provenance=metadata[0],
         )
         for index, (bounds, metadata) in enumerate(ordered)
     ]
@@ -113,9 +116,12 @@ def generate_semantic_span_candidates(
                 end=full[1],
                 kind="full_message",
                 specificity=1,
+                provenance="message",
             )
         )
     return candidates
 
 
-__all__ = ["SemanticSpanCandidate", "generate_semantic_span_candidates"]
+SemanticCandidate = SemanticSpanCandidate
+
+__all__ = ["SemanticCandidate", "SemanticSpanCandidate", "generate_semantic_span_candidates"]

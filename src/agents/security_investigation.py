@@ -46,7 +46,7 @@ ExternalCall = Callable[[], Awaitable[ToolEnvelope]]
 _LOCAL_SIGNAL_BY_TITLE = {
     "URL đích bị chặn bởi SSRF guard": "ssrf_blocked",
     "Tên miền quốc tế hóa cần thận trọng": "punycode_domain",
-    "Đường dẫn yêu cầu thông tin tài khoản": "credential_path",
+    "Đường dẫn quy trình tài khoản": "credential_path",
     "Tên miền có mẫu mạo danh khuyến mãi": "promotion_lure_domain",
 }
 
@@ -58,11 +58,17 @@ _TRUST_TOOLS = {
 
 def _requires_high_risk_reputation(context: SecurityContextV4) -> bool:
     """Escalate reputation checks for requests that can lose money or access."""
+    workflow_coverage = any(
+        {part.casefold() for part in urlsplit(value).path.replace("-", "/").replace("_", "/").split("/")}
+        & {"login", "signin", "verify", "account"}
+        for value in context.urls
+    )
     return bool(
         context.credential_request
         or context.otp_request
         or context.payment_request
         or context.personal_information_request
+        or workflow_coverage
     )
 
 

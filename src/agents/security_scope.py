@@ -316,6 +316,8 @@ _SHARE_SCREEN_TERMS = (
 )
 _SCAN_QR_TERMS = ("quét mã qr", "quet ma qr", "quét qr", "quet qr", "scan qr")
 _SUBMIT_FORM_TERMS = (
+    "nhập otp vào form",
+    "nhap otp vao form",
     "điền biểu mẫu",
     "dien bieu mau",
     "điền form",
@@ -483,6 +485,10 @@ def _is_credential_disclosure_request(text: str) -> bool:
     deterministic extraction boundary so later policy can reason from actual
     hostile context rather than from the word "login" alone.
     """
+    if _contains_any(text, ("không gửi", "khong gui", "đừng gửi", "dung gui", "không chia sẻ", "khong chia se")):
+        return False
+    if _contains_any(text, ("tôi đã gửi", "toi da gui", "tôi đã cung cấp", "toi da cung cap")):
+        return False
     if _contains_any(text, _CREDENTIAL_DISCLOSURE_TERMS):
         return True
     has_credential = _contains_any(text, _CREDENTIAL_TERMS)
@@ -491,6 +497,39 @@ def _is_credential_disclosure_request(text: str) -> bool:
         ("gửi", "gui", "cung cấp", "cung cap", "chia sẻ", "chia se", "đưa", "dua", "cho họ", "cho ho"),
     )
     return has_credential and has_disclosure_verb
+
+
+def _is_otp_disclosure_request(text: str) -> bool:
+    if not _contains_any(text, _OTP_TERMS):
+        return False
+    if _contains_any(text, ("không gửi", "khong gui", "đừng gửi", "dung gui", "không chia sẻ", "khong chia se")):
+        return False
+    if _contains_any(text, ("tôi đã gửi", "toi da gui", "tôi đã chia sẻ", "toi da chia se")):
+        return False
+    disclosure = _contains_any(
+        text,
+        ("gửi", "gui", "chia sẻ", "chia se", "cung cấp", "cung cap", "đưa", "dua", "share", "send", "provide",
+         "cho tôi", "cho toi", "cho họ", "cho ho"),
+    )
+    # Entering a code into a form/service is authentication, even when an OTP
+    # keyword and a URL happen to be present.
+    routine_entry = _contains_any(text, ("nhập otp", "nhap otp", "điền otp", "dien otp")) and _contains_any(
+        text, ("form", "biểu mẫu", "bieu mau", "ứng dụng", "ung dung", "trang", "website")
+    )
+    return disclosure and not routine_entry
+
+
+def _is_active_login_request(text: str) -> bool:
+    if not _contains_any(text, _LOGIN_TERMS):
+        return False
+    if _contains_any(text, ("không đăng nhập", "khong dang nhap", "không login", "cannot login", "can't login")):
+        return False
+    return _contains_any(
+        text,
+        ("yêu cầu đăng nhập", "yeu cau dang nhap", "bắt đăng nhập", "bat dang nhap", "đăng nhập ", "dang nhap ",
+         "nhập thông tin đăng nhập", "nhap thong tin dang nhap", "để đăng nhập", "de dang nhap",
+         "hãy đăng nhập", "hay dang nhap"),
+    )
 
 
 def _neutral_context_reasons(text: str) -> list[str]:
@@ -523,9 +562,6 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     reasons: list[str] = []
 
     security_groups = (
-        ("login_request", _LOGIN_TERMS),
-        ("credential_request", _CREDENTIAL_DISCLOSURE_TERMS),
-        ("otp_request", _OTP_TERMS),
         ("account_verification_context", _ACCOUNT_TERMS),
         ("charity_context", _CHARITY_TERMS),
         ("investment_context", _INVESTMENT_TERMS),
@@ -536,6 +572,10 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     for reason, terms in security_groups:
         if _contains_any(text, terms):
             reasons.append(reason)
+    if _is_active_login_request(text):
+        reasons.append("login_request")
+    if _is_otp_disclosure_request(text):
+        reasons.append("otp_request")
     if _is_credential_disclosure_request(text):
         reasons.append("credential_request")
     if _is_refund_context(text, message):
@@ -628,7 +668,7 @@ def _requested_action(
     explicit_action = _explicit_requested_action(text)
     if explicit_action is RequestedActionV4.APPLY_FOR_PASSPORT:
         return explicit_action
-    if _contains_any(text, _LOGIN_TERMS):
+    if _is_active_login_request(text):
         return RequestedActionV4.LOGIN
     if credential_request:
         return RequestedActionV4.SHARE_CREDENTIALS
@@ -724,7 +764,7 @@ def extract_security_context(message: str) -> SecurityContextV4:
     text = _fold(message)
     urls = _normalized_urls(message)
     credential_request = _is_credential_disclosure_request(text)
-    otp_request = _contains_any(text, _OTP_TERMS)
+    otp_request = _is_otp_disclosure_request(text)
     payment_request = _is_payment_request(text, message)
     recruitment = _contains_any(text, _RECRUITMENT_TERMS)
     promotion = _contains_any(text, _PROMOTION_TERMS)

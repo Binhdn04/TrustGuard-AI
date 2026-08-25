@@ -351,6 +351,7 @@ _SENSITIVE_PATH_MARKERS = {
     "verify",
     "wallet",
 }
+_ROUTINE_PATH_FEATURES = {"path:account", "path:login", "path:signin", "path:verify"}
 
 
 def _security_url_parts(value: str) -> tuple[str, str, set[str]]:
@@ -399,6 +400,12 @@ def build_security_memory_record(
     domains: set[str] = set()
     fingerprints: set[str] = set()
     lexical: set[str] = set()
+    sensitive_semantics = bool(
+        context.credential_request
+        or context.otp_request
+        or context.payment_request
+        or context.personal_information_request
+    )
     for value in context.urls:
         try:
             domain, fingerprint, features = _security_url_parts(value)
@@ -406,7 +413,7 @@ def build_security_memory_record(
             continue
         domains.add(domain)
         fingerprints.add(fingerprint)
-        lexical.update(features)
+        lexical.update(features if sensitive_semantics else features - _ROUTINE_PATH_FEATURES)
     patterns = {
         name
         for name, present in (

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
+from src.agents.security_scope import derive_potential_threat
 from src.core.auth import Principal, require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
@@ -138,7 +139,18 @@ def _merge_context(previous: SecurityContextV4, current: SecurityContextV4) -> S
         )
     urls = list(dict.fromkeys([*previous.urls, *current.urls]))[:10]
     signals = list(dict.fromkeys([*previous.impersonation_signals, *current.impersonation_signals]))[:10]
-    return current.model_copy(
+    # Current accepted semantics replace revisable action interpretations.
+    # Objective URLs and entity facts accumulate, while confirmed exposure is
+    # retained separately in AssistantContextV4 by highest_exposure().
+    current_interprets_action = bool(
+        current.requested_action
+        or current.credential_request
+        or current.otp_request
+        or current.payment_request
+        or current.personal_information_request
+        or current.scenario is not SecurityScenarioV4.UNKNOWN
+    )
+    merged = current.model_copy(
         update={
             "claimed_entity": current.claimed_entity or previous.claimed_entity,
             "scenario": previous.scenario if current.scenario is SecurityScenarioV4.UNKNOWN else current.scenario,
@@ -146,11 +158,11 @@ def _merge_context(previous: SecurityContextV4, current: SecurityContextV4) -> S
             "amount": current.amount or previous.amount,
             "urgency": current.urgency or previous.urgency,
             "urls": urls,
-            "credential_request": current.credential_request or previous.credential_request,
-            "otp_request": current.otp_request or previous.otp_request,
-            "payment_request": current.payment_request or previous.payment_request,
+            "credential_request": current.credential_request if current_interprets_action else previous.credential_request,
+            "otp_request": current.otp_request if current_interprets_action else previous.otp_request,
+            "payment_request": current.payment_request if current_interprets_action else previous.payment_request,
             "personal_information_request": (
-                current.personal_information_request or previous.personal_information_request
+                current.personal_information_request if current_interprets_action else previous.personal_information_request
             ),
             "impersonation_signals": signals,
             "potential_threat": (
@@ -160,6 +172,7 @@ def _merge_context(previous: SecurityContextV4, current: SecurityContextV4) -> S
             ),
         }
     )
+    return merged.model_copy(update={"potential_threat": derive_potential_threat(merged)})
 
 
 class SecurityAnalysisService:

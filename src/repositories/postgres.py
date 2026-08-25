@@ -506,11 +506,12 @@ class PostgresPlatformRepository:
             await connection.execute(
                 """INSERT INTO security_analyses(
                        id, owner_id, status, response, policy_version, created_at, updated_at,
-                       completed_at, conversation_id
-                   ) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$7,$8)
+                       completed_at, conversation_id, policy_metadata
+                   ) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$7,$8,$9::jsonb)
                    ON CONFLICT(id) DO UPDATE SET status=excluded.status, response=excluded.response,
                        policy_version=excluded.policy_version, updated_at=excluded.updated_at,
-                       completed_at=excluded.completed_at, conversation_id=excluded.conversation_id""",
+                       completed_at=excluded.completed_at, conversation_id=excluded.conversation_id,
+                       policy_metadata=excluded.policy_metadata""",
                 response.analysis_id,
                 owner_id,
                 response.status.value,
@@ -519,6 +520,7 @@ class PostgresPlatformRepository:
                 response.created_at,
                 response.completed_at,
                 response.conversation_id,
+                response.policy_metadata.model_dump_json() if response.policy_metadata else "{}",
             )
             for event in events:
                 await connection.execute(
@@ -810,11 +812,12 @@ class PostgresPlatformRepository:
             final_event = final_event.model_copy(update={"sequence": sequence})
             await connection.execute(
                 """UPDATE security_analyses SET status=$2,response=$3::jsonb,policy_version=$4,
-                          updated_at=$5,completed_at=$5 WHERE id=$1""",
+                          policy_metadata=$5::jsonb,updated_at=$6,completed_at=$6 WHERE id=$1""",
                 response.analysis_id,
                 response.status.value,
                 response.model_dump_json(),
                 response.policy_version,
+                response.policy_metadata.model_dump_json() if response.policy_metadata else "{}",
                 response.completed_at,
             )
             await connection.execute(

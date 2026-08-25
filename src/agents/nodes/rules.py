@@ -99,7 +99,7 @@ def build_rule_check_node(blacklist: BlacklistRepository | None):
             if any(token in path for token in _CREDENTIAL_TOKENS):
                 evidence.append(
                     _evidence(
-                        "Đường dẫn yêu cầu thông tin tài khoản",
+                        "Đường dẫn quy trình tài khoản",
                         f"Đường dẫn của {host} có dấu hiệu trang đăng nhập hoặc xác minh.",
                         now,
                     )

@@ -2173,7 +2173,7 @@ class OfficialLinkVerificationCoordinator:
             overall = VerificationStatusV4.UNVERIFIED
             reason = "applicable_evidence_insufficient"
         return OfficialLinkVerificationReportV4(
-            schema_version="official-link-verification-v3",
+            schema_version="official-link-verification-v4",
             intent=intent.contract,
             publisher_verification=publisher,
             claim_verification=claim,

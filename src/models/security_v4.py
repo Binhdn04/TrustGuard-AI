@@ -34,6 +34,7 @@ SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
 SECURITY_ASSISTANT_RESPONSE_VERSION = "security-assistant-response-v1"
 OFFICIAL_LINK_VERIFICATION_VERSION = "official-link-verification-v3"
 OFFICIAL_LINK_VERIFICATION_VERSION_V3 = "official-link-verification-v3"
+OFFICIAL_LINK_VERIFICATION_VERSION_V4 = "official-link-verification-v4"
 OFFICIAL_LINK_VERIFICATION_POLICY_VERSION_V4 = "official-link-verification-v4"
 OFFICIAL_LINK_VERIFICATION_VERSION_V1 = "official-link-verification-v1"
 RESOURCE_IDENTITY_VERSION = "resource-identity-v1"
@@ -630,7 +631,8 @@ class ResourceVerificationV4(OfficialVerificationComponentV4):
 
 class OfficialLinkVerificationReportV4(SecurityContractModel):
     schema_version: Literal[
-        "official-link-verification-v1", "official-link-verification-v2", "official-link-verification-v3"
+        "official-link-verification-v1", "official-link-verification-v2", "official-link-verification-v3",
+        "official-link-verification-v4",
     ] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
     intent: VerificationIntentV4
     publisher_verification: PublisherVerificationV4
@@ -969,6 +971,23 @@ class AssistantContextV4(SecurityContractModel):
         SECURITY_UNDERSTANDING_VERSION
     )
     model_version: str = Field(min_length=1, max_length=200)
+    # These are backend-derived assurance facts.  They deliberately contain no
+    # message text, provider output, URLs, or secrets.
+    action_candidate_present: bool = False
+    action_intent_available: bool = True
+    grounded_actions: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+
+class SecurityPolicyMetadataV4(SecurityContractModel):
+    release_version: Literal["security-risk-v7"] = SECURITY_RISK_POLICY_VERSION_V7
+    activated_features: list[str] = Field(default_factory=list, max_length=10)
+    decision_assurance: Literal[
+        "passive_target_verified",
+        "action_resource_verified",
+        "action_intent_unavailable",
+        "verification_incomplete",
+        "adverse_evidence",
+    ]
 
 
 class SecurityConversationStatusV4(StrEnum):
@@ -1049,6 +1068,9 @@ class SecurityScopeResponseV4(SecurityContractModel):
         ]
         | None
     ) = None
+    policy_metadata: SecurityPolicyMetadataV4 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -1074,6 +1096,39 @@ class SecurityScopeResponseV4(SecurityContractModel):
     def remove_retired_stored_investigation_steps(cls, value: Any, info: ValidationInfo) -> Any:
         if not info.context or not info.context.get("stored_security_scope") or not isinstance(value, dict):
             return value
+        # Historical reports never had explicit coverage for ownership,
+        # sender, or action endorsement. Preserve their original report
+        # version/payload while making the missing assurance visible; never
+        # silently reinterpret it as NOT_APPLICABLE on read.
+        report = value.get("official_verification")
+        if isinstance(report, dict) and report.get("schema_version") in {
+            "official-link-verification-v1", "official-link-verification-v2"
+        }:
+            intent = report.get("intent") if isinstance(report.get("intent"), dict) else {}
+            has_action = bool(intent.get("requested_action"))
+            has_url = bool(intent.get("action_url_indices"))
+            report = {
+                **report,
+                "domain_ownership_verification": {
+                    "applicable": has_url,
+                    "status": "UNVERIFIED" if has_url else None,
+                    "reason_code": "legacy_coverage_unavailable",
+                    "evidence_refs": [],
+                },
+                "sender_verification": {
+                    "applicable": has_action,
+                    "status": "UNVERIFIED" if has_action else None,
+                    "reason_code": "legacy_coverage_unavailable",
+                    "evidence_refs": [],
+                },
+                "action_endorsement_verification": {
+                    "applicable": has_action,
+                    "status": "UNVERIFIED" if has_action else None,
+                    "reason_code": "legacy_coverage_unavailable",
+                    "evidence_refs": [],
+                },
+            }
+            value = {**value, "official_verification": report}
         raw_plan = value.get("investigation_plan")
         if not isinstance(raw_plan, list):
             return value
