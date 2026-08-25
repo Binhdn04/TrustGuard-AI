@@ -122,6 +122,31 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reviewed_official_passport_login_is_safe_without_action_endorsement() -> None:
+    """Official ownership is positive evidence; login is not credential theft."""
+    message = (
+        "Công an phường bảo tôi đăng nhập vào "
+        "https://vpcp.dichvucong.gov.vn/p/home/dvc-trang-chu.html làm hộ chiếu"
+    )
+    request, scoped = _scope(message)
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    official = _brand(
+        name="Công an",
+        aliases=["công an", "Công an phường"],
+        official_domains=["dichvucong.gov.vn"],
+    )
+    enriched = await SecurityTrustService(_TrustRepository(brands=[official]), clock=lambda: NOW).enrich(
+        request, investigated
+    )
+
+    result = assess_security_risk(enriched)
+
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.threat_type.value == "UNDETERMINED_SECURITY_THREAT"
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+
+
+@pytest.mark.asyncio
 async def test_brand_mismatch_alone_is_low_risk() -> None:
     request, scoped = _scope("ACME xem https://unrelated.example")
     investigated = await SecurityInvestigationService().investigate(request, scoped)
@@ -321,7 +346,7 @@ async def test_local_entity_linker_detects_reviewed_owner_mismatch_without_ai_of
 
 
 @pytest.mark.asyncio
-async def test_unresolved_entity_url_relation_blocks_safe_even_for_official_target() -> None:
+async def test_reviewed_owner_resolves_unresolved_entity_url_relation() -> None:
     message = "Bệnh viện Đại học Y xem thông tin tại https://bachmai.gov.vn/"
     request, scoped = _scope(message)
     assert scoped.security_context.claimed_entity == "Bệnh viện Đại học Y"
@@ -348,8 +373,8 @@ async def test_unresolved_entity_url_relation_blocks_safe_even_for_official_targ
     result = assess_security_risk(enriched)
 
     assert any(item.signal == "entity_url_relation_unresolved" for item in result.evidence)
-    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
-    assert result.confidence <= 0.65
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
 
 
 @pytest.mark.asyncio

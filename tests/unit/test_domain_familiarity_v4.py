@@ -229,7 +229,7 @@ async def test_specific_platform_identity_wins_parent_and_resource_stays_unverif
     result = assess_security_risk(enriched, familiarity_enforced=True)
     assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
     assert result.policy_version == "security-risk-v5"
-    assert SecurityRecommendedActionV4.DO_NOT_OPEN_LINK in result.recommended_actions
+    assert SecurityRecommendedActionV4.PROCEED_WITH_CAUTION in result.recommended_actions
 
 
 @pytest.mark.asyncio
@@ -259,7 +259,8 @@ async def test_platform_familiarity_never_overrides_sensitive_context_or_blackli
         _Brands([_google()]), domain_familiarity_enabled=True, clock=lambda: NOW
     ).enrich(request, investigated)
     sensitive = assess_security_risk(enriched, familiarity_enforced=True)
-    assert sensitive.risk in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.SUSPICIOUS}
+    assert sensitive.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
+    assert SecurityRecommendedActionV4.ALLOW_OPEN not in sensitive.recommended_actions
 
     blacklist = SecurityEvidenceV4(
         evidence_ref="evidence:ffffffffffffffff",

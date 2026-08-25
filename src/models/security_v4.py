@@ -27,6 +27,7 @@ SECURITY_RISK_POLICY_VERSION_V3 = "security-risk-v3"
 SECURITY_RISK_POLICY_VERSION_V4 = "security-risk-v4"
 SECURITY_RISK_POLICY_VERSION_V5 = "security-risk-v5"
 SECURITY_RISK_POLICY_VERSION_V6 = "security-risk-v6"
+SECURITY_RISK_POLICY_VERSION_V7 = "security-risk-v7"
 SECURITY_UNDERSTANDING_VERSION_V1 = "security-understanding-v1"
 SECURITY_UNDERSTANDING_VERSION_V2 = "security-understanding-v2"
 SECURITY_UNDERSTANDING_VERSION = SECURITY_UNDERSTANDING_VERSION_V2
@@ -1044,6 +1045,7 @@ class SecurityScopeResponseV4(SecurityContractModel):
             "security-risk-v4",
             "security-risk-v5",
             "security-risk-v6",
+            "security-risk-v7",
         ]
         | None
     ) = None

@@ -531,8 +531,15 @@ def merge_semantic_understanding(
         updates["entity_url_claims"] = entity_url_claims
 
     # AI candidates are additions only. Existing true rule signals are never removed.
+    # ``credential_request`` means disclosure to another party, not routine
+    # credential entry into a login page.  A semantic signal may add it only
+    # when the same grounded interpretation identifies credential sharing.
+    semantic_credential_disclosure = (
+        SemanticSecuritySignal.CREDENTIAL_REQUEST in signals
+        and (requested_action is RequestedActionV4.SHARE_CREDENTIALS or base.requested_action is RequestedActionV4.SHARE_CREDENTIALS)
+    )
     updates.update(
-        credential_request=(base.credential_request or SemanticSecuritySignal.CREDENTIAL_REQUEST in signals),
+        credential_request=base.credential_request or semantic_credential_disclosure,
         otp_request=base.otp_request or SemanticSecuritySignal.OTP_REQUEST in signals,
         payment_request=base.payment_request or SemanticSecuritySignal.PAYMENT_REQUEST in signals,
         personal_information_request=(

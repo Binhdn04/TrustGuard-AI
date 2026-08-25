@@ -253,7 +253,7 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
     completed = assess_security_risk(staged, official_verification_enforced=True)
     response = policy_grounded_assistant_response(completed)
     assert completed.risk.value == "INSUFFICIENT_EVIDENCE"
-    assert completed.policy_version == "security-risk-v6"
+    assert completed.policy_version == "security-risk-v7"
     assert {
         item.signal for item in completed.evidence if item.type is SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION
     } == {

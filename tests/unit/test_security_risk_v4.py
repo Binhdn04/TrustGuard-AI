@@ -11,6 +11,7 @@ from src.models import (
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationToolV4,
+    SecurityRecommendedActionV4,
     SecurityRiskV4,
     SecurityToolErrorV4,
     SecurityTriageCreateRequestV4,
@@ -44,7 +45,12 @@ async def test_high_risk_security_fixtures(message: str, expected: SecurityRiskV
     result = await _assess(message)
     assert result.risk is expected
     assert result.policy_version == (
-        "security-risk-v6" if result.security_context and result.security_context.claimed_entity else "security-risk-v1"
+        "security-risk-v7"
+        if result.security_context
+        and (result.security_context.credential_request or result.security_context.requested_action.value == "login")
+        else "security-risk-v6"
+        if result.security_context and result.security_context.claimed_entity
+        else "security-risk-v1"
     )
     assert result.explanation_evidence_refs
 
@@ -54,6 +60,25 @@ async def test_approved_blacklist_is_strong_malicious_evidence() -> None:
     result = await _assess("Mở link https://bad.example/login", blacklist=["bad.example"])
     assert result.risk is SecurityRiskV4.MALICIOUS
     assert result.score >= 95
+
+
+@pytest.mark.asyncio
+async def test_unverified_login_is_uncertain_not_credential_theft_or_a_block_order() -> None:
+    result = await _assess("Một người bảo tôi đăng nhập https://unknown.example để làm thủ tục")
+
+    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
+    assert result.threat_type.value == "UNDETERMINED_SECURITY_THREAT"
+    assert SecurityRecommendedActionV4.PROCEED_WITH_CAUTION in result.recommended_actions
+    assert SecurityRecommendedActionV4.DO_NOT_OPEN_LINK not in result.recommended_actions
+
+
+@pytest.mark.asyncio
+async def test_impersonated_login_is_high_risk_only_with_positive_malicious_context() -> None:
+    result = await _assess("Kẻ giả mạo công an bắt tôi đăng nhập ngay https://unknown.example")
+
+    assert result.risk is SecurityRiskV4.HIGH_RISK
+    assert result.threat_type.value == "CREDENTIAL_THEFT"
+    assert SecurityRecommendedActionV4.DO_NOT_OPEN_LINK in result.recommended_actions
 
 
 @pytest.mark.asyncio

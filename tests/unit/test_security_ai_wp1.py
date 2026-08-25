@@ -105,6 +105,23 @@ def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None
     assert completed.risk.value == "HIGH_RISK"
 
 
+def test_semantic_credential_signal_does_not_reclassify_a_login_as_disclosure() -> None:
+    message = "Đăng nhập vào https://official.example để nộp hồ sơ"
+    scoped = _scope(message)
+    output = _understanding(
+        message,
+        requested_action=RequestedActionV4.LOGIN,
+        security_signals=[SemanticSecuritySignal.CREDENTIAL_REQUEST],
+    )
+
+    merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert merged.security_context is not None
+    assert merged.security_context.requested_action is RequestedActionV4.LOGIN
+    assert merged.security_context.credential_request is False
+    assert merged.security_context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+
+
 def test_rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations() -> None:
     message = "HR tuyển dụng yêu cầu đóng phí hồ sơ ngay"
     scoped = _scope(message)
