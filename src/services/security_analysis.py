@@ -158,11 +158,15 @@ def _merge_context(previous: SecurityContextV4, current: SecurityContextV4) -> S
             "amount": current.amount or previous.amount,
             "urgency": current.urgency or previous.urgency,
             "urls": urls,
-            "credential_request": current.credential_request if current_interprets_action else previous.credential_request,
+            "credential_request": current.credential_request
+            if current_interprets_action
+            else previous.credential_request,
             "otp_request": current.otp_request if current_interprets_action else previous.otp_request,
             "payment_request": current.payment_request if current_interprets_action else previous.payment_request,
             "personal_information_request": (
-                current.personal_information_request if current_interprets_action else previous.personal_information_request
+                current.personal_information_request
+                if current_interprets_action
+                else previous.personal_information_request
             ),
             "impersonation_signals": signals,
             "potential_threat": (

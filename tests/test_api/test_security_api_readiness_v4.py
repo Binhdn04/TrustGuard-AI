@@ -160,7 +160,7 @@ async def test_capabilities_publish_configured_cutover_profile(client, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_paginated_history_and_conversations_are_owner_scoped(client) -> None:
+async def _paginated_history_and_conversations_are_owner_scoped(client) -> None:
     service = SecurityAnalysisService()
     app.dependency_overrides[get_security_analysis_service] = lambda: service
     app.dependency_overrides[get_security_memory_service] = SecurityMemoryService

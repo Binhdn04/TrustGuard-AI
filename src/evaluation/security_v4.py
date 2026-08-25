@@ -29,10 +29,19 @@ from src.models import (
     SecurityTriageCreateRequestV4,
 )
 from src.security_ai.contracts import (
+    SemanticActionKind,
+    SemanticActionMention,
+    SemanticDirection,
+    SemanticInteractionType,
+    SemanticModality,
+    SemanticParticipant,
     SemanticSecuritySignal,
+    SemanticSensitiveObject,
+    SemanticStance,
     Understanding,
     UnderstandingSourceSpan,
 )
+from src.services.security_span_candidates import generate_semantic_span_candidates
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import merge_semantic_understanding
 
@@ -212,8 +221,31 @@ def _semantic_fixture_output(case: SecurityEvaluationCase) -> Understanding | No
         if value not in (None, [], ExposureStateV4.UNKNOWN):
             field_names.append(field_name)
     field_names.extend(signal.value for signal in fixture.security_signals)
+    action_mentions: list[SemanticActionMention] = []
+    if fixture.requested_action is not None:
+        candidates = generate_semantic_span_candidates(case.message)
+        action_span = next(
+            (item for item in candidates if item.kind == "action_phrase"),
+            next(item for item in candidates if item.kind == "full_message"),
+        )
+        action_kind, sensitive_object, interaction_type = _fixture_action_mention(fixture.requested_action)
+        action_mentions.append(
+            SemanticActionMention(
+                action_kind=action_kind,
+                sensitive_object=sensitive_object,
+                actor=SemanticParticipant.SENDER,
+                recipient=SemanticParticipant.USER,
+                direction=SemanticDirection.TO_USER,
+                modality=SemanticModality.REQUESTED,
+                stance=SemanticStance.ASSERTED,
+                interaction_type=interaction_type,
+                span_ids=[action_span.span_id],
+                confidence=0.95,
+            )
+        )
     return Understanding(
         **fixture.model_dump(),
+        action_mentions=action_mentions,
         field_confidences={field_name: 0.95 for field_name in field_names},
         source_spans=[
             UnderstandingSourceSpan(
@@ -224,6 +256,28 @@ def _semantic_fixture_output(case: SecurityEvaluationCase) -> Understanding | No
             for field_name in field_names
         ],
     )
+
+
+def _fixture_action_mention(
+    action: RequestedActionV4,
+) -> tuple[SemanticActionKind, SemanticSensitiveObject, SemanticInteractionType]:
+    if action is RequestedActionV4.SHARE_OTP:
+        return SemanticActionKind.DISCLOSE, SemanticSensitiveObject.OTP, SemanticInteractionType.DISCLOSURE
+    if action is RequestedActionV4.SHARE_CREDENTIALS:
+        return SemanticActionKind.DISCLOSE, SemanticSensitiveObject.CREDENTIALS, SemanticInteractionType.DISCLOSURE
+    if action is RequestedActionV4.PROVIDE_PERSONAL_INFORMATION:
+        return (
+            SemanticActionKind.DISCLOSE,
+            SemanticSensitiveObject.PERSONAL_INFORMATION,
+            SemanticInteractionType.DISCLOSURE,
+        )
+    if action in {RequestedActionV4.TRANSFER_MONEY, RequestedActionV4.PAY_FEE}:
+        return (
+            SemanticActionKind.TRANSFER_MONEY,
+            SemanticSensitiveObject.MONEY,
+            SemanticInteractionType.ROUTINE_WORKFLOW,
+        )
+    return SemanticActionKind(action.value), SemanticSensitiveObject.UNKNOWN, SemanticInteractionType.ROUTINE_WORKFLOW
 
 
 def load_evaluation_set(path: str | Path) -> list[SecurityEvaluationCase]:

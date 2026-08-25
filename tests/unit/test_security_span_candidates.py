@@ -26,7 +26,7 @@ def test_hosted_understanding_wire_selects_ids_and_has_no_offset_fields() -> Non
     assert '"end"' not in str(schema)
 
 
-def test_invalid_span_id_does_not_reject_semantic_candidate() -> None:
+def test_retired_scalar_action_is_ignored_when_spans_are_valid() -> None:
     message = "Vào https://example.test để làm hộ chiếu"
     scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
     spans = generate_semantic_span_candidates(message)
@@ -45,5 +45,5 @@ def test_invalid_span_id_does_not_reject_semantic_candidate() -> None:
 
     assert merged.scope_decision is ScopeDecisionV4.IN_SCOPE
     assert merged.security_context is not None
-    assert merged.security_context.requested_action is RequestedActionV4.APPLY_FOR_PASSPORT
+    assert merged.security_context.requested_action is None
     assert not any("invalid_source_span" in item and "scope_decision" in item for item in merged.limitations)

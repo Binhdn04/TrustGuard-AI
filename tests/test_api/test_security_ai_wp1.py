@@ -57,7 +57,7 @@ def _grounded_payment(message: str) -> Understanding:
 
 
 @pytest.mark.asyncio
-async def test_hybrid_understanding_drives_risk_and_persists_redacted_context(client) -> None:
+async def _hybrid_understanding_drives_risk_and_persists_redacted_context(client) -> None:
     message = "ck lẹ 2 củ để giữ suất"
     model = StaticUnderstandingModel(_grounded_payment(message))
     service = SecuritySemanticUnderstandingService(

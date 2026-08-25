@@ -258,10 +258,7 @@ def _has_contextual_threat(scope: SecurityScopeResponseV4) -> bool:
     from missing official verification or an unverified reputation result.
     """
     context = scope.security_context
-    return bool(
-        context
-        and context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
-    )
+    return bool(context and context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT)
 
 
 def _actions(
@@ -375,9 +372,8 @@ def assess_security_risk(
     # normal sign-in or application action is not itself a threat signal while
     # a fuller action-endorsement chain is unavailable.
     action_chain_verified = (
-        (official_verification_enforced and _complete_official_verification(scope))
-        or reviewed_target_ownership
-    )
+        official_verification_enforced and _complete_official_verification(scope)
+    ) or reviewed_target_ownership
     # Sensitive actions are not malicious evidence by themselves.  They can
     # strengthen an independently identified threat pattern, and a verified
     # official action chain can neutralize even that contextual concern.
@@ -408,9 +404,7 @@ def assess_security_risk(
         not action_chain_verified
         and context.scenario.value in {"recruitment", "promotion_prize"}
         and (
-            context.payment_request
-            or context.credential_request
-            or context.requested_action is RequestedActionV4.LOGIN
+            context.payment_request or context.credential_request or context.requested_action is RequestedActionV4.LOGIN
         )
     ):
         contributions.append(_Contribution(10, context_ref))

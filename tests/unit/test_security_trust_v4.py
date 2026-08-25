@@ -125,8 +125,7 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
 async def test_reviewed_official_passport_login_is_safe_without_action_endorsement() -> None:
     """Official ownership is positive evidence; login is not credential theft."""
     message = (
-        "Công an phường bảo tôi đăng nhập vào "
-        "https://vpcp.dichvucong.gov.vn/p/home/dvc-trang-chu.html làm hộ chiếu"
+        "Công an phường bảo tôi đăng nhập vào https://vpcp.dichvucong.gov.vn/p/home/dvc-trang-chu.html làm hộ chiếu"
     )
     request, scoped = _scope(message)
     investigated = await SecurityInvestigationService().investigate(request, scoped)
@@ -305,7 +304,7 @@ async def test_reviewed_owner_mismatch_overrides_target_whitelist() -> None:
     assert "Bach Mai Hospital" in mismatch.description
     assert result.risk is SecurityRiskV4.SUSPICIOUS
     assert result.score == 40
-    assert result.policy_version == "security-risk-v6"
+    assert result.policy_version == "security-risk-v7"
 
 
 @pytest.mark.asyncio

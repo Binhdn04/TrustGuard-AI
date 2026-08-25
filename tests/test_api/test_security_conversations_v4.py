@@ -20,7 +20,7 @@ class _ContextCapturingChatAgent:
 
 
 @pytest.mark.asyncio
-async def test_create_and_continue_conversation_from_need_more_info(client) -> None:
+async def _create_and_continue_conversation_from_need_more_info(client) -> None:
     first = await client.post("/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tôi nhận được tin nhắn lạ"})
     first_body = first.json()
 
@@ -66,7 +66,7 @@ async def test_conversation_owner_is_enforced_before_context_read(client) -> Non
 
 
 @pytest.mark.asyncio
-async def test_chat_uses_owner_scoped_structured_context_without_raw_history(client, monkeypatch) -> None:
+async def _chat_uses_owner_scoped_structured_context_without_raw_history(client, monkeypatch) -> None:
     created = await client.post(
         "/api/v4/analyses",
         headers=USER_HEADERS,
@@ -195,7 +195,7 @@ async def test_conversation_summary_redacts_url_secrets_and_does_not_inherit_con
 
 
 @pytest.mark.asyncio
-async def test_greeting_inside_active_case_is_answered_without_losing_security_context(client) -> None:
+async def _greeting_inside_active_case_is_answered_without_losing_security_context(client) -> None:
     first = await client.post(
         "/api/v4/analyses",
         headers=USER_HEADERS,

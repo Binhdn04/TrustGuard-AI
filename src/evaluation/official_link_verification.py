@@ -19,6 +19,7 @@ from src.models import (
     BrandRecordV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
+    RequestedActionV4,
     ResourceMatchStatusV4,
     ScopeDecisionV4,
     SecurityInvestigationStatusV4,
@@ -27,7 +28,18 @@ from src.models import (
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
 )
-from src.security_ai.contracts import Understanding, UnderstandingSourceSpan
+from src.security_ai.contracts import (
+    SemanticActionKind,
+    SemanticActionMention,
+    SemanticDirection,
+    SemanticInteractionType,
+    SemanticModality,
+    SemanticParticipant,
+    SemanticSensitiveObject,
+    SemanticStance,
+    Understanding,
+    UnderstandingSourceSpan,
+)
 from src.security_ai.runtime import BudgetExceededError, TurnExecutionContext
 from src.services.official_resource_identity import UrlNormalizationError, normalize_verification_url
 from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
@@ -40,6 +52,7 @@ from src.services.official_verification_transport import (
     WebSearchEnvelope,
     WebSearchHit,
 )
+from src.services.security_span_candidates import generate_semantic_span_candidates
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import merge_semantic_understanding
 
@@ -347,9 +360,34 @@ def _semantic_scope(case: OfficialVerificationEvaluationCase, scoped):
     start = case.message.casefold().find(entity.casefold())
     if start < 0:
         raise ValueError(f"semantic entity is not grounded in message: {case.id}")
+    action_mentions: list[SemanticActionMention] = []
+    if scoped.security_context and scoped.security_context.requested_action is not None:
+        candidates = generate_semantic_span_candidates(case.message)
+        action_span = next(
+            (item for item in candidates if item.kind == "action_phrase"),
+            next(item for item in candidates if item.kind == "full_message"),
+        )
+        action_kind, sensitive_object, interaction_type = _fixture_action_mention(
+            scoped.security_context.requested_action
+        )
+        action_mentions.append(
+            SemanticActionMention(
+                action_kind=action_kind,
+                sensitive_object=sensitive_object,
+                actor=SemanticParticipant.SENDER,
+                recipient=SemanticParticipant.USER,
+                direction=SemanticDirection.TO_USER,
+                modality=SemanticModality.REQUESTED,
+                stance=SemanticStance.ASSERTED,
+                interaction_type=interaction_type,
+                span_ids=[action_span.span_id],
+                confidence=0.95,
+            )
+        )
     output = Understanding(
         scope_decision=ScopeDecisionV4.IN_SCOPE,
         claimed_entity=entity,
+        action_mentions=action_mentions,
         field_confidences={"scope_decision": 0.95, "claimed_entity": 0.95},
         source_spans=[UnderstandingSourceSpan(field_name="claimed_entity", start=start, end=start + len(entity))],
     )
@@ -359,6 +397,28 @@ def _semantic_scope(case: OfficialVerificationEvaluationCase, scoped):
         output,
         model_version="security-v4-v2-semantic-fixture",
     )
+
+
+def _fixture_action_mention(
+    action: RequestedActionV4,
+) -> tuple[SemanticActionKind, SemanticSensitiveObject, SemanticInteractionType]:
+    if action is RequestedActionV4.SHARE_OTP:
+        return SemanticActionKind.DISCLOSE, SemanticSensitiveObject.OTP, SemanticInteractionType.DISCLOSURE
+    if action is RequestedActionV4.SHARE_CREDENTIALS:
+        return SemanticActionKind.DISCLOSE, SemanticSensitiveObject.CREDENTIALS, SemanticInteractionType.DISCLOSURE
+    if action is RequestedActionV4.PROVIDE_PERSONAL_INFORMATION:
+        return (
+            SemanticActionKind.DISCLOSE,
+            SemanticSensitiveObject.PERSONAL_INFORMATION,
+            SemanticInteractionType.DISCLOSURE,
+        )
+    if action in {RequestedActionV4.TRANSFER_MONEY, RequestedActionV4.PAY_FEE}:
+        return (
+            SemanticActionKind.TRANSFER_MONEY,
+            SemanticSensitiveObject.MONEY,
+            SemanticInteractionType.ROUTINE_WORKFLOW,
+        )
+    return SemanticActionKind(action.value), SemanticSensitiveObject.UNKNOWN, SemanticInteractionType.ROUTINE_WORKFLOW
 
 
 def _allowed_urls(case: OfficialVerificationEvaluationCase) -> set[str]:

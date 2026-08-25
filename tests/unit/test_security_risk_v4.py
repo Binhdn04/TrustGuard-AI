@@ -44,14 +44,7 @@ async def _assess(message: str, *, blacklist: list[str] | None = None):
 async def test_high_risk_security_fixtures(message: str, expected: SecurityRiskV4) -> None:
     result = await _assess(message)
     assert result.risk is expected
-    assert result.policy_version == (
-        "security-risk-v7"
-        if result.security_context
-        and (result.security_context.credential_request or result.security_context.requested_action.value == "login")
-        else "security-risk-v6"
-        if result.security_context and result.security_context.claimed_entity
-        else "security-risk-v1"
-    )
+    assert result.policy_version == "security-risk-v7"
     assert result.explanation_evidence_refs
 
 

@@ -90,8 +90,7 @@ def _accepted_action_mentions(
             valid_relationship = mention.actor is SemanticParticipant.USER
         elif mention.direction is SemanticDirection.USER_TO_FORM_OR_SERVICE:
             valid_relationship = (
-                mention.actor is SemanticParticipant.USER
-                and mention.recipient is SemanticParticipant.FORM_OR_SERVICE
+                mention.actor is SemanticParticipant.USER and mention.recipient is SemanticParticipant.FORM_OR_SERVICE
             )
         if valid_refs and valid_confidence and valid_relationship:
             accepted.append(mention)
@@ -117,13 +116,21 @@ def _project_action_mentions(
     # been retained.  This ordering is policy impact, then earliest
     # backend-owned span; provider ordering is never trusted.
     projected: list[tuple[RequestedActionV4, SemanticActionMention]] = []
-    flags = {"credential_request": False, "otp_request": False, "payment_request": False,
-             "personal_information_request": False}
+    flags = {
+        "credential_request": False,
+        "otp_request": False,
+        "payment_request": False,
+        "personal_information_request": False,
+    }
     for item in active:
-        if item.interaction_type in {
-            SemanticInteractionType.DISCLOSURE,
-            SemanticInteractionType.SUSPICIOUS_SOLICITATION,
-        } and item.action_kind is SemanticActionKind.DISCLOSE:
+        if (
+            item.interaction_type
+            in {
+                SemanticInteractionType.DISCLOSURE,
+                SemanticInteractionType.SUSPICIOUS_SOLICITATION,
+            }
+            and item.action_kind is SemanticActionKind.DISCLOSE
+        ):
             if item.sensitive_object is SemanticSensitiveObject.OTP:
                 flags["otp_request"] = True
                 projected.append((RequestedActionV4.SHARE_OTP, item))
@@ -142,13 +149,24 @@ def _project_action_mentions(
                 projected.append((action, item))
 
     starts = {item.span_id: item.start for item in candidates}
-    priority = {action: index for index, action in enumerate((
-        RequestedActionV4.SHARE_OTP, RequestedActionV4.SHARE_CREDENTIALS,
-        RequestedActionV4.TRANSFER_MONEY, RequestedActionV4.PROVIDE_PERSONAL_INFORMATION,
-        RequestedActionV4.LOGIN, RequestedActionV4.INSTALL_APP, RequestedActionV4.SHARE_SCREEN,
-        RequestedActionV4.SUBMIT_FORM, RequestedActionV4.REGISTER_OR_APPLY,
-        RequestedActionV4.OPEN_LINK, RequestedActionV4.DOWNLOAD_FILE,
-    ))}
+    priority = {
+        action: index
+        for index, action in enumerate(
+            (
+                RequestedActionV4.SHARE_OTP,
+                RequestedActionV4.SHARE_CREDENTIALS,
+                RequestedActionV4.TRANSFER_MONEY,
+                RequestedActionV4.PROVIDE_PERSONAL_INFORMATION,
+                RequestedActionV4.LOGIN,
+                RequestedActionV4.INSTALL_APP,
+                RequestedActionV4.SHARE_SCREEN,
+                RequestedActionV4.SUBMIT_FORM,
+                RequestedActionV4.REGISTER_OR_APPLY,
+                RequestedActionV4.OPEN_LINK,
+                RequestedActionV4.DOWNLOAD_FILE,
+            )
+        )
+    }
     requested_action = min(
         projected,
         key=lambda value: (priority.get(value[0], 99), min(starts[span] for span in value[1].span_ids)),
@@ -175,6 +193,8 @@ def _project_action_mentions(
         elif item.action_kind is SemanticActionKind.OPEN_LINK:
             exposure = highest_exposure(exposure, ExposureStateV4.LINK_OPENED)
     return requested_action, flags, exposure
+
+
 # These values are interpretations of the message, not quotes from it.  The
 # model is the primary authority for them once its structured output is valid;
 # requiring an offset or a self-reported confidence here turns semantic
@@ -539,9 +559,7 @@ def merge_semantic_understanding(
     """Ground and merge AI candidates without weakening deterministic signals."""
     resolved_candidates = span_candidates or generate_semantic_span_candidates(message, entity_candidates)
     candidate_mentions = (
-        output.action_mentions
-        if output.interpretation_status is SemanticInterpretationStatus.ACCEPTED
-        else []
+        output.action_mentions if output.interpretation_status is SemanticInterpretationStatus.ACCEPTED else []
     )
     accepted_mentions, rejected_mentions = _accepted_action_mentions(candidate_mentions, resolved_candidates)
     url_count = len((scope.security_context or partial_security_context(message)).urls)
@@ -552,7 +570,9 @@ def merge_semantic_understanding(
     accepted_mentions = valid_mentions
     if output.action_mentions and not candidate_mentions:
         rejected_mentions = len(output.action_mentions)
-    semantic_action, semantic_flags, semantic_exposure = _project_action_mentions(accepted_mentions, resolved_candidates)
+    semantic_action, semantic_flags, semantic_exposure = _project_action_mentions(
+        accepted_mentions, resolved_candidates
+    )
     output, invalid_span_fields = _resolve_span_selections(
         output,
         resolved_candidates,
@@ -687,8 +707,10 @@ def merge_semantic_understanding(
             updates["scenario"] = scenario
     if accepted_mentions:
         updates["requested_action"] = requested_action
-    elif output.action_mentions or output.requested_action is not None or any(
-        item.kind == "action_phrase" for item in resolved_candidates
+    elif (
+        output.action_mentions
+        or output.requested_action is not None
+        or any(item.kind == "action_phrase" for item in resolved_candidates)
     ):
         # Do not leak lexical or retired scalar actions into the public
         # projection when semantic grounding was rejected.
@@ -737,15 +759,13 @@ def merge_semantic_understanding(
         understanding_version=SECURITY_UNDERSTANDING_VERSION,
         model_version=model_version,
         action_candidate_present=any(item.kind == "action_phrase" for item in resolved_candidates),
-        action_intent_available=bool(accepted_mentions) or not any(
-            item.kind == "action_phrase" for item in resolved_candidates
-        ),
+        action_intent_available=bool(accepted_mentions)
+        or not any(item.kind == "action_phrase" for item in resolved_candidates),
         grounded_actions=GroundedActionSet(
             actions=accepted_mentions,
             candidate_present=any(item.kind == "action_phrase" for item in resolved_candidates),
-            intent_available=bool(accepted_mentions) or not any(
-                item.kind == "action_phrase" for item in resolved_candidates
-            ),
+            intent_available=bool(accepted_mentions)
+            or not any(item.kind == "action_phrase" for item in resolved_candidates),
         ).model_dump(mode="json")["actions"],
     )
     limitations = list(scope.limitations)
@@ -784,7 +804,8 @@ def merge_semantic_understanding(
             "rejected_fields": sorted(rejected_field_failures),
             "scope_after_merge": (
                 ScopeDecisionV4.IN_SCOPE.value
-                if scope.scope_decision is not ScopeDecisionV4.IN_SCOPE and accepted_scope is ScopeDecisionV4.IN_SCOPE
+                if scope.scope_decision is not ScopeDecisionV4.IN_SCOPE
+                and accepted_scope is ScopeDecisionV4.IN_SCOPE
                 and _has_security_information(merged)
                 else scope.scope_decision.value
             ),
@@ -984,9 +1005,7 @@ class SecuritySemanticUnderstandingService:
 
     @staticmethod
     def _fallback(message: str, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
-        candidate_present = any(
-            item.kind == "action_phrase" for item in generate_semantic_span_candidates(message)
-        )
+        candidate_present = any(item.kind == "action_phrase" for item in generate_semantic_span_candidates(message))
         context = scope.security_context
         if candidate_present and context is not None:
             context = context.model_copy(

@@ -508,8 +508,23 @@ def _is_otp_disclosure_request(text: str) -> bool:
         return False
     disclosure = _contains_any(
         text,
-        ("gửi", "gui", "chia sẻ", "chia se", "cung cấp", "cung cap", "đưa", "dua", "share", "send", "provide",
-         "cho tôi", "cho toi", "cho họ", "cho ho"),
+        (
+            "gửi",
+            "gui",
+            "chia sẻ",
+            "chia se",
+            "cung cấp",
+            "cung cap",
+            "đưa",
+            "dua",
+            "share",
+            "send",
+            "provide",
+            "cho tôi",
+            "cho toi",
+            "cho họ",
+            "cho ho",
+        ),
     )
     # Entering a code into a form/service is authentication, even when an OTP
     # keyword and a URL happen to be present.
@@ -526,9 +541,20 @@ def _is_active_login_request(text: str) -> bool:
         return False
     return _contains_any(
         text,
-        ("yêu cầu đăng nhập", "yeu cau dang nhap", "bắt đăng nhập", "bat dang nhap", "đăng nhập ", "dang nhap ",
-         "nhập thông tin đăng nhập", "nhap thong tin dang nhap", "để đăng nhập", "de dang nhap",
-         "hãy đăng nhập", "hay dang nhap"),
+        (
+            "yêu cầu đăng nhập",
+            "yeu cau dang nhap",
+            "bắt đăng nhập",
+            "bat dang nhap",
+            "đăng nhập ",
+            "dang nhap ",
+            "nhập thông tin đăng nhập",
+            "nhap thong tin dang nhap",
+            "để đăng nhập",
+            "de dang nhap",
+            "hãy đăng nhập",
+            "hay dang nhap",
+        ),
     )
 
 
@@ -728,9 +754,7 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
         if context.credential_request and context.otp_request and coercive_or_scam_context:
             return PotentialThreatV4.CREDENTIAL_AND_OTP_PHISHING
         if (
-            context.credential_request
-            or context.otp_request
-            or context.requested_action is RequestedActionV4.LOGIN
+            context.credential_request or context.otp_request or context.requested_action is RequestedActionV4.LOGIN
         ) and coercive_or_scam_context:
             return PotentialThreatV4.PHISHING
         # Account verification is a topic, not evidence that somebody is
@@ -750,9 +774,7 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
             return PotentialThreatV4.IMPERSONATION_FINANCIAL_SCAM
         return PotentialThreatV4.FINANCIAL_SCAM
     if (
-        context.credential_request
-        or context.otp_request
-        or context.requested_action is RequestedActionV4.LOGIN
+        context.credential_request or context.otp_request or context.requested_action is RequestedActionV4.LOGIN
     ) and coercive_or_scam_context:
         return PotentialThreatV4.CREDENTIAL_THEFT
     if context.impersonation_signals:

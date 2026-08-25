@@ -144,9 +144,7 @@ def _remove_unsafe_sentences(text: str) -> tuple[str, bool]:
     retained = [
         sentence
         for sentence in sentences
-        if sentence
-        and not _UNSAFE_LINK_TEXT.search(sentence)
-        and not _TECHNICAL_METRIC_TEXT.search(sentence)
+        if sentence and not _UNSAFE_LINK_TEXT.search(sentence) and not _TECHNICAL_METRIC_TEXT.search(sentence)
     ]
     return " ".join(retained).strip(), len(retained) != len(sentences)
 
@@ -219,10 +217,7 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     if _has_verified_official_allow_open(scope):
         verification = scope.official_verification
         assert verification is not None
-        summary = (
-            "Liên kết và thủ tục bạn hỏi đã được nguồn chính thức xác nhận. "
-            "Bạn có thể mở liên kết này."
-        )
+        summary = "Liên kết và thủ tục bạn hỏi đã được nguồn chính thức xác nhận. Bạn có thể mở liên kết này."
         if verification.sender_verification.status is VerificationStatusV4.UNVERIFIED:
             summary += " Danh tính người gửi chưa được xác minh riêng, nhưng điều đó không thay đổi kết luận về liên kết và thủ tục này."
         return summary
@@ -443,9 +438,22 @@ class GroundedSecurityResponseService:
 def _public_uncertainties(limitations: list[str]) -> list[str]:
     """Retain user-relevant uncertainty while never shipping operational diagnostics."""
     internal_markers = (
-        "provider", "timeout", "deadline", "grounding", "policy", "evidence_ref",
-        "structured output", "semantic", "error", "lỗi ai", "mã", "reviewed identity",
-        "exact-resource", "association", "registry", "domain và tổ chức",
+        "provider",
+        "timeout",
+        "deadline",
+        "grounding",
+        "policy",
+        "evidence_ref",
+        "structured output",
+        "semantic",
+        "error",
+        "lỗi ai",
+        "mã",
+        "reviewed identity",
+        "exact-resource",
+        "association",
+        "registry",
+        "domain và tổ chức",
     )
     return [item for item in limitations if not any(marker in item.casefold() for marker in internal_markers)][:20]
 

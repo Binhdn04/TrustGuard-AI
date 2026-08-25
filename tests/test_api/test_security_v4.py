@@ -87,10 +87,10 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
     assert body["tool_calls_used"] == 0
     assert body["security_context"]["scenario"] == "recruitment"
     assert body["security_context"]["potential_threat"] == "RECRUITMENT_SCAM"
-    assert body["limitations"] == []
-    assert body["risk"] == "HIGH_RISK"
-    assert body["score"] == 65
-    assert body["policy_version"] == "security-risk-v6"
+    assert body["limitations"] == ["AI semantic understanding không khả dụng; kết quả chỉ dùng rule cục bộ."]
+    assert body["risk"] == "INSUFFICIENT_EVIDENCE"
+    assert body["score"] == 0
+    assert body["policy_version"] == "security-risk-v7"
     assert body["threat_type"] == "RECRUITMENT_SCAM"
     assert body["explanation_evidence_refs"] == [body["evidence"][0]["evidence_ref"]]
     record = next(item for item in caplog.records if item.getMessage() == "http_request_completed")
@@ -99,7 +99,7 @@ async def test_v4_in_scope_returns_context_and_completes_local_investigation(cli
 
 
 @pytest.mark.asyncio
-async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
+async def test_v4_unavailable_semantic_grounding_does_not_produce_admin_review_action(client) -> None:
     repository = MemoryWave2Repository()
     wave2 = Wave2PlatformService(repository)
     app.dependency_overrides[get_wave2_service] = lambda: wave2
@@ -114,17 +114,13 @@ async def test_v4_high_risk_url_produces_admin_review_action(client) -> None:
         app.dependency_overrides.pop(get_wave2_service, None)
 
     assert response.status_code == 200
-    assert response.json()["risk"] == "HIGH_RISK"
+    assert response.json()["risk"] == "INSUFFICIENT_EVIDENCE"
     assert queue.status_code == 200
-    assert queue.json()["total"] == 1
-    action = queue.json()["items"][0]
-    assert action["security_analysis_id"] == response.json()["analysis_id"]
-    assert action["target"] == "hitl.example"
-    assert action["status"] == "pending_review"
+    assert queue.json()["total"] == 0
 
 
 @pytest.mark.asyncio
-async def test_v4_security_memory_campaign_admin_review_and_correction(client) -> None:
+async def test_v4_security_memory_admin_correction_remains_owner_scoped(client) -> None:
     memory = SecurityMemoryService()
     app.dependency_overrides[get_security_memory_service] = lambda: memory
     try:
@@ -150,15 +146,6 @@ async def test_v4_security_memory_campaign_admin_review_and_correction(client) -
             json={"verdict": "false_positive", "note": "Verified test infrastructure."},
         )
         memory_audit = await client.get(f"/api/v4/admin/security-memory/{memory_id}/audit", headers=ADMIN_HEADERS)
-        campaign_id = campaigns.json()[0]["campaign_id"]
-        review = await client.post(
-            f"/api/v4/admin/security-campaigns/{campaign_id}/decision",
-            headers=ADMIN_HEADERS,
-            json={"decision": "confirmed", "note": "Three linked security reports."},
-        )
-        campaign_audit = await client.get(
-            f"/api/v4/admin/security-campaigns/{campaign_id}/audit", headers=ADMIN_HEADERS
-        )
     finally:
         app.dependency_overrides.pop(get_security_memory_service, None)
 
@@ -167,11 +154,9 @@ async def test_v4_security_memory_campaign_admin_review_and_correction(client) -
     assert {item["analysis_id"] for item in records.json()} == {item["analysis_id"] for item in created}
     assert all("message" not in item for item in records.json())
     assert campaigns.status_code == 200
-    assert campaigns.json()[0]["aggregate_signals"]["domain:campaign.example"] == 3
+    assert campaigns.json() == []
     assert correction.json()["admin_verdict"] == "false_positive"
     assert [item["verdict"] for item in memory_audit.json()] == ["false_positive"]
-    assert review.json()["reviewer_status"] == "confirmed"
-    assert campaign_audit.json()[0]["clustering_version"] == "security-clustering-v1"
 
 
 @pytest.mark.asyncio
