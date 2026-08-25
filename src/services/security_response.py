@@ -158,6 +158,81 @@ class SynthesisGroundingCheck:
     failure: SynthesisGroundingFailure | None = None
 
 
+def _remove_unsafe_sentences(text: str) -> tuple[str, bool]:
+    """Remove a prohibited prose fragment without retaining private/model text."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    retained = [
+        sentence
+        for sentence in sentences
+        if sentence
+        and not _UNSAFE_LINK_TEXT.search(sentence)
+        and not _TECHNICAL_METRIC_TEXT.search(sentence)
+    ]
+    return " ".join(retained).strip(), len(retained) != len(sentences)
+
+
+def _remove_unverified_official_claims(text: str) -> tuple[str, bool]:
+    """Drop only sentences that assert official verification without evidence."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    retained = [
+        sentence
+        for sentence in sentences
+        if not (
+            ("tên miền chính thức" in sentence.casefold() or "domain chính thức" in sentence.casefold())
+            and "đã được xác minh" in sentence.casefold()
+        )
+        and not re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", sentence, re.IGNORECASE)
+    ]
+    return " ".join(retained).strip(), len(retained) != len(sentences)
+
+
+def repair_grounded_ai_response(
+    scope: SecurityScopeResponseV4,
+    synthesis: AssistantSynthesis,
+) -> tuple[AssistantResponseV4 | None, list[str]]:
+    """Fail soft: retain valid AI prose/reasons when one component is unsafe.
+
+    The repair never creates facts, verdicts, or actions.  If a required
+    component is entirely removed it is supplied by the existing evidence/policy
+    renderer, while the remaining safe prose remains model-authored.
+    """
+    repairs: list[str] = []
+    summary, changed = _remove_unsafe_sentences(synthesis.summary)
+    if changed:
+        repairs.append("removed_unsafe_or_metric_text")
+    summary, changed = _remove_unverified_official_claims(summary)
+    if changed:
+        repairs.append("removed_unverified_official_claim")
+    if not summary:
+        summary = _friendly_summary(scope)
+        repairs.append("replaced_summary_with_policy_grounded_text")
+
+    available_refs = {item.evidence_ref for item in scope.evidence}
+    reasons: list[AssistantReasonV4] = []
+    for reason in synthesis.top_reasons:
+        text, changed = _remove_unsafe_sentences(reason.text)
+        text, official_changed = _remove_unverified_official_claims(text)
+        if changed or official_changed:
+            repairs.append("removed_unsafe_reason_text")
+        if not text or set(reason.evidence_refs) - available_refs:
+            repairs.append("dropped_invalid_reason")
+            continue
+        reasons.append(AssistantReasonV4(text=text, evidence_refs=reason.evidence_refs))
+    if available_refs and not reasons:
+        reasons = _grounded_plain_reasons(scope)
+        repairs.append("replaced_reasons_with_evidence_grounded_text")
+
+    repaired = AssistantSynthesis(
+        summary=summary,
+        top_reasons=[
+            {"text": reason.text, "evidence_refs": reason.evidence_refs}
+            for reason in reasons
+        ],
+    )
+    checked = check_grounded_ai_response(scope, repaired)
+    return checked.response, list(dict.fromkeys(repairs))
+
+
 def _immediate_steps(scope: SecurityScopeResponseV4) -> list[AssistantImmediateStepV4]:
     assert scope.policy_version is not None
     return [
@@ -321,6 +396,27 @@ class GroundedSecurityResponseService:
         )
         checked = check_grounded_ai_response(scope, result.output) if result.output is not None else None
         grounded = checked.response if checked is not None else None
+        repairs: list[str] = []
+        if grounded is None and result.output is not None:
+            grounded, repairs = repair_grounded_ai_response(scope, result.output)
+            if grounded is not None:
+                logger.info(
+                    "security_ai_response_repaired",
+                    extra={
+                        "operation": AssistantOperation.SYNTHESIZE.value,
+                        "guard_failure": checked.failure.value if checked and checked.failure else None,
+                        "repair_actions": repairs,
+                        "final_response_source": "ai_repaired",
+                    },
+                )
+                limitation = "AI diễn đạt đã được làm sạch; kết luận và hành động vẫn do evidence/policy quyết định."
+                limitations = list(dict.fromkeys([*scope.limitations, limitation]))
+                return scope.model_copy(
+                    update={
+                        "assistant_response": grounded.model_copy(update={"uncertainties": limitations[:20]}),
+                        "limitations": limitations,
+                    }
+                )
         if grounded is None:
             reason = result.error or (
                 checked.failure.value if checked is not None and checked.failure is not None else "grounding_rejected"
@@ -334,6 +430,15 @@ class GroundedSecurityResponseService:
                     },
                 )
             return self._with_ai_limitation(scope, response, reason=reason)
+        logger.info(
+            "security_ai_response_trace",
+            extra={
+                "operation": AssistantOperation.SYNTHESIZE.value,
+                "guard_failure": None,
+                "repair_actions": repairs,
+                "final_response_source": "ai",
+            },
+        )
         return scope.model_copy(update={"assistant_response": grounded})
 
     @staticmethod
@@ -394,5 +499,6 @@ __all__ = [
     "check_grounded_ai_response",
     "grounded_ai_response",
     "policy_grounded_assistant_response",
+    "repair_grounded_ai_response",
     "template_assistant_response",
 ]

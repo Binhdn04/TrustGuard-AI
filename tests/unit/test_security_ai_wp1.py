@@ -132,7 +132,7 @@ def test_rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations(
     assert completed.confidence <= 0.65
 
 
-def test_ungrounded_or_low_confidence_signals_are_discarded() -> None:
+def test_semantic_interpretation_does_not_require_literal_spans_or_confidence() -> None:
     message = "Tin nhắn này hơi kỳ"
     scoped = _scope(message)
     output = Understanding(
@@ -149,16 +149,14 @@ def test_ungrounded_or_low_confidence_signals_are_discarded() -> None:
 
     merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
 
-    assert merged.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
-    assert merged.security_context is None
-    assert any("low_confidence" in item and "scope_decision" in item for item in merged.limitations)
-    assert any(
-        "missing_source_span" in item and "payment_request, scenario, scope_decision" in item
-        for item in merged.limitations
-    )
+    assert merged.scope_decision is ScopeDecisionV4.IN_SCOPE
+    assert merged.security_context is not None
+    assert merged.security_context.scenario is SecurityScenarioV4.PAYMENT
+    assert merged.security_context.payment_request is True
+    assert not any("scope_decision" in item for item in merged.limitations)
 
 
-def test_semantic_grounding_reports_missing_confidence_and_invalid_span_separately(caplog) -> None:
+def test_semantic_validation_does_not_report_irrelevant_grounding_failures(caplog) -> None:
     message = "Tin nhắn này hơi kỳ"
     scoped = _scope(message)
     output = Understanding(
@@ -171,18 +169,17 @@ def test_semantic_grounding_reports_missing_confidence_and_invalid_span_separate
         ],
     )
 
-    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+    with caplog.at_level("INFO", logger="trustguard.security_ai"):
         merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
 
-    assert any("missing_confidence" in item and "scope_decision" in item for item in merged.limitations)
-    assert any("invalid_source_span" in item and "scenario" in item for item in merged.limitations)
+    assert merged.scope_decision is ScopeDecisionV4.IN_SCOPE
+    assert merged.security_context is not None
+    assert merged.security_context.scenario is SecurityScenarioV4.PAYMENT
     rejected = [record for record in caplog.records if record.getMessage() == "security_ai_semantic_field_rejected"]
-    assert {(record.field_name, record.failure_code) for record in rejected} == {
-        ("scope_decision", "missing_confidence"),
-        ("scenario", "invalid_source_span"),
-    }
-    assert {record.operation for record in rejected} == {"understand"}
-    assert all(message not in record.getMessage() for record in rejected)
+    assert rejected == []
+    trace = next(record for record in caplog.records if record.getMessage() == "security_ai_understanding_trace")
+    assert trace.validation_decisions["scope_decision"] == "accepted_semantic"
+    assert trace.validation_decisions["scenario"] == "accepted_semantic"
 
 
 def test_literal_claimed_entity_is_grounded_when_model_omits_metadata() -> None:

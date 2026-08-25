@@ -87,6 +87,14 @@ class SecurityTriagePipeline:
                         "status": "completed",
                         "scope": scoped.scope_decision.value,
                         "scenario": scoped.security_context.scenario.value if scoped.security_context else None,
+                        "semantic_processing_mode": (
+                            scoped.assistant_context.processing_mode.value if scoped.assistant_context else "rules_only"
+                        ),
+                        "semantic_fields": (
+                            sorted(scoped.assistant_context.field_confidences)
+                            if scoped.assistant_context is not None
+                            else []
+                        ),
                     }
                 )
         if progress is not None:
@@ -207,7 +215,7 @@ class SecurityTriagePipeline:
                     output={
                         "status": "completed",
                         "generation_mode": response.generation_mode.value if response else None,
-                        "summary": response.summary if response else None,
+                        "final_response_source": response.generation_mode.value if response else None,
                     }
                 )
         if progress is not None:
@@ -228,6 +236,7 @@ class SecurityTriagePipeline:
                     "risk": scoped.risk.value if scoped.risk else None,
                     "score": scoped.score,
                     "confidence": scoped.confidence,
+                    "verdict_source": "evidence_policy",
                 }
             )
 

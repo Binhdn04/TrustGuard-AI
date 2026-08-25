@@ -138,8 +138,8 @@ async def test_ai_response_keeps_actions_and_uncertainties_deterministic() -> No
 
 
 @pytest.mark.asyncio
-async def test_invalid_synthesis_keeps_a_policy_grounded_answer(caplog) -> None:
-    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+async def test_invalid_synthesis_repairs_invalid_reason_without_discarding_ai_summary(caplog) -> None:
+    with caplog.at_level("INFO", logger="trustguard.security_ai"):
         result = await GroundedSecurityResponseService(
             ai_enabled=True,
             model=_MalformedSynthesisModel(),
@@ -148,14 +148,44 @@ async def test_invalid_synthesis_keeps_a_policy_grounded_answer(caplog) -> None:
 
     response = result.assistant_response
     assert response is not None
-    assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
+    assert response.generation_mode is AssistantGenerationModeV4.AI
     assert response.top_reasons[0].evidence_refs == ["evidence:0123456789abcdef"]
-    assert any("bằng chứng và hành động đã kiểm chứng" in item for item in result.limitations)
-    assert any("unknown_evidence_ref" in item for item in result.limitations)
-    record = next(item for item in caplog.records if item.getMessage() == "security_ai_grounding_rejected")
+    assert any("đã được làm sạch" in item for item in result.limitations)
+    record = next(item for item in caplog.records if item.getMessage() == "security_ai_response_repaired")
     assert record.operation == "synthesize"
-    assert record.failure_code == "unknown_evidence_ref"
+    assert record.guard_failure == "unknown_evidence_ref"
     assert "Unsupported claim" not in record.getMessage()
+
+
+class _MetricSynthesisModel:
+    async def synthesize(self, result):
+        ref = result["evidence"][0]["evidence_ref"]
+        return ModelResponse(
+            output=AssistantSynthesis(
+                summary="Nội dung này đáng ngờ. Điểm số rủi ro là 95/100.",
+                top_reasons=[
+                    SynthesisReason(text="Có yêu cầu OTP.", evidence_refs=[ref]),
+                    SynthesisReason(text="Độ tin cậy 90%.", evidence_refs=[ref]),
+                ],
+            ),
+            provider="fake",
+            model="synthesis-v1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_metric_violation_is_repaired_per_component() -> None:
+    result = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_MetricSynthesisModel(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(_risk_result())
+
+    response = result.assistant_response
+    assert response is not None
+    assert response.generation_mode is AssistantGenerationModeV4.AI
+    assert response.summary == "Nội dung này đáng ngờ."
+    assert [reason.text for reason in response.top_reasons] == ["Có yêu cầu OTP."]
 
 
 @pytest.mark.asyncio

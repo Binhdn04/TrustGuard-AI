@@ -364,6 +364,10 @@ async def evaluate_ai_case(case: SecurityAIEvaluationCase) -> SecurityAICaseResu
             AssistantGenerationModeV4.POLICY_GROUNDED,
             AssistantGenerationModeV4.TEMPLATE_FALLBACK,
         }
+        # A guarded synthesis can now be safely repaired component by
+        # component.  Treat that as a successful resilience path rather than
+        # requiring an unnecessary all-policy fallback.
+        fallback_seen = fallback_seen or any("AI diễn đạt đã được làm sạch" in item for item in completed.limitations)
         available_refs = {item.evidence_ref for item in completed.evidence}
         allowed_actions = set(completed.recommended_actions)
         total_reasons = len(response.top_reasons)

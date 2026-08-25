@@ -47,6 +47,29 @@ from src.services.security_span_candidates import SemanticSpanCandidate, generat
 GazetteerLoader = Callable[[], Awaitable[list[BrandRecordV4]]]
 
 _MIN_GROUNDED_CONFIDENCE = 0.80
+# These values are interpretations of the message, not quotes from it.  The
+# model is the primary authority for them once its structured output is valid;
+# requiring an offset or a self-reported confidence here turns semantic
+# understanding into a brittle keyword extractor.  Values that can authorize
+# a lookup or assert an entity/action relationship remain extractive below.
+_SEMANTIC_FIELDS = frozenset(
+    {
+        "scope_decision",
+        "sender_intent",
+        "social_engineering_techniques",
+        "scenario",
+        "exposure_state",
+        "credential_request",
+        "otp_request",
+        "payment_request",
+        "personal_information_request",
+        "urgency",
+        "impersonation",
+        "missing_information",
+        "follow_up_slot",
+        "follow_up_question",
+    }
+)
 _FOLLOW_UP_QUESTION = (
     "Bạn có thể gửi nội dung đầy đủ của tin nhắn, tên người gửi và đường link hoặc hành động họ yêu cầu không?"
 )
@@ -405,15 +428,27 @@ def merge_semantic_understanding(
         field_name: {"invalid_reference"} for field_name in invalid_candidate_fields
     }
     for field_name in invalid_span_fields:
-        rejected_field_failures.setdefault(field_name, set()).add("invalid_source_span")
+        # Candidate spans only ground extractive claims.  A stale/invalid span
+        # selection must not contradict an otherwise valid semantic inference.
+        if field_name not in _SEMANTIC_FIELDS:
+            rejected_field_failures.setdefault(field_name, set()).add("invalid_source_span")
+
+    validation_decisions: dict[str, str] = {}
 
     def accept(field_name: str, present: bool) -> bool:
         if not present:
+            validation_decisions[field_name] = "omitted"
             return False
+        if field_name in _SEMANTIC_FIELDS:
+            accepted_fields.add(field_name)
+            validation_decisions[field_name] = "accepted_semantic"
+            return True
         if _grounded(field_name, output, spans):
             accepted_fields.add(field_name)
+            validation_decisions[field_name] = "accepted_extractive"
             return True
         rejected_field_failures.setdefault(field_name, set()).update(_grounding_failures(field_name, output, spans))
+        validation_decisions[field_name] = "rejected_extractive_grounding"
         return False
 
     accepted_scope = output.scope_decision if accept("scope_decision", output.scope_decision is not None) else None
@@ -515,7 +550,11 @@ def merge_semantic_understanding(
         *_backend_context_source_spans(message, merged),
     ]
     accepted_spans = list({(span.field_name, span.start, span.end): span for span in candidate_spans}.values())[:50]
-    accepted_confidences = {field_name: output.field_confidences[field_name] for field_name in accepted_fields}
+    accepted_confidences = {
+        field_name: output.field_confidences[field_name]
+        for field_name in accepted_fields
+        if field_name in output.field_confidences
+    }
     for span in accepted_spans:
         if span.field_name in {"claimed_entity", "entity_url_claims"}:
             accepted_confidences.setdefault(span.field_name, 1.0)
@@ -536,6 +575,41 @@ def merge_semantic_understanding(
         limitations = _append_grounding_limitations(limitations, rejected_field_failures)
     if conflicts:
         limitations.append(_CONFLICT_LIMITATION)
+
+    # Do not log raw model text or message excerpts.  This records the
+    # end-to-end decision boundary needed to diagnose an apparent rules-only
+    # response while preserving the private-message invariant.
+    logger.info(
+        "security_ai_understanding_trace",
+        extra={
+            "operation": AssistantOperation.UNDERSTAND.value,
+            "raw_output_fields": sorted(
+                field_name
+                for field_name, present in {
+                    "scope_decision": output.scope_decision is not None,
+                    "sender_intent": bool(output.sender_intent),
+                    "social_engineering_techniques": bool(output.social_engineering_techniques),
+                    "claimed_entity": bool(output.claimed_entity),
+                    "entity_url_claims": bool(output.entity_url_claims),
+                    "scenario": output.scenario not in (None, SecurityScenarioV4.UNKNOWN),
+                    "requested_action": output.requested_action is not None,
+                    "exposure_state": output.exposure_state is not ExposureStateV4.UNKNOWN,
+                    "missing_information": bool(output.missing_information),
+                    "follow_up_slot": output.follow_up_slot is not None,
+                }.items()
+                if present
+            ),
+            "validation_decisions": validation_decisions,
+            "merged_semantic_fields": sorted(accepted_fields),
+            "rejected_fields": sorted(rejected_field_failures),
+            "scope_after_merge": (
+                ScopeDecisionV4.IN_SCOPE.value
+                if scope.scope_decision is not ScopeDecisionV4.IN_SCOPE and accepted_scope is ScopeDecisionV4.IN_SCOPE
+                and _has_security_information(merged)
+                else scope.scope_decision.value
+            ),
+        },
+    )
 
     update: dict[str, object] = {
         "security_context": merged,
