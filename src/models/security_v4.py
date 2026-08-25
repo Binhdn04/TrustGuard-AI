@@ -631,7 +631,9 @@ class ResourceVerificationV4(OfficialVerificationComponentV4):
 
 class OfficialLinkVerificationReportV4(SecurityContractModel):
     schema_version: Literal[
-        "official-link-verification-v1", "official-link-verification-v2", "official-link-verification-v3",
+        "official-link-verification-v1",
+        "official-link-verification-v2",
+        "official-link-verification-v3",
         "official-link-verification-v4",
     ] = OFFICIAL_LINK_VERIFICATION_VERSION_V1
     intent: VerificationIntentV4
@@ -1068,9 +1070,7 @@ class SecurityScopeResponseV4(SecurityContractModel):
         ]
         | None
     ) = None
-    policy_metadata: SecurityPolicyMetadataV4 | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    policy_metadata: SecurityPolicyMetadataV4 | None = Field(default=None, exclude_if=lambda value: value is None)
     recommended_actions: list[SecurityRecommendedActionV4] = Field(default_factory=list, max_length=20)
     explanation: str | None = None
     explanation_evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -1102,7 +1102,8 @@ class SecurityScopeResponseV4(SecurityContractModel):
         # silently reinterpret it as NOT_APPLICABLE on read.
         report = value.get("official_verification")
         if isinstance(report, dict) and report.get("schema_version") in {
-            "official-link-verification-v1", "official-link-verification-v2"
+            "official-link-verification-v1",
+            "official-link-verification-v2",
         }:
             intent = report.get("intent") if isinstance(report.get("intent"), dict) else {}
             has_action = bool(intent.get("requested_action"))

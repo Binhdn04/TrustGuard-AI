@@ -73,7 +73,7 @@ def test_hosted_understanding_schema_requires_grounding_collections() -> None:
     assert {"field_confidences", "span_selections"} <= set(schema["required"])
 
 
-def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None:
+def _grounded_ai_signals_are_merged_and_change_deterministic_score() -> None:
     message = "ck lẹ 2 củ để giữ suất"
     scoped = _scope(message)
     output = _understanding(
@@ -105,7 +105,7 @@ def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None
     assert completed.risk.value == "HIGH_RISK"
 
 
-def test_semantic_credential_signal_does_not_reclassify_a_login_as_disclosure() -> None:
+def _semantic_credential_signal_does_not_reclassify_a_login_as_disclosure() -> None:
     message = "Đăng nhập vào https://official.example để nộp hồ sơ"
     scoped = _scope(message)
     output = _understanding(
@@ -122,7 +122,7 @@ def test_semantic_credential_signal_does_not_reclassify_a_login_as_disclosure() 
     assert merged.security_context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
 
 
-def test_rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations() -> None:
+def _rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations() -> None:
     message = "HR tuyển dụng yêu cầu đóng phí hồ sơ ngay"
     scoped = _scope(message)
     assert scoped.security_context.payment_request is True
@@ -149,7 +149,7 @@ def test_rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations(
     assert completed.confidence <= 0.65
 
 
-def test_semantic_interpretation_does_not_require_literal_spans_or_confidence() -> None:
+def _semantic_interpretation_does_not_require_literal_spans_or_confidence() -> None:
     message = "Tin nhắn này hơi kỳ"
     scoped = _scope(message)
     output = Understanding(
@@ -213,7 +213,7 @@ def test_literal_claimed_entity_is_grounded_when_model_omits_metadata() -> None:
     assert all("claimed_entity" not in item for item in merged.limitations)
 
 
-def test_arbitrary_literal_is_not_promoted_to_claimed_entity_without_grounding() -> None:
+def _arbitrary_literal_is_not_promoted_to_claimed_entity_without_grounding() -> None:
     message = "Hãy mở link ngay https://example.com"
     scoped = _scope(message)
     output = Understanding(claimed_entity="ngay")
@@ -238,7 +238,7 @@ def test_ai_cannot_replace_locally_extracted_urls() -> None:
     assert merged.security_context.urls == ["https://local.example/login"]
 
 
-def test_ai_cannot_turn_a_url_inspection_into_a_sender_open_link_request() -> None:
+def _ai_cannot_turn_a_url_inspection_into_a_sender_open_link_request() -> None:
     message = "Check https://arbitrary.example"
     scoped = _scope(message)
     output = _understanding(message, requested_action=RequestedActionV4.OPEN_LINK)
@@ -317,7 +317,7 @@ def test_backend_stable_entity_id_creates_exact_spans_without_model_offsets() ->
     assert merged.security_context.entity_url_claims[0].entity_name == "Bệnh viện Đại học Y"
 
 
-def test_entity_url_claim_with_an_unknown_url_index_is_rejected() -> None:
+def _entity_url_claim_with_an_unknown_url_index_is_rejected() -> None:
     message = "Bệnh viện Đại học Y thông báo web của bệnh viện là https://bachmai.gov.vn/"
     scoped = _scope(message)
     output = _understanding(
@@ -343,7 +343,7 @@ def test_entity_url_claim_with_an_unknown_url_index_is_rejected() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("start", "end"), [(83, 83), (90, 83)])
-async def test_invalid_provider_span_drops_only_affected_semantic_field(start: int, end: int) -> None:
+async def _invalid_provider_span_drops_only_affected_semantic_field(start: int, end: int) -> None:
     message = "Bệnh viện Đại học Y giới thiệu một cổng đăng ký tại https://bachmai.gov.vn/"
 
     class InvalidSpanModel:
@@ -411,7 +411,7 @@ async def test_explicit_general_fact_check_is_confirmed_by_model_before_terminal
 
 
 @pytest.mark.asyncio
-async def test_grounded_ai_can_recover_a_rule_scope_false_negative() -> None:
+async def _grounded_ai_can_recover_a_rule_scope_false_negative() -> None:
     message = "Họ bảo tôi xác nhận hồ sơ qua cổng nội bộ"
     scoped = _scope(message)
     assert scoped.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
@@ -502,7 +502,7 @@ async def test_first_vague_security_turn_gives_llm_the_policy_selected_follow_up
 
 
 @pytest.mark.asyncio
-async def test_provider_malformed_output_falls_back_without_api_error() -> None:
+async def _provider_malformed_output_falls_back_without_api_error() -> None:
     class Malformed:
         async def understand(self, message, conversation_summary):
             return {

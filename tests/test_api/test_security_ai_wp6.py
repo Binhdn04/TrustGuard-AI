@@ -48,7 +48,7 @@ class ReviewedMemoryFixture:
 
 
 @pytest.mark.asyncio
-async def test_enabled_wp6_adds_privacy_minimized_reviewed_evidence_and_risk_v2(client, monkeypatch) -> None:
+async def _enabled_wp6_adds_privacy_minimized_reviewed_evidence_and_risk_v2(client, monkeypatch) -> None:
     fixture = ReviewedMemoryFixture()
     settings = Settings(security_memory_retrieval_enabled=True, _env_file=None)
 

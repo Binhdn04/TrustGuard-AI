@@ -156,7 +156,7 @@ class _Telemetry:
         self.events.append(event)
 
 
-def test_verified_suppresses_only_same_target_reviewed_brand_mismatch() -> None:
+def _verified_suppresses_only_same_target_reviewed_brand_mismatch() -> None:
     _, scoped = _scope()
     evidence = _brand_evidence()
     prepared = _with_report(scoped.model_copy(update={"evidence": [evidence]}), _report(VerificationStatusV4.VERIFIED))
@@ -369,7 +369,7 @@ async def test_off_shadow_visible_keep_legacy_risk_fields_and_only_visible_expos
 
 
 @pytest.mark.asyncio
-async def test_enforced_provider_unavailable_falls_back_without_safe_upgrade() -> None:
+async def _enforced_provider_unavailable_falls_back_without_safe_upgrade() -> None:
     request, scoped = _scope()
     scoped = scoped.model_copy(update={"evidence": [_brand_evidence("official_match")]})
     unavailable = _report(

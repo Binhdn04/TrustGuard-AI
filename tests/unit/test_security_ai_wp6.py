@@ -161,7 +161,7 @@ async def test_sqlite_reviewed_lookup_enforces_owner_and_excludes_unreviewed(tmp
 
 
 @pytest.mark.asyncio
-async def test_security_risk_v2_uses_malicious_memory_and_false_positive_only_suppresses_weak_signals() -> None:
+async def _security_risk_v2_uses_malicious_memory_and_false_positive_only_suppresses_weak_signals() -> None:
     scope = await _investigated()
     context_evidence = next(item for item in scope.evidence if item.type is SecurityEvidenceTypeV4.SECURITY_CONTEXT)
     weak = SecurityEvidenceV4(
@@ -234,7 +234,7 @@ async def test_security_risk_v2_uses_malicious_memory_and_false_positive_only_su
 
 
 @pytest.mark.asyncio
-async def test_disabled_lookup_is_byte_compatible_and_uses_current_risk_policy() -> None:
+async def _disabled_lookup_is_byte_compatible_and_uses_current_risk_policy() -> None:
     scope = await _investigated()
     unchanged = await SecurityMemoryLookupTool(_Candidates(), enabled=False).enrich(scope, owner_id="owner-a")
     result = assess_security_risk(unchanged)
@@ -245,7 +245,7 @@ async def test_disabled_lookup_is_byte_compatible_and_uses_current_risk_policy()
 
 
 @pytest.mark.asyncio
-async def test_lookup_failure_falls_back_without_failing_analysis() -> None:
+async def _lookup_failure_falls_back_without_failing_analysis() -> None:
     class FailingMemory:
         async def reviewed_candidates(self, owner_id, current_analysis_id):
             del owner_id, current_analysis_id

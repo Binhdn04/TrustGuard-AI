@@ -25,7 +25,9 @@ def _requested(action: SemanticActionKind, sensitive: SemanticSensitiveObject, s
         direction=SemanticDirection.TO_USER,
         modality=SemanticModality.REQUESTED,
         stance=SemanticStance.ASSERTED,
-        interaction_type=SemanticInteractionType.DISCLOSURE if action is SemanticActionKind.DISCLOSE else SemanticInteractionType.ROUTINE_WORKFLOW,
+        interaction_type=SemanticInteractionType.DISCLOSURE
+        if action is SemanticActionKind.DISCLOSE
+        else SemanticInteractionType.ROUTINE_WORKFLOW,
         span_ids=[span_id],
         confidence=0.95,
     )
@@ -38,7 +40,15 @@ def test_registration_and_id_card_mention_is_not_personal_information_disclosure
     merged = merge_semantic_understanding(
         message,
         scope,
-        Understanding(action_mentions=[_requested(SemanticActionKind.REGISTER_OR_APPLY, SemanticSensitiveObject.PERSONAL_INFORMATION, candidates[0].span_id)]),
+        Understanding(
+            action_mentions=[
+                _requested(
+                    SemanticActionKind.REGISTER_OR_APPLY,
+                    SemanticSensitiveObject.PERSONAL_INFORMATION,
+                    candidates[0].span_id,
+                )
+            ]
+        ),
         model_version="test",
         span_candidates=candidates,
     )
@@ -52,7 +62,9 @@ def test_registration_and_id_card_mention_is_not_personal_information_disclosure
 def test_retired_scalar_action_is_ignored_and_candidate_blocks_safe() -> None:
     message = "Mở link https://example.com ngay"
     scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
-    merged = merge_semantic_understanding(message, scope, Understanding(requested_action=RequestedActionV4.OPEN_LINK), model_version="test")
+    merged = merge_semantic_understanding(
+        message, scope, Understanding(requested_action=RequestedActionV4.OPEN_LINK), model_version="test"
+    )
     decision = assess_security_risk(merged, familiarity_enforced=True)
     assert decision.security_context is not None
     assert decision.security_context.requested_action is None

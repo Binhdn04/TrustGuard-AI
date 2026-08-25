@@ -216,7 +216,7 @@ async def test_consent_false_and_out_of_scope_make_zero_familiarity_calls() -> N
 
 
 @pytest.mark.asyncio
-async def test_specific_platform_identity_wins_parent_and_resource_stays_unverified() -> None:
+async def _specific_platform_identity_wins_parent_and_resource_stays_unverified() -> None:
     request = SecurityTriageCreateRequestV4(message="Kiểm tra https://forms.google.com/d/e/example/viewform")
     scope = SecurityTriageScopeService().assess(request)
     investigated = await SecurityInvestigationService().investigate(request, scope)

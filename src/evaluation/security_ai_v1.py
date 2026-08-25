@@ -31,13 +31,22 @@ from src.security_ai.contracts import (
     AssistantSynthesis,
     ModelResponse,
     ModelUsage,
+    SemanticActionKind,
+    SemanticActionMention,
+    SemanticDirection,
+    SemanticInteractionType,
+    SemanticModality,
+    SemanticParticipant,
     SemanticSecuritySignal,
+    SemanticSensitiveObject,
+    SemanticStance,
     Understanding,
     UnderstandingSourceSpan,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime, TurnBudget
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_response import GroundedSecurityResponseService
+from src.services.security_span_candidates import generate_semantic_span_candidates
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
 
@@ -206,11 +215,56 @@ def _understanding(message: str, fixture: EvaluationUnderstanding | None) -> Und
         if value not in (None, [], ExposureStateV4.UNKNOWN):
             grounded.append(field_name)
     grounded.extend(item.value for item in fixture.security_signals)
+    action_mentions: list[SemanticActionMention] = []
+    if fixture.requested_action is not None:
+        candidates = generate_semantic_span_candidates(message)
+        action_span = next(
+            (item for item in candidates if item.kind == "action_phrase"),
+            next(item for item in candidates if item.kind == "full_message"),
+        )
+        action_kind, sensitive_object, interaction_type = _fixture_action_mention(fixture.requested_action)
+        action_mentions.append(
+            SemanticActionMention(
+                action_kind=action_kind,
+                sensitive_object=sensitive_object,
+                actor=SemanticParticipant.SENDER,
+                recipient=SemanticParticipant.USER,
+                direction=SemanticDirection.TO_USER,
+                modality=SemanticModality.REQUESTED,
+                stance=SemanticStance.ASSERTED,
+                interaction_type=interaction_type,
+                span_ids=[action_span.span_id],
+                confidence=0.95,
+            )
+        )
     return Understanding(
         **data,
+        action_mentions=action_mentions,
         field_confidences={item: 0.95 for item in grounded},
         source_spans=[UnderstandingSourceSpan(field_name=item, start=0, end=len(message)) for item in grounded],
     )
+
+
+def _fixture_action_mention(
+    action: RequestedActionV4,
+) -> tuple[SemanticActionKind, SemanticSensitiveObject, SemanticInteractionType]:
+    if action is RequestedActionV4.SHARE_OTP:
+        return SemanticActionKind.DISCLOSE, SemanticSensitiveObject.OTP, SemanticInteractionType.DISCLOSURE
+    if action is RequestedActionV4.SHARE_CREDENTIALS:
+        return SemanticActionKind.DISCLOSE, SemanticSensitiveObject.CREDENTIALS, SemanticInteractionType.DISCLOSURE
+    if action is RequestedActionV4.PROVIDE_PERSONAL_INFORMATION:
+        return (
+            SemanticActionKind.DISCLOSE,
+            SemanticSensitiveObject.PERSONAL_INFORMATION,
+            SemanticInteractionType.DISCLOSURE,
+        )
+    if action in {RequestedActionV4.TRANSFER_MONEY, RequestedActionV4.PAY_FEE}:
+        return (
+            SemanticActionKind.TRANSFER_MONEY,
+            SemanticSensitiveObject.MONEY,
+            SemanticInteractionType.ROUTINE_WORKFLOW,
+        )
+    return SemanticActionKind(action.value), SemanticSensitiveObject.UNKNOWN, SemanticInteractionType.ROUTINE_WORKFLOW
 
 
 def _positive(value: str | bool | None) -> bool:

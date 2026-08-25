@@ -57,7 +57,7 @@ def _context(*, version: str = "security-context-v2") -> SecurityContextV4:
     )
 
 
-def _report() -> OfficialLinkVerificationReportV4:
+def _report(*, schema_version: str = "official-link-verification-v4") -> OfficialLinkVerificationReportV4:
     identity = OfficialIdentityV4(
         identity_type=OfficialIdentityTypeV4.WEBSITE,
         canonical_value="example.edu",
@@ -71,6 +71,7 @@ def _report() -> OfficialLinkVerificationReportV4:
         match_key="url-v1:https://forms.example/application",
     )
     return OfficialLinkVerificationReportV4(
+        schema_version=schema_version,
         intent=VerificationIntentV4(
             organization_name="Example University",
             claim_summary="Example University is recruiting.",
@@ -167,7 +168,7 @@ def test_old_context_risk_and_brand_json_remain_readable() -> None:
 
 
 def test_old_official_report_defaults_new_verification_layers_to_not_applicable() -> None:
-    payload = _report().model_dump(mode="json")
+    payload = _report(schema_version="official-link-verification-v1").model_dump(mode="json")
     payload.pop("domain_ownership_verification", None)
     payload.pop("sender_verification", None)
     payload.pop("action_endorsement_verification", None)
@@ -280,5 +281,5 @@ async def test_cp2_runtime_emits_context_v2_without_enabling_official_verificati
     assert response.status_code == 200
     body = response.json()
     assert body["security_context"]["schema_version"] == "security-context-v2"
-    assert body["policy_version"] == "security-risk-v6"
+    assert body["policy_version"] == "security-risk-v7"
     assert "official_verification" not in body

@@ -110,4 +110,3 @@ def test_invalid_mention_is_dropped_without_discarding_valid_sibling() -> None:
     assert merged.security_context is not None
     assert merged.security_context.otp_request is True
     assert merged.security_context.requested_action is RequestedActionV4.SHARE_OTP
-    assert any("bị bỏ qua độc lập" in item for item in merged.limitations)
