@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -28,11 +29,22 @@ from src.core.product_boundary import SECURITY_TRIAGE_API_PREFIX
 from src.models import ErrorCode
 from src.observability.langfuse import close_langfuse_observability, get_langfuse_observability
 
+logger = logging.getLogger("trustguard.official_verification")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_structured_logging(settings.log_level)
+    logger.info(
+        "official_verification_runtime_mode",
+        extra={
+            "official_verification": {
+                "rollout_mode": settings.security_official_verification_mode,
+                "risk_policy_enforced": settings.security_official_verification_mode == "enforced",
+            }
+        },
+    )
     get_langfuse_observability()
     if not settings.demo_auth_enabled and (not settings.oidc_issuer or not settings.oidc_audience):
         raise RuntimeError("OIDC_ISSUER and OIDC_AUDIENCE are required when demo auth is disabled")

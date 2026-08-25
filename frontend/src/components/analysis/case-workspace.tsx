@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, ChevronDown, CircleHelp, FileSearch, RotateCcw, ShieldCheck } from "lucide-react";
+import { Activity, ChevronDown, FileSearch, RotateCcw, ShieldCheck } from "lucide-react";
 
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { useAccountPreferences } from "@/lib/account-preferences-context";
@@ -18,7 +18,6 @@ import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/g
 
 import { ActionRiskPanel, SimpleRiskTechnicalDetails } from "./action-risk-panel";
 import { AnalysisAppealForm } from "./analysis-appeal-form";
-import { AnalysisLimitations } from "./analysis-limitations";
 import { AnalysisReportForm } from "./analysis-report-form";
 import { CaseSignalMap } from "./case-signal-map";
 import { ConversationPanel } from "./conversation-panel";
@@ -78,7 +77,6 @@ function InvestigationPanel({
               mode={mode}
             />
             <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
-            <AnalysisLimitations limitations={latest.limitations} />
           </>
         )}
         {!busy && latest?.scope_decision !== "IN_SCOPE" && (
@@ -111,8 +109,6 @@ function ActionPanel({
   const completed = latest?.scope_decision === "IN_SCOPE" && latest.status === "completed" && latest.risk
     ? viewModel
     : null;
-  const reasons = completed?.assistant?.topReasons.slice(0, 3) ?? [];
-  const uncertainties = completed?.assistant?.uncertainties.slice(0, 3) ?? [];
   return (
     <section aria-labelledby="action-heading" className="case-panel min-h-[36rem] overflow-hidden">
       <header className="border-b border-border/70 px-4 py-3.5">
@@ -148,31 +144,6 @@ function ActionPanel({
                 </summary>
                 <div className="space-y-4 border-t border-border/70 p-4">
                   <SimpleRiskTechnicalDetails viewModel={completed} />
-                  <OfficialVerificationPanel viewModel={completed} mode="simple" />
-                  {reasons.length > 0 && (
-                    <section aria-labelledby="agent-reasons-heading" className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                      <div className="flex items-center gap-2">
-                        <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary"><Bot className="size-4" aria-hidden="true" /></span>
-                        <h3 id="agent-reasons-heading" className="text-sm font-semibold">Các dấu hiệu chính</h3>
-                      </div>
-                      <ol className="mt-3 space-y-2 text-sm leading-6">
-                        {reasons.map((reason, index) => (
-                          <li key={`${reason.text}:${index}`} className="flex gap-2">
-                            <span className="mt-0.5 font-bold text-primary">{index + 1}.</span>
-                            <span>{reason.text}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-                  )}
-                  {uncertainties.length > 0 && (
-                    <section aria-labelledby="agent-uncertainties-heading" className="rounded-2xl border border-amber-500/25 bg-amber-500/8 p-4">
-                      <h3 id="agent-uncertainties-heading" className="flex items-center gap-2 text-sm font-semibold"><CircleHelp className="size-4" />Điều chưa xác minh được</h3>
-                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                        {uncertainties.map((item) => <li key={item}>• {item}</li>)}
-                      </ul>
-                    </section>
-                  )}
                   <details className="group/checks rounded-2xl border border-border bg-background/45">
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
                       Đã kiểm tra những gì?
@@ -181,7 +152,6 @@ function ActionPanel({
                     <div className="space-y-5 border-t border-border/70 p-4">
                       <InvestigationTimelineV4 lifecycle={completed.lifecycle} steps={completed.steps} errors={completed.errors} mode="simple" />
                       <EvidenceDeck evidence={completed.evidence} mode="simple" />
-                      <AnalysisLimitations limitations={latest!.limitations} />
                     </div>
                   </details>
                   <details className="group/report rounded-2xl border border-border bg-background/45">

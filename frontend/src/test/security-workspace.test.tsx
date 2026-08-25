@@ -382,33 +382,23 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByRole("button", { name: "Chụp lại" })).not.toBeInTheDocument();
     const resultDetailLabel = screen.getByText("Xem kết quả chi tiết");
     const resultDetails = resultDetailLabel.closest("details");
-    const mainSignals = screen.getByRole("heading", { name: "Các dấu hiệu chính" });
     expect(resultDetails).not.toHaveAttribute("open");
-    expect(mainSignals).not.toBeVisible();
 
     fireEvent.click(resultDetailLabel);
 
     expect(resultDetails).toHaveAttribute("open");
-    expect(mainSignals).toBeVisible();
     expect(screen.getByRole("heading", { name: "Điểm số và thông tin kỹ thuật" })).toBeVisible();
 
-    const detailLabel = within(assistant).getByText("Xem lý do và hướng dẫn chi tiết");
-    const details = detailLabel.closest("details");
-    const primaryAction = within(assistant).getByText("Không mở liên kết");
-    expect(details).not.toHaveAttribute("open");
-    expect(primaryAction).not.toBeVisible();
-
-    fireEvent.click(detailLabel);
-
-    expect(details).toHaveAttribute("open");
-    expect(primaryAction).toBeVisible();
-    expect(within(assistant).getByText(/Đường dẫn yêu cầu đăng nhập\./)).toBeVisible();
+    // The conversation is composer-owned prose. Evidence and actions remain
+    // available in the case workspace, rather than being restyled into a
+    // second fixed security report beneath the chat message.
+    expect(within(assistant).queryByText("Các bước nên làm")).not.toBeInTheDocument();
+    expect(within(assistant).queryByText("Vì sao mình đưa ra lời khuyên này?")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /danger\.example/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Lưu lại tin nhắn để báo cáo")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
     expect(screen.getAllByText(evidenceRef).length).toBeGreaterThan(0);
-    expect(screen.getByText(/security-assistant-response-v1/)).toBeInTheDocument();
     expect(screen.getByText("Lưu lại tin nhắn để báo cáo")).toBeInTheDocument();
   });
 

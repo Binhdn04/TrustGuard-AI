@@ -48,7 +48,7 @@ class _UngroundedModel:
 
 
 @pytest.mark.asyncio
-async def test_v4_ungrounded_synthesis_repairs_reason_without_failing_analysis(client) -> None:
+async def test_v4_ungrounded_synthesis_falls_back_without_failing_analysis(client) -> None:
     async def override_response_service():
         return GroundedSecurityResponseService(
             ai_enabled=True,
@@ -69,8 +69,8 @@ async def test_v4_ungrounded_synthesis_repairs_reason_without_failing_analysis(c
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "completed"
-    assert body["assistant_response"]["generation_mode"] == "ai"
-    assert any("đã được làm sạch" in item for item in body["limitations"])
+    assert body["assistant_response"]["generation_mode"] == "policy_grounded"
+    assert not any("grounding" in item.casefold() for item in body["assistant_response"]["uncertainties"])
     assert {ref for reason in body["assistant_response"]["top_reasons"] for ref in reason["evidence_refs"]} <= {
         item["evidence_ref"] for item in body["evidence"]
     }

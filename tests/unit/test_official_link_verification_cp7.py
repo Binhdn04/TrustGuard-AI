@@ -29,6 +29,7 @@ from src.models import (
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
 )
+from src.security_ai.contracts import AssistantSynthesis
 from src.security_ai.runtime import SecurityAssistantRuntime, TurnExecutionContext
 from src.services.official_verification_coordinator import (
     ComparisonDimension,
@@ -52,7 +53,11 @@ from src.services.official_verification_transport import (
 )
 from src.services.platform_wave2 import SourceRegistryEntry, SourceTier, VersionedSourceRegistry
 from src.services.security_pipeline import SecurityTriagePipeline
-from src.services.security_response import policy_grounded_assistant_response
+from src.services.security_response import (
+    SynthesisGroundingFailure,
+    check_grounded_ai_response,
+    policy_grounded_assistant_response,
+)
 from src.services.security_triage import SecurityTriageScopeService
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -1125,6 +1130,7 @@ async def test_passport_resource_verification_is_safe_without_authenticating_sen
     assert scope.security_context.requested_action is RequestedActionV4.APPLY_FOR_PASSPORT
     assert report.publisher_verification.status is VerificationStatusV4.VERIFIED
     assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
     assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
     assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
 
@@ -1134,3 +1140,22 @@ async def test_passport_resource_verification_is_safe_without_authenticating_sen
     )
     assert completed.risk.value == "SAFE"
     assert completed.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+
+    # The simple conversation UI renders assistant_response.summary verbatim.
+    # Assert the user-visible response, not only the underlying truth fields.
+    rendered_response = policy_grounded_assistant_response(completed).summary
+    assert "Bạn có thể mở liên kết này." in rendered_response
+    assert "chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm" not in rendered_response
+    assert "người gửi chưa được xác minh" in rendered_response.casefold()
+
+    rejected = check_grounded_ai_response(
+        completed,
+        AssistantSynthesis(
+            summary=(
+                "Mình chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm. "
+                "Trong lúc chưa rõ, bạn nên coi đây là tình huống cần thận trọng."
+            )
+        ),
+    )
+    assert rejected.response is None
+    assert rejected.failure is SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION

@@ -53,7 +53,7 @@ describe("CP9 official link verification presentation", () => {
     const { container } = render(<OfficialVerificationPanel viewModel={viewModel("CONFLICTING")} mode="analyst" />);
     expect(screen.getByText("Xác minh đơn vị phát hành")).toBeInTheDocument();
     expect(screen.getByText("Chuỗi tài nguyên / URL chuẩn hóa (chỉ văn bản)")).toBeInTheDocument();
-    expect(screen.getByText(/search_provider_unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/search_provider_unavailable/)).not.toBeInTheDocument();
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(screen.getAllByText(suspiciousUrl).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Sao chép URL đã gửi" }));

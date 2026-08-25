@@ -186,12 +186,6 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
               </div>
             </div>
           )}
-          <div>
-            <h4 className="text-xs font-semibold">Giới hạn</h4>
-            {report.limitations.length > 0
-              ? <ul className="mt-2 space-y-1 text-xs text-muted-foreground">{report.limitations.map((item) => <li key={item}>- {item}</li>)}</ul>
-              : <p className="mt-2 text-xs text-muted-foreground">API không báo cáo giới hạn.</p>}
-          </div>
         </div>
       )}
     </section>
