@@ -148,9 +148,7 @@ async def test_mvp_report_blacklist_whitelist_and_reanalysis_flow(client, tmp_pa
         assert any(item["tool"] == "whitelist_lookup" for item in trusted_again.json()["investigation_plan"])
 
         unreviewed_message = "Kiểm tra https://m12-unreviewed.example/status"
-        unreviewed = await client.post(
-            "/api/v4/analyses", headers=USER_HEADERS, json={"message": unreviewed_message}
-        )
+        unreviewed = await client.post("/api/v4/analyses", headers=USER_HEADERS, json={"message": unreviewed_message})
         unreviewed_report = await client.post(
             f"/api/v4/analyses/{unreviewed.json()['analysis_id']}/reports",
             headers=USER_HEADERS,
@@ -173,7 +171,8 @@ async def test_mvp_report_blacklist_whitelist_and_reanalysis_flow(client, tmp_pa
         )
         assert rejected.status_code == 200
         assert (before_rejection.json()["risk"], before_rejection.json()["score"]) == (
-            after_rejection.json()["risk"], after_rejection.json()["score"]
+            after_rejection.json()["risk"],
+            after_rejection.json()["score"],
         )
         assert not any(
             item["type"] in {"reviewed_security_memory", "whitelist", "blacklist"}
@@ -182,10 +181,7 @@ async def test_mvp_report_blacklist_whitelist_and_reanalysis_flow(client, tmp_pa
 
         audit = await client.get("/api/v4/admin/audit", headers=ADMIN_HEADERS, params={"limit": 100})
         assert audit.status_code == 200
-        report_events = [
-            item for item in audit.json()["items"]
-            if item["resource_id"] == report.json()["report_id"]
-        ]
+        report_events = [item for item in audit.json()["items"] if item["resource_id"] == report.json()["report_id"]]
         assert any(item["actor_id"] == "demo-security-admin" and item["occurred_at"] for item in report_events)
         assert any(
             item["report_details"]

@@ -1382,10 +1382,7 @@ class SecurityReportRecordV4(SecurityReportCreateRequestV4):
                 raise ValueError("report without remediation cannot contain a reference")
         elif self.remediation_status is SecurityReportRemediationStatusV4.NOT_REQUESTED:
             raise ValueError("requested remediation requires a progress status")
-        if (
-            self.remediation_status is SecurityReportRemediationStatusV4.EXECUTED
-            and self.remediation_reference is None
-        ):
+        if self.remediation_status is SecurityReportRemediationStatusV4.EXECUTED and self.remediation_reference is None:
             raise ValueError("executed remediation requires a target reference")
         if self.remediation_reference is not None:
             reference_by_action = {
@@ -1445,10 +1442,14 @@ class SecurityReportDecisionRequestV4(SecurityContractModel):
             SecurityReportResolutionV4.NO_CHANGE,
         }:
             raise ValueError("non-conclusive resolution cannot update Security Memory")
-        if self.resolution in {
-            SecurityReportResolutionV4.NEEDS_MORE_INFORMATION,
-            SecurityReportResolutionV4.NO_CHANGE,
-        } and self.remediation_action is not SecurityReportRemediationActionV4.NONE:
+        if (
+            self.resolution
+            in {
+                SecurityReportResolutionV4.NEEDS_MORE_INFORMATION,
+                SecurityReportResolutionV4.NO_CHANGE,
+            }
+            and self.remediation_action is not SecurityReportRemediationActionV4.NONE
+        ):
             raise ValueError("non-conclusive resolution cannot request remediation")
         if len(self.audit_evidence_refs()) > 100:
             raise ValueError("combined report decision evidence_refs cannot exceed 100 items")

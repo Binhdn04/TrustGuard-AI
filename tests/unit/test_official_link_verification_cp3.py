@@ -219,7 +219,7 @@ def test_bare_url_has_no_grounded_official_verification_intent() -> None:
     message = "https://example.test/application"
     context = extract_security_context(message)
 
-    assert context.requested_action is RequestedActionV4.OPEN_LINK
+    assert context.requested_action is None
     assert build_grounded_verification_intent(message, context) is None
 
 

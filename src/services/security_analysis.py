@@ -879,8 +879,7 @@ class SecurityAnalysisService:
             (
                 item
                 for item in records
-                if item.remediation_reference is not None
-                and item.remediation_reference.admin_action_id == action_id
+                if item.remediation_reference is not None and item.remediation_reference.admin_action_id == action_id
             ),
             None,
         )

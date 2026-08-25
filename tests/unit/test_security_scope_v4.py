@@ -112,6 +112,25 @@ def test_otp_account_verification_context() -> None:
     assert context.impersonation_signals == []
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Tôi đang tự xác minh tài khoản Google của mình.",
+        "Kiểm tra cách xác minh tài khoản của tổ chức này.",
+        "Google có yêu cầu xác minh tài khoản không?",
+    ],
+)
+def test_neutral_account_verification_does_not_imply_brand_impersonation(message: str) -> None:
+    context = extract_security_context(message)
+
+    assert context.scenario is SecurityScenarioV4.ACCOUNT_VERIFICATION
+    assert context.impersonation_signals == []
+    assert context.credential_request is False
+    assert context.otp_request is False
+    assert context.payment_request is False
+    assert context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+
+
 def test_financial_transfer_context() -> None:
     context = extract_security_context("Chuyển tiền ngay vào tài khoản này để mở khóa tài khoản.")
 

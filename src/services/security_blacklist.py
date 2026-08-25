@@ -105,9 +105,7 @@ class SecurityBlacklistAdminService:
             campaign_id=None,
             action=ReviewedAction.DISABLE_BLACKLIST,
             target=record.canonical_domain,
-            evidence=self._evidence(
-                request.reason, request.provenance, request.evidence_refs, record.canonical_domain
-            ),
+            evidence=self._evidence(request.reason, request.provenance, request.evidence_refs, record.canonical_domain),
         )
         return self._proposal(action, None)
 
@@ -135,9 +133,7 @@ class SecurityBlacklistAdminService:
             execution_error=result.execution_error,
         )
 
-    async def list_audit(
-        self, blacklist_id: UUID, principal: Principal
-    ) -> list[SecurityBlacklistAuditRecordV4]:
+    async def list_audit(self, blacklist_id: UUID, principal: Principal) -> list[SecurityBlacklistAuditRecordV4]:
         record = await self.get_record(blacklist_id, principal)
         actions = [
             item
@@ -197,9 +193,7 @@ class SecurityBlacklistAdminService:
                     blacklist_id=uuid5(NAMESPACE_URL, f"trustguard:blacklist:{domain}"),
                     canonical_domain=domain,
                     lifecycle=(
-                        SecurityBlacklistLifecycleV4.DISABLED
-                        if disabled
-                        else SecurityBlacklistLifecycleV4.ACTIVE
+                        SecurityBlacklistLifecycleV4.DISABLED if disabled else SecurityBlacklistLifecycleV4.ACTIVE
                     ),
                     enabling_action_id=enabling.action_id,
                     disabling_action_id=latest.action_id if disabled else None,
@@ -234,9 +228,7 @@ class SecurityBlacklistAdminService:
         ]
 
     @staticmethod
-    def _proposal(
-        action: AdminActionRecordV3, source_report_id: UUID | None
-    ) -> SecurityBlacklistActionProposalV4:
+    def _proposal(action: AdminActionRecordV3, source_report_id: UUID | None) -> SecurityBlacklistActionProposalV4:
         return SecurityBlacklistActionProposalV4(
             action_id=action.action_id,
             action=SecurityBlacklistActionV4(action.action.value),

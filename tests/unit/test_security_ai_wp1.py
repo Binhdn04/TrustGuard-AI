@@ -11,6 +11,7 @@ from src.models import (
     EntityUrlRelationshipV4,
     ExposureStateV4,
     MissingInformationSlotV4,
+    PotentialThreatV4,
     RequestedActionV4,
     ScopeDecisionV4,
     SecurityConversationSummaryV4,
@@ -26,6 +27,7 @@ from src.security_ai.contracts import (
     UnderstandingSourceSpan,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.security_entity_mentions import EntityMentionCandidate
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import (
     SecuritySemanticUnderstandingService,
@@ -220,6 +222,33 @@ def test_ai_cannot_replace_locally_extracted_urls() -> None:
     merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
 
     assert merged.security_context.urls == ["https://local.example/login"]
+
+
+def test_ai_cannot_turn_a_url_inspection_into_a_sender_open_link_request() -> None:
+    message = "Check https://arbitrary.example"
+    scoped = _scope(message)
+    output = _understanding(message, requested_action=RequestedActionV4.OPEN_LINK)
+
+    merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert merged.security_context.requested_action is None
+    assert any("requested_action" in item for item in merged.limitations)
+    assert "requested_action" not in merged.assistant_context.field_confidences
+
+
+def test_local_entity_candidate_is_not_an_impersonation_signal() -> None:
+    message = "Check Google at https://arbitrary.example"
+    scoped = _scope(message)
+
+    merged = SecuritySemanticUnderstandingService._merge_local_candidates(
+        message,
+        scoped,
+        [EntityMentionCandidate(mention_id="entity_0", text="Google", start=6, end=12)],
+    )
+
+    assert merged.security_context.claimed_entity == "Google"
+    assert merged.security_context.impersonation_signals == []
+    assert merged.security_context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
 
 
 def test_grounded_entity_url_claim_uses_only_a_local_url_index() -> None:

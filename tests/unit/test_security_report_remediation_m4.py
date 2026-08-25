@@ -147,9 +147,7 @@ async def test_m4_executes_explicit_memory_whitelist_and_blacklist_remediation(t
     action_id = proposed.remediation_reference.admin_action_id
     action_result = await decide_security_blacklist_action_admin_v4(
         action_id,
-        SecurityBlacklistDecisionRequestV4(
-            decision="approved", note="Second human review approved execution."
-        ),
+        SecurityBlacklistDecisionRequestV4(decision="approved", note="Second human review approved execution."),
         blacklist,
         analyses,
         ADMIN,

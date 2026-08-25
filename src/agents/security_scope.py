@@ -586,7 +586,6 @@ def _requested_action(
     payment_request: bool,
     recruitment: bool,
     personal_information_request: bool,
-    urls: list[str],
 ) -> RequestedActionV4 | None:
     if otp_request:
         return RequestedActionV4.SHARE_OTP
@@ -607,7 +606,12 @@ def _requested_action(
     explicit_action = _explicit_requested_action(text)
     if explicit_action is not None:
         return explicit_action
-    return RequestedActionV4.OPEN_LINK if urls else None
+    # A submitted URL is the object of an inspection, not proof that a sender
+    # instructed the user to open it.  Keep that distinction at the extraction
+    # boundary: the investigation planner already uses ``urls`` directly, and
+    # sender/action verification must only run for an action grounded in the
+    # content being assessed.
+    return None
 
 
 def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
@@ -637,7 +641,14 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
             return PotentialThreatV4.CREDENTIAL_AND_OTP_PHISHING
         if context.credential_request or context.otp_request:
             return PotentialThreatV4.PHISHING
-        return PotentialThreatV4.BRAND_IMPERSONATION
+        # Account verification is a topic, not evidence that somebody is
+        # impersonating an organization. Preserve an impersonation label only
+        # when that assertion is explicitly grounded in the message.
+        return (
+            PotentialThreatV4.BRAND_IMPERSONATION
+            if context.impersonation_signals
+            else PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+        )
     if context.scenario is SecurityScenarioV4.REFUND and context.otp_request:
         return PotentialThreatV4.PAYMENT_AND_OTP_PHISHING
     if context.scenario is SecurityScenarioV4.REFUND and context.requested_action is RequestedActionV4.PAY_FEE:
@@ -713,7 +724,6 @@ def extract_security_context(message: str) -> SecurityContextV4:
             payment_request=payment_request,
             recruitment=recruitment,
             personal_information_request=personal_information_request,
-            urls=urls,
         ),
         amount=amount_match.group(0) if amount_match else None,
         urgency=_contains_any(text, _URGENCY_TERMS) or _DEADLINE_RE.search(text) is not None,

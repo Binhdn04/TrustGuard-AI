@@ -233,7 +233,7 @@ async def test_specific_platform_identity_wins_parent_and_resource_stays_unverif
 
 
 @pytest.mark.asyncio
-async def test_reviewed_first_party_can_only_promote_zero_score_to_low_risk() -> None:
+async def test_neutral_inspection_of_reviewed_first_party_is_safe() -> None:
     request = SecurityTriageCreateRequestV4(message="Mở https://google.com", consent={"external_url_lookup": False})
     scope = SecurityTriageScopeService().assess(request)
     investigated = await SecurityInvestigationService().investigate(request, scope)
@@ -241,10 +241,9 @@ async def test_reviewed_first_party_can_only_promote_zero_score_to_low_risk() ->
         _Brands([_google()]), domain_familiarity_enabled=True, clock=lambda: NOW
     ).enrich(request, investigated)
     result = assess_security_risk(enriched, familiarity_enforced=True)
-    assert result.risk is SecurityRiskV4.LOW_RISK
-    assert result.risk is not SecurityRiskV4.SAFE
+    assert result.risk is SecurityRiskV4.SAFE
     assert result.score == 0
-    assert result.recommended_actions == [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION]
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
 
 
 @pytest.mark.asyncio

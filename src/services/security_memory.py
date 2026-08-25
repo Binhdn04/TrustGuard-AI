@@ -171,9 +171,7 @@ class SecurityMemoryService:
                 reverse=True,
             )
 
-    async def memory_for_analysis(
-        self, analysis_id: UUID, principal: Principal
-    ) -> SecurityMemoryRecordV4 | None:
+    async def memory_for_analysis(self, analysis_id: UUID, principal: Principal) -> SecurityMemoryRecordV4 | None:
         require_security_admin(principal)
         return next((item for item in await self.list_memory(principal) if item.analysis_id == analysis_id), None)
 

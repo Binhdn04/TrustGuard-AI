@@ -907,7 +907,13 @@ class SecurityInvestigationService:
         if step.tool is SecurityInvestigationToolV4.URL_REPUTATION:
             findings = result.findings
             matched = [finding for finding in findings if finding.matched]
-            signal = result.verdict.value if matched else "provider_no_hit"
+            malicious_matches = [finding for finding in matched if finding.verdict.value == "malicious"]
+            signal_parts = [result.verdict.value] if matched else ["provider_no_hit"]
+            if result.provider_conflict:
+                signal_parts.append("provider_conflict")
+            if len({finding.provider for finding in malicious_matches}) > 1:
+                signal_parts.append("corroborated_provider_hit")
+            signal = "+".join(signal_parts)
             description = (
                 f"Reputation policy {result.policy_version} trả verdict {result.verdict.value}; "
                 f"matched providers={len(matched)}/{len(findings)}."

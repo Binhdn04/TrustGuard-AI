@@ -452,13 +452,11 @@ class SQLiteBlacklistRepository:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             columns = {
-                row[1]
-                for row in self._connection.execute("PRAGMA table_info(security_feedback_audit_v4)").fetchall()
+                row[1] for row in self._connection.execute("PRAGMA table_info(security_feedback_audit_v4)").fetchall()
             }
             if "details_json" not in columns:
                 self._connection.execute(
-                    "ALTER TABLE security_feedback_audit_v4 "
-                    "ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'"
+                    "ALTER TABLE security_feedback_audit_v4 ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'"
                 )
             self._connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (5, ?)",
@@ -571,9 +569,7 @@ class SQLiteBlacklistRepository:
             )
             self._connection.commit()
 
-    async def list_security_admin_action_audit(
-        self, action_id: UUID
-    ) -> list[AdminActionAuditRecordV3]:
+    async def list_security_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
         async with self._lock:
             rows = self._connection.execute(
                 """SELECT record_json FROM security_blacklist_action_audit_v4
@@ -1711,9 +1707,7 @@ class SQLiteBlacklistRepository:
                 evidence_refs=json.loads(row[6]),
                 occurred_at=datetime.fromisoformat(row[7]).astimezone(UTC),
                 report_details=(
-                    SecurityReportAuditDetailsV4.model_validate_json(row[8])
-                    if json.loads(row[8])
-                    else None
+                    SecurityReportAuditDetailsV4.model_validate_json(row[8]) if json.loads(row[8]) else None
                 ),
             )
             for row in [*feedback, *trust]

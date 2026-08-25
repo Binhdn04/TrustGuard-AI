@@ -101,11 +101,13 @@ def _combination_is_valid(
 
 @pytest.mark.parametrize(
     ("decision", "resolution", "action"),
-    list(product(
-        list(ReportReviewDecision),
-        [None, *list(SecurityReportResolutionV4)],
-        list(SecurityReportRemediationActionV4),
-    )),
+    list(
+        product(
+            list(ReportReviewDecision),
+            [None, *list(SecurityReportResolutionV4)],
+            list(SecurityReportRemediationActionV4),
+        )
+    ),
 )
 def test_report_decision_resolution_remediation_matrix(
     decision: ReportReviewDecision,

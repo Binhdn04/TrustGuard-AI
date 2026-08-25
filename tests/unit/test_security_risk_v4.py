@@ -6,6 +6,8 @@ from src.agents.security_investigation import SecurityInvestigationService
 from src.agents.security_risk import assess_security_risk
 from src.agents.tools import FakeBlacklistRepository
 from src.models import (
+    EntityUrlClaimV4,
+    EntityUrlRelationshipV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationToolV4,
@@ -86,6 +88,84 @@ async def test_no_hit_and_provider_failure_never_become_safe() -> None:
     reassessed = assess_security_risk(type(result).model_validate(payload))
     assert reassessed.risk is not SecurityRiskV4.SAFE
     assert reassessed.confidence <= 0.65
+
+
+@pytest.mark.asyncio
+async def test_url_inspection_and_unverified_identity_are_not_action_or_risk_evidence() -> None:
+    """Unknown verification states stay limitations for every submitted domain."""
+    request = SecurityTriageCreateRequestV4(message="Check https://arbitrary.example")
+    scoped = SecurityTriageScopeService().assess(request)
+    assert scoped.security_context is not None
+    assert scoped.security_context.requested_action is None
+
+    context = scoped.security_context.model_copy(
+        update={
+            "claimed_entity": "Arbitrary Organization",
+            "entity_url_claims": [
+                EntityUrlClaimV4(
+                    entity_name="Arbitrary Organization",
+                    url_index=0,
+                    relationship=EntityUrlRelationshipV4.CLAIMED_OFFICIAL_SITE,
+                    confidence=1.0,
+                )
+            ],
+        }
+    )
+    investigated = await SecurityInvestigationService().investigate(
+        request,
+        scoped.model_copy(update={"security_context": context}),
+    )
+    unverified = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{'3' * 16}",
+        type=SecurityEvidenceTypeV4.BRAND_MATCH,
+        source="fixture",
+        target="arbitrary.example",
+        signal="claimed_identity_unverified",
+        description="No reviewed association is available.",
+        observed_at=NOW,
+        confidence=0.5,
+    )
+    payload = investigated.model_dump()
+    payload["evidence"] = [unverified]
+    result = assess_security_risk(type(investigated).model_validate(payload))
+
+    assert result.score == 0
+    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
+    assert result.risk is not SecurityRiskV4.MALICIOUS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence_type", "signal"),
+    [
+        (SecurityEvidenceTypeV4.URL_REPUTATION, "provider_no_hit"),
+        (SecurityEvidenceTypeV4.URL_REPUTATION, "provider_conflict"),
+        (SecurityEvidenceTypeV4.RDAP, "service_unavailable"),
+        (SecurityEvidenceTypeV4.BRAND_MATCH, "claimed_identity_unverified"),
+        (SecurityEvidenceTypeV4.BRAND_MATCH, "entity_url_relation_unresolved"),
+    ],
+)
+async def test_non_positive_evidence_never_escalates_neutral_inspection(evidence_type, signal) -> None:
+    request = SecurityTriageCreateRequestV4(message="Check https://arbitrary.example")
+    investigated = await SecurityInvestigationService().investigate(
+        request, SecurityTriageScopeService().assess(request)
+    )
+    evidence = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{'4' * 16}",
+        type=evidence_type,
+        source="fixture",
+        target="arbitrary.example",
+        signal=signal,
+        description="Non-positive coverage or conflicting evidence.",
+        observed_at=NOW,
+    )
+    payload = investigated.model_dump()
+    payload["evidence"] = [evidence]
+
+    result = assess_security_risk(type(investigated).model_validate(payload))
+
+    assert result.score == 0
+    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
 
 
 @pytest.mark.asyncio

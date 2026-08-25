@@ -20,12 +20,8 @@ async def test_security_blacklist_v4_admin_flow_is_proposal_then_review(client) 
         "provenance": "api-test",
     }
     try:
-        denied = await client.post(
-            "/api/v4/admin/blacklist/proposals", headers=USER_HEADERS, json=payload
-        )
-        proposal = await client.post(
-            "/api/v4/admin/blacklist/proposals", headers=ADMIN_HEADERS, json=payload
-        )
+        denied = await client.post("/api/v4/admin/blacklist/proposals", headers=USER_HEADERS, json=payload)
+        proposal = await client.post("/api/v4/admin/blacklist/proposals", headers=ADMIN_HEADERS, json=payload)
         before = await client.get("/api/v4/admin/blacklist/page", headers=ADMIN_HEADERS)
         decision = await client.post(
             f"/api/v4/admin/blacklist/actions/{proposal.json()['action_id']}/decision",
@@ -33,12 +29,8 @@ async def test_security_blacklist_v4_admin_flow_is_proposal_then_review(client) 
             json={"decision": "approved", "note": "Human reviewer approved execution."},
         )
         blacklist_id = decision.json()["record"]["blacklist_id"]
-        detail = await client.get(
-            f"/api/v4/admin/blacklist/{blacklist_id}", headers=ADMIN_HEADERS
-        )
-        audit = await client.get(
-            f"/api/v4/admin/blacklist/{blacklist_id}/audit", headers=ADMIN_HEADERS
-        )
+        detail = await client.get(f"/api/v4/admin/blacklist/{blacklist_id}", headers=ADMIN_HEADERS)
+        audit = await client.get(f"/api/v4/admin/blacklist/{blacklist_id}/audit", headers=ADMIN_HEADERS)
     finally:
         app.dependency_overrides.pop(get_security_blacklist_admin_service, None)
 

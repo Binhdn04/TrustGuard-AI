@@ -853,14 +853,14 @@ class MemoryWave2Repository:
         if save_audit is not None:
             await save_audit(action_audit)
         return AdminActionDecisionResponseV3(
-                action_id=action_id,
-                decision_id=decision_id,
-                action=item.action,
-                status=status,
-                reviewed_at=now,
-                executed_at=executed_at,
-                execution_error=execution_error,
-            )
+            action_id=action_id,
+            decision_id=decision_id,
+            action=item.action,
+            status=status,
+            reviewed_at=now,
+            executed_at=executed_at,
+            execution_error=execution_error,
+        )
 
     async def record_campaign(self, campaign: CampaignWrite) -> CampaignDetailV3:
         detail = CampaignDetailV3(

@@ -148,9 +148,7 @@ async def _complete_report_for_admin_action(action_id, status, execution_error, 
         report.report_id,
         SecurityReportRemediationUpdateV4(
             status=(
-                SecurityReportRemediationStatusV4.EXECUTED
-                if executed
-                else SecurityReportRemediationStatusV4.FAILED
+                SecurityReportRemediationStatusV4.EXECUTED if executed else SecurityReportRemediationStatusV4.FAILED
             ),
             # Keep the reviewed-action linkage even when review rejects the
             # proposal or execution fails. Operators still need to trace the
@@ -391,9 +389,7 @@ async def list_security_blacklist_admin_v4(
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> SecurityBlacklistPageV4:
-    return await blacklist.list_records(
-        principal, q=q, lifecycle=lifecycle, limit=limit, offset=offset
-    )
+    return await blacklist.list_records(principal, q=q, lifecycle=lifecycle, limit=limit, offset=offset)
 
 
 @router.post(
@@ -1166,9 +1162,7 @@ async def decide_security_report_admin_v4(
             whitelist_request = request.whitelist_entry
             if whitelist_request is None:
                 raise RuntimeError("WHITELIST_INPUT_MISSING")
-            provenance = (
-                f"report:{report_id};analysis:{record.analysis_id};{whitelist_request.provenance}"
-            )[:1000]
+            provenance = (f"report:{report_id};analysis:{record.analysis_id};{whitelist_request.provenance}")[:1000]
             whitelist_record = await trust.create_whitelist(
                 whitelist_request.model_copy(update={"provenance": provenance}), principal
             )
@@ -1176,9 +1170,7 @@ async def decide_security_report_admin_v4(
                 report_id,
                 SecurityReportRemediationUpdateV4(
                     status=SecurityReportRemediationStatusV4.EXECUTED,
-                    reference=SecurityReportRemediationReferenceV4(
-                        whitelist_id=whitelist_record.whitelist_id
-                    ),
+                    reference=SecurityReportRemediationReferenceV4(whitelist_id=whitelist_record.whitelist_id),
                     note=request.note,
                     evidence_refs=request.evidence_refs,
                 ),

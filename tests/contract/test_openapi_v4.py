@@ -63,33 +63,21 @@ def test_openapi_exposes_structured_report_resolution_and_remediation() -> None:
     request = components["SecurityReportDecisionRequestV4"]
     assert request["additionalProperties"] is False
     assert request["properties"]["remediation_action"]["default"] == "none"
-    assert request["properties"]["resolution"]["anyOf"][0]["$ref"].endswith(
-        "/SecurityReportResolutionV4"
-    )
-    assert request["properties"]["whitelist_entry"]["anyOf"][0]["$ref"].endswith(
-        "/WhitelistCreateRequestV4"
-    )
+    assert request["properties"]["resolution"]["anyOf"][0]["$ref"].endswith("/SecurityReportResolutionV4")
+    assert request["properties"]["whitelist_entry"]["anyOf"][0]["$ref"].endswith("/WhitelistCreateRequestV4")
     assert request["properties"]["blacklist_proposal"]["anyOf"][0]["$ref"].endswith(
         "/SecurityReportBlacklistProposalV4"
     )
 
     record = components["SecurityReportRecordV4"]["properties"]
     assert record["remediation_status"]["default"] == "not_requested"
-    assert record["remediation_reference"]["anyOf"][0]["$ref"].endswith(
-        "/SecurityReportRemediationReferenceV4"
-    )
+    assert record["remediation_reference"]["anyOf"][0]["$ref"].endswith("/SecurityReportRemediationReferenceV4")
 
     audit = components["SecurityAdminAuditEventV4"]["properties"]
-    assert audit["report_details"]["anyOf"][0]["$ref"].endswith(
-        "/SecurityReportAuditDetailsV4"
-    )
+    assert audit["report_details"]["anyOf"][0]["$ref"].endswith("/SecurityReportAuditDetailsV4")
     audit_details = components["SecurityReportAuditDetailsV4"]["properties"]
-    assert audit_details["resolution"]["anyOf"][0]["$ref"].endswith(
-        "/SecurityReportResolutionV4"
-    )
-    assert audit_details["remediation_reference"]["anyOf"][0]["$ref"].endswith(
-        "/SecurityReportRemediationReferenceV4"
-    )
+    assert audit_details["resolution"]["anyOf"][0]["$ref"].endswith("/SecurityReportResolutionV4")
+    assert audit_details["remediation_reference"]["anyOf"][0]["$ref"].endswith("/SecurityReportRemediationReferenceV4")
 
 
 def test_openapi_exposes_v4_blacklist_lifecycle_without_public_v3_expansion() -> None:

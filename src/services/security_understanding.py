@@ -5,7 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from src.agents.nodes.extraction import extract_urls
-from src.agents.security_scope import derive_potential_threat, partial_security_context
+from src.agents.security_scope import derive_potential_threat, partial_security_context, requested_action_source_span
 from src.models import (
     SECURITY_UNDERSTANDING_VERSION,
     AssistantContextV4,
@@ -14,6 +14,7 @@ from src.models import (
     BrandRecordV4,
     EntityUrlClaimV4,
     ExposureStateV4,
+    RequestedActionV4,
     ScopeDecisionV4,
     SecurityContextV4,
     SecurityScenarioV4,
@@ -451,6 +452,17 @@ def merge_semantic_understanding(
     requested_action = (
         output.requested_action if accept("requested_action", output.requested_action is not None) else None
     )
+    if (
+        requested_action is RequestedActionV4.OPEN_LINK
+        and requested_action_source_span(message, RequestedActionV4.OPEN_LINK) is None
+    ):
+        # A model may understand that the user wants us to inspect a URL, but
+        # that is not evidence that a sender told the user to open it.  OPEN_LINK
+        # therefore needs an explicit message span before it can drive sender
+        # attribution or action-endorsement verification.
+        requested_action = None
+        accepted_fields.discard("requested_action")
+        rejected_field_failures.setdefault("requested_action", set()).add("invalid_reference")
     extracted_exposure = (
         output.exposure_state
         if accept("exposure_state", output.exposure_state is not ExposureStateV4.UNKNOWN)
@@ -703,14 +715,14 @@ class SecuritySemanticUnderstandingService:
         )
         if entity == context.claimed_entity and combined_claims == context.entity_url_claims:
             return scope
-        signals = list(context.impersonation_signals)
-        if entity and "claimed_organization" not in signals:
-            signals.append("claimed_organization")
+        # Mentioning an organization is an entity candidate, not evidence that
+        # anyone is impersonating it.  Keep any independently grounded
+        # impersonation signal intact, but never manufacture one while merging
+        # local entity candidates.
         merged = context.model_copy(
             update={
                 "claimed_entity": entity,
                 "entity_url_claims": combined_claims,
-                "impersonation_signals": signals,
             }
         )
         merged = merged.model_copy(update={"potential_threat": derive_potential_threat(merged)})
