@@ -36,6 +36,7 @@ from src.models import (
     ResourceMatchStatusV4,
     ResourceMatchV4,
     ResourceVerificationV4,
+    RequestedActionV4,
     ScopeDecisionV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
@@ -1855,6 +1856,23 @@ class OfficialLinkVerificationCoordinator:
                     applicable=False,
                     status=None,
                     reason_code="no_user_action_url",
+                ),
+                0,
+                0,
+                [],
+            )
+        if intent.contract.requested_action is RequestedActionV4.OPEN_LINK:
+            # "Open this link" identifies a target to inspect, not an
+            # official workflow with a canonical outbound destination.  A
+            # publisher page can contain many unrelated links; comparing any
+            # one of them with the submitted URL would turn an otherwise
+            # verified domain (for example, a provider homepage) into a false
+            # resource conflict.
+            return (
+                ResourceVerificationV4(
+                    applicable=True,
+                    status=VerificationStatusV4.UNVERIFIED,
+                    reason_code="generic_open_link_not_resource_comparable",
                 ),
                 0,
                 0,

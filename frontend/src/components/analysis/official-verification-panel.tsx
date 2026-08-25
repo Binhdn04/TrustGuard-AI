@@ -59,6 +59,15 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
     ["Danh tính người gửi", report.sender_verification],
     ["Xác nhận hành động", report.action_endorsement_verification],
   ] as const;
+  const conflictComponents: Array<[string, OfficialVerificationComponentV4 | undefined]> = [
+    ["Publisher", report.publisher_verification],
+    ["Nội dung xác nhận", report.claim_verification],
+    ["Tài nguyên", report.resource_verification],
+    ["Hành động", report.action_endorsement_verification],
+  ];
+  const conflictingComponent = conflictComponents.find(
+    ([, component]) => component?.applicable && component.status === "CONFLICTING",
+  );
   const Icon = report.overall_status === "VERIFIED"
     ? BadgeCheck
     : report.overall_status === "CONFLICTING"
@@ -83,6 +92,11 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
         Kết quả này mô tả quan hệ giữa đơn vị phát hành/tài nguyên với nguồn chính thức; không tự suy diễn URL là an toàn.
         {mode === "analyst" && <> Lý do: <code>{report.reason_code}</code>.</>}
       </p>
+      {conflictingComponent && (
+        <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
+          Mâu thuẫn nằm ở bước xác minh {conflictingComponent[0].toLowerCase()}, không phải kết luận tên miền này độc hại.
+        </p>
+      )}
       {verificationLayers.some(([, component]) => component?.applicable) && (
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {verificationLayers.map(([label, component]) => (
