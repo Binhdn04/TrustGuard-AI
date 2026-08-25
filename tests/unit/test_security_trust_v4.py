@@ -103,7 +103,7 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
     safe = assess_security_risk(enriched)
     assert safe.risk is SecurityRiskV4.SAFE
     assert SecurityRecommendedActionV4.DO_NOT_OPEN_LINK not in safe.recommended_actions
-    assert SecurityRecommendedActionV4.PROCEED_WITH_CAUTION in safe.recommended_actions
+    assert SecurityRecommendedActionV4.ALLOW_OPEN in safe.recommended_actions
 
     blacklist = SecurityEvidenceV4(
         evidence_ref=f"evidence:{'f' * 16}",
@@ -122,6 +122,31 @@ async def test_whitelist_suppresses_weak_signal_but_not_blacklist() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reviewed_official_passport_login_is_safe_without_action_endorsement() -> None:
+    """Official ownership is positive evidence; login is not credential theft."""
+    message = (
+        "Công an phường bảo tôi đăng nhập vào "
+        "https://vpcp.dichvucong.gov.vn/p/home/dvc-trang-chu.html làm hộ chiếu"
+    )
+    request, scoped = _scope(message)
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    official = _brand(
+        name="Công an",
+        aliases=["công an", "Công an phường"],
+        official_domains=["dichvucong.gov.vn"],
+    )
+    enriched = await SecurityTrustService(_TrustRepository(brands=[official]), clock=lambda: NOW).enrich(
+        request, investigated
+    )
+
+    result = assess_security_risk(enriched)
+
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.threat_type.value == "UNDETERMINED_SECURITY_THREAT"
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+
+
+@pytest.mark.asyncio
 async def test_brand_mismatch_alone_is_low_risk() -> None:
     request, scoped = _scope("ACME xem https://unrelated.example")
     investigated = await SecurityInvestigationService().investigate(request, scoped)
@@ -134,7 +159,91 @@ async def test_brand_mismatch_alone_is_low_risk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unreviewed_claimed_identity_is_visible_and_never_safe() -> None:
+async def test_single_reputation_hit_conflicting_with_reviewed_official_domain_is_safe() -> None:
+    request, scoped = _scope("ACME xem https://acme.example")
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    enriched = await SecurityTrustService(
+        _TrustRepository(brands=[_brand()]), domain_familiarity_enabled=True, clock=lambda: NOW
+    ).enrich(request, investigated)
+    reputation = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{'e' * 16}",
+        type=SecurityEvidenceTypeV4.URL_REPUTATION,
+        source="single-provider",
+        target="https://acme.example/",
+        signal="malicious",
+        description="An uncorroborated provider hit.",
+        observed_at=NOW,
+        confidence=1.0,
+    )
+    payload = enriched.model_dump()
+    payload["evidence"] = [*enriched.evidence, reputation]
+
+    result = assess_security_risk(type(enriched).model_validate(payload), familiarity_enforced=True)
+
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.score == 0
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+    assert SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER not in result.recommended_actions
+    assert any("reputation đơn lẻ mâu thuẫn" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+async def test_corroborated_reputation_hits_are_not_discredited_by_official_domain() -> None:
+    request, scoped = _scope("ACME xem https://acme.example")
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    enriched = await SecurityTrustService(
+        _TrustRepository(brands=[_brand()]), domain_familiarity_enabled=True, clock=lambda: NOW
+    ).enrich(request, investigated)
+    provider_hits = [
+        SecurityEvidenceV4(
+            evidence_ref=f"evidence:{index * 16:016x}",
+            type=SecurityEvidenceTypeV4.URL_REPUTATION,
+            source=f"provider-{index}",
+            target="https://acme.example/",
+            signal="malicious",
+            description="Independent provider hit.",
+            observed_at=NOW,
+            confidence=1.0,
+        )
+        for index in (1, 2)
+    ]
+    payload = enriched.model_dump()
+    payload["evidence"] = [*enriched.evidence, *provider_hits]
+
+    result = assess_security_risk(type(enriched).model_validate(payload), familiarity_enforced=True)
+
+    assert result.risk is SecurityRiskV4.MALICIOUS
+    assert result.score == 95
+
+
+@pytest.mark.asyncio
+async def test_corroborated_reputation_evidence_overrides_reviewed_domain() -> None:
+    request, scoped = _scope("ACME xem https://acme.example")
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    enriched = await SecurityTrustService(
+        _TrustRepository(brands=[_brand()]), domain_familiarity_enabled=True, clock=lambda: NOW
+    ).enrich(request, investigated)
+    reputation = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{'b' * 16}",
+        type=SecurityEvidenceTypeV4.URL_REPUTATION,
+        source="reputation-cascade",
+        target="https://acme.example/",
+        signal="malicious+corroborated_provider_hit",
+        description="Two independent providers matched the target.",
+        observed_at=NOW,
+        confidence=1.0,
+    )
+    payload = enriched.model_dump()
+    payload["evidence"] = [*enriched.evidence, reputation]
+
+    result = assess_security_risk(type(enriched).model_validate(payload), familiarity_enforced=True)
+
+    assert result.risk is SecurityRiskV4.MALICIOUS
+    assert result.score == 95
+
+
+@pytest.mark.asyncio
+async def test_unreviewed_claimed_identity_is_a_limitation_not_risk_evidence() -> None:
     message = "Bệnh viện Đại học Y yêu cầu đăng ký tại https://bachmai.gov.vn/"
     request, scoped = _scope(message)
     context = scoped.security_context.model_copy(update={"claimed_entity": "Bệnh viện Đại học Y"})
@@ -148,7 +257,8 @@ async def test_unreviewed_claimed_identity_is_visible_and_never_safe() -> None:
     assert identity.target == "bachmai.gov.vn"
     assert "Bệnh viện Đại học Y" in identity.description
     assert any("exact-resource association" in item for item in result.limitations)
-    assert result.risk is SecurityRiskV4.LOW_RISK
+    assert result.score == 0
+    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
 
 
 @pytest.mark.asyncio
@@ -236,7 +346,7 @@ async def test_local_entity_linker_detects_reviewed_owner_mismatch_without_ai_of
 
 
 @pytest.mark.asyncio
-async def test_unresolved_entity_url_relation_blocks_safe_even_for_official_target() -> None:
+async def test_reviewed_owner_resolves_unresolved_entity_url_relation() -> None:
     message = "Bệnh viện Đại học Y xem thông tin tại https://bachmai.gov.vn/"
     request, scoped = _scope(message)
     assert scoped.security_context.claimed_entity == "Bệnh viện Đại học Y"
@@ -263,8 +373,8 @@ async def test_unresolved_entity_url_relation_blocks_safe_even_for_official_targ
     result = assess_security_risk(enriched)
 
     assert any(item.signal == "entity_url_relation_unresolved" for item in result.evidence)
-    assert result.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
-    assert result.confidence <= 0.65
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
 
 
 @pytest.mark.asyncio

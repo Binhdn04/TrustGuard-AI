@@ -33,20 +33,21 @@ describe("application shell", () => {
   it("keeps admin destinations out of the user navigation", () => {
     render(<WorkspaceNavigation pathname="/" role="user" capabilities={capabilities} />);
 
-    expect(screen.getByRole("link", { name: /New case/i })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: /Cases/i })).toBeInTheDocument();
-    expect(screen.queryByText("Admin")).not.toBeInTheDocument();
-    expect(screen.queryByText("Review")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Kiểm tra/i })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /Lịch sử/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Hồ sơ/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Quản trị bảo mật")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Duyệt bảo mật/i })).not.toBeInTheDocument();
   });
 
   it("links every implemented admin workspace", () => {
     render(<WorkspaceNavigation pathname="/admin/review" role="security_admin" capabilities={capabilities} />);
 
-    expect(screen.getByRole("link", { name: /Observatory/i })).toHaveAttribute("href", "/admin/observatory");
-    expect(screen.getByRole("link", { name: /Review/i })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: /Review/i })).toHaveAttribute("href", "/admin/review");
-    expect(screen.getByRole("link", { name: /Trust/i })).toHaveAttribute("href", "/admin/trust");
-    expect(screen.getByRole("link", { name: /Audit/i })).toHaveAttribute("href", "/admin/audit");
+    expect(screen.getByRole("link", { name: /Duyệt bảo mật/i })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /Duyệt bảo mật/i })).toHaveAttribute("href", "/admin/review");
+    expect(screen.getByRole("link", { name: /Tin cậy & chặn/i })).toHaveAttribute("href", "/admin/trust");
+    expect(screen.queryByRole("link", { name: /Observatory/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Audit/i })).not.toBeInTheDocument();
   });
 
   it("provides a labeled mobile navigation", () => {
@@ -54,7 +55,8 @@ describe("application shell", () => {
 
     const navigation = screen.getByRole("navigation", { name: "Điều hướng di động" });
     expect(navigation).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Cases" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /Lịch sử/i })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("link", { name: /Hồ sơ/i })).not.toBeInTheDocument();
   });
 
   it("loads real capabilities and does not render a static readiness badge", async () => {
@@ -64,14 +66,15 @@ describe("application shell", () => {
 
     render(<AppShell api={api}><p>Workspace content</p></AppShell>);
 
-    expect(await screen.findAllByText("Observatory")).not.toHaveLength(0);
+    expect(await screen.findAllByRole("link", { name: /Duyệt bảo mật/i })).not.toHaveLength(0);
     expect(api.getCapabilities).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("official-verification-capability")).toHaveTextContent("Official verification: off");
+    expect(screen.queryByTestId("official-verification-capability")).not.toBeInTheDocument();
     expect(screen.queryByText(/Hệ thống sẵn sàng/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Trợ lý an toàn số")).toBeInTheDocument();
     expect(screen.getByText("Workspace content")).toBeInTheDocument();
   });
 
-  it("exposes web readiness from rollback capabilities", async () => {
+  it("keeps technical web readiness out of the application header", async () => {
     const api = {
       getCapabilities: vi.fn().mockResolvedValue({
         ...capabilities,
@@ -81,6 +84,19 @@ describe("application shell", () => {
     } as unknown as SecurityAnalysisApi;
 
     render(<AppShell api={api}><p>Workspace content</p></AppShell>);
-    expect(await screen.findByTestId("official-verification-capability")).toHaveTextContent("Official verification: web ready");
+    expect(await screen.findAllByRole("link", { name: /Duyệt bảo mật/i })).not.toHaveLength(0);
+    expect(screen.queryByText(/Xác minh nguồn chính thức/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the two MVP admin destinations when capability loading fails", async () => {
+    const api = {
+      getCapabilities: vi.fn().mockRejectedValue(new Error("capabilities unavailable")),
+    } as unknown as SecurityAnalysisApi;
+
+    render(<AppShell api={api}><p>Workspace content</p></AppShell>);
+
+    expect(await screen.findAllByRole("link", { name: /Duyệt bảo mật/i })).not.toHaveLength(0);
+    expect(screen.getAllByRole("link", { name: /Tin cậy & chặn/i })).not.toHaveLength(0);
+    expect(screen.queryByTestId("official-verification-capability")).not.toBeInTheDocument();
   });
 });

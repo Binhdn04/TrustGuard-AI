@@ -11,7 +11,7 @@ from src.models import Evidence, EvidenceType, RiskLevel, Verdict, risk_level_fo
 _LOCAL_RULE_WEIGHTS = {
     "URL đích bị chặn bởi SSRF guard": 65,
     "Tên miền quốc tế hóa cần thận trọng": 25,
-    "Đường dẫn yêu cầu thông tin tài khoản": 35,
+    "Đường dẫn quy trình tài khoản": 0,
     "Tên miền có mẫu mạo danh khuyến mãi": 15,
 }
 

@@ -25,17 +25,33 @@ _AMOUNT_RE = re.compile(
 )
 _DEADLINE_RE = re.compile(r"\b(?:trước|truoc)\s+\d{1,2}\s*h\b", re.IGNORECASE)
 
-_CREDENTIAL_TERMS = (
+_LOGIN_TERMS = (
     "đăng nhập",
     "dang nhap",
     "login",
     "sign in",
+)
+_CREDENTIAL_TERMS = (
     "mật khẩu",
     "mat khau",
     "password",
     "thông tin đăng nhập",
     "thong tin dang nhap",
     "credentials",
+)
+_CREDENTIAL_DISCLOSURE_TERMS = (
+    "gửi mật khẩu",
+    "gui mat khau",
+    "cung cấp mật khẩu",
+    "cung cap mat khau",
+    "chia sẻ mật khẩu",
+    "chia se mat khau",
+    "gửi thông tin đăng nhập",
+    "gui thong tin dang nhap",
+    "cung cấp thông tin đăng nhập",
+    "cung cap thong tin dang nhap",
+    "share credentials",
+    "send password",
 )
 _OTP_TERMS = (
     "otp",
@@ -156,7 +172,6 @@ _URGENCY_TERMS = (
     "immediately",
     "urgent",
     " lẹ",
-    "le ",
 )
 _IMPERSONATION_ENTITIES = (
     ("tập đoàn vingroup", "Vingroup"),
@@ -301,6 +316,8 @@ _SHARE_SCREEN_TERMS = (
 )
 _SCAN_QR_TERMS = ("quét mã qr", "quet ma qr", "quét qr", "quet qr", "scan qr")
 _SUBMIT_FORM_TERMS = (
+    "nhập otp vào form",
+    "nhap otp vao form",
     "điền biểu mẫu",
     "dien bieu mau",
     "điền form",
@@ -330,6 +347,15 @@ _DOWNLOAD_FILE_TERMS = (
     "tai xuong",
     "download file",
     "download attachment",
+)
+_PASSPORT_APPLICATION_TERMS = (
+    "làm hộ chiếu",
+    "lam ho chieu",
+    "xin hộ chiếu",
+    "xin ho chieu",
+    "cấp hộ chiếu",
+    "cap ho chieu",
+    "apply for a passport",
 )
 
 _FORM_CONTEXT_TERMS = (
@@ -370,6 +396,7 @@ _ACTION_SOURCE_TERMS = {
     RequestedActionV4.SUBMIT_FORM: _SUBMIT_FORM_TERMS,
     RequestedActionV4.REGISTER_OR_APPLY: _REGISTER_APPLY_TERMS,
     RequestedActionV4.DOWNLOAD_FILE: _DOWNLOAD_FILE_TERMS,
+    RequestedActionV4.APPLY_FOR_PASSPORT: _PASSPORT_APPLICATION_TERMS,
 }
 
 _TOPIC_SOURCE_TERMS = (
@@ -450,11 +477,68 @@ def _is_refund_context(text: str, message: str) -> bool:
     )
 
 
+def _is_credential_disclosure_request(text: str) -> bool:
+    """Detect a request to disclose credentials, not an ordinary sign-in.
+
+    A login flow necessarily involves credentials, but it is not evidence that
+    another party will receive or steal them.  Keep that distinction at the
+    deterministic extraction boundary so later policy can reason from actual
+    hostile context rather than from the word "login" alone.
+    """
+    if _contains_any(text, ("không gửi", "khong gui", "đừng gửi", "dung gui", "không chia sẻ", "khong chia se")):
+        return False
+    if _contains_any(text, ("tôi đã gửi", "toi da gui", "tôi đã cung cấp", "toi da cung cap")):
+        return False
+    if _contains_any(text, _CREDENTIAL_DISCLOSURE_TERMS):
+        return True
+    has_credential = _contains_any(text, _CREDENTIAL_TERMS)
+    has_disclosure_verb = _contains_any(
+        text,
+        ("gửi", "gui", "cung cấp", "cung cap", "chia sẻ", "chia se", "đưa", "dua", "cho họ", "cho ho"),
+    )
+    return has_credential and has_disclosure_verb
+
+
+def _is_otp_disclosure_request(text: str) -> bool:
+    if not _contains_any(text, _OTP_TERMS):
+        return False
+    if _contains_any(text, ("không gửi", "khong gui", "đừng gửi", "dung gui", "không chia sẻ", "khong chia se")):
+        return False
+    if _contains_any(text, ("tôi đã gửi", "toi da gui", "tôi đã chia sẻ", "toi da chia se")):
+        return False
+    disclosure = _contains_any(
+        text,
+        ("gửi", "gui", "chia sẻ", "chia se", "cung cấp", "cung cap", "đưa", "dua", "share", "send", "provide",
+         "cho tôi", "cho toi", "cho họ", "cho ho"),
+    )
+    # Entering a code into a form/service is authentication, even when an OTP
+    # keyword and a URL happen to be present.
+    routine_entry = _contains_any(text, ("nhập otp", "nhap otp", "điền otp", "dien otp")) and _contains_any(
+        text, ("form", "biểu mẫu", "bieu mau", "ứng dụng", "ung dung", "trang", "website")
+    )
+    return disclosure and not routine_entry
+
+
+def _is_active_login_request(text: str) -> bool:
+    if not _contains_any(text, _LOGIN_TERMS):
+        return False
+    if _contains_any(text, ("không đăng nhập", "khong dang nhap", "không login", "cannot login", "can't login")):
+        return False
+    return _contains_any(
+        text,
+        ("yêu cầu đăng nhập", "yeu cau dang nhap", "bắt đăng nhập", "bat dang nhap", "đăng nhập ", "dang nhap ",
+         "nhập thông tin đăng nhập", "nhap thong tin dang nhap", "để đăng nhập", "de dang nhap",
+         "hãy đăng nhập", "hay dang nhap"),
+    )
+
+
 def _neutral_context_reasons(text: str) -> list[str]:
     return [reason for reason, terms in _NEUTRAL_CONTEXT_GROUPS if _contains_any(text, terms)]
 
 
 def _explicit_requested_action(text: str) -> RequestedActionV4 | None:
+    if _contains_any(text, _PASSPORT_APPLICATION_TERMS):
+        return RequestedActionV4.APPLY_FOR_PASSPORT
     if _contains_any(text, _INSTALL_APP_TERMS):
         return RequestedActionV4.INSTALL_APP
     if _contains_any(text, _SHARE_SCREEN_TERMS):
@@ -478,8 +562,6 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     reasons: list[str] = []
 
     security_groups = (
-        ("credential_request", _CREDENTIAL_TERMS),
-        ("otp_request", _OTP_TERMS),
         ("account_verification_context", _ACCOUNT_TERMS),
         ("charity_context", _CHARITY_TERMS),
         ("investment_context", _INVESTMENT_TERMS),
@@ -490,6 +572,12 @@ def classify_security_scope(message: str) -> ScopeAssessment:
     for reason, terms in security_groups:
         if _contains_any(text, terms):
             reasons.append(reason)
+    if _is_active_login_request(text):
+        reasons.append("login_request")
+    if _is_otp_disclosure_request(text):
+        reasons.append("otp_request")
+    if _is_credential_disclosure_request(text):
+        reasons.append("credential_request")
     if _is_refund_context(text, message):
         reasons.append("refund_context")
     if _is_payment_request(text, message):
@@ -574,16 +662,16 @@ def _requested_action(
     payment_request: bool,
     recruitment: bool,
     personal_information_request: bool,
-    urls: list[str],
 ) -> RequestedActionV4 | None:
     if otp_request:
         return RequestedActionV4.SHARE_OTP
+    explicit_action = _explicit_requested_action(text)
+    if explicit_action is RequestedActionV4.APPLY_FOR_PASSPORT:
+        return explicit_action
+    if _is_active_login_request(text):
+        return RequestedActionV4.LOGIN
     if credential_request:
-        return (
-            RequestedActionV4.LOGIN
-            if _contains_any(text, ("đăng nhập", "dang nhap", "login", "sign in"))
-            else RequestedActionV4.SHARE_CREDENTIALS
-        )
+        return RequestedActionV4.SHARE_CREDENTIALS
     if payment_request:
         return (
             RequestedActionV4.PAY_FEE
@@ -592,14 +680,30 @@ def _requested_action(
         )
     if personal_information_request:
         return RequestedActionV4.PROVIDE_PERSONAL_INFORMATION
-    explicit_action = _explicit_requested_action(text)
     if explicit_action is not None:
         return explicit_action
-    return RequestedActionV4.OPEN_LINK if urls else None
+    # A submitted URL is the object of an inspection, not proof that a sender
+    # instructed the user to open it.  Keep that distinction at the extraction
+    # boundary: the investigation planner already uses ``urls`` directly, and
+    # sender/action verification must only run for an action grounded in the
+    # content being assessed.
+    return None
 
 
 def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
     """Derive threat type only from the validated, merged security context."""
+    coercive_or_scam_context = bool(
+        context.urgency
+        or context.impersonation_signals
+        or context.scenario
+        in {
+            SecurityScenarioV4.ACCOUNT_VERIFICATION,
+            SecurityScenarioV4.PROMOTION_PRIZE,
+            SecurityScenarioV4.INVESTMENT,
+            SecurityScenarioV4.ONLINE_TASK,
+            SecurityScenarioV4.CHARITY,
+        }
+    )
     if context.scenario is SecurityScenarioV4.RECRUITMENT:
         return (
             PotentialThreatV4.RECRUITMENT_IMPERSONATION
@@ -621,11 +725,22 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
     if context.scenario is SecurityScenarioV4.ACCOUNT_VERIFICATION:
         if context.payment_request:
             return PotentialThreatV4.FINANCIAL_SCAM
-        if context.credential_request and context.otp_request:
+        if context.credential_request and context.otp_request and coercive_or_scam_context:
             return PotentialThreatV4.CREDENTIAL_AND_OTP_PHISHING
-        if context.credential_request or context.otp_request:
+        if (
+            context.credential_request
+            or context.otp_request
+            or context.requested_action is RequestedActionV4.LOGIN
+        ) and coercive_or_scam_context:
             return PotentialThreatV4.PHISHING
-        return PotentialThreatV4.BRAND_IMPERSONATION
+        # Account verification is a topic, not evidence that somebody is
+        # impersonating an organization. Preserve an impersonation label only
+        # when that assertion is explicitly grounded in the message.
+        return (
+            PotentialThreatV4.BRAND_IMPERSONATION
+            if context.impersonation_signals
+            else PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+        )
     if context.scenario is SecurityScenarioV4.REFUND and context.otp_request:
         return PotentialThreatV4.PAYMENT_AND_OTP_PHISHING
     if context.scenario is SecurityScenarioV4.REFUND and context.requested_action is RequestedActionV4.PAY_FEE:
@@ -634,7 +749,11 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
         if context.impersonation_signals:
             return PotentialThreatV4.IMPERSONATION_FINANCIAL_SCAM
         return PotentialThreatV4.FINANCIAL_SCAM
-    if context.credential_request or context.otp_request:
+    if (
+        context.credential_request
+        or context.otp_request
+        or context.requested_action is RequestedActionV4.LOGIN
+    ) and coercive_or_scam_context:
         return PotentialThreatV4.CREDENTIAL_THEFT
     if context.impersonation_signals:
         return PotentialThreatV4.BRAND_IMPERSONATION
@@ -644,8 +763,8 @@ def derive_potential_threat(context: SecurityContextV4) -> PotentialThreatV4:
 def extract_security_context(message: str) -> SecurityContextV4:
     text = _fold(message)
     urls = _normalized_urls(message)
-    credential_request = _contains_any(text, _CREDENTIAL_TERMS)
-    otp_request = _contains_any(text, _OTP_TERMS)
+    credential_request = _is_credential_disclosure_request(text)
+    otp_request = _is_otp_disclosure_request(text)
     payment_request = _is_payment_request(text, message)
     recruitment = _contains_any(text, _RECRUITMENT_TERMS)
     promotion = _contains_any(text, _PROMOTION_TERMS)
@@ -701,7 +820,6 @@ def extract_security_context(message: str) -> SecurityContextV4:
             payment_request=payment_request,
             recruitment=recruitment,
             personal_information_request=personal_information_request,
-            urls=urls,
         ),
         amount=amount_match.group(0) if amount_match else None,
         urgency=_contains_any(text, _URGENCY_TERMS) or _DEADLINE_RE.search(text) is not None,

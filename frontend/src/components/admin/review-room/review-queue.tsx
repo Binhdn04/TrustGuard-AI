@@ -1,6 +1,7 @@
 import { FileWarning, MessageSquareWarning, RefreshCw, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { statusLabel } from "@/lib/presentation/security-labels";
 import type {
   SecurityAppealAdminRecordV4,
   SecurityReportAdminRecordV4,
@@ -64,9 +65,9 @@ export function ReviewQueue({
   return (
     <section aria-labelledby="review-queue-heading" className="overflow-hidden rounded-2xl border border-border bg-card">
       <div className="border-b border-border p-4">
-        <p className="micro-label">Feedback queue</p>
-        <h2 id="review-queue-heading" className="mt-1 font-semibold">Cases requiring human review</h2>
-        <div className="mt-4 grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label="Loại feedback">
+        <p className="micro-label">Hàng đợi phản hồi</p>
+        <h2 id="review-queue-heading" className="mt-1 font-semibold">Hồ sơ cần người duyệt</h2>
+        <div className="mt-4 grid grid-cols-2 rounded-xl bg-muted p-1" role="tablist" aria-label="Loại phản hồi">
           {(["report", "appeal"] as const).map((value) => (
             <button
               key={value}
@@ -76,18 +77,18 @@ export function ReviewQueue({
               onClick={() => onKindChange(value)}
               className={cn("rounded-lg px-3 py-2 text-xs font-semibold capitalize", kind === value ? "bg-background shadow-sm" : "text-muted-foreground")}
             >
-              {value === "report" ? "Reports" : "Appeals"}
+              {value === "report" ? "Báo cáo" : "Khiếu nại"}
             </button>
           ))}
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto] xl:grid-cols-1">
           <label className="relative">
-            <span className="sr-only">Tìm feedback</span>
+            <span className="sr-only">Tìm phản hồi</span>
             <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-            <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Analysis, owner, reason…" className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-sm" />
+            <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Mã kiểm tra, chủ sở hữu, lý do…" className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-sm" />
           </label>
-          <select aria-label="Lọc feedback theo trạng thái" value={status} onChange={(event) => onStatusChange(event.target.value)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm">
-            {statusOptions.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}
+          <select aria-label="Lọc phản hồi theo trạng thái" value={status} onChange={(event) => onStatusChange(event.target.value)} className="rounded-xl border border-border bg-background px-3 py-2 text-sm">
+            {statusOptions.map((value) => <option key={value} value={value}>{value === "all" ? "Tất cả trạng thái" : statusLabel(value)}</option>)}
           </select>
         </div>
       </div>
@@ -105,7 +106,7 @@ export function ReviewQueue({
                 <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="size-4" /></span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-2">
-                    <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase", statusTone(record.status))}>{record.status.replaceAll("_", " ")}</span>
+                    <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase", statusTone(record.status))}>{statusLabel(record.status)}</span>
                     <time className="text-[10px] text-muted-foreground" dateTime={record.created_at}>{new Date(record.created_at).toLocaleString("vi-VN")}</time>
                   </span>
                   <span className="mt-2 line-clamp-2 block text-sm font-semibold">{record.reason}</span>
@@ -114,15 +115,15 @@ export function ReviewQueue({
               </button>
             );
           })}
-          {items.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Không có feedback phù hợp.</p>}
+          {items.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Không có phản hồi phù hợp.</p>}
         </div>
       )}
       <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted-foreground">
-        <span>{total} records</span>
+        <span>{total} hồ sơ</span>
         <span className="flex items-center gap-2">
-          <button type="button" aria-label="Feedback page trước" disabled={page <= 1 || loading} onClick={() => onPageChange(page - 1)} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">←</button>
+          <button type="button" aria-label="Trang phản hồi trước" disabled={page <= 1 || loading} onClick={() => onPageChange(page - 1)} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">←</button>
           {page}/{lastPage}
-          <button type="button" aria-label="Feedback page sau" disabled={page >= lastPage || loading} onClick={() => onPageChange(page + 1)} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">→</button>
+          <button type="button" aria-label="Trang phản hồi sau" disabled={page >= lastPage || loading} onClick={() => onPageChange(page + 1)} className="rounded-lg border border-border px-2 py-1 disabled:opacity-40">→</button>
         </span>
       </div>
     </section>

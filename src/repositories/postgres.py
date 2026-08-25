@@ -67,7 +67,13 @@ from src.models import (
     SecurityMemoryAuditRecordV4,
     SecurityMemoryRecordV4,
     SecurityReportAdminRecordV4,
+    SecurityReportAuditDetailsV4,
+    SecurityReportDecisionRequestV4,
     SecurityReportRecordV4,
+    SecurityReportRemediationActionV4,
+    SecurityReportRemediationReferenceV4,
+    SecurityReportRemediationStatusV4,
+    SecurityReportRemediationUpdateV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
     ToolError,
@@ -500,11 +506,12 @@ class PostgresPlatformRepository:
             await connection.execute(
                 """INSERT INTO security_analyses(
                        id, owner_id, status, response, policy_version, created_at, updated_at,
-                       completed_at, conversation_id
-                   ) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$7,$8)
+                       completed_at, conversation_id, policy_metadata
+                   ) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$7,$8,$9::jsonb)
                    ON CONFLICT(id) DO UPDATE SET status=excluded.status, response=excluded.response,
                        policy_version=excluded.policy_version, updated_at=excluded.updated_at,
-                       completed_at=excluded.completed_at, conversation_id=excluded.conversation_id""",
+                       completed_at=excluded.completed_at, conversation_id=excluded.conversation_id,
+                       policy_metadata=excluded.policy_metadata""",
                 response.analysis_id,
                 owner_id,
                 response.status.value,
@@ -513,6 +520,7 @@ class PostgresPlatformRepository:
                 response.created_at,
                 response.completed_at,
                 response.conversation_id,
+                response.policy_metadata.model_dump_json() if response.policy_metadata else "{}",
             )
             for event in events:
                 await connection.execute(
@@ -804,11 +812,12 @@ class PostgresPlatformRepository:
             final_event = final_event.model_copy(update={"sequence": sequence})
             await connection.execute(
                 """UPDATE security_analyses SET status=$2,response=$3::jsonb,policy_version=$4,
-                          updated_at=$5,completed_at=$5 WHERE id=$1""",
+                          policy_metadata=$5::jsonb,updated_at=$6,completed_at=$6 WHERE id=$1""",
                 response.analysis_id,
                 response.status.value,
                 response.model_dump_json(),
                 response.policy_version,
+                response.policy_metadata.model_dump_json() if response.policy_metadata else "{}",
                 response.completed_at,
             )
             await connection.execute(
@@ -1266,8 +1275,7 @@ class PostgresPlatformRepository:
     async def decide_security_report(
         self,
         report_id: UUID,
-        decision: ReportReviewDecision,
-        note: str,
+        request: SecurityReportDecisionRequestV4,
         reviewer_id: str,
         occurred_at: datetime,
     ) -> SecurityReportAdminRecordV4 | None:
@@ -1287,27 +1295,133 @@ class PostgresPlatformRepository:
                     retryable=False,
                 )
             current = SecurityReportRecordV4.model_validate(_json_value(row["record"]))
-            updated = current.model_copy(
-                update={
+            updated = SecurityReportRecordV4.model_validate(
+                {
+                    **current.model_dump(),
                     "status": ReportStatus.PROCESSED,
-                    "decision": decision,
+                    "decision": request.decision,
+                    "resolution": request.resolution,
+                    "remediation_action": request.remediation_action,
+                    "whitelist_entry": request.whitelist_entry,
+                    "blacklist_proposal": request.blacklist_proposal,
+                    "remediation_status": (
+                        SecurityReportRemediationStatusV4.NOT_REQUESTED
+                        if request.remediation_action is SecurityReportRemediationActionV4.NONE
+                        else SecurityReportRemediationStatusV4.PENDING
+                    ),
                     "reviewer_id": reviewer_id,
-                    "review_note": note,
+                    "review_note": request.note,
                     "reviewed_at": occurred_at,
                 }
             )
             audit = SecurityAdminAuditEventV4(
                 resource_type=SecurityAuditResourceV4.REPORT,
                 resource_id=report_id,
-                action=f"report_{decision.value}",
+                action=f"report_{request.decision.value}",
                 actor_id=reviewer_id,
-                note=note,
+                note=request.note,
                 occurred_at=occurred_at,
+                evidence_refs=request.audit_evidence_refs(),
+                report_details=SecurityReportAuditDetailsV4.from_record(updated),
             )
             await connection.execute(
                 "UPDATE security_analysis_reports_v4 SET status=$2,record=$3::jsonb WHERE id=$1",
                 report_id,
                 updated.status.value,
+                updated.model_dump_json(),
+            )
+            await self._insert_security_feedback_audit(connection, audit)
+        return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=row["owner_id"])
+
+    async def complete_security_report_remediation(
+        self,
+        report_id: UUID,
+        request: SecurityReportRemediationUpdateV4,
+        actor_id: str,
+        occurred_at: datetime,
+    ) -> SecurityReportAdminRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                "SELECT owner_id,record FROM security_analysis_reports_v4 WHERE id=$1 FOR UPDATE",
+                report_id,
+            )
+            if row is None:
+                return None
+            current = SecurityReportRecordV4.model_validate(_json_value(row["record"]))
+            if current.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+                raise PlatformError(
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security report remediation is not pending.",
+                    retryable=False,
+                )
+            updated = SecurityReportRecordV4.model_validate(
+                {
+                    **current.model_dump(),
+                    "remediation_status": request.status,
+                    "remediation_reference": request.reference,
+                }
+            )
+            audit = SecurityAdminAuditEventV4(
+                resource_type=SecurityAuditResourceV4.REPORT,
+                resource_id=report_id,
+                action=f"report_remediation_{request.status.value}",
+                actor_id=actor_id,
+                note=request.note,
+                occurred_at=occurred_at,
+                evidence_refs=request.evidence_refs,
+                report_details=SecurityReportAuditDetailsV4.from_record(updated),
+            )
+            await connection.execute(
+                "UPDATE security_analysis_reports_v4 SET record=$2::jsonb WHERE id=$1",
+                report_id,
+                updated.model_dump_json(),
+            )
+            await self._insert_security_feedback_audit(connection, audit)
+        return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=row["owner_id"])
+
+    async def link_security_report_remediation(
+        self,
+        report_id: UUID,
+        reference: SecurityReportRemediationReferenceV4,
+        note: str,
+        evidence_refs: list[str],
+        actor_id: str,
+        occurred_at: datetime,
+    ) -> SecurityReportAdminRecordV4 | None:
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                "SELECT owner_id,record FROM security_analysis_reports_v4 WHERE id=$1 FOR UPDATE",
+                report_id,
+            )
+            if row is None:
+                return None
+            current = SecurityReportRecordV4.model_validate(_json_value(row["record"]))
+            if current.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+                raise PlatformError(
+                    status_code=409,
+                    code=ErrorCode.CONFLICT,
+                    message="Security report remediation is not pending.",
+                    retryable=False,
+                )
+            updated = SecurityReportRecordV4.model_validate(
+                {**current.model_dump(), "remediation_reference": reference}
+            )
+            audit = SecurityAdminAuditEventV4(
+                resource_type=SecurityAuditResourceV4.REPORT,
+                resource_id=report_id,
+                action="report_remediation_proposed",
+                actor_id=actor_id,
+                note=note,
+                occurred_at=occurred_at,
+                evidence_refs=evidence_refs,
+                report_details=SecurityReportAuditDetailsV4.from_record(updated),
+            )
+            await connection.execute(
+                "UPDATE security_analysis_reports_v4 SET record=$2::jsonb WHERE id=$1",
+                report_id,
                 updated.model_dump_json(),
             )
             await self._insert_security_feedback_audit(connection, audit)
@@ -1408,8 +1522,8 @@ class PostgresPlatformRepository:
     async def _insert_security_feedback_audit(self, connection, audit: SecurityAdminAuditEventV4) -> None:
         await connection.execute(
             """INSERT INTO security_feedback_audit_v4(
-                   id,resource_type,resource_id,action,actor_id,note,evidence_refs,occurred_at
-               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)""",
+                   id,resource_type,resource_id,action,actor_id,note,evidence_refs,details,occurred_at
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)""",
             audit.audit_id,
             audit.resource_type.value,
             audit.resource_id,
@@ -1417,6 +1531,7 @@ class PostgresPlatformRepository:
             audit.actor_id,
             audit.note,
             json.dumps(audit.evidence_refs),
+            audit.report_details.model_dump_json() if audit.report_details is not None else "{}",
             audit.occurred_at,
         )
 
@@ -1424,12 +1539,12 @@ class PostgresPlatformRepository:
         pool = await self._get_pool()
         async with pool.acquire() as connection:
             feedback = await connection.fetch(
-                """SELECT id,resource_type,resource_id,action,actor_id,note,evidence_refs,occurred_at
+                """SELECT id,resource_type,resource_id,action,actor_id,note,evidence_refs,occurred_at,details
                    FROM security_feedback_audit_v4"""
             )
             trust = await connection.fetch(
                 """SELECT id,resource_type,resource_id,action,reviewer_id AS actor_id,
-                          NULL::text AS note,'[]'::jsonb AS evidence_refs,occurred_at
+                          NULL::text AS note,'[]'::jsonb AS evidence_refs,occurred_at,'{}'::jsonb AS details
                    FROM security_trust_audit"""
             )
             memory = await connection.fetch("SELECT record FROM security_memory_audit")
@@ -1444,6 +1559,11 @@ class PostgresPlatformRepository:
                 note=row["note"],
                 evidence_refs=list(_json_value(row["evidence_refs"])),
                 occurred_at=row["occurred_at"],
+                report_details=(
+                    SecurityReportAuditDetailsV4.model_validate(_json_value(row["details"]))
+                    if _json_value(row["details"])
+                    else None
+                ),
             )
             for row in [*feedback, *trust]
         ]
@@ -2405,7 +2525,8 @@ class PostgresPlatformRepository:
         async with pool.acquire() as connection:
             existing = await connection.fetchrow(
                 """SELECT * FROM admin_actions
-                   WHERE security_analysis_id IS NOT DISTINCT FROM $1
+                   WHERE status='pending_review'
+                     AND security_analysis_id IS NOT DISTINCT FROM $1
                      AND analysis_id IS NOT DISTINCT FROM $2
                      AND campaign_id IS NOT DISTINCT FROM $3
                      AND action=$4 AND canonical_target IS NOT DISTINCT FROM $5
@@ -2423,8 +2544,11 @@ class PostgresPlatformRepository:
                        id,analysis_id,security_analysis_id,campaign_id,action,canonical_target,status,
                        evidence_snapshot,proposed_at
                    ) VALUES($1,$2,$3,$4,$5,$6,'pending_review',$7::jsonb,$8)
-                   ON CONFLICT(security_analysis_id,action,canonical_target)
-                     WHERE security_analysis_id IS NOT NULL DO NOTHING
+                   ON CONFLICT(
+                     COALESCE(security_analysis_id,'00000000-0000-0000-0000-000000000000'::uuid),
+                     action,canonical_target
+                   )
+                     WHERE status='pending_review' DO NOTHING
                    RETURNING *""",
                 action_id,
                 analysis_id,
@@ -2435,16 +2559,19 @@ class PostgresPlatformRepository:
                 json.dumps([item.model_dump(mode="json") for item in evidence]),
                 now,
             )
-            if inserted is None and security_analysis_id is not None:
+            if inserted is None:
                 concurrent = await connection.fetchrow(
                     """SELECT * FROM admin_actions
-                       WHERE security_analysis_id=$1 AND action=$2 AND canonical_target=$3""",
+                       WHERE status='pending_review'
+                         AND security_analysis_id IS NOT DISTINCT FROM $1
+                         AND action=$2 AND canonical_target=$3""",
                     security_analysis_id,
                     action.value,
                     canonical,
                 )
                 if concurrent is not None:
                     return self._admin_action(concurrent)
+                raise _platform_conflict("A matching admin action proposal already exists.")
         return record
 
     async def list_admin_actions(
@@ -2547,21 +2674,30 @@ class PostgresPlatformRepository:
                 decision_id if approved else None,
             )
             if approved and action["action"] == ReviewedAction.ADD_TO_BLACKLIST.value:
-                await connection.execute(
-                    """INSERT INTO blacklist_entries(
-                           id,canonical_domain,active,enabling_decision_id,created_at,updated_at
-                       ) VALUES($1,$2,true,$3,$4,$4)
-                       ON CONFLICT(canonical_domain) DO UPDATE SET
-                         active=true,enabling_decision_id=EXCLUDED.enabling_decision_id,
-                         disabling_decision_id=NULL,updated_at=EXCLUDED.updated_at,
-                         version=blacklist_entries.version+1""",
-                    uuid4(),
+                already_active = await connection.fetchval(
+                    "SELECT active FROM blacklist_entries WHERE canonical_domain=$1 FOR UPDATE",
                     action["canonical_target"],
-                    decision_id,
-                    now,
                 )
-                new_status = AdminActionStatus.EXECUTED
-                executed_at = now
+                if already_active:
+                    new_status = AdminActionStatus.FAILED
+                    executed_at = now
+                    execution_error = "BLACKLIST_TARGET_ALREADY_ACTIVE"
+                else:
+                    await connection.execute(
+                        """INSERT INTO blacklist_entries(
+                               id,canonical_domain,active,enabling_decision_id,created_at,updated_at
+                           ) VALUES($1,$2,true,$3,$4,$4)
+                           ON CONFLICT(canonical_domain) DO UPDATE SET
+                             active=true,enabling_decision_id=EXCLUDED.enabling_decision_id,
+                             disabling_decision_id=NULL,updated_at=EXCLUDED.updated_at,
+                             version=blacklist_entries.version+1""",
+                        uuid4(),
+                        action["canonical_target"],
+                        decision_id,
+                        now,
+                    )
+                    new_status = AdminActionStatus.EXECUTED
+                    executed_at = now
             elif approved and action["action"] == ReviewedAction.DISABLE_BLACKLIST.value:
                 result = await connection.execute(
                     """UPDATE blacklist_entries SET active=false,disabling_decision_id=$2,
@@ -2596,6 +2732,26 @@ class PostgresPlatformRepository:
                 new_status.value,
                 execution_error,
             )
+            if action["action"] in {
+                ReviewedAction.ADD_TO_BLACKLIST.value,
+                ReviewedAction.DISABLE_BLACKLIST.value,
+            }:
+                await self._insert_security_feedback_audit(
+                    connection,
+                    SecurityAdminAuditEventV4(
+                        resource_type=SecurityAuditResourceV4.BLACKLIST,
+                        resource_id=action_id,
+                        action=f"blacklist_{action['action']}_{new_status.value}",
+                        actor_id=reviewer_id,
+                        note=note,
+                        occurred_at=now,
+                        evidence_refs=[
+                            item.get("title", "")
+                            for item in _json_value(action["evidence_snapshot"])
+                            if item.get("title")
+                        ],
+                    ),
+                )
         return AdminActionDecisionResponseV3(
             action_id=action_id,
             decision_id=decision_id,

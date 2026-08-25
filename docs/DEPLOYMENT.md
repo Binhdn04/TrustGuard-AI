@@ -163,6 +163,12 @@ Chạy toàn bộ checks trong [TESTING.md](TESTING.md). Trước migration dest
 `0018_remove_vector_compat` không downgrade. Không chạy nếu chưa chứng minh restore.
 `0019_security_identity_discovery` là additive và không tái tạo các bảng source-discovery/fact-check đã xóa.
 Sau upgrade, kiểm tra candidate/evidence/decision tables và một Alembic head trước khi bật discovery rollout.
+`0020_report_audit_details` chỉ thêm cột JSONB `details` có default `{}` vào feedback audit; không rewrite hoặc
+xóa audit cũ. Sau upgrade, xác minh report decision mới có structured resolution/remediation details, audit cũ
+vẫn đọc được và Alembic chỉ còn một head.
+`0021_security_blacklist_v4` thay unique index cũ bằng unique index chỉ áp dụng cho proposal `pending_review` và
+thêm `blacklist` vào feedback-audit constraint. Migration không sửa trực tiếp blacklist entry; sau upgrade phải
+smoke add → approve → disable → approve → re-add và xác minh restart vẫn giữ lifecycle/audit.
 
 ## Deploy and verify
 
@@ -177,6 +183,26 @@ curl https://<backend-domain>/api/v4/capabilities
 Acceptance: readiness `200`; OpenAPI chỉ public v4; user/admin OIDC và RBAC pass; frontend không gọi
 localhost/CORS lỗi; worker không crash-loop/duplicate job; polling/WebSocket fallback hoạt động; database,
 Redis và worker không public; restart không mất dữ liệu.
+
+### MVP post-deploy smoke
+
+Giữ `/login` cho local/demo; hosted build dùng Authorization Code + PKCE và không có demo token. Sau deploy, cần
+hai danh tính OAuth thật (`user` và `security_admin`) để xác minh xuyên suốt:
+
+1. user tạo analysis rồi gửi report; admin thấy đúng report, còn user nhận `403` khi gọi admin API;
+2. admin duyệt false positive/confirm safe với whitelist hoặc Memory remediation, rồi phân tích lại để xác minh
+   pipeline vẫn chạy và chỉ reviewed record được dùng làm evidence;
+3. admin duyệt malicious với blacklist remediation: report tạo proposal `pending_review`, sau đó admin phải approve
+   action liên kết riêng; chỉ trạng thái `executed` mới tạo blacklist active;
+4. phân tích lại target đã blacklist và xác minh approved-blacklist evidence, verdict theo policy, report/action
+   reference cùng actor/time trong unified audit;
+5. reject/dismiss một report và reject một blacklist action; xác minh không có active trust/block record mới,
+   remediation thất bại vẫn giữ action reference;
+6. restart backend/worker và xác minh whitelist/blacklist lifecycle cùng audit vẫn còn trên PostgreSQL.
+
+Chỉ lưu ID và summary đã redact trong release evidence. Không lưu token, raw private message, credential, OTP hoặc
+URL query nhạy cảm. Nếu bất kỳ bước nào thất bại, giữ release ở trạng thái pending và rollback application theo
+phần dưới; không downgrade migration để che lỗi dữ liệu.
 
 ## Rollout and rollback
 
@@ -217,6 +243,9 @@ quay về inline/polling path và giữ audit evidence.
 Identity candidates đã persist được giữ nguyên khi rollback mode. `off` không discovery; `shadow` vẫn persist và
 telemetry nhưng không đổi response/risk; `visible` chỉ hiển thị association; `enforced` mới áp dụng mismatch policy.
 Không drop `0019` để rollback application vì quyết định reviewer là immutable audit data.
+Không drop `0020` khi rollback application; cột audit additive có thể được phiên bản cũ bỏ qua an toàn.
+Không downgrade `0021` khi còn proposal trùng action/target ở lifecycle terminal; giữ schema và rollback application
+trước, vì khôi phục unique index cũ có thể xung đột với lịch sử re-add hợp lệ.
 
 ## Official-link CP10 hosted evidence
 

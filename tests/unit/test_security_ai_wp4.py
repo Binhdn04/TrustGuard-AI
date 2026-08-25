@@ -81,14 +81,14 @@ def test_grounding_verifier_rejects_hallucinated_refs_and_urls() -> None:
     assert check_grounded_ai_response(scoped, statistical).failure is SynthesisGroundingFailure.TECHNICAL_METRIC
 
 
-def test_grounding_verifier_reports_missing_reasons_separately() -> None:
+def test_grounding_verifier_allows_a_single_natural_reply_without_report_sections() -> None:
     scoped = _risk_result()
     synthesis = AssistantSynthesis(summary="Nội dung này cần được xem xét thận trọng.")
 
     checked = check_grounded_ai_response(scoped, synthesis)
 
-    assert checked.response is None
-    assert checked.failure is SynthesisGroundingFailure.MISSING_TOP_REASONS
+    assert checked.response is not None
+    assert checked.failure is None
 
 
 class _ValidSynthesisModel:
@@ -138,7 +138,7 @@ async def test_ai_response_keeps_actions_and_uncertainties_deterministic() -> No
 
 
 @pytest.mark.asyncio
-async def test_invalid_synthesis_keeps_a_policy_grounded_answer(caplog) -> None:
+async def test_invalid_synthesis_uses_the_deterministic_fallback_only_when_composition_fails(caplog) -> None:
     with caplog.at_level("WARNING", logger="trustguard.security_ai"):
         result = await GroundedSecurityResponseService(
             ai_enabled=True,
@@ -149,13 +149,40 @@ async def test_invalid_synthesis_keeps_a_policy_grounded_answer(caplog) -> None:
     response = result.assistant_response
     assert response is not None
     assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
-    assert response.top_reasons[0].evidence_refs == ["evidence:0123456789abcdef"]
-    assert any("bằng chứng và hành động đã kiểm chứng" in item for item in result.limitations)
-    assert any("unknown_evidence_ref" in item for item in result.limitations)
-    record = next(item for item in caplog.records if item.getMessage() == "security_ai_grounding_rejected")
-    assert record.operation == "synthesize"
-    assert record.failure_code == "unknown_evidence_ref"
-    assert "Unsupported claim" not in record.getMessage()
+    assert "Unsupported claim" not in response.summary
+    assert not any("grounding" in item.casefold() for item in response.uncertainties)
+    assert any(item.getMessage() == "security_ai_composer_fallback" for item in caplog.records)
+
+
+class _MetricSynthesisModel:
+    async def synthesize(self, result):
+        ref = result["evidence"][0]["evidence_ref"]
+        return ModelResponse(
+            output=AssistantSynthesis(
+                summary="Nội dung này đáng ngờ. Điểm số rủi ro là 95/100.",
+                top_reasons=[
+                    SynthesisReason(text="Có yêu cầu OTP.", evidence_refs=[ref]),
+                    SynthesisReason(text="Độ tin cậy 90%.", evidence_refs=[ref]),
+                ],
+            ),
+            provider="fake",
+            model="synthesis-v1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_metric_violation_falls_back_without_showing_internal_metrics() -> None:
+    result = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_MetricSynthesisModel(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(_risk_result())
+
+    response = result.assistant_response
+    assert response is not None
+    assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
+    assert "95/100" not in response.summary
+    assert "độ tin cậy" not in response.summary.casefold()
 
 
 @pytest.mark.asyncio
@@ -175,3 +202,20 @@ async def test_disabled_ai_still_returns_a_policy_grounded_answer_without_failur
         "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."
     )
     assert not any("AI explanation" in item for item in result.limitations)
+
+
+def test_composer_context_excludes_review_workflow_diagnostics() -> None:
+    scoped = _risk_result().model_copy(
+        update={
+            "limitations": [
+                "Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ giữa URL và tổ chức.",
+                "Không thể xác nhận đầy đủ hành động được yêu cầu.",
+            ]
+        }
+    )
+
+    payload = GroundedSecurityResponseService._synthesis_payload(scoped)
+
+    assert payload["important_uncertainties"] == ["Không thể xác nhận đầy đủ hành động được yêu cầu."]
+    assert all("description" not in item for item in payload["evidence"])
+    assert all("reviewed" not in str(value).casefold() for value in payload.values())

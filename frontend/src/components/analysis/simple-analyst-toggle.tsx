@@ -15,7 +15,7 @@ export function SimpleAnalystToggle({
         <button
           key={option}
           type="button"
-          aria-label={option}
+          aria-label={labels[option]}
           aria-pressed={mode === option}
           onClick={() => onChange(option)}
           className={cn(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, ChevronDown, CircleHelp, FileSearch, RotateCcw, ShieldCheck } from "lucide-react";
+import { Activity, ChevronDown, FileSearch, RotateCcw, ShieldCheck } from "lucide-react";
 
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { useAccountPreferences } from "@/lib/account-preferences-context";
@@ -12,12 +12,12 @@ import {
   type SecurityPresentationMode,
 } from "@/lib/mappers/security-case-view-model";
 import { cn } from "@/lib/utils";
+import { statusLabel } from "@/lib/presentation/security-labels";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
 import { ActionRiskPanel, SimpleRiskTechnicalDetails } from "./action-risk-panel";
 import { AnalysisAppealForm } from "./analysis-appeal-form";
-import { AnalysisLimitations } from "./analysis-limitations";
 import { AnalysisReportForm } from "./analysis-report-form";
 import { CaseSignalMap } from "./case-signal-map";
 import { ConversationPanel } from "./conversation-panel";
@@ -55,15 +55,15 @@ function InvestigationPanel({
   return (
     <section aria-labelledby="investigation-heading" className="case-panel min-h-[36rem] overflow-hidden">
       <header className="border-b border-border/70 px-4 py-3.5">
-        <p className="micro-label">02 / Investigation</p>
-        <h2 id="investigation-heading" className="mt-1 text-sm font-semibold">Signals & evidence</h2>
+        <p className="micro-label">02 / Điều tra</p>
+        <h2 id="investigation-heading" className="mt-1 text-sm font-semibold">Tín hiệu và bằng chứng</h2>
       </header>
       <div className="space-y-6 p-4">
         {busy && (
           <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
             <p className="flex items-center gap-2 text-sm font-semibold"><Activity className="size-4 text-primary" />Đang chờ kết quả điều tra</p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              Chỉ hiển thị step và evidence sau khi API trả về; không mô phỏng DNS, redirect hoặc provider call.
+              Chỉ hiển thị bước và bằng chứng sau khi API trả về; không mô phỏng DNS, chuyển hướng hoặc lệnh gọi nhà cung cấp.
             </p>
           </div>
         )}
@@ -77,15 +77,14 @@ function InvestigationPanel({
               mode={mode}
             />
             <EvidenceDeck evidence={viewModel.evidence} mode={mode} />
-            <AnalysisLimitations limitations={latest.limitations} />
           </>
         )}
         {!busy && latest?.scope_decision !== "IN_SCOPE" && (
           <div className="rounded-xl border border-dashed border-border p-5 text-center">
             <FileSearch className="mx-auto size-5 text-muted-foreground" />
-            <p className="mt-2 text-sm font-semibold">Chưa mở investigation</p>
+            <p className="mt-2 text-sm font-semibold">Chưa mở điều tra</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Case cần nằm trong phạm vi và đủ context trước khi có investigation output.
+              Trường hợp cần nằm trong phạm vi và đủ ngữ cảnh trước khi có kết quả điều tra.
             </p>
           </div>
         )}
@@ -110,14 +109,12 @@ function ActionPanel({
   const completed = latest?.scope_decision === "IN_SCOPE" && latest.status === "completed" && latest.risk
     ? viewModel
     : null;
-  const reasons = completed?.assistant?.topReasons.slice(0, 3) ?? [];
-  const uncertainties = completed?.assistant?.uncertainties.slice(0, 3) ?? [];
   return (
     <section aria-labelledby="action-heading" className="case-panel min-h-[36rem] overflow-hidden">
       <header className="border-b border-border/70 px-4 py-3.5">
-        {mode === "analyst" && <p className="micro-label">03 / Action</p>}
+        {mode === "analyst" && <p className="micro-label">03 / Hành động</p>}
         <h2 id="action-heading" className={mode === "simple" ? "text-sm font-semibold" : "mt-1 text-sm font-semibold"}>
-          {mode === "simple" ? "Kết luận và hướng dẫn" : "Decision & next steps"}
+          {mode === "simple" ? "Kết luận và hướng dẫn" : "Quyết định và bước tiếp theo"}
         </h2>
       </header>
       <div className="space-y-4 p-4">
@@ -147,31 +144,6 @@ function ActionPanel({
                 </summary>
                 <div className="space-y-4 border-t border-border/70 p-4">
                   <SimpleRiskTechnicalDetails viewModel={completed} />
-                  <OfficialVerificationPanel viewModel={completed} mode="simple" />
-                  {reasons.length > 0 && (
-                    <section aria-labelledby="agent-reasons-heading" className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                      <div className="flex items-center gap-2">
-                        <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary"><Bot className="size-4" aria-hidden="true" /></span>
-                        <h3 id="agent-reasons-heading" className="text-sm font-semibold">Các dấu hiệu chính</h3>
-                      </div>
-                      <ol className="mt-3 space-y-2 text-sm leading-6">
-                        {reasons.map((reason, index) => (
-                          <li key={`${reason.text}:${index}`} className="flex gap-2">
-                            <span className="mt-0.5 font-bold text-primary">{index + 1}.</span>
-                            <span>{reason.text}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-                  )}
-                  {uncertainties.length > 0 && (
-                    <section aria-labelledby="agent-uncertainties-heading" className="rounded-2xl border border-amber-500/25 bg-amber-500/8 p-4">
-                      <h3 id="agent-uncertainties-heading" className="flex items-center gap-2 text-sm font-semibold"><CircleHelp className="size-4" />Điều chưa xác minh được</h3>
-                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                        {uncertainties.map((item) => <li key={item}>• {item}</li>)}
-                      </ul>
-                    </section>
-                  )}
                   <details className="group/checks rounded-2xl border border-border bg-background/45">
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
                       Đã kiểm tra những gì?
@@ -180,7 +152,6 @@ function ActionPanel({
                     <div className="space-y-5 border-t border-border/70 p-4">
                       <InvestigationTimelineV4 lifecycle={completed.lifecycle} steps={completed.steps} errors={completed.errors} mode="simple" />
                       <EvidenceDeck evidence={completed.evidence} mode="simple" />
-                      <AnalysisLimitations limitations={latest!.limitations} />
                     </div>
                   </details>
                   <details className="group/report rounded-2xl border border-border bg-background/45">
@@ -215,7 +186,7 @@ function ActionPanel({
             <p className="mt-2 text-sm font-semibold">{busy ? "Đang chờ kết quả" : "Chưa có hướng dẫn"}</p>
             {mode === "analyst" && (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Frontend không tự tính verdict, score hoặc hành động khi API chưa trả kết luận.
+                Frontend không tự tính kết luận, điểm số hoặc hành động khi API chưa trả kết quả.
               </p>
             )}
           </div>
@@ -258,7 +229,7 @@ export function CaseWorkspace({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMode(preferences.defaultPresentation);
   }, [preferences.defaultPresentation]);
-  const analysisLabel = latest?.analysis_id ? latest.analysis_id.slice(0, 8) : "pending";
+  const analysisLabel = latest?.analysis_id ? latest.analysis_id.slice(0, 8) : "đang chờ";
   const viewModel = useMemo(
     () => latest ? mapSecurityCaseViewModel(latest, lifecycleEvents) : null,
     [latest, lifecycleEvents],
@@ -270,13 +241,13 @@ export function CaseWorkspace({
     <div className="space-y-4">
       <header className="flex flex-col justify-between gap-4 border-b border-border/70 pb-4 sm:flex-row sm:items-end">
         <div>
-          {mode === "analyst" && <p className="micro-label text-primary">ACTIVE CASE / {analysisLabel}</p>}
+          {mode === "analyst" && <p className="micro-label text-primary">TRƯỜNG HỢP ĐANG MỞ / {analysisLabel}</p>}
           <h1 className={cn("text-2xl font-semibold tracking-[-0.025em] sm:text-3xl", mode === "analyst" && "mt-2")}>
-            {mode === "simple" ? "Trợ lý an toàn số" : "Security investigation workspace"}
+            {mode === "simple" ? "Trợ lý an toàn số" : "Không gian điều tra bảo mật"}
           </h1>
           {mode === "analyst" && (
             <p className="mt-1 text-sm text-muted-foreground">
-              {latest ? `${latest.status} · ${latest.scope_decision}` : "Đang tạo case từ nội dung intake"}
+              {latest ? `${statusLabel(latest.status)} · ${statusLabel(latest.scope_decision)}` : "Đang tạo trường hợp từ nội dung tiếp nhận"}
             </p>
           )}
         </div>
@@ -294,7 +265,7 @@ export function CaseWorkspace({
         </div>
       </header>
 
-      <div className={cn("grid rounded-xl border border-border bg-card p-1 lg:hidden", mode === "simple" ? "grid-cols-2" : "grid-cols-3")} role="tablist" aria-label="Khu vực case">
+      <div className={cn("grid rounded-xl border border-border bg-card p-1 lg:hidden", mode === "simple" ? "grid-cols-2" : "grid-cols-3")} role="tablist" aria-label="Khu vực trường hợp">
         {panels.map((panel) => (
           <button
             key={panel.id}

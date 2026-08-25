@@ -185,14 +185,14 @@ describe("FE5 case detail and resume", () => {
 
     expect(await screen.findByRole("heading", { name: "Tiếp tục cuộc trò chuyện" })).toBeInTheDocument();
     screen.getAllByText("account_verification").forEach((item) => expect(item).not.toBeVisible());
-    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
-    expect(screen.getByRole("heading", { name: "Structured context retained" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
+    expect(screen.getByRole("heading", { name: "Ngữ cảnh có cấu trúc được giữ lại" })).toBeInTheDocument();
     expect(screen.getAllByText("account_verification").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Context v3/)).toBeInTheDocument();
+    expect(screen.getByText(/Ngữ cảnh v3/)).toBeInTheDocument();
     expect(screen.queryByText("Nội dung chat riêng tư không thuộc contract")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Tiếp tục case với thông tin mới"), { target: { value: "Họ vừa yêu cầu gửi OTP" } });
-    fireEvent.click(screen.getByRole("button", { name: "Gửi follow-up cho case" }));
+    fireEvent.change(screen.getByLabelText("Tiếp tục lượt kiểm tra với thông tin mới"), { target: { value: "Họ vừa yêu cầu gửi OTP" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gửi thông tin bổ sung cho lượt kiểm tra" }));
     await waitFor(() => expect(createAnalysis).toHaveBeenCalledWith({
       message: "Họ vừa yêu cầu gửi OTP",
       conversation_id: analysis.conversation_id,
@@ -213,14 +213,14 @@ describe("FE5 case detail and resume", () => {
       createAnalysis,
     })} />);
 
-    const input = await screen.findByLabelText("Tiếp tục case với thông tin mới");
+    const input = await screen.findByLabelText("Tiếp tục lượt kiểm tra với thông tin mới");
     fireEvent.change(input, { target: { value: "Thông tin cần gửi lại" } });
-    fireEvent.click(screen.getByRole("button", { name: "Gửi follow-up cho case" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gửi thông tin bổ sung cho lượt kiểm tra" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Context version mới đã được tải");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Phiên bản ngữ cảnh mới đã được tải");
     expect(input).toHaveValue("Thông tin cần gửi lại");
-    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
-    expect(screen.getByText(/Context v4/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
+    expect(screen.getByText(/Ngữ cảnh v4/)).toBeInTheDocument();
   });
 
   it("gives a clear owner/not-found path and a new-case action", async () => {
@@ -229,7 +229,7 @@ describe("FE5 case detail and resume", () => {
       getAnalysis: vi.fn().mockRejectedValue(new ApiError("Forbidden", "FORBIDDEN", false, 403)),
     })} />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("không có quyền mở analysis");
-    expect(screen.getByRole("link", { name: "Bắt đầu case mới" })).toHaveAttribute("href", "/");
+    expect(await screen.findByRole("alert")).toHaveTextContent("không có quyền mở lượt kiểm tra");
+    expect(screen.getByRole("link", { name: "Bắt đầu lượt kiểm tra mới" })).toHaveAttribute("href", "/");
   });
 });

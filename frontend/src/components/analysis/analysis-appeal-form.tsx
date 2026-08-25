@@ -72,7 +72,7 @@ export function AnalysisAppealForm({ analysisId, securityApi }: { analysisId: st
             <p className="mt-1 text-sm text-muted-foreground">
               Mã hồ sơ <span className="font-mono text-foreground">{appeal.appeal_id}</span>.
             </p>
-            {appeal.status !== "resolved" && <p className="mt-2 text-sm text-muted-foreground">Đội ngũ kiểm duyệt sẽ đối chiếu lại evidence snapshot trước khi đưa ra quyết định.</p>}
+            {appeal.status !== "resolved" && <p className="mt-2 text-sm text-muted-foreground">Đội ngũ kiểm duyệt sẽ đối chiếu lại bản chụp bằng chứng trước khi đưa ra quyết định.</p>}
             {appeal.status === "resolved" && <div className="mt-4 rounded-xl border border-border bg-background/70 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Kết quả</p><p className="mt-1 font-semibold">{appeal.outcome === "overturn" ? "Đảo ngược kết luận trước đó" : appeal.outcome === "uphold" ? "Giữ nguyên kết luận" : "Chưa đủ bằng chứng để kết luận"}</p><p className="mt-2 text-sm text-muted-foreground">{appeal.resolution_note}</p>{appeal.resolved_at && <p className="mt-3 text-xs text-muted-foreground">Giải quyết lúc {new Date(appeal.resolved_at).toLocaleString("vi-VN")}</p>}</div>}
           </div>
         </div>
@@ -93,7 +93,7 @@ export function AnalysisAppealForm({ analysisId, securityApi }: { analysisId: st
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold">Yêu cầu xem xét lại quyết định</span>
-          <span className="mt-0.5 block text-xs text-muted-foreground">Dùng khi bạn cho rằng kết luận có thể gây ảnh hưởng và cần một reviewer đánh giá lại.</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">Dùng khi bạn cho rằng kết luận có thể gây ảnh hưởng và cần một người duyệt đánh giá lại.</span>
         </span>
         <ChevronDown className={`size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -120,7 +120,7 @@ export function AnalysisAppealForm({ analysisId, securityApi }: { analysisId: st
               maxLength={5000}
               value={comment}
               onChange={(event) => setComment(event.target.value)}
-              placeholder="Cung cấp bối cảnh hoặc nguồn tham khảo giúp reviewer xác minh."
+              placeholder="Cung cấp bối cảnh hoặc nguồn tham khảo giúp người duyệt xác minh."
               className="mt-1.5 min-h-24 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
             />
           </div>

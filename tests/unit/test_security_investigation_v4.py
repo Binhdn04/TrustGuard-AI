@@ -358,6 +358,56 @@ async def test_external_evidence_keeps_redirect_rdap_and_reputation_no_hit_incon
     assert result.errors == []
 
 
+def test_reputation_evidence_preserves_conflict_and_independent_hit_count() -> None:
+    url = "https://example.com/login"
+    request = _request(f"Kiểm tra {url}", consent=True)
+    context = _scope(request).security_context
+    assert context is not None
+    step = next(
+        item
+        for item in build_security_investigation_plan(context, external_url_lookup=True)
+        if item.tool is SecurityInvestigationToolV4.URL_REPUTATION
+    )
+    cascade = UrlReputationCascadeResult(
+        normalized_url=url,
+        findings=[
+            UrlReputationFinding(
+                provider="provider-one",
+                provider_version="v1",
+                normalized_url=url,
+                matched=True,
+                verdict=Verdict.MALICIOUS,
+                observed_at=NOW,
+            ),
+            UrlReputationFinding(
+                provider="provider-two",
+                provider_version="v1",
+                normalized_url=url,
+                matched=True,
+                verdict=Verdict.MALICIOUS,
+                observed_at=NOW,
+            ),
+            UrlReputationFinding(
+                provider="provider-three",
+                provider_version="v1",
+                normalized_url=url,
+                matched=True,
+                verdict=Verdict.SAFE,
+                observed_at=NOW,
+            ),
+        ],
+        verdict=Verdict.MALICIOUS,
+        provider_conflict=True,
+        policy_version="fixture-policy-v1",
+    )
+    envelope = _success(ToolName.URL_REPUTATION, cascade)
+
+    evidence, limitations = SecurityInvestigationService()._provider_evidence(step, envelope)
+
+    assert limitations == []
+    assert evidence[0].signal == "malicious+provider_conflict+corroborated_provider_hit"
+
+
 @pytest.mark.asyncio
 async def test_retry_is_bounded_and_counts_each_attempt_against_budget() -> None:
     request = _request("Kiểm tra https://example.com/login", consent=True)

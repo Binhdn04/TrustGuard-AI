@@ -167,14 +167,14 @@ describe("Security Chat workspace", () => {
 
     expect(await screen.findByRole("heading", { name: "Trò chuyện với trợ lý" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Kết luận và hướng dẫn" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Signals & evidence" })).not.toBeInTheDocument();
-    expect(screen.getByRole("tablist", { name: "Khu vực case" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Tín hiệu và bằng chứng" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Khu vực trường hợp" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Kết quả" }));
     expect(screen.getByRole("tab", { name: "Kết quả" })).toHaveAttribute("aria-selected", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
-    expect(screen.getByRole("heading", { name: "Signals & evidence" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Decision & next steps" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
+    expect(screen.getByRole("heading", { name: "Tín hiệu và bằng chứng" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Quyết định và bước tiếp theo" })).toBeInTheDocument();
   });
 
   it("continues NEED_MORE_INFO with the owner conversation version and automatic lookup policy", async () => {
@@ -314,7 +314,7 @@ describe("Security Chat workspace", () => {
     fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Ngân hàng yêu cầu OTP" } });
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
-    expect(await screen.findByRole("heading", { name: "Nguy hiểm" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Độc hại" })).toBeInTheDocument();
     expect(screen.getByText("Không chia sẻ mã OTP")).toBeInTheDocument();
     expect(screen.queryByText(/tuyên bố|fact-check|ảnh trang web/i)).not.toBeInTheDocument();
   });
@@ -382,33 +382,23 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByRole("button", { name: "Chụp lại" })).not.toBeInTheDocument();
     const resultDetailLabel = screen.getByText("Xem kết quả chi tiết");
     const resultDetails = resultDetailLabel.closest("details");
-    const mainSignals = screen.getByRole("heading", { name: "Các dấu hiệu chính" });
     expect(resultDetails).not.toHaveAttribute("open");
-    expect(mainSignals).not.toBeVisible();
 
     fireEvent.click(resultDetailLabel);
 
     expect(resultDetails).toHaveAttribute("open");
-    expect(mainSignals).toBeVisible();
     expect(screen.getByRole("heading", { name: "Điểm số và thông tin kỹ thuật" })).toBeVisible();
 
-    const detailLabel = within(assistant).getByText("Xem lý do và hướng dẫn chi tiết");
-    const details = detailLabel.closest("details");
-    const primaryAction = within(assistant).getByText("Không mở liên kết");
-    expect(details).not.toHaveAttribute("open");
-    expect(primaryAction).not.toBeVisible();
-
-    fireEvent.click(detailLabel);
-
-    expect(details).toHaveAttribute("open");
-    expect(primaryAction).toBeVisible();
-    expect(within(assistant).getByText(/Đường dẫn yêu cầu đăng nhập\./)).toBeVisible();
+    // The conversation is composer-owned prose. Evidence and actions remain
+    // available in the case workspace, rather than being restyled into a
+    // second fixed security report beneath the chat message.
+    expect(within(assistant).queryByText("Các bước nên làm")).not.toBeInTheDocument();
+    expect(within(assistant).queryByText("Vì sao mình đưa ra lời khuyên này?")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /danger\.example/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Lưu lại tin nhắn để báo cáo")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
     expect(screen.getAllByText(evidenceRef).length).toBeGreaterThan(0);
-    expect(screen.getByText(/security-assistant-response-v1/)).toBeInTheDocument();
     expect(screen.getByText("Lưu lại tin nhắn để báo cáo")).toBeInTheDocument();
   });
 
@@ -428,6 +418,8 @@ describe("Security Chat workspace", () => {
     vi.mocked(api.reportAnalysis).mockResolvedValue({
       contract_version: "v4", report_id: "report-1", analysis_id: "analysis-1",
       reason: "Cần xem lại", comment: null, status: "submitted", decision: null,
+      resolution: null, remediation_action: "none", whitelist_entry: null, blacklist_proposal: null,
+      remediation_status: "not_requested", remediation_reference: null,
       reviewer_id: null, review_note: null, created_at: "2026-08-13T08:00:00Z", reviewed_at: null,
     });
     vi.mocked(api.createAppeal).mockResolvedValue({
@@ -459,7 +451,7 @@ describe("Security Chat workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Mất kết nối tạm thời");
-    fireEvent.click(screen.getByRole("button", { name: "Thử lại case này" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại trường hợp này" }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Cần thêm thông tin")).toBeInTheDocument();

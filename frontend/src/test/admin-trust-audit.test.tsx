@@ -119,16 +119,18 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const disableBrand = vi.fn().mockResolvedValue({ ...brand, lifecycle: "disabled" });
     const api = securityClient({ createBrand, disableBrand });
     render(<TrustWorkspace api={api} />);
+    fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
+    fireEvent.click(screen.getByRole("button", { name: "Nguồn chính thức" }));
     expect(await screen.findByText("ACME Bank")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Thêm thương hiệu" }));
-    fireEvent.change(screen.getByLabelText("Brand name"), { target: { value: "Example Bank" } });
-    fireEvent.change(screen.getByLabelText("Official domains"), { target: { value: "bank.example, secure.bank.example" } });
-    fireEvent.change(screen.getByLabelText("Brand provenance"), { target: { value: "Verified registry entry" } });
-    fireEvent.change(screen.getByLabelText("Brand effective from"), { target: { value: "2026-08-14T08:00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Review create request" }));
+    fireEvent.change(screen.getByLabelText("Tên thương hiệu"), { target: { value: "Example Bank" } });
+    fireEvent.change(screen.getByLabelText("Domain chính thức"), { target: { value: "bank.example, secure.bank.example" } });
+    fireEvent.change(screen.getByLabelText("Nguồn xác minh thương hiệu"), { target: { value: "Verified registry entry" } });
+    fireEvent.change(screen.getByLabelText("Thời điểm thương hiệu bắt đầu hiệu lực"), { target: { value: "2026-08-14T08:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Xem lại yêu cầu tạo" }));
     expect(createBrand).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm create" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận tạo" }));
     await waitFor(() => expect(createBrand).toHaveBeenCalledWith(expect.objectContaining({
       name: "Example Bank", official_domains: ["bank.example", "secure.bank.example"],
       provenance: "Verified registry entry", effective_from: expect.stringContaining("2026-08-14"),
@@ -136,20 +138,22 @@ describe("FE8 trust lifecycle and audit isolation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
     expect(disableBrand).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm disable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận vô hiệu hóa" }));
     await waitFor(() => expect(disableBrand).toHaveBeenCalledWith(brand.brand_id));
   });
 
   it("creates an immutable brand version through the supersede endpoint", async () => {
     const createBrandVersion = vi.fn().mockResolvedValue({ ...brand, brand_id: "new-version", supersedes: brand.brand_id });
     render(<TrustWorkspace api={securityClient({ createBrandVersion })} />);
+    fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
+    fireEvent.click(screen.getByRole("button", { name: "Nguồn chính thức" }));
     expect(await screen.findByText("ACME Bank")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tạo phiên bản mới" }));
-    expect(screen.getByText(/existing record is not edited/i)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Brand provenance"), { target: { value: "Reviewed registry update" } });
-    fireEvent.click(screen.getByRole("button", { name: "Review new version" }));
+    expect(screen.getByText(/bản ghi hiện tại không bị chỉnh sửa/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Nguồn xác minh thương hiệu"), { target: { value: "Reviewed registry update" } });
+    fireEvent.click(screen.getByRole("button", { name: "Xem lại phiên bản mới" }));
     expect(createBrandVersion).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm new version" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận phiên bản mới" }));
     await waitFor(() => expect(createBrandVersion).toHaveBeenCalledWith(brand.brand_id, expect.objectContaining({
       name: brand.name, provenance: "Reviewed registry update", official_domains: brand.official_domains,
     })));
@@ -159,18 +163,17 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const createWhitelist = vi.fn().mockResolvedValue(whitelist);
     const disableWhitelist = vi.fn().mockResolvedValue({ ...whitelist, lifecycle: "disabled" });
     render(<TrustWorkspace api={securityClient({ createWhitelist, disableWhitelist })} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Ngoại lệ" }));
     expect(await screen.findByText("acme.example")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Thêm ngoại lệ" }));
-    fireEvent.change(screen.getByLabelText("Whitelist indicator"), { target: { value: "safe.example" } });
-    fireEvent.change(screen.getByLabelText("Whitelist scope"), { target: { value: "domain" } });
-    fireEvent.change(screen.getByLabelText("Whitelist provenance"), { target: { value: "Official security bulletin" } });
-    fireEvent.change(screen.getByLabelText("Whitelist effective from"), { target: { value: "2026-08-14T08:00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Review create request" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm create" }));
+    fireEvent.change(screen.getByLabelText("Giá trị ngoại lệ tin cậy"), { target: { value: "safe.example" } });
+    fireEvent.change(screen.getByLabelText("Phạm vi ngoại lệ tin cậy"), { target: { value: "domain" } });
+    fireEvent.change(screen.getByLabelText("Provenance ngoại lệ tin cậy"), { target: { value: "Official security bulletin" } });
+    fireEvent.change(screen.getByLabelText("Thời điểm bắt đầu hiệu lực"), { target: { value: "2026-08-14T08:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Xem lại yêu cầu tạo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận tạo" }));
     await waitFor(() => expect(createWhitelist).toHaveBeenCalledWith(expect.objectContaining({ indicator: "safe.example", scope: "domain", provenance: "Official security bulletin" })));
     fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm disable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận vô hiệu hóa" }));
     await waitFor(() => expect(disableWhitelist).toHaveBeenCalledWith(whitelist.whitelist_id));
   });
 
@@ -178,13 +181,14 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const correctSecurityMemory = vi.fn().mockResolvedValue({ ...memory, admin_verdict: "malicious" });
     const api = securityClient({ correctSecurityMemory });
     render(<TrustWorkspace api={api} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Bộ nhớ" }));
+    fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
+    fireEvent.click(screen.getByRole("button", { name: "Security Memory" }));
     fireEvent.click(await screen.findByRole("button", { name: /ACME Bank/ }));
     expect(await screen.findByText("evidence:memory")).toBeInTheDocument();
-    expect(screen.getByText(/unreviewed → malicious/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Corrected verdict"), { target: { value: "malicious" } });
-    fireEvent.change(screen.getByLabelText("Reviewer note"), { target: { value: "Confirmed by evidence" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    expect(screen.getByText(/Chưa duyệt → Độc hại/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Kết luận hiệu chỉnh"), { target: { value: "malicious" } });
+    fireEvent.change(screen.getByLabelText("Ghi chú của người duyệt"), { target: { value: "Confirmed by evidence" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu hiệu chỉnh" }));
     await waitFor(() => expect(correctSecurityMemory).toHaveBeenCalledWith(memory.memory_id, { verdict: "malicious", note: "Confirmed by evidence" }));
   });
 
@@ -192,26 +196,27 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     const reviewSecurityCampaign = vi.fn().mockResolvedValue({ ...campaign, reviewer_status: "confirmed", reviewer_id: "admin-1", review_note: "Signals verified", reviewed_at: "2026-08-13T09:20:00Z" });
     const api = securityClient({ reviewSecurityCampaign });
     render(<TrustWorkspace api={api} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chiến dịch" }));
+    fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
+    fireEvent.click(screen.getByRole("button", { name: "Chiến dịch" }));
     fireEvent.click(await screen.findByRole("button", { name: /Shared credential lure/ }));
     await waitFor(() => expect(api.getSecurityCampaign).toHaveBeenCalledWith(campaign.campaign_id));
     expect(api.listSecurityCampaignAudit).toHaveBeenCalledWith(campaign.campaign_id);
-    expect(screen.getByText("Named signals").parentElement).toHaveTextContent("domain:fraud.example: 3");
-    fireEvent.change(screen.getByLabelText("Reviewer note"), { target: { value: "Signals verified" } });
-    fireEvent.click(screen.getByRole("button", { name: "Submit campaign review" }));
+    expect(screen.getByText("Tín hiệu có tên").parentElement).toHaveTextContent("domain:fraud.example: 3");
+    fireEvent.change(screen.getByLabelText("Ghi chú của người duyệt"), { target: { value: "Signals verified" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gửi kết quả duyệt" }));
     await waitFor(() => expect(reviewSecurityCampaign).toHaveBeenCalledWith(campaign.campaign_id, { decision: "confirmed", note: "Signals verified" }));
   });
 
   it("renders only fields present in the unified v4 audit contract", async () => {
     const listAdminAudit = vi.fn().mockResolvedValue({ contract_version: "v4", items: [unifiedAudit], total: 1, limit: 20, offset: 0 });
     render(<AuditWorkspace api={securityClient({ listAdminAudit })} />);
-    expect(await screen.findByText("campaign confirmed")).toBeInTheDocument();
+    expect(await screen.findByText("Chiến dịch đã được xác nhận")).toBeInTheDocument();
     expect(screen.getByText("Signals verified")).toBeInTheDocument();
     expect(screen.getByText("evidence:campaign")).toBeInTheDocument();
     expect(screen.queryByText(/^before value$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^after value$/i)).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Lọc audit theo resource"), { target: { value: "campaign" } });
-    fireEvent.change(screen.getByLabelText("Lọc audit theo action"), { target: { value: "campaign_confirmed" } });
+    fireEvent.change(screen.getByLabelText("Lọc lịch sử theo loại tài nguyên"), { target: { value: "campaign" } });
+    fireEvent.change(screen.getByLabelText("Lọc lịch sử theo hành động"), { target: { value: "campaign_confirmed" } });
     await waitFor(() => expect(listAdminAudit).toHaveBeenLastCalledWith({ limit: 20, offset: 0, resource_type: "campaign", action: "campaign_confirmed" }));
   });
 });

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
@@ -28,6 +29,8 @@ ProgressCallback = Callable[
     [str, str, list[str], SecurityRiskV4 | None],
     Awaitable[None],
 ]
+
+logger = logging.getLogger("trustguard.official_verification")
 InvestigationResolver = Callable[[], Awaitable[SecurityInvestigationService]]
 MemoryLookupResolver = Callable[[], Awaitable[SecurityMemoryLookupTool]]
 
@@ -87,6 +90,14 @@ class SecurityTriagePipeline:
                         "status": "completed",
                         "scope": scoped.scope_decision.value,
                         "scenario": scoped.security_context.scenario.value if scoped.security_context else None,
+                        "semantic_processing_mode": (
+                            scoped.assistant_context.processing_mode.value if scoped.assistant_context else "rules_only"
+                        ),
+                        "semantic_fields": (
+                            sorted(scoped.assistant_context.field_confidences)
+                            if scoped.assistant_context is not None
+                            else []
+                        ),
                     }
                 )
         if progress is not None:
@@ -109,6 +120,7 @@ class SecurityTriagePipeline:
                     familiarity_enforced=self._familiarity_enforced,
                 )
                 self._update_risk_observation(observation, scoped)
+                self._trace_official_verification_risk_boundary(scoped)
             if progress is not None:
                 await progress("incident_response", "Đã ưu tiên hướng dẫn khôi phục tức thời.", [], scoped.risk)
         else:
@@ -192,6 +204,7 @@ class SecurityTriagePipeline:
                     familiarity_enforced=self._familiarity_enforced,
                 )
                 self._update_risk_observation(observation, scoped)
+                self._trace_official_verification_risk_boundary(scoped)
             if progress is not None:
                 await progress(
                     "risk_assessment",
@@ -207,7 +220,7 @@ class SecurityTriagePipeline:
                     output={
                         "status": "completed",
                         "generation_mode": response.generation_mode.value if response else None,
-                        "summary": response.summary if response else None,
+                        "final_response_source": response.generation_mode.value if response else None,
                     }
                 )
         if progress is not None:
@@ -228,8 +241,44 @@ class SecurityTriagePipeline:
                     "risk": scoped.risk.value if scoped.risk else None,
                     "score": scoped.score,
                     "confidence": scoped.confidence,
+                    "verdict_source": "evidence_policy",
                 }
             )
+
+    def _trace_official_verification_risk_boundary(self, scoped: SecurityScopeResponseV4) -> None:
+        """Log the effective rollout-to-policy handoff without message content."""
+        report = scoped.official_verification
+        if report is None:
+            return
+        logger.info(
+            "official_verification_risk_boundary",
+            extra={
+                "official_verification": {
+                    "analysis_id": str(scoped.analysis_id),
+                    "rollout_mode": (
+                        self._official_verification_rollout.mode.value
+                        if self._official_verification_rollout is not None
+                        else "direct_coordinator"
+                    ),
+                    "risk_policy_enforced": self._risk_v3_enforced,
+                    "ownership": report.domain_ownership_verification.status.value
+                    if report.domain_ownership_verification.status is not None
+                    else None,
+                    "resource": report.resource_verification.status.value
+                    if report.resource_verification.status is not None
+                    else None,
+                    "action": report.action_endorsement_verification.status.value
+                    if report.action_endorsement_verification.status is not None
+                    else None,
+                    "sender": report.sender_verification.status.value
+                    if report.sender_verification.status is not None
+                    else None,
+                    "verdict": scoped.risk.value if scoped.risk is not None else None,
+                    "recommended_actions": [item.value for item in scoped.recommended_actions],
+                    "policy_version": scoped.policy_version,
+                }
+            },
+        )
 
     @staticmethod
     def _record_tool_observations(observability, scoped: SecurityScopeResponseV4) -> None:

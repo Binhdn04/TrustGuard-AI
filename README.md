@@ -191,7 +191,7 @@ Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Tron
 
 | Biến | Mặc định | Stage được bật |
 |---|---:|---|
-| `SECURITY_AI_UNDERSTANDING_ENABLED` | `true` | Structured semantic understanding có source spans/confidence; flag là kill switch. |
+| `SECURITY_AI_UNDERSTANDING_ENABLED` | `true` | Structured semantic understanding chọn backend span IDs và confidence; flag là kill switch. |
 | `SECURITY_AI_PLANNING_ENABLED` | `true` | Chỉ ưu tiên deterministic plan; không được tạo target/tool mới. |
 | `SECURITY_AI_EXPLANATION_ENABLED` | `true` | Synthesis có grounding; failure quay về policy response. |
 | `SECURITY_ADMIN_COPILOT_ENABLED` | `true` | Gợi ý cho admin có RBAC, không tự thực thi action. |

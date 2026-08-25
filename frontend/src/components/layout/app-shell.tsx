@@ -14,14 +14,13 @@ import type { SecurityCapabilitiesResponseV4 } from "@/types/generated/api-v4";
 import { Hexagon, LoaderCircle, PanelLeftClose } from "lucide-react";
 
 const routeCopy: Array<{ match: (pathname: string) => boolean; eyebrow: string; title: string }> = [
-  { match: (pathname) => pathname === "/", eyebrow: "SECURITY INTAKE", title: "New investigation" },
-  { match: (pathname) => pathname.startsWith("/history"), eyebrow: "CASE ARCHIVE", title: "Cases" },
-  { match: (pathname) => pathname.startsWith("/profile"), eyebrow: "ACCOUNT", title: "Tài khoản và cài đặt" },
-  { match: (pathname) => pathname.startsWith("/admin/observatory"), eyebrow: "THREAT INTELLIGENCE", title: "Observatory" },
-  { match: (pathname) => pathname.startsWith("/admin/review"), eyebrow: "HUMAN REVIEW", title: "Security Review Room" },
-  { match: (pathname) => pathname.startsWith("/admin/trust"), eyebrow: "SECURITY V4 TRUST", title: "Trust Control Center" },
-  { match: (pathname) => pathname.startsWith("/admin/audit"), eyebrow: "SECURITY V4 AUDIT", title: "Unified Audit" },
-  { match: (pathname) => pathname === "/admin", eyebrow: "HUMAN REVIEW", title: "Review room" },
+  { match: (pathname) => pathname === "/", eyebrow: "KIỂM TRA BẢO MẬT", title: "Kiểm tra mới" },
+  { match: (pathname) => pathname.startsWith("/history"), eyebrow: "LỊCH SỬ", title: "Các lần kiểm tra" },
+  { match: (pathname) => pathname.startsWith("/profile"), eyebrow: "HỒ SƠ", title: "Tài khoản và cài đặt" },
+  { match: (pathname) => pathname.startsWith("/admin/review"), eyebrow: "NGƯỜI DUYỆT", title: "Duyệt bảo mật" },
+  { match: (pathname) => pathname.startsWith("/admin/trust"), eyebrow: "QUẢN TRỊ", title: "Danh sách tin cậy & chặn" },
+  { match: (pathname) => pathname.startsWith("/admin/"), eyebrow: "KHU VỰC NÂNG CAO", title: "Đang chuyển về giao diện MVP" },
+  { match: (pathname) => pathname === "/admin", eyebrow: "NGƯỜI DUYỆT", title: "Duyệt bảo mật" },
 ];
 
 export function AppShell({
@@ -58,14 +57,6 @@ export function AppShell({
     },
     [pathname],
   );
-  const officialVerificationState = capabilities === null
-    ? "Official verification: unavailable"
-    : capabilities.official_link_verification
-      ? capabilities.official_web_search_ready
-        ? "Official verification: web ready"
-        : "Official verification: local sources"
-      : "Official verification: off";
-
   if (isLoading || !user) {
     return (
       <main className="grid min-h-screen place-items-center bg-background px-6 text-center" aria-live="polite">
@@ -95,7 +86,7 @@ export function AppShell({
           </span>
           <div>
             <p className="text-[11px] font-bold tracking-[0.24em] text-muted-foreground">AI PROTECT</p>
-            <p className="text-base font-semibold tracking-tight">Investigation desk</p>
+            <p className="text-base font-semibold tracking-tight">Trợ lý an toàn số</p>
           </div>
         </div>
 
@@ -124,9 +115,6 @@ export function AppShell({
               <p className="truncate text-sm font-semibold sm:text-base">{currentRoute.title}</p>
             </div>
             <div className="flex items-center gap-2">
-              <span data-testid="official-verification-capability" className="hidden rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-semibold text-muted-foreground sm:inline">
-                {officialVerificationState}
-              </span>
               <ThemeToggle />
               <UserMenu />
             </div>

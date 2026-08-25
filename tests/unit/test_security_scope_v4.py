@@ -112,6 +112,25 @@ def test_otp_account_verification_context() -> None:
     assert context.impersonation_signals == []
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Tôi đang tự xác minh tài khoản Google của mình.",
+        "Kiểm tra cách xác minh tài khoản của tổ chức này.",
+        "Google có yêu cầu xác minh tài khoản không?",
+    ],
+)
+def test_neutral_account_verification_does_not_imply_brand_impersonation(message: str) -> None:
+    context = extract_security_context(message)
+
+    assert context.scenario is SecurityScenarioV4.ACCOUNT_VERIFICATION
+    assert context.impersonation_signals == []
+    assert context.credential_request is False
+    assert context.otp_request is False
+    assert context.payment_request is False
+    assert context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+
+
 def test_financial_transfer_context() -> None:
     context = extract_security_context("Chuyển tiền ngay vào tài khoản này để mở khóa tài khoản.")
 
@@ -122,15 +141,25 @@ def test_financial_transfer_context() -> None:
     assert context.potential_threat is PotentialThreatV4.FINANCIAL_SCAM
 
 
-def test_promotion_login_context_keeps_url_and_credential_signal() -> None:
+def test_promotion_login_context_keeps_login_distinct_from_credential_disclosure() -> None:
     context = extract_security_context("Bạn trúng voucher 5 triệu, đăng nhập gift.example/login để nhận quà.")
 
     assert context.scenario is SecurityScenarioV4.PROMOTION_PRIZE
     assert context.potential_threat is PotentialThreatV4.PROMOTION_PRIZE_SCAM
-    assert context.credential_request is True
+    assert context.credential_request is False
     assert context.requested_action is RequestedActionV4.LOGIN
     assert context.amount == "5 triệu"
     assert context.urls == ["https://gift.example/login"]
+
+
+def test_legitimate_login_and_passport_application_do_not_imply_credential_theft() -> None:
+    context = extract_security_context(
+        "Công an phường bảo tôi đăng nhập vào https://vpcp.dichvucong.gov.vn/p/home/dvc-trang-chu.html làm hộ chiếu"
+    )
+
+    assert context.requested_action is RequestedActionV4.APPLY_FOR_PASSPORT
+    assert context.credential_request is False
+    assert context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
 
 
 def test_url_only_is_in_scope_without_inventing_a_specific_threat() -> None:

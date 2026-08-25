@@ -39,6 +39,113 @@ class SemanticSecuritySignal(StrEnum):
     IMPERSONATION = "impersonation"
 
 
+class SemanticActionKind(StrEnum):
+    LOGIN = "login"
+    DISCLOSE = "disclose"
+    TRANSFER_MONEY = "transfer_money"
+    OPEN_LINK = "open_link"
+    SUBMIT_FORM = "submit_form"
+    INSTALL_APP = "install_app"
+    SHARE_SCREEN = "share_screen"
+    SCAN_QR = "scan_qr"
+    DOWNLOAD_FILE = "download_file"
+    REGISTER_OR_APPLY = "register_or_apply"
+    OTHER = "other"
+
+
+class SemanticSensitiveObject(StrEnum):
+    OTP = "otp"
+    CREDENTIALS = "credentials"
+    PERSONAL_INFORMATION = "personal_information"
+    MONEY = "money"
+    URL = "url"
+    DEVICE_ACCESS = "device_access"
+    SCREEN = "screen"
+    FORM = "form"
+    NONE = "none"
+    UNKNOWN = "unknown"
+
+
+class SemanticParticipant(StrEnum):
+    USER = "user"
+    SENDER = "sender"
+    THIRD_PARTY = "third_party"
+    FORM_OR_SERVICE = "form_or_service"
+    UNKNOWN = "unknown"
+
+
+class SemanticDirection(StrEnum):
+    TO_USER = "to_user"
+    FROM_USER = "from_user"
+    BETWEEN_OTHERS = "between_others"
+    USER_TO_FORM_OR_SERVICE = "user_to_form_or_service"
+    UNKNOWN = "unknown"
+
+
+class SemanticModality(StrEnum):
+    REQUESTED = "requested"
+    PERFORMED = "performed"
+    CONTEMPLATED = "contemplated"
+    DENIED = "denied"
+    UNKNOWN = "unknown"
+
+
+class SemanticStance(StrEnum):
+    ASSERTED = "asserted"
+    NEGATED = "negated"
+    QUOTED = "quoted"
+    REPORTED = "reported"
+    HYPOTHETICAL = "hypothetical"
+    UNKNOWN = "unknown"
+
+
+class SemanticInteractionType(StrEnum):
+    AUTHENTICATION = "authentication"
+    DISCLOSURE = "disclosure"
+    RECOVERY = "recovery"
+    ROUTINE_WORKFLOW = "routine_workflow"
+    SUSPICIOUS_SOLICITATION = "suspicious_solicitation"
+    UNKNOWN = "unknown"
+
+
+class SemanticCompletionStatus(StrEnum):
+    COMPLETED = "completed"
+    NOT_COMPLETED = "not_completed"
+    UNKNOWN = "unknown"
+
+
+class SemanticInterpretationStatus(StrEnum):
+    ACCEPTED = "accepted"
+    UNCERTAIN = "uncertain"
+    INCOMPLETE = "incomplete"
+
+
+class SemanticActionMention(StrictModel):
+    """One independently interpreted action; never a policy or risk decision."""
+
+    action_kind: SemanticActionKind
+    sensitive_object: SemanticSensitiveObject = SemanticSensitiveObject.UNKNOWN
+    actor: SemanticParticipant = SemanticParticipant.UNKNOWN
+    recipient: SemanticParticipant = SemanticParticipant.UNKNOWN
+    direction: SemanticDirection = SemanticDirection.UNKNOWN
+    modality: SemanticModality = SemanticModality.UNKNOWN
+    stance: SemanticStance = SemanticStance.UNKNOWN
+    interaction_type: SemanticInteractionType = SemanticInteractionType.UNKNOWN
+    exposure_event: bool = False
+    completion_status: SemanticCompletionStatus = SemanticCompletionStatus.UNKNOWN
+    span_ids: list[str] = Field(default_factory=list, min_length=1, max_length=10)
+    url_indices: list[Annotated[int, Field(ge=0)]] = Field(default_factory=list, max_length=10)
+    confidence: float = Field(ge=0, le=1)
+
+
+class GroundedActionSet(StrictModel):
+    """Backend-validated action facts retained independently of v4 scalar projections."""
+
+    actions: list[SemanticActionMention] = Field(default_factory=list, max_length=20)
+    candidate_present: bool = False
+    intent_available: bool = True
+
+
 class UnderstandingSourceSpan(StrictModel):
     """Untrusted provider offsets validated against the message during merge.
 
@@ -52,6 +159,13 @@ class UnderstandingSourceSpan(StrictModel):
     field_name: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
     start: int = Field(ge=0)
     end: int = Field(ge=0)
+
+
+class UnderstandingSpanSelection(StrictModel):
+    """Provider-selected references to backend-created span candidates."""
+
+    field_name: str = Field(min_length=1, max_length=100)
+    span_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class EntityUrlClaimCandidate(StrictModel):
@@ -71,13 +185,10 @@ class EntityUrlClaimCandidate(StrictModel):
 
 
 class Understanding(StrictModel):
-    # Keep Python-side defaults for rules-only fixtures and backwards-compatible
-    # adapters, while making both grounding collections mandatory in the schema
-    # shown to hosted structured-output models. Without this, function calling
-    # can legally omit all grounding metadata even when semantic candidates are
-    # present, forcing the trust boundary to discard an otherwise useful result.
+    # Keep legacy source_spans for deterministic fixtures. Hosted adapters use a
+    # separate span-ID-only wire schema and merge resolves IDs into these spans.
     model_config = ConfigDict(
-        json_schema_extra={"required": ["field_confidences", "source_spans"]},
+        json_schema_extra={"required": ["field_confidences", "span_selections"]},
     )
 
     scope_decision: ScopeDecisionV4 | None = None
@@ -89,6 +200,9 @@ class Understanding(StrictModel):
     entity_url_claims: list[EntityUrlClaimCandidate] = Field(default_factory=list, max_length=10)
     scenario: SecurityScenarioV4 | None = None
     requested_action: RequestedActionV4 | None = None
+    action_mentions: list[SemanticActionMention] = Field(default_factory=list, max_length=20)
+    semantic_version: Literal["security-semantics-v1"] = "security-semantics-v1"
+    interpretation_status: SemanticInterpretationStatus = SemanticInterpretationStatus.ACCEPTED
     exposure_state: ExposureStateV4 = ExposureStateV4.UNKNOWN
     security_signals: list[SemanticSecuritySignal] = Field(default_factory=list, max_length=10)
     missing_information: list[str] = Field(default_factory=list)
@@ -105,11 +219,9 @@ class Understanding(StrictModel):
     source_spans: list[UnderstandingSourceSpan] = Field(
         default_factory=list,
         max_length=50,
-        description=(
-            "At least one exact current-message span for every emitted semantic field; emit an empty array only "
-            "when no semantic candidate is emitted. Backend-grounded entity IDs are the only exception."
-        ),
+        description=("Backend-resolved spans retained for deterministic fixtures and accepted assistant context."),
     )
+    span_selections: list[UnderstandingSpanSelection] = Field(default_factory=list, max_length=50)
     derived_query_provenance: list[DerivedQueryProvenanceV4] = Field(default_factory=list, max_length=6)
     understanding_version: Literal["security-understanding-v1", "security-understanding-v2"] = (
         SECURITY_UNDERSTANDING_VERSION

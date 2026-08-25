@@ -63,6 +63,7 @@ from src.services.realtime import (
 )
 from src.services.security_admin_copilot import SecurityAdminCopilotService
 from src.services.security_analysis import SecurityAnalysisService
+from src.services.security_blacklist import SecurityBlacklistAdminService
 from src.services.security_memory import SecurityMemoryService
 from src.services.security_pipeline import SecurityTriagePipeline
 from src.services.security_response import GroundedSecurityResponseService
@@ -425,6 +426,7 @@ async def close_security_trust_services() -> None:
         await service.aclose()
     get_security_trust_admin_service.cache_clear()
     get_security_memory_service.cache_clear()
+    get_security_blacklist_admin_service.cache_clear()
     if get_security_trust_repository.cache_info().currsize:
         repository = get_security_trust_repository()
         get_security_trust_repository.cache_clear()
@@ -644,6 +646,11 @@ def get_wave2_service() -> Wave2PlatformService:
     return Wave2PlatformService(repository, _source_registry)
 
 
+@lru_cache
+def get_security_blacklist_admin_service() -> SecurityBlacklistAdminService:
+    return SecurityBlacklistAdminService(get_wave2_service())
+
+
 async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
     override = request.app.dependency_overrides.get(get_wave2_service)
     if override is None:
@@ -654,10 +661,21 @@ async def resolve_wave2_service(request: Request) -> Wave2PlatformService:
     return service
 
 
+async def resolve_security_blacklist_admin_service(request: Request) -> SecurityBlacklistAdminService:
+    override = request.app.dependency_overrides.get(get_security_blacklist_admin_service)
+    service = get_security_blacklist_admin_service() if override is None else override()
+    if hasattr(service, "__await__"):
+        return await service
+    return service
+
+
 PrincipalDependency = Annotated[Principal, Depends(get_principal)]
 PageCaptureServiceDependency = Annotated[PageCaptureService, Depends(get_page_capture_service)]
 TicketManagerDependency = Annotated[WebSocketTicketManager, Depends(resolve_ticket_manager)]
 Wave2ServiceDependency = Annotated[Wave2PlatformService, Depends(resolve_wave2_service)]
+SecurityBlacklistAdminServiceDependency = Annotated[
+    SecurityBlacklistAdminService, Depends(resolve_security_blacklist_admin_service)
+]
 SecurityTriageScopeServiceDependency = Annotated[
     SecurityTriageScopeService,
     Depends(resolve_security_triage_scope_service),

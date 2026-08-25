@@ -5,7 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from src.agents.nodes.extraction import extract_urls
-from src.agents.security_scope import derive_potential_threat, partial_security_context
+from src.agents.security_scope import derive_potential_threat, partial_security_context, requested_action_source_span
 from src.models import (
     SECURITY_UNDERSTANDING_VERSION,
     AssistantContextV4,
@@ -14,6 +14,7 @@ from src.models import (
     BrandRecordV4,
     EntityUrlClaimV4,
     ExposureStateV4,
+    RequestedActionV4,
     ScopeDecisionV4,
     SecurityContextV4,
     SecurityScenarioV4,
@@ -22,8 +23,19 @@ from src.models import (
 )
 from src.security_ai.contracts import (
     AssistantOperation,
+    GroundedActionSet,
     SecurityAssistantModel,
+    SemanticActionKind,
+    SemanticActionMention,
+    SemanticCompletionStatus,
+    SemanticDirection,
+    SemanticInteractionType,
+    SemanticInterpretationStatus,
+    SemanticModality,
+    SemanticParticipant,
     SemanticSecuritySignal,
+    SemanticSensitiveObject,
+    SemanticStance,
     Understanding,
     UnderstandingSourceSpan,
 )
@@ -41,10 +53,151 @@ from src.services.security_entity_mentions import (
     extract_entity_mentions,
     extract_recovery_phrases,
 )
+from src.services.security_span_candidates import SemanticSpanCandidate, generate_semantic_span_candidates
 
 GazetteerLoader = Callable[[], Awaitable[list[BrandRecordV4]]]
 
 _MIN_GROUNDED_CONFIDENCE = 0.80
+
+
+_ACTION_PROJECTION = {
+    SemanticActionKind.LOGIN: RequestedActionV4.LOGIN,
+    SemanticActionKind.TRANSFER_MONEY: RequestedActionV4.TRANSFER_MONEY,
+    SemanticActionKind.OPEN_LINK: RequestedActionV4.OPEN_LINK,
+    SemanticActionKind.SUBMIT_FORM: RequestedActionV4.SUBMIT_FORM,
+    SemanticActionKind.INSTALL_APP: RequestedActionV4.INSTALL_APP,
+    SemanticActionKind.SHARE_SCREEN: RequestedActionV4.SHARE_SCREEN,
+    SemanticActionKind.SCAN_QR: RequestedActionV4.SCAN_QR,
+    SemanticActionKind.DOWNLOAD_FILE: RequestedActionV4.DOWNLOAD_FILE,
+    SemanticActionKind.REGISTER_OR_APPLY: RequestedActionV4.REGISTER_OR_APPLY,
+}
+
+
+def _accepted_action_mentions(
+    mentions: list[SemanticActionMention], candidates: list[SemanticSpanCandidate]
+) -> tuple[list[SemanticActionMention], int]:
+    """Validate mentions independently so one bad model item cannot poison siblings."""
+    candidate_ids = {item.span_id for item in candidates}
+    accepted: list[SemanticActionMention] = []
+    rejected = 0
+    for mention in mentions:
+        valid_refs = bool(mention.span_ids) and set(mention.span_ids) <= candidate_ids
+        valid_confidence = mention.confidence >= _MIN_GROUNDED_CONFIDENCE
+        valid_relationship = True
+        if mention.direction is SemanticDirection.TO_USER:
+            valid_relationship = mention.recipient is SemanticParticipant.USER
+        elif mention.direction is SemanticDirection.FROM_USER:
+            valid_relationship = mention.actor is SemanticParticipant.USER
+        elif mention.direction is SemanticDirection.USER_TO_FORM_OR_SERVICE:
+            valid_relationship = (
+                mention.actor is SemanticParticipant.USER
+                and mention.recipient is SemanticParticipant.FORM_OR_SERVICE
+            )
+        if valid_refs and valid_confidence and valid_relationship:
+            accepted.append(mention)
+        else:
+            rejected += 1
+    return accepted, rejected
+
+
+def _project_action_mentions(
+    mentions: list[SemanticActionMention],
+    candidates: list[SemanticSpanCandidate],
+) -> tuple[RequestedActionV4 | None, dict[str, bool], ExposureStateV4]:
+    active = [
+        item
+        for item in mentions
+        if item.modality is SemanticModality.REQUESTED
+        and item.stance is SemanticStance.ASSERTED
+        and item.actor is SemanticParticipant.SENDER
+        and item.recipient is SemanticParticipant.USER
+        and item.direction is SemanticDirection.TO_USER
+    ]
+    # Compatibility scalar is selected only after every accepted action has
+    # been retained.  This ordering is policy impact, then earliest
+    # backend-owned span; provider ordering is never trusted.
+    projected: list[tuple[RequestedActionV4, SemanticActionMention]] = []
+    flags = {"credential_request": False, "otp_request": False, "payment_request": False,
+             "personal_information_request": False}
+    for item in active:
+        if item.interaction_type in {
+            SemanticInteractionType.DISCLOSURE,
+            SemanticInteractionType.SUSPICIOUS_SOLICITATION,
+        } and item.action_kind is SemanticActionKind.DISCLOSE:
+            if item.sensitive_object is SemanticSensitiveObject.OTP:
+                flags["otp_request"] = True
+                projected.append((RequestedActionV4.SHARE_OTP, item))
+            elif item.sensitive_object is SemanticSensitiveObject.CREDENTIALS:
+                flags["credential_request"] = True
+                projected.append((RequestedActionV4.SHARE_CREDENTIALS, item))
+            elif item.sensitive_object is SemanticSensitiveObject.PERSONAL_INFORMATION:
+                flags["personal_information_request"] = True
+                projected.append((RequestedActionV4.PROVIDE_PERSONAL_INFORMATION, item))
+        elif item.sensitive_object is SemanticSensitiveObject.MONEY:
+            flags["payment_request"] = True
+            projected.append((RequestedActionV4.TRANSFER_MONEY, item))
+        else:
+            action = _ACTION_PROJECTION.get(item.action_kind)
+            if action is not None:
+                projected.append((action, item))
+
+    starts = {item.span_id: item.start for item in candidates}
+    priority = {action: index for index, action in enumerate((
+        RequestedActionV4.SHARE_OTP, RequestedActionV4.SHARE_CREDENTIALS,
+        RequestedActionV4.TRANSFER_MONEY, RequestedActionV4.PROVIDE_PERSONAL_INFORMATION,
+        RequestedActionV4.LOGIN, RequestedActionV4.INSTALL_APP, RequestedActionV4.SHARE_SCREEN,
+        RequestedActionV4.SUBMIT_FORM, RequestedActionV4.REGISTER_OR_APPLY,
+        RequestedActionV4.OPEN_LINK, RequestedActionV4.DOWNLOAD_FILE,
+    ))}
+    requested_action = min(
+        projected,
+        key=lambda value: (priority.get(value[0], 99), min(starts[span] for span in value[1].span_ids)),
+        default=(None, None),
+    )[0]
+
+    exposure = ExposureStateV4.UNKNOWN
+    for item in mentions:
+        completed_user_action = (
+            item.actor is SemanticParticipant.USER
+            and item.modality is SemanticModality.PERFORMED
+            and item.stance is SemanticStance.ASSERTED
+            and item.exposure_event
+            and item.completion_status is SemanticCompletionStatus.COMPLETED
+        )
+        if not completed_user_action:
+            continue
+        if item.sensitive_object is SemanticSensitiveObject.OTP:
+            exposure = highest_exposure(exposure, ExposureStateV4.OTP_SHARED)
+        elif item.sensitive_object is SemanticSensitiveObject.CREDENTIALS:
+            exposure = highest_exposure(exposure, ExposureStateV4.CREDENTIAL_SHARED)
+        elif item.sensitive_object is SemanticSensitiveObject.MONEY:
+            exposure = highest_exposure(exposure, ExposureStateV4.PAYMENT_SENT)
+        elif item.action_kind is SemanticActionKind.OPEN_LINK:
+            exposure = highest_exposure(exposure, ExposureStateV4.LINK_OPENED)
+    return requested_action, flags, exposure
+# These values are interpretations of the message, not quotes from it.  The
+# model is the primary authority for them once its structured output is valid;
+# requiring an offset or a self-reported confidence here turns semantic
+# understanding into a brittle keyword extractor.  Values that can authorize
+# a lookup or assert an entity/action relationship remain extractive below.
+_SEMANTIC_FIELDS = frozenset(
+    {
+        "scope_decision",
+        "sender_intent",
+        "social_engineering_techniques",
+        "scenario",
+        "exposure_state",
+        "credential_request",
+        "otp_request",
+        "payment_request",
+        "personal_information_request",
+        "urgency",
+        "impersonation",
+        "missing_information",
+        "follow_up_slot",
+        "follow_up_question",
+    }
+)
 _FOLLOW_UP_QUESTION = (
     "Bạn có thể gửi nội dung đầy đủ của tin nhắn, tên người gửi và đường link hoặc hành động họ yêu cầu không?"
 )
@@ -101,6 +254,33 @@ def _valid_spans(message: str, output: Understanding) -> dict[str, list[Assistan
         )
         valid.setdefault(span.field_name, []).append(converted)
     return valid
+
+
+def _resolve_span_selections(
+    output: Understanding,
+    candidates: list[SemanticSpanCandidate],
+) -> tuple[Understanding, set[str]]:
+    """Resolve provider-selected IDs while retaining legacy fixture spans."""
+    by_id = {item.span_id: item for item in candidates}
+    resolved = list(output.source_spans)
+    invalid_fields: set[str] = set()
+    for selection in output.span_selections:
+        selected = [by_id.get(span_id) for span_id in selection.span_ids]
+        if not selection.span_ids or any(item is None for item in selected):
+            invalid_fields.add(selection.field_name)
+            continue
+        valid = [item for item in selected if item is not None]
+        best_specificity = max(item.specificity for item in valid)
+        for item in valid:
+            if item.specificity == best_specificity:
+                resolved.append(
+                    UnderstandingSourceSpan(
+                        field_name=selection.field_name,
+                        start=item.start,
+                        end=item.end,
+                    )
+                )
+    return output.model_copy(update={"source_spans": resolved}), invalid_fields
 
 
 def _literal_url_spans(message: str) -> list[tuple[int, int]]:
@@ -301,10 +481,10 @@ def _append_grounding_limitations(
         fields = sorted(field for field, failures in rejected_fields.items() if failure_code in failures)
         if not fields:
             continue
-        updated.append(
-            "AI semantic field đã bị loại do "
-            f"{_GROUNDING_FAILURE_LABELS[failure_code]} ({failure_code}): {', '.join(fields)}."
-        )
+        # Public limitations are stable and intentionally omit field names,
+        # validation codes, spans, and model diagnostics.  The structured log
+        # below retains the precise code for authorized operators.
+        updated.append("Không thể xác nhận đầy đủ hành động được yêu cầu.")
         for field_name in fields:
             logger.warning(
                 "security_ai_semantic_field_rejected",
@@ -334,12 +514,16 @@ def _has_security_information(context: SecurityContextV4) -> bool:
 def _rules_only_context(
     mode: AssistantProcessingModeV4,
     existing: AssistantContextV4 | None = None,
+    *,
+    action_candidate_present: bool = False,
 ) -> AssistantContextV4:
     return AssistantContextV4(
         processing_mode=mode,
         exposure_state=existing.exposure_state if existing else ExposureStateV4.UNKNOWN,
         missing_information=existing.missing_information if existing else [],
         model_version="rules-only-v1" if mode is AssistantProcessingModeV4.RULES_ONLY else "unavailable",
+        action_candidate_present=action_candidate_present,
+        action_intent_available=not action_candidate_present,
     )
 
 
@@ -350,8 +534,29 @@ def merge_semantic_understanding(
     *,
     model_version: str,
     entity_candidates: list[EntityMentionCandidate] | None = None,
+    span_candidates: list[SemanticSpanCandidate] | None = None,
 ) -> SecurityScopeResponseV4:
     """Ground and merge AI candidates without weakening deterministic signals."""
+    resolved_candidates = span_candidates or generate_semantic_span_candidates(message, entity_candidates)
+    candidate_mentions = (
+        output.action_mentions
+        if output.interpretation_status is SemanticInterpretationStatus.ACCEPTED
+        else []
+    )
+    accepted_mentions, rejected_mentions = _accepted_action_mentions(candidate_mentions, resolved_candidates)
+    url_count = len((scope.security_context or partial_security_context(message)).urls)
+    valid_mentions = [
+        mention for mention in accepted_mentions if all(index < url_count for index in mention.url_indices)
+    ]
+    rejected_mentions += len(accepted_mentions) - len(valid_mentions)
+    accepted_mentions = valid_mentions
+    if output.action_mentions and not candidate_mentions:
+        rejected_mentions = len(output.action_mentions)
+    semantic_action, semantic_flags, semantic_exposure = _project_action_mentions(accepted_mentions, resolved_candidates)
+    output, invalid_span_fields = _resolve_span_selections(
+        output,
+        resolved_candidates,
+    )
     output, invalid_candidate_fields = _ground_backend_entity_references(
         message,
         output,
@@ -370,14 +575,28 @@ def merge_semantic_understanding(
     rejected_field_failures: dict[str, set[str]] = {
         field_name: {"invalid_reference"} for field_name in invalid_candidate_fields
     }
+    for field_name in invalid_span_fields:
+        # Candidate spans only ground extractive claims.  A stale/invalid span
+        # selection must not contradict an otherwise valid semantic inference.
+        if field_name not in _SEMANTIC_FIELDS:
+            rejected_field_failures.setdefault(field_name, set()).add("invalid_source_span")
+
+    validation_decisions: dict[str, str] = {}
 
     def accept(field_name: str, present: bool) -> bool:
         if not present:
+            validation_decisions[field_name] = "omitted"
             return False
+        if field_name in _SEMANTIC_FIELDS:
+            accepted_fields.add(field_name)
+            validation_decisions[field_name] = "accepted_semantic"
+            return True
         if _grounded(field_name, output, spans):
             accepted_fields.add(field_name)
+            validation_decisions[field_name] = "accepted_extractive"
             return True
         rejected_field_failures.setdefault(field_name, set()).update(_grounding_failures(field_name, output, spans))
+        validation_decisions[field_name] = "rejected_extractive_grounding"
         return False
 
     accepted_scope = output.scope_decision if accept("scope_decision", output.scope_decision is not None) else None
@@ -413,19 +632,45 @@ def merge_semantic_understanding(
         if accept("scenario", output.scenario is not None and output.scenario is not SecurityScenarioV4.UNKNOWN)
         else None
     )
-    requested_action = (
-        output.requested_action if accept("requested_action", output.requested_action is not None) else None
-    )
+    # The scalar remains wire-compatible for one release, but can never
+    # influence a decision.  Only independently grounded action_mentions are
+    # semantic action input.
+    requested_action = None
+    if output.requested_action is not None:
+        validation_decisions["requested_action"] = "compatibility_scalar_ignored"
+    if accepted_mentions:
+        requested_action = semantic_action
+        accepted_fields.add("action_mentions")
+        validation_decisions["action_mentions"] = "accepted_semantic_mentions"
+    elif output.action_mentions:
+        validation_decisions["action_mentions"] = "rejected_invalid_mentions"
+    if (
+        requested_action is RequestedActionV4.OPEN_LINK
+        and requested_action_source_span(message, RequestedActionV4.OPEN_LINK) is None
+    ):
+        # A model may understand that the user wants us to inspect a URL, but
+        # that is not evidence that a sender told the user to open it.  OPEN_LINK
+        # therefore needs an explicit message span before it can drive sender
+        # attribution or action-endorsement verification.
+        requested_action = None
+        accepted_fields.discard("requested_action")
+        rejected_field_failures.setdefault("requested_action", set()).add("invalid_reference")
     extracted_exposure = (
         output.exposure_state
-        if accept("exposure_state", output.exposure_state is not ExposureStateV4.UNKNOWN)
+        if output.interpretation_status is SemanticInterpretationStatus.ACCEPTED
+        and accept("exposure_state", output.exposure_state is not ExposureStateV4.UNKNOWN)
         else ExposureStateV4.UNKNOWN
     )
+    extracted_exposure = highest_exposure(extracted_exposure, semantic_exposure)
     exposure_state = highest_exposure(
         scope.assistant_context.exposure_state if scope.assistant_context else ExposureStateV4.UNKNOWN,
         extracted_exposure,
     )
-    signals = {signal for signal in output.security_signals if accept(signal.value, True)}
+    signals = {
+        signal
+        for signal in output.security_signals
+        if output.interpretation_status is SemanticInterpretationStatus.ACCEPTED and accept(signal.value, True)
+    }
 
     base = scope.security_context or partial_security_context(message)
     updates: dict[str, object] = {}
@@ -440,22 +685,26 @@ def merge_semantic_understanding(
             conflicts = True
         elif base.scenario is SecurityScenarioV4.UNKNOWN:
             updates["scenario"] = scenario
-    if requested_action is not None:
-        if base.requested_action is not None and base.requested_action is not requested_action:
-            conflicts = True
-        elif base.requested_action is None:
-            updates["requested_action"] = requested_action
+    if accepted_mentions:
+        updates["requested_action"] = requested_action
+    elif output.action_mentions or output.requested_action is not None or any(
+        item.kind == "action_phrase" for item in resolved_candidates
+    ):
+        # Do not leak lexical or retired scalar actions into the public
+        # projection when semantic grounding was rejected.
+        updates["requested_action"] = None
     if entity_url_claims:
         updates["entity_url_claims"] = entity_url_claims
 
-    # AI candidates are additions only. Existing true rule signals are never removed.
+    # Disclosure flags are projections of grounded action mentions only.
+    # ``credential_request`` means disclosure to another party, not routine
+    # credential entry into a login page.  A semantic signal may add it only
+    # when the same grounded interpretation identifies credential sharing.
     updates.update(
-        credential_request=(base.credential_request or SemanticSecuritySignal.CREDENTIAL_REQUEST in signals),
-        otp_request=base.otp_request or SemanticSecuritySignal.OTP_REQUEST in signals,
-        payment_request=base.payment_request or SemanticSecuritySignal.PAYMENT_REQUEST in signals,
-        personal_information_request=(
-            base.personal_information_request or SemanticSecuritySignal.PERSONAL_INFORMATION_REQUEST in signals
-        ),
+        credential_request=semantic_flags["credential_request"],
+        otp_request=semantic_flags["otp_request"],
+        payment_request=semantic_flags["payment_request"],
+        personal_information_request=semantic_flags["personal_information_request"],
         urgency=base.urgency or SemanticSecuritySignal.URGENCY in signals,
     )
     if SemanticSecuritySignal.IMPERSONATION in signals:
@@ -468,7 +717,11 @@ def merge_semantic_understanding(
         *_backend_context_source_spans(message, merged),
     ]
     accepted_spans = list({(span.field_name, span.start, span.end): span for span in candidate_spans}.values())[:50]
-    accepted_confidences = {field_name: output.field_confidences[field_name] for field_name in accepted_fields}
+    accepted_confidences = {
+        field_name: output.field_confidences[field_name]
+        for field_name in accepted_fields
+        if field_name in output.field_confidences
+    }
     for span in accepted_spans:
         if span.field_name in {"claimed_entity", "entity_url_claims"}:
             accepted_confidences.setdefault(span.field_name, 1.0)
@@ -483,12 +736,60 @@ def merge_semantic_understanding(
         derived_query_provenance=output.derived_query_provenance,
         understanding_version=SECURITY_UNDERSTANDING_VERSION,
         model_version=model_version,
+        action_candidate_present=any(item.kind == "action_phrase" for item in resolved_candidates),
+        action_intent_available=bool(accepted_mentions) or not any(
+            item.kind == "action_phrase" for item in resolved_candidates
+        ),
+        grounded_actions=GroundedActionSet(
+            actions=accepted_mentions,
+            candidate_present=any(item.kind == "action_phrase" for item in resolved_candidates),
+            intent_available=bool(accepted_mentions) or not any(
+                item.kind == "action_phrase" for item in resolved_candidates
+            ),
+        ).model_dump(mode="json")["actions"],
     )
     limitations = list(scope.limitations)
     if rejected_field_failures:
         limitations = _append_grounding_limitations(limitations, rejected_field_failures)
+    if rejected_mentions:
+        limitations.append("Không thể xác nhận đầy đủ hành động được yêu cầu.")
     if conflicts:
         limitations.append(_CONFLICT_LIMITATION)
+
+    # Do not log raw model text or message excerpts.  This records the
+    # end-to-end decision boundary needed to diagnose an apparent rules-only
+    # response while preserving the private-message invariant.
+    logger.info(
+        "security_ai_understanding_trace",
+        extra={
+            "operation": AssistantOperation.UNDERSTAND.value,
+            "raw_output_fields": sorted(
+                field_name
+                for field_name, present in {
+                    "scope_decision": output.scope_decision is not None,
+                    "sender_intent": bool(output.sender_intent),
+                    "social_engineering_techniques": bool(output.social_engineering_techniques),
+                    "claimed_entity": bool(output.claimed_entity),
+                    "entity_url_claims": bool(output.entity_url_claims),
+                    "scenario": output.scenario not in (None, SecurityScenarioV4.UNKNOWN),
+                    "requested_action": output.requested_action is not None,
+                    "exposure_state": output.exposure_state is not ExposureStateV4.UNKNOWN,
+                    "missing_information": bool(output.missing_information),
+                    "follow_up_slot": output.follow_up_slot is not None,
+                }.items()
+                if present
+            ),
+            "validation_decisions": validation_decisions,
+            "merged_semantic_fields": sorted(accepted_fields),
+            "rejected_fields": sorted(rejected_field_failures),
+            "scope_after_merge": (
+                ScopeDecisionV4.IN_SCOPE.value
+                if scope.scope_decision is not ScopeDecisionV4.IN_SCOPE and accepted_scope is ScopeDecisionV4.IN_SCOPE
+                and _has_security_information(merged)
+                else scope.scope_decision.value
+            ),
+        },
+    )
 
     update: dict[str, object] = {
         "security_context": merged,
@@ -566,7 +867,7 @@ class SecuritySemanticUnderstandingService:
         organization_candidates = await self._organization_candidates(request.message, scope)
         scope = self._merge_local_candidates(request.message, scope, organization_candidates)
         if not self._enabled:
-            return scope
+            return self._fallback(request.message, scope)
         if self._model is None:
             return self._fallback(request.message, scope)
         preview_exposure = highest_exposure(
@@ -592,6 +893,8 @@ class SecuritySemanticUnderstandingService:
         if phrase_candidates:
             summary_payload["phrase_candidates"] = [item.as_prompt_data() for item in phrase_candidates]
         entity_candidates = [*organization_candidates, *phrase_candidates]
+        span_candidates = generate_semantic_span_candidates(request.message, entity_candidates)
+        summary_payload["span_candidates"] = [item.as_prompt_data(request.message) for item in span_candidates]
         conversation_summary = json.dumps(
             summary_payload,
             ensure_ascii=False,
@@ -610,6 +913,7 @@ class SecuritySemanticUnderstandingService:
             result.output,
             model_version=result.model,
             entity_candidates=entity_candidates,
+            span_candidates=span_candidates,
         )
         return apply_adaptive_conversation_policy(
             request.message,
@@ -665,14 +969,14 @@ class SecuritySemanticUnderstandingService:
         )
         if entity == context.claimed_entity and combined_claims == context.entity_url_claims:
             return scope
-        signals = list(context.impersonation_signals)
-        if entity and "claimed_organization" not in signals:
-            signals.append("claimed_organization")
+        # Mentioning an organization is an entity candidate, not evidence that
+        # anyone is impersonating it.  Keep any independently grounded
+        # impersonation signal intact, but never manufacture one while merging
+        # local entity candidates.
         merged = context.model_copy(
             update={
                 "claimed_entity": entity,
                 "entity_url_claims": combined_claims,
-                "impersonation_signals": signals,
             }
         )
         merged = merged.model_copy(update={"potential_threat": derive_potential_threat(merged)})
@@ -680,11 +984,28 @@ class SecuritySemanticUnderstandingService:
 
     @staticmethod
     def _fallback(message: str, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
+        candidate_present = any(
+            item.kind == "action_phrase" for item in generate_semantic_span_candidates(message)
+        )
+        context = scope.security_context
+        if candidate_present and context is not None:
+            context = context.model_copy(
+                update={
+                    "requested_action": None,
+                    "credential_request": False,
+                    "otp_request": False,
+                    "payment_request": False,
+                    "personal_information_request": False,
+                }
+            )
+            context = context.model_copy(update={"potential_threat": derive_potential_threat(context)})
         fallback = scope.model_copy(
             update={
+                "security_context": context,
                 "assistant_context": _rules_only_context(
                     AssistantProcessingModeV4.FALLBACK,
                     scope.assistant_context,
+                    action_candidate_present=candidate_present,
                 ),
                 "limitations": _unique([*scope.limitations, _FALLBACK_LIMITATION]),
             }

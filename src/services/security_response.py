@@ -26,24 +26,6 @@ _TECHNICAL_METRIC_TEXT = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*(?:%|/100))",
     re.IGNORECASE,
 )
-_AI_SYNTHESIS_LIMITATION = (
-    "AI diễn đạt không khả dụng; phản hồi vẫn được tạo trực tiếp từ kết quả, bằng chứng và hành động đã kiểm chứng."
-)
-_AI_FAILURE_REASON_LABELS = {
-    "budget_exceeded": "vượt ngân sách lượt gọi",
-    "invalid_structured_output": "structured output không hợp lệ",
-    "provider_unconfigured": "provider AI chưa được cấu hình",
-    "provider_error": "provider trả lỗi",
-    "timeout": "provider quá thời gian chờ",
-    "turn_deadline_exceeded": "lượt phân tích vượt deadline",
-    "grounding_rejected": "phản hồi AI không vượt qua kiểm tra grounding",
-    "unknown_evidence_ref": "phản hồi AI trích dẫn bằng chứng không tồn tại",
-    "unsafe_url": "phản hồi AI chứa liên kết không được phép tái hiện",
-    "technical_metric": "phản hồi AI chứa điểm số hoặc chỉ số kỹ thuật không được phép",
-    "missing_top_reasons": "phản hồi AI thiếu lý do có trích dẫn bằng chứng",
-    "official_verification_overreach": "phản hồi AI suy rộng kết quả xác minh chính thức",
-    "invalid_response_contract": "phản hồi AI không thỏa hợp đồng phản hồi cuối",
-}
 _FOLLOW_UP_OFFER = (
     "Nếu bạn đã mở liên kết, nhập mật khẩu, gửi OTP hoặc chuyển tiền, hãy nói cho mình biết loại hành động "
     "đã thực hiện — không gửi giá trị mật khẩu hay mã OTP — để mình hướng dẫn bước tiếp theo."
@@ -89,6 +71,7 @@ _ACTION_GUIDANCE: dict[SecurityRecommendedActionV4, str] = {
     ),
     SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER: "Báo cáo và chặn người gửi.",
     SecurityRecommendedActionV4.PROCEED_WITH_CAUTION: "Chỉ tiếp tục sau khi đã xác minh bằng kênh chính thức.",
+    SecurityRecommendedActionV4.ALLOW_OPEN: "Bạn có thể mở liên kết đã được xác minh này.",
     SecurityRecommendedActionV4.CLOSE_PAGE_AND_DO_NOT_RETURN: "Đóng trang và không quay lại liên kết đó.",
     SecurityRecommendedActionV4.CHANGE_PASSWORD_FROM_TRUSTED_DEVICE: ("Đổi mật khẩu từ một thiết bị đáng tin cậy."),
     SecurityRecommendedActionV4.REVOKE_ACTIVE_SESSIONS: "Đăng xuất các phiên đang hoạt động trên tài khoản.",
@@ -112,10 +95,8 @@ _SIGNAL_GUIDANCE: tuple[tuple[frozenset[str], str], ...] = (
         "Nguồn chính thức chưa xác nhận đúng yêu cầu đăng nhập hoặc hành động trong tin nhắn.",
     ),
     (frozenset({"otp_request", "share_otp"}), "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."),
-    (
-        frozenset({"credential_request", "credential_path", "share_credentials", "login"}),
-        "Nội dung yêu cầu thông tin đăng nhập hoặc dẫn bạn tới bước đăng nhập.",
-    ),
+    (frozenset({"credential_request", "share_credentials"}), "Người gửi yêu cầu bạn cung cấp thông tin đăng nhập."),
+    (frozenset({"login"}), "Nội dung đề cập một bước đăng nhập; chỉ tiếp tục qua kênh chính thức."),
     (
         frozenset({"payment_request", "transfer_money", "pay_fee"}),
         "Người gửi yêu cầu bạn chuyển tiền hoặc thanh toán.",
@@ -146,15 +127,43 @@ class SynthesisGroundingFailure(StrEnum):
     UNKNOWN_EVIDENCE_REF = "unknown_evidence_ref"
     UNSAFE_URL = "unsafe_url"
     TECHNICAL_METRIC = "technical_metric"
-    MISSING_TOP_REASONS = "missing_top_reasons"
     INVALID_RESPONSE_CONTRACT = "invalid_response_contract"
     OFFICIAL_VERIFICATION_OVERREACH = "official_verification_overreach"
+    MISSING_REQUIRED_AFFIRMATION = "missing_required_affirmation"
 
 
 @dataclass(frozen=True, slots=True)
 class SynthesisGroundingCheck:
     response: AssistantResponseV4 | None
     failure: SynthesisGroundingFailure | None = None
+
+
+def _remove_unsafe_sentences(text: str) -> tuple[str, bool]:
+    """Remove a prohibited prose fragment without retaining private/model text."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    retained = [
+        sentence
+        for sentence in sentences
+        if sentence
+        and not _UNSAFE_LINK_TEXT.search(sentence)
+        and not _TECHNICAL_METRIC_TEXT.search(sentence)
+    ]
+    return " ".join(retained).strip(), len(retained) != len(sentences)
+
+
+def _remove_unverified_official_claims(text: str) -> tuple[str, bool]:
+    """Drop only sentences that assert official verification without evidence."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    retained = [
+        sentence
+        for sentence in sentences
+        if not (
+            ("tên miền chính thức" in sentence.casefold() or "domain chính thức" in sentence.casefold())
+            and "đã được xác minh" in sentence.casefold()
+        )
+        and not re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", sentence, re.IGNORECASE)
+    ]
+    return " ".join(retained).strip(), len(retained) != len(sentences)
 
 
 def _immediate_steps(scope: SecurityScopeResponseV4) -> list[AssistantImmediateStepV4]:
@@ -188,9 +197,46 @@ def _grounded_plain_reasons(scope: SecurityScopeResponseV4) -> list[AssistantRea
     ][:3]
 
 
+def _has_verified_official_allow_open(scope: SecurityScopeResponseV4) -> bool:
+    """Whether policy requires an affirmative answer about the submitted action."""
+    verification = scope.official_verification
+    return bool(
+        scope.risk is SecurityRiskV4.SAFE
+        and SecurityRecommendedActionV4.ALLOW_OPEN in scope.recommended_actions
+        and verification is not None
+        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+        and verification.resource_verification.status is VerificationStatusV4.VERIFIED
+        and verification.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    )
+
+
 def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     assert scope.risk is not None
+    # This is a response-selection invariant, not merely an explanation
+    # preference. Sender assurance is independent of the verified resource and
+    # action, and must not turn their affirmative conclusion into generic
+    # caution when composition falls back.
+    if _has_verified_official_allow_open(scope):
+        verification = scope.official_verification
+        assert verification is not None
+        summary = (
+            "Liên kết và thủ tục bạn hỏi đã được nguồn chính thức xác nhận. "
+            "Bạn có thể mở liên kết này."
+        )
+        if verification.sender_verification.status is VerificationStatusV4.UNVERIFIED:
+            summary += " Danh tính người gửi chưa được xác minh riêng, nhưng điều đó không thay đổi kết luận về liên kết và thủ tục này."
+        return summary
+
     summary = _RISK_GUIDANCE[scope.risk]
+    # A verified submitted resource is affirmative truth even when the message
+    # sender has not been authenticated. Do not collapse that distinction into
+    # the generic INSUFFICIENT_EVIDENCE caution fallback.
+    if (
+        scope.official_verification is not None
+        and scope.official_verification.resource_verification.status is VerificationStatusV4.VERIFIED
+        and scope.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
+    ):
+        summary = "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này."
     evidence_by_signal = {item.signal: item for item in scope.evidence if item.type.value == "official_verification"}
     ownership = evidence_by_signal.get("official_domain_verified")
     sender = evidence_by_signal.get("sender_identity_unverified")
@@ -211,11 +257,11 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
 
 
 def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
-    """Answer the user in plain language while staying grounded in verified case data."""
+    """Last-resort response when the composer cannot produce a safe answer."""
     return AssistantResponseV4(
         summary=_friendly_summary(scope),
         top_reasons=_grounded_plain_reasons(scope),
-        uncertainties=list(scope.limitations)[:20],
+        uncertainties=_public_uncertainties(scope.limitations),
         immediate_steps=_immediate_steps(scope),
         follow_up_offer=_FOLLOW_UP_OFFER,
         generation_mode=AssistantGenerationModeV4.POLICY_GROUNDED,
@@ -250,6 +296,13 @@ def check_grounded_ai_response(
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.TECHNICAL_METRIC)
     combined = " ".join(texts).casefold()
+    if _has_verified_official_allow_open(scope) and not re.search(
+        r"(?:có thể mở|được xác minh|đã xác nhận)",
+        synthesis.summary.casefold(),
+    ):
+        # A composer may mention an unverified sender, but it cannot omit the
+        # affirmative conclusion that policy has already established.
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
     signals = {item.signal for item in scope.evidence if item.type.value == "official_verification"}
     if (
         ("tên miền chính thức" in combined or "domain chính thức" in combined)
@@ -261,8 +314,6 @@ def check_grounded_ai_response(
         and scope.official_verification.sender_verification.status is not VerificationStatusV4.VERIFIED
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-    if available_refs and not synthesis.top_reasons:
-        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_TOP_REASONS)
     try:
         return SynthesisGroundingCheck(
             AssistantResponseV4(
@@ -271,9 +322,9 @@ def check_grounded_ai_response(
                     AssistantReasonV4(text=reason.text, evidence_refs=reason.evidence_refs)
                     for reason in synthesis.top_reasons
                 ],
-                # Uncertainty and procedural fields remain deterministic even when
-                # prose synthesis succeeds.
-                uncertainties=list(scope.limitations)[:20],
+                # These remain machine-readable metadata.  The composer, not a
+                # frontend template, decides whether and how to mention them.
+                uncertainties=_public_uncertainties(scope.limitations),
                 immediate_steps=_immediate_steps(scope),
                 follow_up_offer=_FOLLOW_UP_OFFER,
                 response_version=SECURITY_ASSISTANT_RESPONSE_VERSION,
@@ -307,11 +358,10 @@ class GroundedSecurityResponseService:
     async def enrich(self, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
         if scope.risk is None or scope.policy_version is None:
             return scope
-        response = policy_grounded_assistant_response(scope)
         if not self._ai_enabled:
-            return scope.model_copy(update={"assistant_response": response})
+            return scope.model_copy(update={"assistant_response": policy_grounded_assistant_response(scope)})
         if self._model is None:
-            return self._with_ai_limitation(scope, response, reason="provider_unconfigured")
+            return scope.model_copy(update={"assistant_response": policy_grounded_assistant_response(scope)})
 
         result = await self._runtime.invoke(
             AssistantOperation.SYNTHESIZE,
@@ -332,58 +382,72 @@ class GroundedSecurityResponseService:
                         "failure_code": reason,
                     },
                 )
-            return self._with_ai_limitation(scope, response, reason=reason)
+            # Do not expose provider, validator, or policy diagnostics to the
+            # user.  The deterministic renderer exists solely for this failure
+            # path; normal answers are always composer-owned prose.
+            logger.warning("security_ai_composer_fallback", extra={"failure_code": reason})
+            return scope.model_copy(update={"assistant_response": policy_grounded_assistant_response(scope)})
+        logger.info(
+            "security_ai_response_trace",
+            extra={
+                "operation": AssistantOperation.SYNTHESIZE.value,
+                "guard_failure": None,
+                "final_response_source": "ai",
+            },
+        )
         return scope.model_copy(update={"assistant_response": grounded})
 
     @staticmethod
-    def _with_ai_limitation(
-        scope: SecurityScopeResponseV4,
-        response: AssistantResponseV4,
-        *,
-        reason: str,
-    ) -> SecurityScopeResponseV4:
-        reason_label = _AI_FAILURE_REASON_LABELS.get(reason, "lỗi AI không xác định")
-        limitation = f"{_AI_SYNTHESIS_LIMITATION} Nguyên nhân: {reason_label} ({reason})."
-        limitations = list(dict.fromkeys([*scope.limitations, limitation]))
-        response = response.model_copy(update={"uncertainties": limitations[:20]})
-        return scope.model_copy(update={"assistant_response": response, "limitations": limitations})
-
-    @staticmethod
     def _synthesis_payload(scope: SecurityScopeResponseV4) -> dict[str, object]:
+        verification = scope.official_verification
         return {
-            "risk": scope.risk.value if scope.risk else None,
-            "score": scope.score,
-            "confidence": scope.confidence,
-            "threat_type": scope.threat_type.value if scope.threat_type else None,
-            "policy_version": scope.policy_version,
-            "recommended_actions": [action.value for action in scope.recommended_actions],
-            "recommended_action_guidance": [_ACTION_GUIDANCE[action] for action in scope.recommended_actions],
-            "explanation": scope.explanation,
+            "contract": "grounded-security-response-context-v1",
+            "verdict": scope.risk.value if scope.risk else None,
+            "allowed_actions": [
+                {"code": action.value, "user_guidance": _ACTION_GUIDANCE[action]}
+                for action in scope.recommended_actions
+            ],
+            # Evidence descriptions are operational records and can contain
+            # review/provenance vocabulary.  The composer receives only the
+            # user-meaningful facts, while evidence refs stay available for its
+            # optional audit citations.
             "evidence": [
                 {
                     "evidence_ref": item.evidence_ref,
-                    "type": item.type.value,
-                    "source": item.source,
                     "signal": item.signal,
-                    "description": item.description,
                 }
                 for item in scope.evidence
+                if item.signal
+                not in {"claimed_identity_unverified", "entity_target_unverified", "entity_url_relation_unresolved"}
             ],
-            "limitations": list(scope.limitations),
-            "official_verification": (
+            "important_uncertainties": _public_uncertainties(scope.limitations),
+            "verification_state": (
                 {
-                    "domain_ownership_verification": scope.official_verification.domain_ownership_verification.model_dump(
-                        mode="json"
-                    ),
-                    "sender_verification": scope.official_verification.sender_verification.model_dump(mode="json"),
-                    "action_endorsement_verification": (
-                        scope.official_verification.action_endorsement_verification.model_dump(mode="json")
-                    ),
+                    "domain_ownership": verification.domain_ownership_verification.status.value,
+                    "sender_identity": verification.sender_verification.status.value,
+                    "requested_action": verification.action_endorsement_verification.status.value,
+                    "unverified_is_not_a_risk_signal_by_itself": True,
                 }
-                if scope.official_verification is not None
+                if verification is not None
                 else None
             ),
+            "presentation_constraints": {
+                "write_one_natural_user_facing_reply": True,
+                "do_not_use_a_fixed_report_structure": True,
+                "may_choose_order_headings_brevity_and_emphasis": True,
+                "do_not_expose_internal_diagnostics": True,
+            },
         }
+
+
+def _public_uncertainties(limitations: list[str]) -> list[str]:
+    """Retain user-relevant uncertainty while never shipping operational diagnostics."""
+    internal_markers = (
+        "provider", "timeout", "deadline", "grounding", "policy", "evidence_ref",
+        "structured output", "semantic", "error", "lỗi ai", "mã", "reviewed identity",
+        "exact-resource", "association", "registry", "domain và tổ chức",
+    )
+    return [item for item in limitations if not any(marker in item.casefold() for marker in internal_markers)][:20]
 
 
 __all__ = [

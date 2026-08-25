@@ -8,9 +8,10 @@ from src.core.auth import Principal, UserRole
 from src.models import (
     AnalysisStatus,
     AppealOutcome,
-    ReportReviewDecision,
     SecurityAppealCreateRequestV4,
     SecurityReportCreateRequestV4,
+    SecurityReportDecisionRequestV4,
+    SecurityReportResolutionV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
 )
@@ -128,8 +129,11 @@ async def test_sqlite_persists_feedback_decisions_conversations_and_unified_audi
     )
     reviewed_report = await service.decide_report(
         report.report_id,
-        ReportReviewDecision.APPROVED,
-        "Reviewed evidence",
+        SecurityReportDecisionRequestV4(
+            decision="approved",
+            resolution=SecurityReportResolutionV4.NO_CHANGE,
+            note="Reviewed evidence",
+        ),
         ADMIN,
     )
     reviewed_appeal = await service.decide_appeal(
@@ -147,5 +151,8 @@ async def test_sqlite_persists_feedback_decisions_conversations_and_unified_audi
 
     assert conversations[0].conversation_id == completed.conversation_id
     assert reports[0] == reviewed_report
+    assert reviewed_report.resolution is SecurityReportResolutionV4.NO_CHANGE
+    assert reviewed_report.remediation_action.value == "none"
+    assert reviewed_report.remediation_status.value == "not_requested"
     assert appeals[0] == reviewed_appeal
     assert {item.resource_type.value for item in audit} == {"appeal", "report"}

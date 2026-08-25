@@ -49,7 +49,7 @@ describe("FE4 security case presentation", () => {
   it("places the primary backend recommendation before risk metrics", () => {
     render(<Presentation />);
 
-    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
 
     const recommendation = screen.getByText("Không mở liên kết");
     const score = screen.getByText("91/100");
@@ -75,26 +75,26 @@ describe("FE4 security case presentation", () => {
   it("keeps all evidence and marks only exact explanation references", () => {
     render(<Presentation />);
 
-    const deck = screen.getByRole("heading", { name: "Recorded observations" }).closest("section");
+    const deck = screen.getByRole("heading", { name: "Các quan sát đã ghi nhận" }).closest("section");
     expect(deck).not.toBeNull();
     const evidenceDeck = within(deck as HTMLElement);
     expect(evidenceDeck.getByText("URL asks for account credentials.")).toBeInTheDocument();
     expect(evidenceDeck.getByText("Claimed brand does not match the observed domain.")).toBeInTheDocument();
-    expect(evidenceDeck.getAllByText("Used in decision")).toHaveLength(1);
-    expect(screen.getByRole("list", { name: "Signal relationships" })).toHaveTextContent("depends_on");
+    expect(evidenceDeck.getAllByText("Được dùng trong kết luận")).toHaveLength(1);
+    expect(screen.getByRole("list", { name: "Quan hệ giữa các tín hiệu" })).toHaveTextContent("phụ thuộc");
   });
 
   it("changes presentation depth without changing the verdict or evidence set", () => {
     render(<Presentation />);
 
     expect(screen.queryByText("ruleset:security-url-v1")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "analyst" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
 
-    expect(screen.getByRole("button", { name: "analyst" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Kỹ thuật" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "Rủi ro cao" })).toBeInTheDocument();
     expect(screen.getByText("ruleset:security-url-v1")).toBeInTheDocument();
     expect(screen.getAllByText("evidence:aaaaaaaaaaaaaaaa").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Depends on:/).some((item) => item.textContent?.includes("step-aaaaaaaaaaaa"))).toBe(true);
+    expect(screen.getAllByText(/Phụ thuộc:/).some((item) => item.textContent?.includes("step-aaaaaaaaaaaa"))).toBe(true);
     expect(screen.queryByText(/PCAP|ASN|geolocation/i)).not.toBeInTheDocument();
   });
 
@@ -124,7 +124,7 @@ describe("FE4 security case presentation", () => {
       official_verification: null,
     });
     render(<DomainIdentitySummary viewModel={mapSecurityCaseViewModel(result)} mode="simple" />);
-    expect(screen.getByText(/Nền tảng đã review: Google Forms/)).toBeInTheDocument();
+    expect(screen.getByText(/Nền tảng đã duyệt: Google Forms/)).toBeInTheDocument();
     expect(screen.getByText("Nền tảng quen thuộc không bảo chứng nội dung.")).toBeInTheDocument();
     expect(screen.getByText("Chưa xác minh tài nguyên cụ thể")).toBeInTheDocument();
   });

@@ -1,5 +1,5 @@
-import { ObservatoryWorkspace } from "@/components/admin/observatory/observatory-workspace";
+import { redirect } from "next/navigation";
 
 export default function ThreatObservatoryPage() {
-  return <ObservatoryWorkspace />;
+  redirect("/admin/trust");
 }

@@ -20,6 +20,7 @@ from src.api.dependencies import (
     SecurityAdminCopilotServiceDependency,
     SecurityAnalysisServiceDependency,
     SecurityAssistantRuntimeDependency,
+    SecurityBlacklistAdminServiceDependency,
     SecurityMemoryServiceDependency,
     SecurityResponseServiceDependency,
     SecurityTriageScopeServiceDependency,
@@ -73,6 +74,16 @@ from src.models import (
     SecurityAppealPageV4,
     SecurityAppealRecordV4,
     SecurityAuditResourceV4,
+    SecurityBlacklistActionProposalV4,
+    SecurityBlacklistActionStatusV4,
+    SecurityBlacklistAuditRecordV4,
+    SecurityBlacklistDecisionRequestV4,
+    SecurityBlacklistDecisionResponseV4,
+    SecurityBlacklistDisableRequestV4,
+    SecurityBlacklistLifecycleV4,
+    SecurityBlacklistPageV4,
+    SecurityBlacklistProposalRequestV4,
+    SecurityBlacklistRecordV4,
     SecurityCampaignAuditRecordV4,
     SecurityCampaignDecisionRequestV4,
     SecurityCampaignPageV4,
@@ -97,6 +108,11 @@ from src.models import (
     SecurityReportDecisionRequestV4,
     SecurityReportPageV4,
     SecurityReportRecordV4,
+    SecurityReportRemediationActionV4,
+    SecurityReportRemediationReferenceV4,
+    SecurityReportRemediationStatusV4,
+    SecurityReportRemediationUpdateV4,
+    SecurityReportResolutionV4,
     SecurityRiskV4,
     SecurityScopeResponseV4,
     SecurityThreatIntelligencePageV4,
@@ -121,6 +137,28 @@ _COMMON_ERRORS = {
     422: {"model": ErrorEnvelope},
     429: {"model": ErrorEnvelope},
 }
+
+
+async def _complete_report_for_admin_action(action_id, status, execution_error, analyses, principal) -> None:
+    report = await analyses.report_for_admin_action(action_id, principal)
+    if report is None or report.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+        return
+    executed = status.value == SecurityBlacklistActionStatusV4.EXECUTED.value
+    await analyses.record_report_remediation(
+        report.report_id,
+        SecurityReportRemediationUpdateV4(
+            status=(
+                SecurityReportRemediationStatusV4.EXECUTED if executed else SecurityReportRemediationStatusV4.FAILED
+            ),
+            # Keep the reviewed-action linkage even when review rejects the
+            # proposal or execution fails. Operators still need to trace the
+            # terminal report remediation back to its immutable action audit.
+            reference=SecurityReportRemediationReferenceV4(admin_action_id=action_id),
+            note=("Reviewed blacklist action executed." if executed else execution_error or "Action rejected."),
+            evidence_refs=[],
+        ),
+        principal,
+    )
 
 
 def _encode_cursor(sequence: int) -> str:
@@ -313,11 +351,14 @@ async def decide_admin_action_v4(
     action_id: UUID,
     request: AdminActionDecisionRequestV3,
     principal: PrincipalDependency,
+    analyses: SecurityAnalysisServiceDependency,
     http_request: Request,
 ) -> AdminActionDecisionResponseV3:
     require_security_admin(principal)
     wave2 = await resolve_wave2_service(http_request)
-    return await wave2.decide_admin_action(action_id, request.decision, request.note, principal.user_id)
+    result = await wave2.decide_admin_action(action_id, request.decision, request.note, principal.user_id)
+    await _complete_report_for_admin_action(action_id, result.status, result.execution_error, analyses, principal)
+    return result
 
 
 @router.get(
@@ -333,6 +374,94 @@ async def list_admin_action_audit_v4(
     require_security_admin(principal)
     wave2 = await resolve_wave2_service(http_request)
     return await wave2.list_admin_action_audit(action_id)
+
+
+@router.get(
+    "/admin/blacklist/page",
+    response_model=SecurityBlacklistPageV4,
+    responses=_COMMON_ERRORS,
+)
+async def list_security_blacklist_admin_v4(
+    blacklist: SecurityBlacklistAdminServiceDependency,
+    principal: PrincipalDependency,
+    q: str | None = Query(default=None, max_length=200),
+    lifecycle: SecurityBlacklistLifecycleV4 | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SecurityBlacklistPageV4:
+    return await blacklist.list_records(principal, q=q, lifecycle=lifecycle, limit=limit, offset=offset)
+
+
+@router.post(
+    "/admin/blacklist/proposals",
+    response_model=SecurityBlacklistActionProposalV4,
+    status_code=201,
+    responses=_COMMON_ERRORS,
+)
+async def propose_security_blacklist_admin_v4(
+    request: SecurityBlacklistProposalRequestV4,
+    blacklist: SecurityBlacklistAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityBlacklistActionProposalV4:
+    return await blacklist.propose_add(request, principal)
+
+
+@router.post(
+    "/admin/blacklist/actions/{action_id}/decision",
+    response_model=SecurityBlacklistDecisionResponseV4,
+    responses=_COMMON_ERRORS,
+)
+async def decide_security_blacklist_action_admin_v4(
+    action_id: UUID,
+    request: SecurityBlacklistDecisionRequestV4,
+    blacklist: SecurityBlacklistAdminServiceDependency,
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityBlacklistDecisionResponseV4:
+    result = await blacklist.decide(action_id, request.decision, request.note, principal)
+    await _complete_report_for_admin_action(action_id, result.status, result.execution_error, analyses, principal)
+    return result
+
+
+@router.get(
+    "/admin/blacklist/{blacklist_id}",
+    response_model=SecurityBlacklistRecordV4,
+    responses=_COMMON_ERRORS,
+)
+async def get_security_blacklist_admin_v4(
+    blacklist_id: UUID,
+    blacklist: SecurityBlacklistAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityBlacklistRecordV4:
+    return await blacklist.get_record(blacklist_id, principal)
+
+
+@router.post(
+    "/admin/blacklist/{blacklist_id}/disable-proposals",
+    response_model=SecurityBlacklistActionProposalV4,
+    status_code=201,
+    responses=_COMMON_ERRORS,
+)
+async def propose_disable_security_blacklist_admin_v4(
+    blacklist_id: UUID,
+    request: SecurityBlacklistDisableRequestV4,
+    blacklist: SecurityBlacklistAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> SecurityBlacklistActionProposalV4:
+    return await blacklist.propose_disable(blacklist_id, request, principal)
+
+
+@router.get(
+    "/admin/blacklist/{blacklist_id}/audit",
+    response_model=list[SecurityBlacklistAuditRecordV4],
+    responses=_COMMON_ERRORS,
+)
+async def list_security_blacklist_audit_admin_v4(
+    blacklist_id: UUID,
+    blacklist: SecurityBlacklistAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> list[SecurityBlacklistAuditRecordV4]:
+    return await blacklist.list_audit(blacklist_id, principal)
 
 
 @router.post("/chat", response_model=SecurityChatResponseV4, responses=_COMMON_ERRORS)
@@ -1000,9 +1129,84 @@ async def decide_security_report_admin_v4(
     report_id: UUID,
     request: SecurityReportDecisionRequestV4,
     analyses: SecurityAnalysisServiceDependency,
+    memory: SecurityMemoryServiceDependency,
+    trust: SecurityTrustAdminServiceDependency,
+    blacklist: SecurityBlacklistAdminServiceDependency,
     principal: PrincipalDependency,
 ) -> SecurityReportAdminRecordV4:
-    return await analyses.decide_report(report_id, request.decision, request.note, principal)
+    record = await analyses.decide_report(report_id, request, principal)
+    if request.remediation_action is SecurityReportRemediationActionV4.NONE:
+        return record
+    try:
+        if request.remediation_action is SecurityReportRemediationActionV4.UPDATE_MEMORY:
+            memory_record = await memory.memory_for_analysis(record.analysis_id, principal)
+            if memory_record is None:
+                raise RuntimeError("SECURITY_MEMORY_NOT_FOUND")
+            verdict = {
+                SecurityReportResolutionV4.CONFIRM_SAFE: SecurityMemoryAdminVerdictV4.SAFE,
+                SecurityReportResolutionV4.MARK_FALSE_POSITIVE: SecurityMemoryAdminVerdictV4.FALSE_POSITIVE,
+                SecurityReportResolutionV4.CONFIRM_MALICIOUS: SecurityMemoryAdminVerdictV4.MALICIOUS,
+            }[request.resolution]
+            updated_memory = await memory.correct_memory(memory_record.memory_id, verdict, request.note, principal)
+            return await analyses.record_report_remediation(
+                report_id,
+                SecurityReportRemediationUpdateV4(
+                    status=SecurityReportRemediationStatusV4.EXECUTED,
+                    reference=SecurityReportRemediationReferenceV4(memory_id=updated_memory.memory_id),
+                    note=request.note,
+                    evidence_refs=request.evidence_refs,
+                ),
+                principal,
+            )
+        if request.remediation_action is SecurityReportRemediationActionV4.ADD_TO_WHITELIST:
+            whitelist_request = request.whitelist_entry
+            if whitelist_request is None:
+                raise RuntimeError("WHITELIST_INPUT_MISSING")
+            provenance = (f"report:{report_id};analysis:{record.analysis_id};{whitelist_request.provenance}")[:1000]
+            whitelist_record = await trust.create_whitelist(
+                whitelist_request.model_copy(update={"provenance": provenance}), principal
+            )
+            return await analyses.record_report_remediation(
+                report_id,
+                SecurityReportRemediationUpdateV4(
+                    status=SecurityReportRemediationStatusV4.EXECUTED,
+                    reference=SecurityReportRemediationReferenceV4(whitelist_id=whitelist_record.whitelist_id),
+                    note=request.note,
+                    evidence_refs=request.evidence_refs,
+                ),
+                principal,
+            )
+        proposal_input = request.blacklist_proposal
+        if proposal_input is None:
+            raise RuntimeError("BLACKLIST_PROPOSAL_INPUT_MISSING")
+        proposal = await blacklist.propose_add(
+            SecurityBlacklistProposalRequestV4(
+                canonical_domain=proposal_input.canonical_domain,
+                reason=proposal_input.reason,
+                evidence_refs=proposal_input.evidence_refs,
+                provenance=proposal_input.provenance,
+                source_analysis_id=record.analysis_id,
+                source_report_id=report_id,
+            ),
+            principal,
+        )
+        return await analyses.link_report_remediation(
+            report_id,
+            SecurityReportRemediationReferenceV4(admin_action_id=proposal.action_id),
+            request.note,
+            request.audit_evidence_refs(),
+            principal,
+        )
+    except Exception as exc:
+        return await analyses.record_report_remediation(
+            report_id,
+            SecurityReportRemediationUpdateV4(
+                status=SecurityReportRemediationStatusV4.FAILED,
+                note=f"Remediation failed: {type(exc).__name__}",
+                evidence_refs=request.audit_evidence_refs(),
+            ),
+            principal,
+        )
 
 
 @router.get("/admin/appeals", response_model=SecurityAppealPageV4, responses=_COMMON_ERRORS)

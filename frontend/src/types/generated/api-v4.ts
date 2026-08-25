@@ -41,7 +41,8 @@ export type RequestedActionV4 =
   | "scan_qr"
   | "submit_form"
   | "register_or_apply"
-  | "download_file";
+  | "download_file"
+  | "apply_for_passport";
 
 export type VerificationTopicV4 =
   | "recruitment" | "promotion" | "event" | "course" | "survey"
@@ -55,7 +56,7 @@ export type OfficialIdentityTypeV4 =
 export type OfficialIdentityMatchScopeV4 = "exact" | "host_and_subdomains" | "bounded_phrase";
 export type IdentityRelationshipV4 = "official_controlled" | "parent_organization" | "endorsed_third_party_service";
 export type IdentityAssociationAssuranceV4 = "discovered" | "verified" | "conflicting" | "promoted" | "rejected" | "confirmed_mismatch";
-export type IdentityEvidenceFamilyV4 = "entity_self_identification" | "independent_entity_link" | "parent_declaration" | "candidate_corroboration" | "exact_resource_endorsement" | "target_resource_match" | "explicit_ownership_conflict";
+export type IdentityEvidenceFamilyV4 = "entity_self_identification" | "independent_entity_link" | "parent_declaration" | "candidate_corroboration" | "exact_resource_endorsement" | "target_resource_match" | "explicit_ownership_conflict" | "action_endorsement";
 export type ResourceTypeV4 = "url" | "google_form" | "microsoft_form" | "file" | "other";
 export type ResourceMatchStatusV4 = "EXACT_RESOURCE" | "EXACT_CANONICAL_URL" | "DIFFERENT_RESOURCE" | "UNRESOLVED";
 
@@ -80,6 +81,7 @@ export type SecurityRecommendedActionV4 =
   | "CONTACT_BANK_IF_ALREADY_PAID"
   | "REPORT_AND_BLOCK_SENDER"
   | "PROCEED_WITH_CAUTION"
+  | "ALLOW_OPEN"
   | "CLOSE_PAGE_AND_DO_NOT_RETURN"
   | "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE"
   | "REVOKE_ACTIVE_SESSIONS"
@@ -125,11 +127,18 @@ export type SecurityEvidenceTypeV4 =
 
 export type TrustLifecycleV4 = "active" | "disabled";
 export type WhitelistScopeV4 = "domain" | "url" | "contact";
+export type SecurityBlacklistLifecycleV4 = "active" | "disabled";
+export type SecurityBlacklistActionV4 = "add_to_blacklist" | "disable_blacklist";
+export type SecurityBlacklistActionStatusV4 = "pending_review" | "rejected" | "executed" | "failed";
+export type SecurityBlacklistReviewDecisionV4 = "approved" | "rejected";
 export type SecurityReportStatusV4 = "submitted" | "reviewing" | "processed";
 export type SecurityReportReviewDecisionV4 = "approved" | "rejected" | "dismissed";
+export type SecurityReportResolutionV4 = "confirm_safe" | "mark_false_positive" | "confirm_malicious" | "needs_more_information" | "no_change";
+export type SecurityReportRemediationActionV4 = "none" | "update_memory" | "add_to_whitelist" | "propose_blacklist";
+export type SecurityReportRemediationStatusV4 = "not_requested" | "pending" | "executed" | "failed";
 export type SecurityAppealStatusV4 = "submitted" | "under_review" | "resolved";
 export type SecurityAppealOutcomeV4 = "uphold" | "overturn" | "inconclusive";
-export type SecurityAuditResourceV4 = "brand" | "whitelist" | "memory" | "campaign" | "report" | "appeal" | "copilot" | "identity_candidate";
+export type SecurityAuditResourceV4 = "brand" | "whitelist" | "memory" | "campaign" | "report" | "appeal" | "copilot" | "identity_candidate" | "blacklist";
 export type SecurityAdminCopilotDispositionV4 = "confirm_malicious" | "confirm_safe" | "mark_false_positive" | "needs_more_information" | "no_change";
 export type SecurityAdminCopilotActionV4 = "add_to_blacklist" | "block_domain" | "publish_broad_warning" | "none";
 
@@ -303,7 +312,7 @@ export interface OfficialLinkVerificationReportV4 {
   limitations: string[];
   identity_associations?: IdentityAssociationV4[];
   identity_evidence?: IdentityEvidenceObservationV4[];
-  policy_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3";
+  policy_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3" | "official-link-verification-v4";
 }
 
 export interface IdentityEvidenceObservationV4 {
@@ -381,6 +390,78 @@ export interface WhitelistRecordV4 {
 }
 
 export type WhitelistPageV4 = SecurityPageV4<WhitelistRecordV4>;
+
+export interface SecurityBlacklistProposalRequestV4 {
+  canonical_domain: string;
+  reason: string;
+  evidence_refs: string[];
+  provenance: string;
+  source_analysis_id?: string | null;
+  source_report_id?: string | null;
+}
+
+export interface SecurityBlacklistDisableRequestV4 {
+  reason: string;
+  evidence_refs: string[];
+  provenance: string;
+}
+
+export interface SecurityBlacklistRecordV4 {
+  contract_version: "v4";
+  blacklist_id: string;
+  canonical_domain: string;
+  lifecycle: SecurityBlacklistLifecycleV4;
+  enabling_action_id: string | null;
+  disabling_action_id: string | null;
+  reason: string;
+  provenance: string;
+  evidence_refs: string[];
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export type SecurityBlacklistPageV4 = SecurityPageV4<SecurityBlacklistRecordV4>;
+
+export interface SecurityBlacklistActionProposalV4 {
+  contract_version: "v4";
+  action_id: string;
+  action: SecurityBlacklistActionV4;
+  canonical_domain: string;
+  status: SecurityBlacklistActionStatusV4;
+  source_analysis_id: string | null;
+  source_report_id: string | null;
+  proposed_at: string;
+}
+
+export interface SecurityBlacklistDecisionRequestV4 {
+  decision: SecurityBlacklistReviewDecisionV4;
+  note: string;
+}
+
+export interface SecurityBlacklistDecisionResponseV4 {
+  contract_version: "v4";
+  action_id: string;
+  action: SecurityBlacklistActionV4;
+  status: SecurityBlacklistActionStatusV4;
+  record: SecurityBlacklistRecordV4 | null;
+  reviewed_at: string;
+  executed_at: string | null;
+  execution_error: string | null;
+}
+
+export interface SecurityBlacklistAuditRecordV4 {
+  contract_version: "v4";
+  decision_id: string;
+  action_id: string;
+  decision: SecurityBlacklistReviewDecisionV4;
+  action: SecurityBlacklistActionV4;
+  status: SecurityBlacklistActionStatusV4;
+  note: string;
+  evidence_refs: string[];
+  decided_at: string;
+  execution_error: string | null;
+}
 
 export interface SecurityTriageCreateRequestV4 {
   message: string;
@@ -599,6 +680,29 @@ export interface SecurityReportCreateRequestV4 {
   comment?: string | null;
 }
 
+export interface SecurityReportBlacklistProposalV4 {
+  canonical_domain: string;
+  reason: string;
+  evidence_refs: string[];
+  provenance: string;
+}
+
+export interface SecurityReportRemediationReferenceV4 {
+  whitelist_id?: string | null;
+  memory_id?: string | null;
+  admin_action_id?: string | null;
+}
+
+export interface SecurityReportAuditDetailsV4 {
+  decision: SecurityReportReviewDecisionV4;
+  resolution?: SecurityReportResolutionV4 | null;
+  remediation_action: SecurityReportRemediationActionV4;
+  remediation_status: SecurityReportRemediationStatusV4;
+  remediation_reference?: SecurityReportRemediationReferenceV4 | null;
+  whitelist_entry?: WhitelistCreateRequestV4 | null;
+  blacklist_proposal?: SecurityReportBlacklistProposalV4 | null;
+}
+
 export interface SecurityReportRecordV4 {
   contract_version: "v4";
   report_id: string;
@@ -607,6 +711,12 @@ export interface SecurityReportRecordV4 {
   comment: string | null;
   status: SecurityReportStatusV4;
   decision: SecurityReportReviewDecisionV4 | null;
+  resolution: SecurityReportResolutionV4 | null;
+  remediation_action: SecurityReportRemediationActionV4;
+  whitelist_entry: WhitelistCreateRequestV4 | null;
+  blacklist_proposal: SecurityReportBlacklistProposalV4 | null;
+  remediation_status: SecurityReportRemediationStatusV4;
+  remediation_reference: SecurityReportRemediationReferenceV4 | null;
   reviewer_id: string | null;
   review_note: string | null;
   created_at: string;
@@ -615,6 +725,11 @@ export interface SecurityReportRecordV4 {
 
 export interface SecurityReportDecisionRequestV4 {
   decision: SecurityReportReviewDecisionV4;
+  resolution?: SecurityReportResolutionV4 | null;
+  remediation_action?: SecurityReportRemediationActionV4;
+  whitelist_entry?: WhitelistCreateRequestV4 | null;
+  blacklist_proposal?: SecurityReportBlacklistProposalV4 | null;
+  evidence_refs?: string[];
   note: string;
 }
 
@@ -775,6 +890,7 @@ export interface SecurityAdminAuditEventV4 {
   note: string | null;
   occurred_at: string;
   evidence_refs: string[];
+  report_details?: SecurityReportAuditDetailsV4 | null;
 }
 
 export type SecurityAdminAuditPageV4 = SecurityPageV4<SecurityAdminAuditEventV4>;

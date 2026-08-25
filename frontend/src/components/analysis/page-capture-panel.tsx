@@ -19,7 +19,7 @@ function captureErrorMessage(error: unknown): string {
     return "Trang web phản hồi quá chậm nên chưa thể tạo ảnh xem trước.";
   }
   if (message.includes("downloadable") || message.includes("download")) {
-    return "Liên kết này dẫn tới tệp tải xuống nên TrustGuard không mở để chụp ảnh.";
+    return "Liên kết này dẫn tới tệp tải xuống nên AI PROTECT không mở để chụp ảnh.";
   }
   return "Không thể tạo ảnh xem trước. Trang web có thể đang chặn truy cập tự động.";
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -20,7 +21,18 @@ from src.models import (
     VerificationIntentV4,
     VerificationTopicV4,
 )
-from src.security_ai.contracts import ModelResponse, Understanding, UnderstandingSourceSpan
+from src.security_ai.contracts import (
+    ModelResponse,
+    SemanticActionKind,
+    SemanticActionMention,
+    SemanticDirection,
+    SemanticInteractionType,
+    SemanticModality,
+    SemanticParticipant,
+    SemanticStance,
+    Understanding,
+    UnderstandingSourceSpan,
+)
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.official_verification_intent import (
     DerivedOrganizationName,
@@ -219,7 +231,7 @@ def test_bare_url_has_no_grounded_official_verification_intent() -> None:
     message = "https://example.test/application"
     context = extract_security_context(message)
 
-    assert context.requested_action is RequestedActionV4.OPEN_LINK
+    assert context.requested_action is None
     assert build_grounded_verification_intent(message, context) is None
 
 
@@ -384,13 +396,29 @@ async def test_grounded_semantic_output_can_add_a_new_action_without_a_network_t
 
     class _SemanticActionModel:
         async def understand(self, received_message, conversation_summary):
-            del conversation_summary
             assert received_message == message
+            span_id = next(
+                item["id"]
+                for item in json.loads(conversation_summary)["span_candidates"]
+                if "hoàn tất thủ tục" in item["text"]
+            )
             return ModelResponse(
                 output=Understanding(
                     scope_decision=ScopeDecisionV4.IN_SCOPE,
-                    requested_action=RequestedActionV4.REGISTER_OR_APPLY,
-                    field_confidences={"scope_decision": 0.9, "requested_action": 0.9},
+                    action_mentions=[
+                        SemanticActionMention(
+                            action_kind=SemanticActionKind.REGISTER_OR_APPLY,
+                            actor=SemanticParticipant.SENDER,
+                            recipient=SemanticParticipant.USER,
+                            direction=SemanticDirection.TO_USER,
+                            modality=SemanticModality.REQUESTED,
+                            stance=SemanticStance.ASSERTED,
+                            interaction_type=SemanticInteractionType.ROUTINE_WORKFLOW,
+                            span_ids=[span_id],
+                            confidence=0.95,
+                        )
+                    ],
+                    field_confidences={"scope_decision": 0.9},
                     source_spans=[
                         UnderstandingSourceSpan(field_name="scope_decision", start=0, end=len(message)),
                         UnderstandingSourceSpan(

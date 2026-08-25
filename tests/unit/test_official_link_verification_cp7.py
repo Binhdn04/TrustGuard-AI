@@ -18,15 +18,18 @@ from src.models import (
     IdentityRelationshipV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
+    RequestedActionV4,
     ResourceMatchStatusV4,
     ScopeDecisionV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
+    SecurityRecommendedActionV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
 )
+from src.security_ai.contracts import AssistantSynthesis
 from src.security_ai.runtime import SecurityAssistantRuntime, TurnExecutionContext
 from src.services.official_verification_coordinator import (
     ComparisonDimension,
@@ -50,7 +53,11 @@ from src.services.official_verification_transport import (
 )
 from src.services.platform_wave2 import SourceRegistryEntry, SourceTier, VersionedSourceRegistry
 from src.services.security_pipeline import SecurityTriagePipeline
-from src.services.security_response import policy_grounded_assistant_response
+from src.services.security_response import (
+    SynthesisGroundingFailure,
+    check_grounded_ai_response,
+    policy_grounded_assistant_response,
+)
 from src.services.security_triage import SecurityTriageScopeService
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -251,7 +258,7 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
     completed = assess_security_risk(staged, official_verification_enforced=True)
     response = policy_grounded_assistant_response(completed)
     assert completed.risk.value == "INSUFFICIENT_EVIDENCE"
-    assert completed.policy_version == "security-risk-v6"
+    assert completed.policy_version == "security-risk-v7"
     assert {
         item.signal for item in completed.evidence if item.type is SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION
     } == {
@@ -1090,3 +1097,65 @@ async def test_bare_url_keeps_official_report_none() -> None:
 
     assert outcome.report is None
     assert outcome.adapter_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_passport_resource_verification_is_safe_without_authenticating_sender() -> None:
+    target = "https://dichvucong.bocongan.gov.vn/?home=1"
+    authority = "https://authority.example/government-directory"
+    message = f"Cán bộ phường hướng dẫn tôi vào\n{target} để làm hộ chiếu"
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    coordinator = _coordinator(
+        repository=_BrandRepository([]),
+        search=_SearchProvider([_hit(target), _hit(authority)]),
+        fetcher=_HtmlFetcher(
+            {
+                target: (
+                    "<html><body>dichvucong.bocongan.gov.vn — Cổng dịch vụ công hướng dẫn làm hộ chiếu.</body></html>"
+                ),
+                authority: (f"<html><body>Danh bạ dịch vụ công chính thức: {target} làm hộ chiếu.</body></html>"),
+            }
+        ),
+    )
+
+    outcome = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
+    assert outcome.report is not None
+    report = outcome.report
+    assert scope.scope_decision is ScopeDecisionV4.IN_SCOPE
+    assert scope.security_context is not None
+    assert scope.security_context.requested_action is RequestedActionV4.APPLY_FOR_PASSPORT
+    assert report.publisher_verification.status is VerificationStatusV4.VERIFIED
+    assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+
+    completed = assess_security_risk(
+        apply_official_verification_outcome(scope, outcome),
+        official_verification_enforced=True,
+    )
+    assert completed.risk.value == "SAFE"
+    assert completed.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+
+    # The simple conversation UI renders assistant_response.summary verbatim.
+    # Assert the user-visible response, not only the underlying truth fields.
+    rendered_response = policy_grounded_assistant_response(completed).summary
+    assert "Bạn có thể mở liên kết này." in rendered_response
+    assert "chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm" not in rendered_response
+    assert "người gửi chưa được xác minh" in rendered_response.casefold()
+
+    rejected = check_grounded_ai_response(
+        completed,
+        AssistantSynthesis(
+            summary=(
+                "Mình chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm. "
+                "Trong lúc chưa rõ, bạn nên coi đây là tình huống cần thận trọng."
+            )
+        ),
+    )
+    assert rejected.response is None
+    assert rejected.failure is SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION

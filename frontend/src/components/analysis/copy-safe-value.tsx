@@ -18,7 +18,7 @@ export function CopySafeValue({ value, label = "URL" }: { value: string; label?:
       <button
         type="button"
         onClick={() => void copy()}
-        aria-label={`Copy ${label}`}
+        aria-label={`Sao chép ${label}`}
         className="grid size-7 shrink-0 place-items-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground"
       >
         {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}

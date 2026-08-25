@@ -26,10 +26,10 @@ describe("IdentityCandidateQueue", () => {
     render(<IdentityCandidateQueue page={{ contract_version: "v4", items: [candidate], total: 1, limit: 10, offset: 0 }} query={{ entity: "", status: "all", relationship: "all", page: 1 }} loading={false} busy={false} error={null} onQueryChange={vi.fn()} onDecide={onDecide} onRetry={vi.fn()} />);
 
     expect(screen.getByText(/exact_resource_endorsement/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "approve" }));
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Reviewer note"), { target: { value: "Reviewed both independent evidence families." } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt" }));
+    expect(screen.getByRole("button", { name: "Xác nhận" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Ghi chú của người duyệt"), { target: { value: "Reviewed both independent evidence families." } });
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận" }));
     await waitFor(() => expect(onDecide).toHaveBeenCalledWith(candidate, expect.objectContaining({ action: "approve", relationship: "endorsed_third_party_service", identity_type: "website" })));
   });
 });

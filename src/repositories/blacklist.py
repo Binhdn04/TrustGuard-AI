@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 from src.agents.tools.domains import DEFAULT_PUBLIC_SUFFIX_LIST
 from src.core.errors import PlatformError
 from src.models import (
+    AdminActionAuditRecordV3,
+    AdminActionRecordV3,
     AdminDecisionAudit,
     AnalysisCreateRequest,
     AnalysisCreateRequestV3,
@@ -47,7 +49,13 @@ from src.models import (
     SecurityMemoryAuditRecordV4,
     SecurityMemoryRecordV4,
     SecurityReportAdminRecordV4,
+    SecurityReportAuditDetailsV4,
+    SecurityReportDecisionRequestV4,
     SecurityReportRecordV4,
+    SecurityReportRemediationActionV4,
+    SecurityReportRemediationReferenceV4,
+    SecurityReportRemediationStatusV4,
+    SecurityReportRemediationUpdateV4,
     SecurityScopeResponseV4,
     ToolError,
     TrustLifecycleV4,
@@ -245,7 +253,8 @@ class SQLiteBlacklistRepository:
             CREATE TABLE IF NOT EXISTS security_feedback_audit_v4 (
                 audit_id TEXT PRIMARY KEY, resource_type TEXT NOT NULL,
                 resource_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT NOT NULL,
-                note TEXT, evidence_refs_json TEXT NOT NULL, occurred_at TEXT NOT NULL
+                note TEXT, evidence_refs_json TEXT NOT NULL, details_json TEXT NOT NULL DEFAULT '{}',
+                occurred_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS ix_security_feedback_audit_time
                 ON security_feedback_audit_v4(occurred_at DESC);
@@ -329,6 +338,10 @@ class SQLiteBlacklistRepository:
             self._apply_review_queue_migration()
         if 4 not in applied:
             self._apply_retired_security_tool_migration()
+        if 5 not in applied:
+            self._apply_security_report_audit_details_migration()
+        if 6 not in applied:
+            self._apply_security_blacklist_v4_migration()
 
     def _apply_v2_migration(self) -> None:
         statements = (
@@ -433,6 +446,137 @@ class SQLiteBlacklistRepository:
         except Exception:
             self._connection.rollback()
             raise
+
+    def _apply_security_report_audit_details_migration(self) -> None:
+        """Add structured report audit metadata without rewriting immutable events."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = {
+                row[1] for row in self._connection.execute("PRAGMA table_info(security_feedback_audit_v4)").fetchall()
+            }
+            if "details_json" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE security_feedback_audit_v4 ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'"
+                )
+            self._connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (5, ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _apply_security_blacklist_v4_migration(self) -> None:
+        """Persist local reviewed actions and allow disabling blacklist entries."""
+        try:
+            self._connection.execute("PRAGMA foreign_keys = OFF")
+            self._connection.execute("BEGIN IMMEDIATE")
+            table_sql = self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='admin_decisions'"
+            ).fetchone()[0]
+            if "disable_blacklist" not in table_sql:
+                self._connection.execute(
+                    """CREATE TABLE admin_decisions_v6 (
+                        decision_id TEXT PRIMARY KEY, analysis_id TEXT,
+                        reviewer_id TEXT NOT NULL,
+                        decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+                        action TEXT NOT NULL CHECK (
+                          action IN ('add_to_blacklist', 'disable_blacklist', 'none')
+                        ),
+                        note TEXT NOT NULL, decided_at TEXT NOT NULL
+                    )"""
+                )
+                self._connection.execute(
+                    """INSERT INTO admin_decisions_v6(
+                           decision_id,analysis_id,reviewer_id,decision,action,note,decided_at
+                       ) SELECT decision_id,analysis_id,reviewer_id,decision,action,note,decided_at
+                         FROM admin_decisions"""
+                )
+                self._connection.execute("DROP TABLE admin_decisions")
+                self._connection.execute("ALTER TABLE admin_decisions_v6 RENAME TO admin_decisions")
+            self._connection.execute(
+                """CREATE TABLE IF NOT EXISTS security_blacklist_actions_v4 (
+                    action_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+                    record_json TEXT NOT NULL, proposed_at TEXT NOT NULL
+                )"""
+            )
+            self._connection.execute(
+                """CREATE TABLE IF NOT EXISTS security_blacklist_action_audit_v4 (
+                    decision_id TEXT PRIMARY KEY, action_id TEXT NOT NULL,
+                    record_json TEXT NOT NULL, decided_at TEXT NOT NULL,
+                    FOREIGN KEY(action_id) REFERENCES security_blacklist_actions_v4(action_id)
+                )"""
+            )
+            self._connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (6, ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+        finally:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+
+    async def save_security_admin_action(self, record: AdminActionRecordV3) -> None:
+        async with self._lock:
+            self._connection.execute(
+                """INSERT INTO security_blacklist_actions_v4(
+                       action_id,status,record_json,proposed_at
+                   ) VALUES(?,?,?,?)
+                   ON CONFLICT(action_id) DO UPDATE SET
+                     status=excluded.status,record_json=excluded.record_json""",
+                (
+                    str(record.action_id),
+                    record.status.value,
+                    record.model_dump_json(),
+                    record.proposed_at.isoformat(),
+                ),
+            )
+            self._connection.commit()
+
+    async def list_security_admin_actions(self) -> list[AdminActionRecordV3]:
+        async with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM security_blacklist_actions_v4 ORDER BY proposed_at DESC"
+            ).fetchall()
+        return [AdminActionRecordV3.model_validate_json(row[0]) for row in rows]
+
+    async def save_security_admin_action_audit(self, record: AdminActionAuditRecordV3) -> None:
+        async with self._lock:
+            self._connection.execute(
+                """INSERT OR REPLACE INTO security_blacklist_action_audit_v4(
+                       decision_id,action_id,record_json,decided_at
+                   ) VALUES(?,?,?,?)""",
+                (
+                    str(record.decision_id),
+                    str(record.action_id),
+                    record.model_dump_json(),
+                    record.decided_at.isoformat(),
+                ),
+            )
+            self._insert_security_feedback_audit(
+                SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.BLACKLIST,
+                    resource_id=record.action_id,
+                    action=f"blacklist_{record.action.value}_{record.execution_status.value}",
+                    actor_id=record.reviewer_id,
+                    note=record.note,
+                    occurred_at=record.decided_at,
+                    evidence_refs=[item.title for item in record.evidence_snapshot],
+                )
+            )
+            self._connection.commit()
+
+    async def list_security_admin_action_audit(self, action_id: UUID) -> list[AdminActionAuditRecordV3]:
+        async with self._lock:
+            rows = self._connection.execute(
+                """SELECT record_json FROM security_blacklist_action_audit_v4
+                   WHERE action_id=? ORDER BY decided_at""",
+                (str(action_id),),
+            ).fetchall()
+        return [AdminActionAuditRecordV3.model_validate_json(row[0]) for row in rows]
 
     def _quarantine_analysis_migration(self, analysis_id: str, created_at: str, exc: Exception) -> None:
         try:
@@ -1206,8 +1350,7 @@ class SQLiteBlacklistRepository:
     async def decide_security_report(
         self,
         report_id: UUID,
-        decision: ReportReviewDecision,
-        note: str,
+        request: SecurityReportDecisionRequestV4,
         reviewer_id: str,
         occurred_at: datetime,
     ) -> SecurityReportAdminRecordV4 | None:
@@ -1229,26 +1372,142 @@ class SQLiteBlacklistRepository:
                         retryable=False,
                     )
                 current = SecurityReportRecordV4.model_validate_json(row[2])
-                updated = current.model_copy(
-                    update={
+                updated = SecurityReportRecordV4.model_validate(
+                    {
+                        **current.model_dump(),
                         "status": ReportStatus.PROCESSED,
-                        "decision": decision,
+                        "decision": request.decision,
+                        "resolution": request.resolution,
+                        "remediation_action": request.remediation_action,
+                        "whitelist_entry": request.whitelist_entry,
+                        "blacklist_proposal": request.blacklist_proposal,
+                        "remediation_status": (
+                            SecurityReportRemediationStatusV4.NOT_REQUESTED
+                            if request.remediation_action is SecurityReportRemediationActionV4.NONE
+                            else SecurityReportRemediationStatusV4.PENDING
+                        ),
                         "reviewer_id": reviewer_id,
-                        "review_note": note,
+                        "review_note": request.note,
                         "reviewed_at": occurred_at,
                     }
                 )
                 audit = SecurityAdminAuditEventV4(
                     resource_type=SecurityAuditResourceV4.REPORT,
                     resource_id=report_id,
-                    action=f"report_{decision.value}",
+                    action=f"report_{request.decision.value}",
                     actor_id=reviewer_id,
-                    note=note,
+                    note=request.note,
                     occurred_at=occurred_at,
+                    evidence_refs=request.audit_evidence_refs(),
+                    report_details=SecurityReportAuditDetailsV4.from_record(updated),
                 )
                 self._connection.execute(
                     "UPDATE security_analysis_reports_v4 SET status=?,record_json=? WHERE report_id=?",
                     (updated.status.value, updated.model_dump_json(), str(report_id)),
+                )
+                self._insert_security_feedback_audit(audit)
+                self._connection.commit()
+                return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=row[0])
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def complete_security_report_remediation(
+        self,
+        report_id: UUID,
+        request: SecurityReportRemediationUpdateV4,
+        actor_id: str,
+        occurred_at: datetime,
+    ) -> SecurityReportAdminRecordV4 | None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT owner_id,record_json FROM security_analysis_reports_v4 WHERE report_id=?",
+                    (str(report_id),),
+                ).fetchone()
+                if row is None:
+                    self._connection.rollback()
+                    return None
+                current = SecurityReportRecordV4.model_validate_json(row[1])
+                if current.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+                    raise PlatformError(
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Security report remediation is not pending.",
+                        retryable=False,
+                    )
+                updated = SecurityReportRecordV4.model_validate(
+                    {
+                        **current.model_dump(),
+                        "remediation_status": request.status,
+                        "remediation_reference": request.reference,
+                    }
+                )
+                audit = SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.REPORT,
+                    resource_id=report_id,
+                    action=f"report_remediation_{request.status.value}",
+                    actor_id=actor_id,
+                    note=request.note,
+                    occurred_at=occurred_at,
+                    evidence_refs=request.evidence_refs,
+                    report_details=SecurityReportAuditDetailsV4.from_record(updated),
+                )
+                self._connection.execute(
+                    "UPDATE security_analysis_reports_v4 SET record_json=? WHERE report_id=?",
+                    (updated.model_dump_json(), str(report_id)),
+                )
+                self._insert_security_feedback_audit(audit)
+                self._connection.commit()
+                return SecurityReportAdminRecordV4(**updated.model_dump(), owner_id=row[0])
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    async def link_security_report_remediation(
+        self,
+        report_id: UUID,
+        reference: SecurityReportRemediationReferenceV4,
+        note: str,
+        evidence_refs: list[str],
+        actor_id: str,
+        occurred_at: datetime,
+    ) -> SecurityReportAdminRecordV4 | None:
+        async with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT owner_id,record_json FROM security_analysis_reports_v4 WHERE report_id=?",
+                    (str(report_id),),
+                ).fetchone()
+                if row is None:
+                    self._connection.rollback()
+                    return None
+                current = SecurityReportRecordV4.model_validate_json(row[1])
+                if current.remediation_status is not SecurityReportRemediationStatusV4.PENDING:
+                    raise PlatformError(
+                        status_code=409,
+                        code=ErrorCode.CONFLICT,
+                        message="Security report remediation is not pending.",
+                        retryable=False,
+                    )
+                updated = SecurityReportRecordV4.model_validate(
+                    {**current.model_dump(), "remediation_reference": reference}
+                )
+                audit = SecurityAdminAuditEventV4(
+                    resource_type=SecurityAuditResourceV4.REPORT,
+                    resource_id=report_id,
+                    action="report_remediation_proposed",
+                    actor_id=actor_id,
+                    note=note,
+                    occurred_at=occurred_at,
+                    evidence_refs=evidence_refs,
+                    report_details=SecurityReportAuditDetailsV4.from_record(updated),
+                )
+                self._connection.execute(
+                    "UPDATE security_analysis_reports_v4 SET record_json=? WHERE report_id=?",
+                    (updated.model_dump_json(), str(report_id)),
                 )
                 self._insert_security_feedback_audit(audit)
                 self._connection.commit()
@@ -1356,8 +1615,9 @@ class SQLiteBlacklistRepository:
     def _insert_security_feedback_audit(self, audit: SecurityAdminAuditEventV4) -> None:
         self._connection.execute(
             """INSERT INTO security_feedback_audit_v4(
-                   audit_id,resource_type,resource_id,action,actor_id,note,evidence_refs_json,occurred_at
-               ) VALUES(?,?,?,?,?,?,?,?)""",
+                   audit_id,resource_type,resource_id,action,actor_id,note,evidence_refs_json,
+                   details_json,occurred_at
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
             (
                 str(audit.audit_id),
                 audit.resource_type.value,
@@ -1366,6 +1626,7 @@ class SQLiteBlacklistRepository:
                 audit.actor_id,
                 audit.note,
                 json.dumps(audit.evidence_refs),
+                audit.report_details.model_dump_json() if audit.report_details is not None else "{}",
                 audit.occurred_at.isoformat(),
             ),
         )
@@ -1427,10 +1688,10 @@ class SQLiteBlacklistRepository:
         async with self._lock:
             feedback = self._connection.execute(
                 """SELECT audit_id,resource_type,resource_id,action,actor_id,note,
-                          evidence_refs_json,occurred_at FROM security_feedback_audit_v4"""
+                          evidence_refs_json,occurred_at,details_json FROM security_feedback_audit_v4"""
             ).fetchall()
             trust = self._connection.execute(
-                """SELECT audit_id,resource_type,resource_id,action,reviewer_id,NULL,'[]',occurred_at
+                """SELECT audit_id,resource_type,resource_id,action,reviewer_id,NULL,'[]',occurred_at,'{}'
                    FROM security_trust_audit"""
             ).fetchall()
             memory = self._connection.execute("SELECT record_json FROM security_memory_audit").fetchall()
@@ -1445,6 +1706,9 @@ class SQLiteBlacklistRepository:
                 note=row[5],
                 evidence_refs=json.loads(row[6]),
                 occurred_at=datetime.fromisoformat(row[7]).astimezone(UTC),
+                report_details=(
+                    SecurityReportAuditDetailsV4.model_validate_json(row[8]) if json.loads(row[8]) else None
+                ),
             )
             for row in [*feedback, *trust]
         ]
@@ -1535,12 +1799,16 @@ class SQLiteBlacklistRepository:
         values = (decision_id.strip(), reviewer_id.strip(), decision, action, note.strip())
         if not all(values):
             raise ValueError("all decision audit fields are required")
-        if decision not in {"approved", "rejected"} or action not in {"add_to_blacklist", "none"}:
+        if decision not in {"approved", "rejected"} or action not in {
+            "add_to_blacklist",
+            "disable_blacklist",
+            "none",
+        }:
             raise ValueError("invalid decision or action")
-        if action == "add_to_blacklist" and decision != "approved":
+        if action in {"add_to_blacklist", "disable_blacklist"} and decision != "approved":
             raise ValueError("blacklist action requires an approved decision")
-        if action != "add_to_blacklist" and normalized_domains:
-            raise ValueError("blacklist domains require add_to_blacklist action")
+        if action not in {"add_to_blacklist", "disable_blacklist"} and normalized_domains:
+            raise ValueError("blacklist domains require a blacklist action")
         now = datetime.now(UTC).isoformat()
         async with self._lock:
             try:
@@ -1554,13 +1822,30 @@ class SQLiteBlacklistRepository:
                     (values[0], analysis_id, *values[1:], now),
                 )
                 for domain in normalized_domains:
-                    self._connection.execute(
-                        """
-                        INSERT INTO blacklist(domain, decision_id, added_at) VALUES (?, ?, ?)
-                        ON CONFLICT(domain) DO NOTHING
-                        """,
-                        (domain, values[0], now),
-                    )
+                    if action == "add_to_blacklist":
+                        active = self._connection.execute(
+                            "SELECT active FROM blacklist WHERE domain=?", (domain,)
+                        ).fetchone()
+                        if active is not None and bool(active[0]):
+                            raise ValueError("BLACKLIST_TARGET_ALREADY_ACTIVE")
+                        self._connection.execute(
+                            """
+                            INSERT INTO blacklist(domain, decision_id, added_at, active)
+                            VALUES (?, ?, ?, 1)
+                            ON CONFLICT(domain) DO UPDATE SET
+                              decision_id=excluded.decision_id,
+                              added_at=excluded.added_at,
+                              active=1
+                            """,
+                            (domain, values[0], now),
+                        )
+                    else:
+                        cursor = self._connection.execute(
+                            "UPDATE blacklist SET active=0 WHERE domain=? AND active=1",
+                            (domain,),
+                        )
+                        if cursor.rowcount == 0:
+                            raise ValueError("BLACKLIST_TARGET_NOT_ACTIVE")
                 self._connection.commit()
             except Exception:
                 self._connection.rollback()

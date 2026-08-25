@@ -11,6 +11,7 @@ from src.models import (
     EntityUrlRelationshipV4,
     ExposureStateV4,
     MissingInformationSlotV4,
+    PotentialThreatV4,
     RequestedActionV4,
     ScopeDecisionV4,
     SecurityConversationSummaryV4,
@@ -26,6 +27,7 @@ from src.security_ai.contracts import (
     UnderstandingSourceSpan,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.security_entity_mentions import EntityMentionCandidate
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import (
     SecuritySemanticUnderstandingService,
@@ -68,7 +70,7 @@ def _scope(message: str):
 def test_hosted_understanding_schema_requires_grounding_collections() -> None:
     schema = Understanding.model_json_schema()
 
-    assert {"field_confidences", "source_spans"} <= set(schema["required"])
+    assert {"field_confidences", "span_selections"} <= set(schema["required"])
 
 
 def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None:
@@ -103,6 +105,23 @@ def test_grounded_ai_signals_are_merged_and_change_deterministic_score() -> None
     assert completed.risk.value == "HIGH_RISK"
 
 
+def test_semantic_credential_signal_does_not_reclassify_a_login_as_disclosure() -> None:
+    message = "Đăng nhập vào https://official.example để nộp hồ sơ"
+    scoped = _scope(message)
+    output = _understanding(
+        message,
+        requested_action=RequestedActionV4.LOGIN,
+        security_signals=[SemanticSecuritySignal.CREDENTIAL_REQUEST],
+    )
+
+    merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert merged.security_context is not None
+    assert merged.security_context.requested_action is RequestedActionV4.LOGIN
+    assert merged.security_context.credential_request is False
+    assert merged.security_context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
+
+
 def test_rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations() -> None:
     message = "HR tuyển dụng yêu cầu đóng phí hồ sơ ngay"
     scoped = _scope(message)
@@ -130,7 +149,7 @@ def test_rule_true_signals_are_sticky_and_conflicts_are_retained_as_limitations(
     assert completed.confidence <= 0.65
 
 
-def test_ungrounded_or_low_confidence_signals_are_discarded() -> None:
+def test_semantic_interpretation_does_not_require_literal_spans_or_confidence() -> None:
     message = "Tin nhắn này hơi kỳ"
     scoped = _scope(message)
     output = Understanding(
@@ -147,16 +166,14 @@ def test_ungrounded_or_low_confidence_signals_are_discarded() -> None:
 
     merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
 
-    assert merged.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
-    assert merged.security_context is None
-    assert any("low_confidence" in item and "scope_decision" in item for item in merged.limitations)
-    assert any(
-        "missing_source_span" in item and "payment_request, scenario, scope_decision" in item
-        for item in merged.limitations
-    )
+    assert merged.scope_decision is ScopeDecisionV4.IN_SCOPE
+    assert merged.security_context is not None
+    assert merged.security_context.scenario is SecurityScenarioV4.PAYMENT
+    assert merged.security_context.payment_request is True
+    assert not any("scope_decision" in item for item in merged.limitations)
 
 
-def test_semantic_grounding_reports_missing_confidence_and_invalid_span_separately(caplog) -> None:
+def test_semantic_validation_does_not_report_irrelevant_grounding_failures(caplog) -> None:
     message = "Tin nhắn này hơi kỳ"
     scoped = _scope(message)
     output = Understanding(
@@ -169,18 +186,17 @@ def test_semantic_grounding_reports_missing_confidence_and_invalid_span_separate
         ],
     )
 
-    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+    with caplog.at_level("INFO", logger="trustguard.security_ai"):
         merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
 
-    assert any("missing_confidence" in item and "scope_decision" in item for item in merged.limitations)
-    assert any("invalid_source_span" in item and "scenario" in item for item in merged.limitations)
+    assert merged.scope_decision is ScopeDecisionV4.IN_SCOPE
+    assert merged.security_context is not None
+    assert merged.security_context.scenario is SecurityScenarioV4.PAYMENT
     rejected = [record for record in caplog.records if record.getMessage() == "security_ai_semantic_field_rejected"]
-    assert {(record.field_name, record.failure_code) for record in rejected} == {
-        ("scope_decision", "missing_confidence"),
-        ("scenario", "invalid_source_span"),
-    }
-    assert {record.operation for record in rejected} == {"understand"}
-    assert all(message not in record.getMessage() for record in rejected)
+    assert rejected == []
+    trace = next(record for record in caplog.records if record.getMessage() == "security_ai_understanding_trace")
+    assert trace.validation_decisions["scope_decision"] == "accepted_semantic"
+    assert trace.validation_decisions["scenario"] == "accepted_semantic"
 
 
 def test_literal_claimed_entity_is_grounded_when_model_omits_metadata() -> None:
@@ -220,6 +236,33 @@ def test_ai_cannot_replace_locally_extracted_urls() -> None:
     merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
 
     assert merged.security_context.urls == ["https://local.example/login"]
+
+
+def test_ai_cannot_turn_a_url_inspection_into_a_sender_open_link_request() -> None:
+    message = "Check https://arbitrary.example"
+    scoped = _scope(message)
+    output = _understanding(message, requested_action=RequestedActionV4.OPEN_LINK)
+
+    merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")
+
+    assert merged.security_context.requested_action is None
+    assert any("requested_action" in item for item in merged.limitations)
+    assert "requested_action" not in merged.assistant_context.field_confidences
+
+
+def test_local_entity_candidate_is_not_an_impersonation_signal() -> None:
+    message = "Check Google at https://arbitrary.example"
+    scoped = _scope(message)
+
+    merged = SecuritySemanticUnderstandingService._merge_local_candidates(
+        message,
+        scoped,
+        [EntityMentionCandidate(mention_id="entity_0", text="Google", start=6, end=12)],
+    )
+
+    assert merged.security_context.claimed_entity == "Google"
+    assert merged.security_context.impersonation_signals == []
+    assert merged.security_context.potential_threat is PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
 
 
 def test_grounded_entity_url_claim_uses_only_a_local_url_index() -> None:
@@ -448,11 +491,11 @@ async def test_first_vague_security_turn_gives_llm_the_policy_selected_follow_up
 
     result = await service.enrich(SecurityTriageCreateRequestV4(message=message), _scope(message))
 
-    assert model.received_summary == {
-        "security_context": None,
-        "exposure_state": "UNKNOWN",
-        "policy_selected_follow_up_slot": "action_taken",
-    }
+    assert model.received_summary is not None
+    assert model.received_summary["security_context"] is None
+    assert model.received_summary["exposure_state"] == "UNKNOWN"
+    assert model.received_summary["policy_selected_follow_up_slot"] == "action_taken"
+    assert model.received_summary["span_candidates"]
     assert result.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
     assert result.follow_up_slot is MissingInformationSlotV4.ACTION_TAKEN
     assert result.follow_up_question == "Bạn đã thực hiện hành động nào theo tin nhắn đó chưa?"

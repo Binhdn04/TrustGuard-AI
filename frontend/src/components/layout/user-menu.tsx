@@ -63,9 +63,9 @@ export function UserMenu() {
               <p className="text-xs text-muted-foreground truncate">{user.email}</p>
               <div className="mt-2 inline-flex items-center px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary/20 text-primary">
                 {user.role === "security_admin" ? (
-                  <><ShieldCheck className="w-3 h-3 mr-1" /> Security Admin</>
+                  <><ShieldCheck className="w-3 h-3 mr-1" /> Quản trị bảo mật</>
                 ) : (
-                  <><User className="w-3 h-3 mr-1" /> User</>
+                  <><User className="w-3 h-3 mr-1" /> Người dùng</>
                 )}
               </div>
             </div>
@@ -79,7 +79,7 @@ export function UserMenu() {
                   onClick={() => setIsOpen(false)}
                 >
                   <LayoutDashboard className="w-4 h-4 mr-3 text-muted-foreground" />
-                  Admin Dashboard
+                  Khu vực quản trị
                 </Link>
               )}
               

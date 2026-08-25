@@ -104,7 +104,9 @@ export async function installUserAnalysisFlow(page: Page) {
       reports = [{
         contract_version: "v4", report_id: "70000000-0000-4000-8000-000000000007",
         analysis_id: ANALYSIS_ID, reason: payload.reason, comment: payload.comment ?? null,
-        status: "submitted", decision: null, reviewer_id: null, review_note: null,
+        status: "submitted", decision: null, resolution: null, remediation_action: "none",
+        whitelist_entry: null, blacklist_proposal: null, remediation_status: "not_requested",
+        remediation_reference: null, reviewer_id: null, review_note: null,
         created_at: now, reviewed_at: null,
       }];
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(reports[0]) });
@@ -221,6 +223,8 @@ export async function installAdminReviewFlow(page: Page) {
     contract_version: "v4", report_id: "70000000-0000-4000-8000-000000000007",
     analysis_id: ANALYSIS_ID, owner_id: "user-e2e", reason: "Kết luận cần human review",
     comment: "Please inspect the evidence chain.", status: "submitted", decision: null,
+    resolution: null, remediation_action: "none", whitelist_entry: null, blacklist_proposal: null,
+    remediation_status: "not_requested", remediation_reference: null,
     reviewer_id: null, review_note: null, created_at: createdAt, reviewed_at: null,
   };
   const brand: BrandRecordV4 = {
@@ -253,8 +257,8 @@ export async function installAdminReviewFlow(page: Page) {
   });
   await page.route("**/api/v4/admin/reports/*/decision", async (route) => {
     v4ReportReviewed = true;
-    const payload = route.request().postDataJSON() as { decision: "approved" | "rejected" | "dismissed"; note: string };
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...adminReport, status: "processed", decision: payload.decision, reviewer_id: "admin-e2e", review_note: payload.note, reviewed_at: completedAt }) });
+    const payload = route.request().postDataJSON() as { decision: "approved" | "rejected" | "dismissed"; resolution?: "no_change"; remediation_action?: "none"; evidence_refs?: string[]; note: string };
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...adminReport, status: "processed", decision: payload.decision, resolution: payload.resolution ?? null, remediation_action: payload.remediation_action ?? "none", reviewer_id: "admin-e2e", review_note: payload.note, reviewed_at: completedAt }) });
   });
   await page.route(`**/api/v4/admin/analyses/${ANALYSIS_ID}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(adminCase) }));
   await page.route("**/api/v4/admin/brands/page*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contract_version: "v4", items: [brand], total: 1, limit: 10, offset: 0 }) }));

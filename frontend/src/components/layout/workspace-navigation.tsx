@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ComponentType, SVGProps } from "react";
-import { Archive, BadgeCheck, Binoculars, FileClock, Plus, ShieldCheck } from "lucide-react";
+import { Archive, BadgeCheck, Plus, ShieldCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/auth-context";
@@ -23,42 +23,26 @@ export interface WorkspaceNavGroup {
 
 export function workspaceNavigation(
   role: Role,
-  capabilities: SecurityCapabilitiesResponseV4 | null,
+  _capabilities: SecurityCapabilitiesResponseV4 | null,
 ): WorkspaceNavGroup[] {
+  void _capabilities;
   const groups: WorkspaceNavGroup[] = [
     {
-      label: "Workspace",
+      label: "Không gian làm việc",
       items: [
-        { label: "New case", description: "Bắt đầu điều tra", href: "/", icon: Plus },
-        { label: "Cases", description: "Lịch sử của bạn", href: "/history", icon: Archive },
+        { label: "Kiểm tra", description: "Bắt đầu kiểm tra bảo mật", href: "/", icon: Plus },
+        { label: "Lịch sử", description: "Các lần kiểm tra của bạn", href: "/history", icon: Archive },
       ],
     },
   ];
 
   if (role !== "security_admin") return groups;
 
-  const adminItems: WorkspaceNavItem[] = [];
-  if (capabilities?.intelligence_explorer) {
-    adminItems.push({
-      label: "Observatory",
-      description: "Intelligence explorer",
-      href: "/admin/observatory",
-      icon: Binoculars,
-    });
-  }
-  if (capabilities?.admin_feedback_review) {
-    adminItems.push({ label: "Review", description: "Hàng đợi quyết định", href: "/admin/review", icon: BadgeCheck });
-  }
-  adminItems.push({ label: "Trust", description: "Registry & memory", href: "/admin/trust", icon: ShieldCheck });
-  if (capabilities?.unified_v4_audit) {
-    adminItems.push({
-      label: "Audit",
-      description: "Unified audit trail",
-      href: "/admin/audit",
-      icon: FileClock,
-    });
-  }
-  groups.push({ label: "Admin", items: adminItems });
+  const adminItems: WorkspaceNavItem[] = [
+    { label: "Duyệt bảo mật", description: "Báo cáo và khiếu nại", href: "/admin/review", icon: BadgeCheck },
+    { label: "Tin cậy & chặn", description: "Ngoại lệ và domain chặn", href: "/admin/trust", icon: ShieldCheck },
+  ];
+  groups.push({ label: "Quản trị", items: adminItems });
   return groups;
 }
 

@@ -5,17 +5,13 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from src.models import (
-    SECURITY_RISK_POLICY_VERSION,
-    SECURITY_RISK_POLICY_VERSION_V2,
-    SECURITY_RISK_POLICY_VERSION_V3,
-    SECURITY_RISK_POLICY_VERSION_V4,
-    SECURITY_RISK_POLICY_VERSION_V5,
-    SECURITY_RISK_POLICY_VERSION_V6,
+    SECURITY_RISK_POLICY_VERSION_V7,
     ExposureStateV4,
     IdentityAssociationAssuranceV4,
     PotentialThreatV4,
     RequestedActionV4,
     SecurityEvidenceV4,
+    SecurityPolicyMetadataV4,
     SecurityRecommendedActionV4,
     SecurityRiskV4,
     SecurityScopeResponseV4,
@@ -31,16 +27,18 @@ class _Contribution:
 
 _WEAK_SIGNAL_POINTS = {
     "punycode_domain": 12,
-    "credential_path": 18,
+    # A routine login/verify/account path is workflow metadata, not evidence
+    # that credentials were requested or disclosed.
+    "credential_path": 0,
     "promotion_lure_domain": 8,
     "ssrf_blocked": 15,
     "new_domain": 15,
     "recent_registration": 15,
     "domain_mismatch": 15,
     "lookalike_domain": 20,
-    "claimed_identity_unverified": 10,
 }
 _MALICIOUS_REPUTATION_SIGNALS = {"malicious", "confirmed_threat", "threat_intelligence_hit"}
+_CORROBORATED_REPUTATION_SIGNAL = "corroborated_provider_hit"
 _SAFE_SIGNALS = {
     "approved_whitelist",
     "official_match",
@@ -159,29 +157,76 @@ def _association_is_unverified_target(scope: SecurityScopeResponseV4, evidence: 
     )
 
 
+def _has_reviewed_official_match(scope: SecurityScopeResponseV4, target: str | None) -> bool:
+    """Whether reviewed identity evidence independently owns this target.
+
+    A reputation-provider result for a reviewed first-party target conflicts
+    with an official fact.  One provider alone is not enough to call that
+    target malicious; a blacklist hit or other corroborated threat evidence is
+    still allowed to do so.
+    """
+    return any(
+        item.type.value == "brand_match"
+        and item.signal.casefold() == "official_match"
+        and _target_matches(item.target, target)
+        for item in scope.evidence
+    )
+
+
+def _is_neutral_url_inspection(scope: SecurityScopeResponseV4) -> bool:
+    """Whether the submitted URL is being inspected without risky context."""
+    context = scope.security_context
+    return bool(
+        context
+        and context.urls
+        and not context.claimed_entity
+        and not context.impersonation_signals
+        and not _has_sensitive_action(scope)
+    )
+
+
+def _has_reviewed_first_party_domain(scope: SecurityScopeResponseV4, target: str | None) -> bool:
+    """Exclude shared-platform URLs whose exact resource remains unreviewed."""
+    return any(
+        item.type.value == "domain_familiarity"
+        and item.signal == "reviewed_first_party_domain"
+        and _target_matches(item.target, target)
+        for item in scope.evidence
+    )
+
+
 def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     report = scope.official_verification
-    if report is None or report.overall_status is not VerificationStatusV4.VERIFIED:
+    if report is None or report.overall_status is VerificationStatusV4.CONFLICTING:
         return False
     if any(
-        association.assurance is not IdentityAssociationAssuranceV4.VERIFIED
+        association.assurance
+        in {IdentityAssociationAssuranceV4.CONFLICTING, IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH}
         for association in report.identity_associations
     ):
         return False
-    applicable = [
-        component
-        for component in (
-            report.publisher_verification,
-            report.claim_verification,
-            report.resource_verification,
-            report.action_endorsement_verification,
+    if report.schema_version in {"official-link-verification-v1", "official-link-verification-v2"}:
+        legacy_components = [
+            component
+            for component in (
+                report.publisher_verification,
+                report.claim_verification,
+                report.resource_verification,
+                report.action_endorsement_verification,
+            )
+            if component.applicable
+        ]
+        return bool(legacy_components) and all(
+            component.status is VerificationStatusV4.VERIFIED for component in legacy_components
         )
-        if component.applicable
-    ]
-    return (
-        bool(applicable)
-        and not report.limitations
-        and all(component.status is VerificationStatusV4.VERIFIED for component in applicable)
+    required = [report.resource_verification]
+    if report.action_endorsement_verification.applicable:
+        required.append(report.action_endorsement_verification)
+    context = scope.security_context
+    if not (context and context.urls) and report.sender_verification.applicable:
+        required.append(report.sender_verification)
+    return bool(required) and all(
+        component.applicable and component.status is VerificationStatusV4.VERIFIED for component in required
     )
 
 
@@ -196,6 +241,26 @@ def _has_sensitive_action(scope: SecurityScopeResponseV4) -> bool:
         or context.personal_information_request
         or context.requested_action in _SENSITIVE_ACTIONS
         or (scope.assistant_context is not None and scope.assistant_context.exposure_state in _INCIDENT_EXPOSURES)
+    )
+
+
+def _action_intent_unavailable(scope: SecurityScopeResponseV4) -> bool:
+    context = scope.assistant_context
+    return bool(context and context.action_candidate_present and not context.action_intent_available)
+
+
+def _has_contextual_threat(scope: SecurityScopeResponseV4) -> bool:
+    """Whether a sensitive action has an independent malicious context.
+
+    Login, OTP, and credential-entry are common legitimate flows.  They are
+    protective signals only when the deterministic context has already
+    identified a specific threat pattern; they never manufacture that pattern
+    from missing official verification or an unverified reputation result.
+    """
+    context = scope.security_context
+    return bool(
+        context
+        and context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
     )
 
 
@@ -234,20 +299,34 @@ def _actions(
     }
     actions.extend(incident_actions.get(exposure, []))
     if context.urls or context.requested_action is RequestedActionV4.OPEN_LINK:
-        # A SAFE verdict requires reviewed trust evidence and no unresolved
-        # provider/policy conflict. Do not contradict that verdict with an
-        # unconditional instruction to avoid the verified link.
+        # A SAFE verdict requires reviewed trust evidence. A conflicting
+        # provider hit may already have been discredited by that evidence; do
+        # not contradict the resulting verdict with an unconditional block.
         actions.append(
-            SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
-            if risk is SecurityRiskV4.SAFE or familiarity_low_risk
+            SecurityRecommendedActionV4.ALLOW_OPEN
+            if risk is SecurityRiskV4.SAFE
+            else SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
+            if familiarity_low_risk or risk in {SecurityRiskV4.INSUFFICIENT_EVIDENCE, SecurityRiskV4.LOW_RISK}
             else SecurityRecommendedActionV4.DO_NOT_OPEN_LINK
         )
-    if context.credential_request and risk is not SecurityRiskV4.SAFE:
+    if context.credential_request and risk in {
+        SecurityRiskV4.SUSPICIOUS,
+        SecurityRiskV4.HIGH_RISK,
+        SecurityRiskV4.MALICIOUS,
+    }:
         actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_CREDENTIALS)
         actions.append(SecurityRecommendedActionV4.CHANGE_PASSWORD_IF_ALREADY_SHARED)
-    if context.otp_request and risk is not SecurityRiskV4.SAFE:
+    if context.otp_request and risk in {
+        SecurityRiskV4.SUSPICIOUS,
+        SecurityRiskV4.HIGH_RISK,
+        SecurityRiskV4.MALICIOUS,
+    }:
         actions.append(SecurityRecommendedActionV4.DO_NOT_SHARE_OTP)
-    if context.payment_request and risk is not SecurityRiskV4.SAFE:
+    if context.payment_request and risk in {
+        SecurityRiskV4.SUSPICIOUS,
+        SecurityRiskV4.HIGH_RISK,
+        SecurityRiskV4.MALICIOUS,
+    }:
         actions.append(SecurityRecommendedActionV4.DO_NOT_TRANSFER_MONEY)
         actions.append(SecurityRecommendedActionV4.CONTACT_BANK_IF_ALREADY_PAID)
     if (context.claimed_entity or context.impersonation_signals) and risk is not SecurityRiskV4.SAFE:
@@ -286,16 +365,29 @@ def assess_security_risk(
     context_evidence = next((item for item in scope.evidence if item.type.value == "security_context"), None)
     context_ref = context_evidence.evidence_ref if context_evidence else ""
     has_whitelist = any(item.signal.casefold() == "approved_whitelist" for item in scope.evidence)
+    action_intent_unavailable = _action_intent_unavailable(scope)
     contributions: list[_Contribution] = []
-    action_chain_verified = official_verification_enforced and _complete_official_verification(scope)
-    # These context combinations remain protective fallback signals when no
-    # verification chain exists. A complete official action chain neutralizes
-    # them: the action itself is not evidence of risk.
-    if context.credential_request and not action_chain_verified:
+    reviewed_target_ownership = bool(context.urls) and all(
+        _has_reviewed_official_match(scope, url) for url in context.urls
+    )
+    # A reviewed exact first-party target is affirmative ownership evidence.
+    # It cannot erase blacklist/reputation findings below, but it means that a
+    # normal sign-in or application action is not itself a threat signal while
+    # a fuller action-endorsement chain is unavailable.
+    action_chain_verified = (
+        (official_verification_enforced and _complete_official_verification(scope))
+        or reviewed_target_ownership
+    )
+    # Sensitive actions are not malicious evidence by themselves.  They can
+    # strengthen an independently identified threat pattern, and a verified
+    # official action chain can neutralize even that contextual concern.
+    contextual_threat = _has_contextual_threat(scope)
+    credential_action = context.credential_request or context.requested_action is RequestedActionV4.LOGIN
+    if credential_action and contextual_threat and not action_chain_verified:
         contributions.append(_Contribution(35, context_ref))
-    if context.otp_request and not action_chain_verified:
+    if context.otp_request and contextual_threat and not action_chain_verified:
         contributions.append(_Contribution(40, context_ref))
-    if context.payment_request and not action_chain_verified:
+    if context.payment_request and contextual_threat and not action_chain_verified:
         contributions.append(_Contribution(35, context_ref))
     if context.urgency:
         contributions.append(_Contribution(15, context_ref))
@@ -303,14 +395,29 @@ def assess_security_risk(
         contributions.append(_Contribution(18, context_ref))
     if (
         not action_chain_verified
-        and context.potential_threat is not PotentialThreatV4.UNDETERMINED_SECURITY_THREAT
-        and (context.credential_request or context.otp_request or context.payment_request)
+        and contextual_threat
+        and (
+            context.credential_request
+            or context.otp_request
+            or context.payment_request
+            or context.requested_action is RequestedActionV4.LOGIN
+        )
     ):
         contributions.append(_Contribution(20, context_ref))
     if (
         not action_chain_verified
         and context.scenario.value in {"recruitment", "promotion_prize"}
-        and (context.payment_request or context.credential_request)
+        and (
+            context.payment_request
+            or context.credential_request
+            or context.requested_action is RequestedActionV4.LOGIN
+        )
+    ):
+        contributions.append(_Contribution(10, context_ref))
+    if (
+        not action_chain_verified
+        and context.scenario.value == "account_verification"
+        and context.requested_action is RequestedActionV4.LOGIN
     ):
         contributions.append(_Contribution(10, context_ref))
     if (
@@ -321,6 +428,7 @@ def assess_security_risk(
         contributions.append(_Contribution(15, context_ref))
 
     strong_refs: list[str] = []
+    reputation_conflicts: list[SecurityEvidenceV4] = []
     safe_refs: list[str] = []
     reviewed_risk_refs: list[str] = []
     reviewed_suppressions: list[SecurityEvidenceV4] = []
@@ -347,7 +455,12 @@ def assess_security_risk(
         if item.type.value == "blacklist" and "approved_blacklist_hit" in signal_parts:
             strong_refs.append(item.evidence_ref)
         if item.type.value == "url_reputation" and signal_parts & _MALICIOUS_REPUTATION_SIGNALS:
-            strong_refs.append(item.evidence_ref)
+            if _CORROBORATED_REPUTATION_SIGNAL in signal_parts:
+                strong_refs.append(item.evidence_ref)
+            elif _has_reviewed_official_match(scope, item.target):
+                reputation_conflicts.append(item)
+            else:
+                strong_refs.append(item.evidence_ref)
         if signal_parts & _SAFE_SIGNALS and not (familiarity_enforced and item.signal.casefold() == "official_match"):
             safe_refs.append(item.evidence_ref)
         points = max((_WEAK_SIGNAL_POINTS.get(signal, 0) for signal in signal_parts), default=0)
@@ -369,6 +482,18 @@ def assess_security_risk(
                 residual_official_mismatch = True
         if points:
             weak_contributions.append(_Contribution(points, item.evidence_ref))
+
+    reputation_conflict_refs: list[str] = []
+    conflicts_by_target: dict[str | None, list[SecurityEvidenceV4]] = {}
+    for item in reputation_conflicts:
+        conflicts_by_target.setdefault(item.target, []).append(item)
+    for target_conflicts in conflicts_by_target.values():
+        if len({item.source for item in target_conflicts}) > 1:
+            # Official ownership alone does not discredit corroborated
+            # evidence for the same target.
+            strong_refs.extend(item.evidence_ref for item in target_conflicts)
+        else:
+            reputation_conflict_refs.extend(item.evidence_ref for item in target_conflicts)
 
     if reviewed_suppressions:
         weak_types = {"local_url_rule", "rdap", "brand_match"}
@@ -405,6 +530,9 @@ def assess_security_risk(
         None,
     )
     identity_confirmed_mismatch = identity_confirmed_mismatch or identity_mismatch_evidence is not None
+    # Unverified identity and entity-to-URL association states describe a
+    # coverage gap.  They may prevent a positive trust conclusion, but they
+    # must never be converted into risk points or a higher risk tier.
     identity_relation_unresolved = any(
         item.signal.casefold()
         in {
@@ -412,6 +540,11 @@ def assess_security_risk(
             "entity_target_unverified",
             "entity_url_relation_unresolved",
         }
+        # A reviewed first-party match for the exact target resolves this
+        # association gap.  It remains visible in evidence, but a stale
+        # pre-verification "unresolved" marker must not veto affirmative
+        # ownership evidence.
+        and not _has_reviewed_official_match(scope, item.target)
         for item in scope.evidence
     )
     claimed_url_indexes = {item.url_index for item in context.entity_url_claims}
@@ -420,6 +553,7 @@ def assess_security_risk(
         and context.urls
         and set(range(len(context.urls))) - claimed_url_indexes
         and not (official_verification_enforced and _complete_official_verification(scope))
+        and not all(_has_reviewed_official_match(scope, url) for url in context.urls)
     )
     ai_understanding_fallback = bool(
         scope.assistant_context is not None
@@ -448,6 +582,23 @@ def assess_security_risk(
         score = max(score, 95)
         risk = SecurityRiskV4.MALICIOUS
     elif (
+        familiarity_enforced
+        and _is_neutral_url_inspection(scope)
+        and all(_has_reviewed_official_match(scope, url) for url in context.urls)
+        and all(_has_reviewed_first_party_domain(scope, url) for url in context.urls)
+        and score == 0
+        and not scope.errors
+        and not reviewed_risk_refs
+        and not identity_confirmed_mismatch
+        and not identity_relation_unresolved
+        and not ai_understanding_fallback
+        and not action_intent_unavailable
+    ):
+        # A reviewed first-party domain is affirmative trust evidence for a
+        # neutral inspection. A lone conflicting provider hit is retained as
+        # telemetry, but is discredited rather than treated as residual risk.
+        risk = SecurityRiskV4.SAFE
+    elif (
         official_verification_enforced
         and _complete_official_verification(scope)
         and not scope.errors
@@ -457,6 +608,7 @@ def assess_security_risk(
         and not identity_confirmed_mismatch
         and not identity_relation_unresolved
         and not ai_understanding_fallback
+        and not action_intent_unavailable
     ):
         risk = SecurityRiskV4.SAFE
     elif (
@@ -467,10 +619,15 @@ def assess_security_risk(
         and not identity_confirmed_mismatch
         and not identity_relation_unresolved
         and not ai_understanding_fallback
+        and not action_intent_unavailable
     ):
         risk = SecurityRiskV4.SAFE
     else:
         risk = _risk_for_score(score)
+    # A lexical candidate is not an action finding, but it is enough to block
+    # a positive trust decision until a grounded interpretation exists.
+    if action_intent_unavailable and risk is SecurityRiskV4.SAFE:
+        risk = SecurityRiskV4.INSUFFICIENT_EVIDENCE
     familiarity_refs = [
         item.evidence_ref
         for item in scope.evidence
@@ -525,7 +682,12 @@ def assess_security_risk(
         # gap, not affirmative evidence that the requested action is risky.
         risk = SecurityRiskV4.INSUFFICIENT_EVIDENCE
     # Registration/mismatch-style evidence alone is explicitly non-malicious.
-    if contributions and not official_conflicting and sum(item.points for item in contributions) == weak_external:
+    if (
+        risk is not SecurityRiskV4.MALICIOUS
+        and contributions
+        and not official_conflicting
+        and sum(item.points for item in contributions) == weak_external
+    ):
         risk = SecurityRiskV4.LOW_RISK if score < 45 else SecurityRiskV4.SUSPICIOUS
     familiarity_low_risk = bool(
         familiarity_enforced and risk is SecurityRiskV4.LOW_RISK and score == 0 and familiarity_refs
@@ -552,6 +714,15 @@ def assess_security_risk(
             "action_endorsement_unverified",
         }
     )
+    # An exact resource endorsement can resolve a stale "unverified identity"
+    # evidence item without turning it into risk. Keep that resolved evidence
+    # in the explanation so the result states the actual verification boundary.
+    refs.extend(
+        item.evidence_ref
+        for item in scope.evidence
+        if item.signal in {"claimed_identity_unverified", "entity_target_unverified"}
+        and item.description.startswith("Official verification đã xác nhận chuỗi endorsement")
+    )
     refs = list(dict.fromkeys(refs))
     grounded = [item for item in scope.evidence if item.evidence_ref in refs]
     if not grounded and scope.evidence:
@@ -574,6 +745,29 @@ def assess_security_risk(
         confidence = min(confidence, 0.65)
 
     payload = scope.model_dump()
+    limitations = list(scope.limitations)
+    if reputation_conflict_refs:
+        limitations.append(
+            "Kết quả reputation đơn lẻ mâu thuẫn với reviewed official-domain evidence; cần bằng chứng độc lập "
+            "khác trước khi kết luận tên miền độc hại."
+        )
+    if strong_refs or risk is SecurityRiskV4.MALICIOUS:
+        decision_assurance = "adverse_evidence"
+    elif action_intent_unavailable:
+        decision_assurance = "action_intent_unavailable"
+    elif _has_sensitive_action(scope) or context.requested_action is not None:
+        decision_assurance = "action_resource_verified" if action_chain_verified else "verification_incomplete"
+    elif reviewed_target_ownership and risk is SecurityRiskV4.SAFE:
+        decision_assurance = "passive_target_verified"
+    else:
+        decision_assurance = "verification_incomplete"
+    activated_features = ["semantic-action-enforcement", "action-assurance-enforcement"]
+    if memory_enabled:
+        activated_features.append("security-memory")
+    if official_verification_enforced:
+        activated_features.append("official-verification")
+    if familiarity_enforced:
+        activated_features.append("domain-familiarity")
     payload.update(
         status="completed",
         completed_at=datetime.now(UTC),
@@ -582,23 +776,26 @@ def assess_security_risk(
         risk=risk,
         score=score,
         confidence=round(min(confidence, 0.95), 2),
-        threat_type=context.potential_threat,
-        policy_version=(
-            SECURITY_RISK_POLICY_VERSION_V6
+        threat_type=(
+            PotentialThreatV4.BRAND_IMPERSONATION
             if context.claimed_entity
-            else SECURITY_RISK_POLICY_VERSION_V5
-            if familiarity_enforced
-            else SECURITY_RISK_POLICY_VERSION_V4
-            if context.entity_url_claims or identity_confirmed_mismatch or ai_understanding_fallback
-            else SECURITY_RISK_POLICY_VERSION_V3
-            if official_verification_enforced
-            else SECURITY_RISK_POLICY_VERSION_V2
-            if memory_enabled
-            else SECURITY_RISK_POLICY_VERSION
+            and (
+                identity_confirmed_mismatch
+                or any(
+                    item.type.value == "brand_match" and "domain_mismatch" in item.signal.casefold().split("+")
+                    for item in scope.evidence
+                )
+            )
+            else context.potential_threat
+        ),
+        policy_version=SECURITY_RISK_POLICY_VERSION_V7,
+        policy_metadata=SecurityPolicyMetadataV4(
+            activated_features=sorted(activated_features), decision_assurance=decision_assurance
         ),
         recommended_actions=_actions(scope, risk, familiarity_low_risk=familiarity_low_risk),
         explanation=_explanation(risk, grounded),
         explanation_evidence_refs=refs,
+        limitations=list(dict.fromkeys(limitations)),
     )
     return SecurityScopeResponseV4.model_validate(payload)
 

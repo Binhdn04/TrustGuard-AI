@@ -39,7 +39,7 @@ describe("account MVP", () => {
     expect(screen.getByRole("menuitem", { name: "Hồ sơ cá nhân" })).toHaveAttribute("href", "/profile?tab=profile");
     expect(screen.getByRole("menuitem", { name: "Cài đặt" })).toHaveAttribute("href", "/profile?tab=preferences");
     expect(screen.getByRole("menuitem", { name: "Lịch sử & báo cáo" })).toHaveAttribute("href", "/history");
-    expect(screen.getByRole("menuitem", { name: "Admin Dashboard" })).toHaveAttribute("href", "/admin");
+    expect(screen.getByRole("menuitem", { name: "Khu vực quản trị" })).toHaveAttribute("href", "/admin");
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Đăng xuất" }));
     expect(auth.logout).toHaveBeenCalledOnce();
@@ -74,6 +74,6 @@ describe("account MVP", () => {
     await waitFor(() => expect(document.documentElement.dataset.motion).toBe("reduced"));
 
     fireEvent.click(screen.getByRole("button", { name: "Quyền riêng tư" }));
-    expect(screen.getByText(/luôn được hỏi theo từng request/i)).toBeInTheDocument();
+    expect(screen.getByText(/luôn được hỏi theo từng yêu cầu/i)).toBeInTheDocument();
   });
 });

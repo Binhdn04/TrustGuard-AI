@@ -46,7 +46,7 @@ ExternalCall = Callable[[], Awaitable[ToolEnvelope]]
 _LOCAL_SIGNAL_BY_TITLE = {
     "URL đích bị chặn bởi SSRF guard": "ssrf_blocked",
     "Tên miền quốc tế hóa cần thận trọng": "punycode_domain",
-    "Đường dẫn yêu cầu thông tin tài khoản": "credential_path",
+    "Đường dẫn quy trình tài khoản": "credential_path",
     "Tên miền có mẫu mạo danh khuyến mãi": "promotion_lure_domain",
 }
 
@@ -58,11 +58,17 @@ _TRUST_TOOLS = {
 
 def _requires_high_risk_reputation(context: SecurityContextV4) -> bool:
     """Escalate reputation checks for requests that can lose money or access."""
+    workflow_coverage = any(
+        {part.casefold() for part in urlsplit(value).path.replace("-", "/").replace("_", "/").split("/")}
+        & {"login", "signin", "verify", "account"}
+        for value in context.urls
+    )
     return bool(
         context.credential_request
         or context.otp_request
         or context.payment_request
         or context.personal_information_request
+        or workflow_coverage
     )
 
 
@@ -907,7 +913,13 @@ class SecurityInvestigationService:
         if step.tool is SecurityInvestigationToolV4.URL_REPUTATION:
             findings = result.findings
             matched = [finding for finding in findings if finding.matched]
-            signal = result.verdict.value if matched else "provider_no_hit"
+            malicious_matches = [finding for finding in matched if finding.verdict.value == "malicious"]
+            signal_parts = [result.verdict.value] if matched else ["provider_no_hit"]
+            if result.provider_conflict:
+                signal_parts.append("provider_conflict")
+            if len({finding.provider for finding in malicious_matches}) > 1:
+                signal_parts.append("corroborated_provider_hit")
+            signal = "+".join(signal_parts)
             description = (
                 f"Reputation policy {result.policy_version} trả verdict {result.verdict.value}; "
                 f"matched providers={len(matched)}/{len(findings)}."

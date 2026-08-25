@@ -61,7 +61,7 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <header className="border-b border-border/70 pb-6">
-        <p className="micro-label text-primary">ACCOUNT / DEVICE PREFERENCES</p>
+        <p className="micro-label text-primary">TÀI KHOẢN / TÙY CHỌN THIẾT BỊ</p>
         <h1 className="mt-2 text-3xl font-bold tracking-[-0.025em]">Tài khoản và cài đặt</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
           Quản lý hồ sơ hiển thị và trải nghiệm trên thiết bị này. Danh tính và quyền truy cập vẫn do hệ thống đăng nhập xác minh.
@@ -136,7 +136,7 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
               </fieldset>
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5">
-                <p className="text-xs text-muted-foreground">Role: <strong className="text-foreground">{user.role === "security_admin" ? "Security Admin" : "User"}</strong></p>
+                <p className="text-xs text-muted-foreground">Vai trò: <strong className="text-foreground">{user.role === "security_admin" ? "Quản trị bảo mật" : "Người dùng"}</strong></p>
                 <div className="flex items-center gap-3">
                   {saved && <span role="status" className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300"><Check className="size-3.5" />Đã lưu</span>}
                   <button type="submit" className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground">Lưu hồ sơ</button>
@@ -153,9 +153,9 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
                   <option value="system">Theo hệ thống</option><option value="light">Sáng</option><option value="dark">Tối</option>
                 </select>
               </PreferenceRow>
-              <PreferenceRow icon={Eye} title="Mức chi tiết mặc định" description="Chỉ thay đổi cách trình bày; không thay đổi plan, tool hay risk policy.">
+              <PreferenceRow icon={Eye} title="Mức chi tiết mặc định" description="Chỉ thay đổi cách trình bày; không thay đổi kế hoạch, công cụ hay chính sách rủi ro.">
                 <select aria-label="Mức chi tiết mặc định" value={preferences.defaultPresentation} onChange={(event) => updatePreferences({ defaultPresentation: event.target.value as "simple" | "analyst" })} className="rounded-xl border border-input bg-background px-3 py-2 text-sm">
-                  <option value="simple">Đơn giản</option><option value="analyst">Analyst</option>
+                  <option value="simple">Đơn giản</option><option value="analyst">Kỹ thuật</option>
                 </select>
               </PreferenceRow>
               <PreferenceRow icon={BellRing} title="Chuyển động" description="Giảm animation nếu bạn muốn giao diện ổn định hơn.">
@@ -171,14 +171,14 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
 
           {tab === "privacy" && (
             <div className="space-y-6">
-              <div><p className="micro-label">Privacy & access</p><h2 className="mt-1 text-xl font-bold">Dữ liệu và phiên đăng nhập</h2></div>
+              <div><p className="micro-label">Quyền riêng tư và truy cập</p><h2 className="mt-1 text-xl font-bold">Dữ liệu và phiên đăng nhập</h2></div>
               <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/8 p-4 text-sm leading-6">
                 <ShieldCheck className="mb-2 size-5 text-emerald-700 dark:text-emerald-300" />
-                Lịch sử chỉ được đọc theo owner. Consent cho DNS, redirect, RDAP và URL reputation luôn được hỏi theo từng request và không được lưu thành đồng ý mặc định tại đây.
+                Lịch sử chỉ được đọc theo chủ sở hữu. Đồng ý cho DNS, redirect, RDAP và kiểm tra uy tín URL luôn được hỏi theo từng yêu cầu và không được lưu thành đồng ý mặc định tại đây.
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Link href="/history" className="rounded-xl border border-border p-4 transition-colors hover:bg-muted/60"><History className="size-5 text-primary" /><strong className="mt-3 block text-sm">Lịch sử phân tích</strong><span className="mt-1 block text-xs leading-5 text-muted-foreground">Xem các case thuộc tài khoản hiện tại.</span></Link>
-                <Link href="/history" className="rounded-xl border border-border p-4 transition-colors hover:bg-muted/60"><Archive className="size-5 text-primary" /><strong className="mt-3 block text-sm">Báo cáo của tôi</strong><span className="mt-1 block text-xs leading-5 text-muted-foreground">Mở case tương ứng để xem trạng thái report và appeal.</span></Link>
+                <Link href="/history" className="rounded-xl border border-border p-4 transition-colors hover:bg-muted/60"><History className="size-5 text-primary" /><strong className="mt-3 block text-sm">Lịch sử kiểm tra</strong><span className="mt-1 block text-xs leading-5 text-muted-foreground">Xem các lượt kiểm tra thuộc tài khoản hiện tại.</span></Link>
+                <Link href="/history" className="rounded-xl border border-border p-4 transition-colors hover:bg-muted/60"><Archive className="size-5 text-primary" /><strong className="mt-3 block text-sm">Báo cáo của tôi</strong><span className="mt-1 block text-xs leading-5 text-muted-foreground">Mở lượt kiểm tra tương ứng để xem trạng thái báo cáo và khiếu nại.</span></Link>
               </div>
               <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:justify-between">
                 <button type="button" onClick={() => { resetPreferences(); setTheme("system"); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold"><RotateCcw className="size-4" />Đặt lại tùy chọn</button>
