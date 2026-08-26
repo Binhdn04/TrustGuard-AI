@@ -11,18 +11,28 @@ from src.agents.security_trust import SecurityTrustService
 from src.agents.tools.domain_familiarity import CloudflareRadarDomainFamiliarityProvider
 from src.agents.tools.models import ToolErrorCode
 from src.models import (
+    AssistantContextV4,
+    AssistantProcessingModeV4,
     BrandRecordV4,
     OfficialIdentityMatchScopeV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
+    SecurityInvestigationToolV4,
     SecurityRecommendedActionV4,
     SecurityRiskV4,
+    SecurityToolErrorV4,
     SecurityTriageCreateRequestV4,
 )
+from src.security_ai.contracts import AssistantSynthesis
 from src.services.official_identity_registry import normalize_official_identity
 from src.services.official_verification_coordinator import _local_source
+from src.services.security_response import (
+    SynthesisGroundingFailure,
+    check_grounded_ai_response,
+    policy_grounded_assistant_response,
+)
 from src.services.security_triage import SecurityTriageScopeService
 
 NOW = datetime(2026, 8, 24, tzinfo=UTC)
@@ -244,6 +254,55 @@ async def test_neutral_inspection_of_reviewed_first_party_is_safe() -> None:
     assert result.risk is SecurityRiskV4.SAFE
     assert result.score == 0
     assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+
+
+@pytest.mark.asyncio
+async def test_verified_passive_domain_stays_safe_when_semantic_or_provider_enrichment_is_unavailable() -> None:
+    """Independent ownership evidence, not provider availability, decides this case."""
+    request = SecurityTriageCreateRequestV4(message="Check google.com")
+    scope = SecurityTriageScopeService().assess(request)
+    investigated = await SecurityInvestigationService().investigate(request, scope)
+    enriched = await SecurityTrustService(
+        _Brands([_google()]), domain_familiarity_enabled=True, clock=lambda: NOW
+    ).enrich(request, investigated)
+    degraded = enriched.model_copy(
+        update={
+            "assistant_context": AssistantContextV4(
+                processing_mode=AssistantProcessingModeV4.FALLBACK,
+                model_version="unavailable",
+            ),
+            "errors": [
+                SecurityToolErrorV4(
+                    tool=SecurityInvestigationToolV4.RDAP,
+                    target="google.com",
+                    code="PROVIDER_TIMEOUT",
+                    message="Provider timed out.",
+                    retryable=True,
+                    provider="fixture",
+                )
+            ],
+            "limitations": [
+                "Không thể xác nhận đầy đủ hành động được yêu cầu.",
+                "Không lấy được dữ liệu đăng ký domain từ RDAP; thiếu dữ liệu này không chứng minh domain an toàn.",
+            ],
+        }
+    )
+
+    result = assess_security_risk(degraded, familiarity_enforced=True)
+
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+    summary = policy_grounded_assistant_response(result).summary.casefold()
+    assert "tên miền chính thức" in summary
+    assert "cẩn thận" not in summary
+    assert "xác minh bằng" not in summary
+    cautious_composer_output = AssistantSynthesis(
+        summary="Tên miền này có rủi ro thấp; bạn vẫn nên xác minh qua kênh chính thức."
+    )
+    assert (
+        check_grounded_ai_response(result, cautious_composer_output).failure
+        is SynthesisGroundingFailure.CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET
+    )
 
 
 @pytest.mark.asyncio

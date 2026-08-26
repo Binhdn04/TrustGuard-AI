@@ -11,6 +11,7 @@ from src.agents.tools import (
     RdapDomainIntelligence,
     RedirectResolutionStatus,
     SsrfGuard,
+    ToolCallError,
     ToolResultStatus,
     UrlReputationFinding,
     UrlReputationService,
@@ -286,3 +287,29 @@ async def test_rdap_missing_bootstrap_service_is_inconclusive_and_cached():
     assert second.cache.status.value == "hit"
     assert second.usage.network_calls == 0
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_rdap_provider_failure_is_inconclusive_and_cached_not_a_tool_error():
+    class _UnavailableRdap:
+        provider = "fixture-rdap/v1"
+        calls = 0
+
+        async def lookup(self, _domain: str):
+            self.calls += 1
+            raise ToolCallError("domain_intelligence", "PROVIDER_ERROR", "registry unavailable", retryable=True)
+
+        async def aclose(self):
+            return None
+
+    adapter = _UnavailableRdap()
+    provider = NormalizedRdapProvider(adapter)  # type: ignore[arg-type]
+    first = await provider.lookup("example.com")
+    second = await provider.lookup("example.com")
+
+    assert first.status is ToolResultStatus.INCONCLUSIVE
+    assert first.error is None
+    assert first.result is not None and first.result.signals == ["provider_unavailable"]
+    assert second.status is ToolResultStatus.INCONCLUSIVE
+    assert second.cache.status.value == "hit"
+    assert adapter.calls == 1

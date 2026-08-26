@@ -899,6 +899,10 @@ class SecurityInvestigationService:
                 limitations = [
                     "Registry của hậu tố domain không công bố dịch vụ RDAP; thiếu dữ liệu này không chứng minh domain an toàn."
                 ]
+            elif "provider_unavailable" in result.signals:
+                limitations = [
+                    "Không lấy được dữ liệu đăng ký domain từ RDAP; thiếu dữ liệu này không chứng minh domain an toàn."
+                ]
             else:
                 limitations = []
             return [

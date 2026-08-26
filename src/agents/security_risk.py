@@ -174,14 +174,21 @@ def _has_reviewed_official_match(scope: SecurityScopeResponseV4, target: str | N
 
 
 def _is_neutral_url_inspection(scope: SecurityScopeResponseV4) -> bool:
-    """Whether the submitted URL is being inspected without risky context."""
+    """Whether the submitted URL is being inspected without risky context.
+
+    Naming the owner of a submitted domain is not a dangerous requested
+    action.  In particular, a reviewed gazetteer may identify that owner for
+    a plain domain-check request; treating that useful semantic enrichment as
+    a reason to withhold a positive target decision turns benign uncertainty
+    into caution.
+    """
     context = scope.security_context
     return bool(
         context
         and context.urls
-        and not context.claimed_entity
         and not context.impersonation_signals
         and not _has_sensitive_action(scope)
+        and context.requested_action in {None, RequestedActionV4.OPEN_LINK}
     )
 
 
@@ -576,21 +583,21 @@ def assess_security_risk(
         score = max(score, 95)
         risk = SecurityRiskV4.MALICIOUS
     elif (
-        familiarity_enforced
-        and _is_neutral_url_inspection(scope)
+        _is_neutral_url_inspection(scope)
         and all(_has_reviewed_official_match(scope, url) for url in context.urls)
-        and all(_has_reviewed_first_party_domain(scope, url) for url in context.urls)
         and score == 0
-        and not scope.errors
         and not reviewed_risk_refs
         and not identity_confirmed_mismatch
         and not identity_relation_unresolved
-        and not ai_understanding_fallback
         and not action_intent_unavailable
     ):
-        # A reviewed first-party domain is affirmative trust evidence for a
-        # neutral inspection. A lone conflicting provider hit is retained as
-        # telemetry, but is discredited rather than treated as residual risk.
+        # Reviewed official ownership is affirmative evidence for a passive
+        # target inspection.  A semantic-model fallback and an unavailable
+        # enrichment provider cannot change the user request into an action
+        # or create adverse evidence.  They therefore cannot veto this
+        # decision; no-hit/error data still never creates SAFE on its own.
+        # A lone conflicting provider hit is retained as telemetry, but is
+        # discredited rather than treated as residual risk.
         risk = SecurityRiskV4.SAFE
     elif (
         official_verification_enforced

@@ -4,6 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 from src.models import (
     SECURITY_ASSISTANT_RESPONSE_VERSION,
@@ -11,6 +12,7 @@ from src.models import (
     AssistantImmediateStepV4,
     AssistantReasonV4,
     AssistantResponseV4,
+    RequestedActionV4,
     SecurityEvidenceV4,
     SecurityRecommendedActionV4,
     SecurityRiskV4,
@@ -24,6 +26,11 @@ _UNSAFE_LINK_TEXT = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
 _TECHNICAL_METRIC_TEXT = re.compile(
     r"(?:\b(?:risk score|confidence|policy|evidence_ref)\b|\bđiểm\s+(?:số|rủi ro)\b|độ tin cậy|"
     r"\b\d+(?:[.,]\d+)?\s*(?:%|/100))",
+    re.IGNORECASE,
+)
+_CAUTIONARY_SAFE_CONTRADICTION = re.compile(
+    r"(?:rủi\s+ro\s+thấp|cẩn\s+thận|thận\s+trọng|"
+    r"(?:xác\s+minh|kiểm\s+tra).{0,40}(?:kênh|website|trang|nguồn)\s+chính\s+thức)",
     re.IGNORECASE,
 )
 _FOLLOW_UP_OFFER = (
@@ -130,6 +137,7 @@ class SynthesisGroundingFailure(StrEnum):
     INVALID_RESPONSE_CONTRACT = "invalid_response_contract"
     OFFICIAL_VERIFICATION_OVERREACH = "official_verification_overreach"
     MISSING_REQUIRED_AFFIRMATION = "missing_required_affirmation"
+    CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET = "caution_contradicts_verified_passive_target"
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +216,35 @@ def _has_verified_official_allow_open(scope: SecurityScopeResponseV4) -> bool:
     )
 
 
+def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> bool:
+    """Whether reviewed ownership establishes a safe domain-only decision."""
+    context = scope.security_context
+    if not (
+        scope.risk is SecurityRiskV4.SAFE
+        and SecurityRecommendedActionV4.ALLOW_OPEN in scope.recommended_actions
+        and context is not None
+        and context.urls
+        and context.requested_action in {None, RequestedActionV4.OPEN_LINK}
+        and not context.impersonation_signals
+        and not context.credential_request
+        and not context.otp_request
+        and not context.payment_request
+        and not context.personal_information_request
+    ):
+        return False
+    return all(
+        any(
+            item.type.value == "brand_match"
+            and item.signal.casefold() == "official_match"
+            and item.target
+            and item.target.casefold().rstrip(".")
+            == (urlsplit(url).hostname or "").casefold().rstrip(".")
+            for item in scope.evidence
+        )
+        for url in context.urls
+    )
+
+
 def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     assert scope.risk is not None
     # This is a response-selection invariant, not merely an explanation
@@ -221,6 +258,9 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
         if verification.sender_verification.status is VerificationStatusV4.UNVERIFIED:
             summary += " Danh tính người gửi chưa được xác minh riêng, nhưng điều đó không thay đổi kết luận về liên kết và thủ tục này."
         return summary
+
+    if _has_verified_passive_target_allow_open(scope):
+        return "Tên miền bạn hỏi là tên miền chính thức đã được xác minh và an toàn để mở."
 
     summary = _RISK_GUIDANCE[scope.risk]
     # A verified submitted resource is affirmative truth even when the message
@@ -323,6 +363,15 @@ def check_grounded_ai_response(
         # A composer may mention an unverified sender, but it cannot omit the
         # affirmative conclusion that policy has already established.
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
+    if _has_verified_passive_target_allow_open(scope):
+        summary = synthesis.summary.casefold()
+        if _CAUTIONARY_SAFE_CONTRADICTION.search(summary):
+            return SynthesisGroundingCheck(
+                None,
+                SynthesisGroundingFailure.CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET,
+            )
+        if not re.search(r"(?:an toàn|tên miền chính thức|có thể mở|được xác minh|đã xác nhận)", summary):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
     signals = {item.signal for item in scope.evidence if item.type.value == "official_verification"}
     if (
         ("tên miền chính thức" in combined or "domain chính thức" in combined)
