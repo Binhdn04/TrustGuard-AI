@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from src.agents.nodes.extraction import extract_urls
 from src.agents.nodes.rules import normalize_url
 from src.models import (
+    GroundedEntityRoleV4,
     PotentialThreatV4,
     RequestedActionV4,
     ScopeDecisionV4,
@@ -16,6 +17,7 @@ from src.models import (
 from src.services.security_entity_mentions import (
     deterministic_entity_url_claims,
     extract_entity_mentions,
+    ground_entity_roles,
 )
 
 _SPACE_RE = re.compile(r"\s+")
@@ -322,6 +324,8 @@ _SUBMIT_FORM_TERMS = (
     "dien bieu mau",
     "điền form",
     "dien form",
+    "điền thông tin",
+    "dien thong tin",
     "gửi form",
     "gui form",
     "nộp form",
@@ -801,12 +805,17 @@ def extract_security_context(message: str) -> SecurityContextV4:
     personal_information_request = _contains_any(text, _PERSONAL_INFO_TERMS)
     entity = _claimed_entity(text)
     entity_mentions = extract_entity_mentions(message, (entity,) if entity else ())
+    grounded_mentions = ground_entity_roles(message, entity_mentions)
     entity_url_claims = deterministic_entity_url_claims(message, entity_mentions, len(urls))
     if entity is None:
         if entity_url_claims:
             entity = entity_url_claims[0].entity_name
-        elif len(entity_mentions) == 1 and urls:
-            entity = entity_mentions[0].text
+        else:
+            claimed_mentions = [
+                item for item in grounded_mentions if item.role is GroundedEntityRoleV4.CLAIMED_ORGANIZATION
+            ]
+            if claimed_mentions:
+                entity = claimed_mentions[0].text
 
     if online_task:
         scenario = SecurityScenarioV4.ONLINE_TASK
@@ -834,6 +843,7 @@ def extract_security_context(message: str) -> SecurityContextV4:
     amount_match = _AMOUNT_RE.search(message)
     context = SecurityContextV4(
         claimed_entity=entity,
+        entity_mentions=grounded_mentions,
         scenario=scenario,
         requested_action=_requested_action(
             text,

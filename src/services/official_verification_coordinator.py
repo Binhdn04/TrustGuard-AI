@@ -1915,9 +1915,20 @@ class OfficialLinkVerificationCoordinator:
                 limitations.append(f"external_resolve_{fetched.limitation.value}")
             return None
 
-        user_resources = [
-            await resolve(url, identify_resource(url), outbound=False) for url in user_urls[:_MAX_USER_ACTION_URLS]
-        ]
+        user_resources = []
+        for url in user_urls[:_MAX_USER_ACTION_URLS]:
+            direct_resource = identify_resource(url)
+            # Provider-specific identities (for example a Google Form URL)
+            # are already stable. A generic URL can instead be an unlisted
+            # shortener, so resolve it under the existing consent, SSRF, and
+            # per-turn call limits before comparing it to an official link.
+            user_resources.append(
+                await resolve(
+                    url,
+                    direct_resource if direct_resource is not None and direct_resource.provider is not None else None,
+                    outbound=False,
+                )
+            )
         exact: tuple[ResourceMatchV4, str, LinkEvidenceStrength] | None = None
         different: tuple[ResourceMatchV4, str, LinkEvidenceStrength] | None = None
         unresolved: tuple[ResourceMatchV4, str, LinkEvidenceStrength] | None = None

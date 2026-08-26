@@ -530,6 +530,36 @@ async def test_third_party_redirect_chains_match_with_external_consent() -> None
 
 
 @pytest.mark.asyncio
+async def test_unlisted_short_link_is_resolved_before_resource_comparison() -> None:
+    user_short = "https://unlisted-short.example/UserAlias"
+    request, scope = _request_scope(
+        user_url=user_short,
+        official_consent=True,
+        external_consent=True,
+    )
+    official_short = "https://bit.ly/OfficialAlias"
+    final_form = "https://docs.google.com/forms/d/e/FORM-SAME/viewform"
+    fetcher = _HtmlFetcher(
+        {OFFICIAL_JOBS: _positive_page(official_short)},
+        redirects={
+            user_short: [user_short, final_form],
+            official_short: [official_short, "https://forms.gle/OfficialAlias", final_form],
+        },
+    )
+
+    outcome = await _coordinator(
+        search=_SearchProvider([_hit()]),
+        fetcher=fetcher,
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.resource_verification.match is not None
+    assert outcome.report.resource_verification.match.status is ResourceMatchStatusV4.EXACT_RESOURCE
+    assert user_short in fetcher.calls
+
+
+@pytest.mark.asyncio
 async def test_reviewed_social_account_post_can_endorse_an_exact_third_party_form() -> None:
     user_form = "https://v.wjx.cn/vm/to3MR3b.aspx"
     social_profile = "https://www.linkedin.com/school/tsinghua-university/"

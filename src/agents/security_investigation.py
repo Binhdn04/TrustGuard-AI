@@ -873,6 +873,8 @@ class SecurityInvestigationService:
             ], []
         if step.tool is SecurityInvestigationToolV4.REDIRECT_RESOLVER:
             signal = "+".join(result.signals) if result.signals else result.status.value
+            if result.status.value == "unresolved":
+                signal = "redirect_destination_unresolved+" + signal
             return [
                 _evidence(
                     SecurityEvidenceTypeV4.REDIRECT,

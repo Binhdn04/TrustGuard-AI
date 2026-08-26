@@ -246,6 +246,31 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
         verification_sentences.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
     if verification_sentences:
         summary = " ".join([*verification_sentences, summary])
+    # The fallback is normally rare, but it must retain the same case facts as
+    # the composer.  Risk is a decision; it is not a substitute for the
+    # independent organization, claim, resource, and action conclusions.
+    verification = scope.official_verification
+    if verification is not None and verification.overall_status is not VerificationStatusV4.VERIFIED:
+        intent = verification.intent
+        facts: list[str] = []
+        if intent.organization_name:
+            facts.append(f"Tin nhắn tự nhận liên quan đến {intent.organization_name}.")
+        if intent.claim_summary and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED:
+            facts.append(f"Chưa xác nhận được thông tin về {intent.claim_summary} từ nguồn chính thức.")
+        if verification.resource_verification.status is VerificationStatusV4.UNVERIFIED:
+            facts.append("Chưa xác nhận được liên kết được gửi là tài nguyên do tổ chức này công bố.")
+        if (
+            intent.requested_action is not None
+            and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+        ):
+            facts.append("Chưa có xác nhận chính thức cho đúng hành động mà tin nhắn yêu cầu.")
+        if any(
+            item.type.value == "redirect" and "redirect_destination_unresolved" in item.signal
+            for item in scope.evidence
+        ):
+            facts.append("Điểm đến cuối của liên kết vẫn chưa xác định được.")
+        if facts:
+            summary = " ".join([*facts, summary])
     if scope.recommended_actions:
         summary = f"{summary} {_ACTION_GUIDANCE[scope.recommended_actions[0]]}"
     return summary
@@ -395,6 +420,17 @@ class GroundedSecurityResponseService:
     @staticmethod
     def _synthesis_payload(scope: SecurityScopeResponseV4) -> dict[str, object]:
         verification = scope.official_verification
+        redirect_unresolved = any(
+            item.type.value == "redirect" and "redirect_destination_unresolved" in item.signal
+            for item in scope.evidence
+        )
+        malicious_evidence_observed = any(
+            any(
+                marker in item.signal.casefold()
+                for marker in ("malicious", "confirmed_threat", "approved_blacklist_hit", "threat_intelligence_hit")
+            )
+            for item in scope.evidence
+        )
         return {
             "contract": "grounded-security-response-context-v1",
             "verdict": scope.risk.value if scope.risk else None,
@@ -418,9 +454,36 @@ class GroundedSecurityResponseService:
             "important_uncertainties": _public_uncertainties(scope.limitations),
             "verification_state": (
                 {
+                    "claimed_organization": verification.intent.organization_name,
+                    "program_claim": {
+                        "value": verification.intent.claim_summary,
+                        "topic": verification.intent.topic.value if verification.intent.topic is not None else None,
+                        "status": verification.claim_verification.status.value
+                        if verification.claim_verification.status is not None
+                        else None,
+                    },
+                    "requested_action": {
+                        "value": verification.intent.requested_action.value
+                        if verification.intent.requested_action is not None
+                        else None,
+                        "endorsement_status": verification.action_endorsement_verification.status.value
+                        if verification.action_endorsement_verification.status is not None
+                        else None,
+                    },
+                    "submitted_resource": {
+                        "claimed_platforms": [
+                            mention.text
+                            for mention in (scope.security_context.entity_mentions if scope.security_context else [])
+                            if mention.role.value == "platform_provider"
+                        ],
+                        "status": verification.resource_verification.status.value
+                        if verification.resource_verification.status is not None
+                        else None,
+                        "final_destination": "unresolved" if redirect_unresolved else "not_reported",
+                    },
                     "domain_ownership": verification.domain_ownership_verification.status.value,
                     "sender_identity": verification.sender_verification.status.value,
-                    "requested_action": verification.action_endorsement_verification.status.value,
+                    "malicious_evidence": "observed" if malicious_evidence_observed else "none_observed",
                     "unverified_is_not_a_risk_signal_by_itself": True,
                 }
                 if verification is not None

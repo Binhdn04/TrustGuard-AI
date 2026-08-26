@@ -21,7 +21,7 @@ from .models import (
     ToolResultStatus,
     UsageMetadata,
 )
-from .network import GuardedHttpClient, SsrfGuard
+from .network import BROWSER_NAVIGATION_HEADERS, GuardedHttpClient, SsrfGuard
 
 
 class GuardedRedirectResolver:
@@ -41,7 +41,7 @@ class GuardedRedirectResolver:
         self._client = client
         self._owns_client = client is None
         self._timeout = timeout
-        self._guard = guard
+        self._guard = guard or SsrfGuard()
         self._clock = clock
 
     def _http(self) -> GuardedHttpClient:
@@ -49,13 +49,13 @@ class GuardedRedirectResolver:
             self._client = httpx.AsyncClient(timeout=self._timeout)
         return GuardedHttpClient(self._client, self._guard)
 
-    def _usage(self, started: float, calls: int) -> UsageMetadata:
+    def _usage(self, started: float, calls: int, *, attempts: int = 1) -> UsageMetadata:
         return UsageMetadata(
             usage_ref=f"usage:redirect:{uuid4()}",
             provider=self.provider,
             provider_version=self.provider_version,
             operation="resolve_redirects",
-            attempts=1,
+            attempts=attempts,
             network_calls=calls,
             latency_ms=(time.perf_counter() - started) * 1000,
             request_units=calls,
@@ -66,10 +66,23 @@ class GuardedRedirectResolver:
         started = time.perf_counter()
         try:
             target = canonicalize_url(normalized_url)
-            _response, chain = await self._http().get(target)
-            calls = len(chain)
-            # Redirect discovery does not treat a 4xx/5xx landing response as a
-            # resolver failure: the observed chain remains useful evidence.
+            # A 4xx/5xx response is not a terminal redirect result.  Retry the
+            # same guarded request with a browser-navigation profile before
+            # declaring the destination unresolved.  Every request, including
+            # every Location hop in both attempts, is SSRF validated and DNS
+            # pinned by GuardedHttpClient.
+            attempts = 0
+            calls = 0
+            response: httpx.Response | None = None
+            chain: list[str] = [target]
+            for headers in ({}, BROWSER_NAVIGATION_HEADERS):
+                attempts += 1
+                candidate_response, candidate_chain = await self._http().get(target, headers=headers)
+                calls += len(candidate_chain)
+                response, chain = candidate_response, candidate_chain
+                if response.status_code < 400:
+                    break
+
             canonical_chain = [canonicalize_url(item) for item in chain]
             signals: list[str] = []
             if len(canonical_chain) > 1:
@@ -85,18 +98,29 @@ class GuardedRedirectResolver:
                 final_url=canonical_chain[-1],
                 redirect_chain=canonical_chain,
                 status=(
-                    RedirectResolutionStatus.NO_REDIRECT
+                    RedirectResolutionStatus.UNRESOLVED
+                    if response is None or response.status_code >= 400
+                    else RedirectResolutionStatus.NO_REDIRECT
                     if len(canonical_chain) == 1
                     else RedirectResolutionStatus.RESOLVED
                 ),
-                signals=signals,
+                signals=(
+                    [*signals, f"http_{response.status_code}"]
+                    if response is not None and response.status_code >= 400
+                    else signals
+                ),
+                http_status_code=response.status_code if response is not None else None,
                 observed_at=self._clock(),
             )
             return NormalizedToolResult(
-                status=ToolResultStatus.SUCCESS,
+                status=(
+                    ToolResultStatus.INCONCLUSIVE
+                    if response is None or response.status_code >= 400
+                    else ToolResultStatus.SUCCESS
+                ),
                 result=result,
                 cache=CacheMetadata(status=CacheStatus.BYPASS, bypass_reason="live_resolution"),
-                usage=self._usage(started, calls),
+                usage=self._usage(started, calls, attempts=attempts),
             )
         except (UnsafeUrlError, ValueError) as exc:
             return self._error(

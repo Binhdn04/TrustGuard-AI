@@ -101,6 +101,35 @@ class EntityUrlRelationshipV4(StrEnum):
     REFERENCE_ONLY = "reference_only"
 
 
+class GroundedEntityRoleV4(StrEnum):
+    """The role a text-grounded entity plays in this message.
+
+    These are observations about the message, not trust assertions.  In
+    particular, ``claimed_organization`` is allowed to be an unknown name.
+    """
+
+    CLAIMED_ORGANIZATION = "claimed_organization"
+    SENDER = "sender"
+    PLATFORM_PROVIDER = "platform_provider"
+    RESOURCE_INTERMEDIARY = "resource_intermediary"
+    OTHER = "other"
+
+
+class GroundedEntityMentionV4(SecurityContractModel):
+    text: str = Field(min_length=1, max_length=200)
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    role: GroundedEntityRoleV4
+    source: str = Field(min_length=1, max_length=100)
+    registry_name: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> Self:
+        if self.end <= self.start:
+            raise ValueError("entity mention end must be greater than start")
+        return self
+
+
 class EntityUrlClaimV4(SecurityContractModel):
     entity_name: str = Field(min_length=1, max_length=200)
     url_index: int = Field(ge=0, lt=10)
@@ -931,6 +960,7 @@ class SecurityChatResponseV4(SecurityContractModel):
 class SecurityContextV4(SecurityContractModel):
     schema_version: Literal["security-context-v1", "security-context-v2"] = SECURITY_CONTEXT_VERSION
     claimed_entity: str | None = None
+    entity_mentions: list[GroundedEntityMentionV4] = Field(default_factory=list, max_length=20)
     scenario: SecurityScenarioV4
     requested_action: RequestedActionV4 | None = None
     amount: str | None = None

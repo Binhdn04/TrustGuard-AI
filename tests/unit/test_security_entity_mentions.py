@@ -5,13 +5,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.models import BrandRecordV4, SecurityTriageCreateRequestV4
+from src.models import BrandRecordV4, GroundedEntityRoleV4, SecurityTriageCreateRequestV4
 from src.security_ai.contracts import ModelResponse, Understanding
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.security_entity_mentions import (
     OrganizationGazetteer,
     extract_entity_mentions,
     extract_recovery_phrases,
+    ground_entity_roles,
 )
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
@@ -95,6 +96,54 @@ def test_attribution_rule_extracts_unknown_title_cased_sender_without_registry()
     assert context is not None
     assert context.claimed_entity == "Chính phủ"
     assert context.impersonation_signals == []
+
+
+def test_open_world_mentions_keep_unknown_claimed_organization_separate_from_platform_and_resource() -> None:
+    message = "Viettel gửi Google Form qua shorturl.at để đăng ký."
+    candidates = extract_entity_mentions(message, gazetteer=OrganizationGazetteer.from_brands([_brand()]))
+    roles = ground_entity_roles(message, candidates)
+
+    assert [item.text for item in candidates] == ["Viettel", "Google Form"]
+    assert [(item.text, item.role) for item in roles] == [
+        ("Viettel", GroundedEntityRoleV4.CLAIMED_ORGANIZATION),
+        ("Google Form", GroundedEntityRoleV4.PLATFORM_PROVIDER),
+        ("shorturl.at", GroundedEntityRoleV4.RESOURCE_INTERMEDIARY),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unknown_claimed_organization_is_projected_without_registry_membership() -> None:
+    message = "Viettel gửi Google Form qua shorturl.at để đăng ký."
+    request = SecurityTriageCreateRequestV4(message=message)
+    scoped = SecurityTriageScopeService().assess(request)
+
+    async def load_only_google():
+        return [
+            BrandRecordV4(
+                name="Google",
+                aliases=[],
+                official_domains=["google.com"],
+                provenance="reviewed registry",
+                effective_from=NOW - timedelta(days=1),
+                reviewer_id="admin",
+                created_at=NOW,
+            )
+        ]
+
+    result = await SecuritySemanticUnderstandingService(
+        enabled=False,
+        model=None,
+        runtime=SecurityAssistantRuntime(max_retries=0),
+        gazetteer_loader=load_only_google,
+    ).enrich(request, scoped)
+
+    assert result.security_context is not None
+    assert result.security_context.claimed_entity == "Viettel"
+    assert [(item.text, item.role) for item in result.security_context.entity_mentions] == [
+        ("Viettel", GroundedEntityRoleV4.CLAIMED_ORGANIZATION),
+        ("Google Form", GroundedEntityRoleV4.PLATFORM_PROVIDER),
+        ("shorturl.at", GroundedEntityRoleV4.RESOURCE_INTERMEDIARY),
+    ]
 
 
 @pytest.mark.parametrize(
