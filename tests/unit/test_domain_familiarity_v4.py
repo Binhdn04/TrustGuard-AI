@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -14,6 +15,8 @@ from src.models import (
     AssistantContextV4,
     AssistantProcessingModeV4,
     BrandRecordV4,
+    DomainFamiliarityClassificationV4,
+    DomainFamiliarityDetailsV4,
     OfficialIdentityMatchScopeV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
@@ -25,10 +28,12 @@ from src.models import (
     SecurityToolErrorV4,
     SecurityTriageCreateRequestV4,
 )
-from src.security_ai.contracts import AssistantSynthesis
+from src.security_ai.contracts import AssistantSynthesis, ModelResponse
+from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.official_identity_registry import normalize_official_identity
 from src.services.official_verification_coordinator import _local_source
 from src.services.security_response import (
+    GroundedSecurityResponseService,
     SynthesisGroundingFailure,
     check_grounded_ai_response,
     policy_grounded_assistant_response,
@@ -208,6 +213,20 @@ class _NeverCalledFamiliarity:
         raise AssertionError("familiarity provider must not be called")
 
 
+class _RecordingSynthesisModel:
+    def __init__(self, summary: str) -> None:
+        self.summary = summary
+        self.payload: dict[str, object] | None = None
+
+    async def synthesize(self, payload: dict[str, object]) -> ModelResponse[AssistantSynthesis]:
+        self.payload = payload
+        return ModelResponse(
+            output=AssistantSynthesis(summary=self.summary),
+            provider="fixture",
+            model="fixture-synthesis",
+        )
+
+
 @pytest.mark.asyncio
 async def test_consent_false_and_out_of_scope_make_zero_familiarity_calls() -> None:
     provider = _NeverCalledFamiliarity()
@@ -303,6 +322,190 @@ async def test_verified_passive_domain_stays_safe_when_semantic_or_provider_enri
         check_grounded_ai_response(result, cautious_composer_output).failure
         is SynthesisGroundingFailure.CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("domain", ["google.com", "youtube.com", "amazon.com", "wikipedia.org"])
+@pytest.mark.parametrize("provider_failure", [False, True])
+async def test_reviewed_passive_domains_have_one_safe_invariant_regardless_of_enrichment_failure(
+    domain: str,
+    provider_failure: bool,
+) -> None:
+    """A reviewed ownership fact must not depend on semantic brand matching.
+
+    These domains intentionally arrive as the same structured truth: only the
+    reviewed first-party ownership record is authoritative.  This catches the
+    former divergence where a coincidental ``official_match`` produced SAFE,
+    while the equivalent domain-familiarity record produced LOW_RISK.
+    """
+    request = SecurityTriageCreateRequestV4(message=f"Kiểm tra https://{domain}")
+    scoped = SecurityTriageScopeService().assess(request)
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    ownership = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{hashlib.sha256(domain.encode()).hexdigest()[:16]}",
+        type=SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY,
+        source="reviewed-domain-registry",
+        target=domain,
+        signal="reviewed_first_party_domain",
+        description="Reviewed first-party ownership.",
+        observed_at=NOW,
+        confidence=1.0,
+        provenance_ref="reviewed:domain-registry-v1",
+        domain_familiarity=DomainFamiliarityDetailsV4(
+            observed_host=domain,
+            registrable_domain=domain,
+            classification=DomainFamiliarityClassificationV4.REVIEWED_FIRST_PARTY,
+        ),
+    )
+    updates: dict[str, object] = {"evidence": [*investigated.evidence, ownership]}
+    if provider_failure:
+        updates.update(
+            {
+                "assistant_context": AssistantContextV4(
+                    processing_mode=AssistantProcessingModeV4.FALLBACK,
+                    model_version="unavailable",
+                ),
+                "errors": [
+                    SecurityToolErrorV4(
+                        tool=SecurityInvestigationToolV4.RDAP,
+                        target=domain,
+                        code="PROVIDER_TIMEOUT",
+                        message="Provider timed out.",
+                        retryable=True,
+                        provider="fixture",
+                    )
+                ],
+                "limitations": ["RDAP data unavailable."],
+            }
+        )
+
+    result = assess_security_risk(investigated.model_copy(update=updates), familiarity_enforced=True)
+
+    assert result.risk is SecurityRiskV4.SAFE
+    assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+    assert GroundedSecurityResponseService._synthesis_payload(result)["authoritative_security_truth"] == {
+        "verified_passive_target": True,
+        "credible_malicious_evidence": False,
+        "no_risky_requested_action": True,
+    }
+    accepted = check_grounded_ai_response(
+        result,
+        AssistantSynthesis(summary="Tên miền này đã được xác minh; bạn có thể mở."),
+    )
+    assert accepted.response is not None
+    assert (
+        check_grounded_ai_response(
+            result,
+            AssistantSynthesis(summary="Tên miền này có rủi ro thấp; hãy xác minh qua kênh chính thức."),
+        ).failure
+        is SynthesisGroundingFailure.CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("domain", ["youtube.com", "facebook.com", "chatgpt.com"])
+@pytest.mark.parametrize(("path", "expected_risk"), [("", SecurityRiskV4.SAFE), ("/channel/unreviewed", SecurityRiskV4.INSUFFICIENT_EVIDENCE)])
+async def test_reviewed_platform_origin_is_safe_but_hosted_resources_are_not(
+    domain: str,
+    path: str,
+    expected_risk: SecurityRiskV4,
+) -> None:
+    """Platform ownership proves the origin, never arbitrary hosted content."""
+    request = SecurityTriageCreateRequestV4(message=f"Kiểm tra https://{domain}{path}")
+    scoped = SecurityTriageScopeService().assess(request)
+    investigated = await SecurityInvestigationService().investigate(request, scoped)
+    platform = SecurityEvidenceV4(
+        evidence_ref=f"evidence:{hashlib.sha256((domain + path).encode()).hexdigest()[:16]}",
+        type=SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY,
+        source="reviewed-domain-registry",
+        target=domain,
+        signal="reviewed_platform_service",
+        description="Reviewed platform service.",
+        observed_at=NOW,
+        confidence=1.0,
+        provenance_ref="reviewed:platform-registry-v1",
+        domain_familiarity=DomainFamiliarityDetailsV4(
+            observed_host=domain,
+            registrable_domain=domain,
+            classification=DomainFamiliarityClassificationV4.REVIEWED_PLATFORM_SERVICE,
+            platform_name="Reviewed platform",
+            shared_platform=True,
+        ),
+    )
+
+    result = assess_security_risk(
+        investigated.model_copy(update={"evidence": [*investigated.evidence, platform]}),
+        familiarity_enforced=True,
+    )
+
+    assert result.risk is expected_risk
+    if not path:
+        assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+        assert GroundedSecurityResponseService._synthesis_payload(result)["important_uncertainties"] == []
+        assert (
+            check_grounded_ai_response(
+                result,
+                AssistantSynthesis(summary="Rủi ro thấp; hãy cẩn thận và xác minh qua kênh chính thức."),
+            ).failure
+            is SynthesisGroundingFailure.CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET
+        )
+    else:
+        assert SecurityRecommendedActionV4.ALLOW_OPEN not in result.recommended_actions
+
+
+@pytest.mark.asyncio
+async def test_verified_platform_origin_reaches_gpt_and_rejects_cautionary_composition() -> None:
+    request = SecurityTriageCreateRequestV4(message="youtube.com")
+    investigated = await SecurityInvestigationService().investigate(request, SecurityTriageScopeService().assess(request))
+    platform = SecurityEvidenceV4(
+        evidence_ref="evidence:0123456789abcdef",
+        type=SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY,
+        source="reviewed-domain-registry",
+        target="youtube.com",
+        signal="reviewed_platform_service",
+        description="Reviewed platform service.",
+        observed_at=NOW,
+        confidence=1.0,
+        provenance_ref="reviewed:platform-registry-v1",
+        domain_familiarity=DomainFamiliarityDetailsV4(
+            observed_host="youtube.com",
+            registrable_domain="youtube.com",
+            classification=DomainFamiliarityClassificationV4.REVIEWED_PLATFORM_SERVICE,
+            platform_name="YouTube",
+            shared_platform=True,
+        ),
+    )
+    result = assess_security_risk(
+        investigated.model_copy(update={"evidence": [*investigated.evidence, platform]}),
+        familiarity_enforced=True,
+    )
+    assert result.risk is SecurityRiskV4.SAFE
+
+    valid_model = _RecordingSynthesisModel("Tên miền đã được xác minh; bạn có thể mở.")
+    composed = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=valid_model,
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(result)
+    assert composed.assistant_response is not None
+    assert composed.assistant_response.generation_mode.value == "ai"
+    assert valid_model.payload and valid_model.payload["authoritative_security_truth"] == {
+        "verified_passive_target": True,
+        "credible_malicious_evidence": False,
+        "no_risky_requested_action": True,
+    }
+    assert valid_model.payload["important_uncertainties"] == []
+
+    cautious_model = _RecordingSynthesisModel("Rủi ro thấp; hãy cẩn thận và xác minh qua kênh chính thức.")
+    rejected = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=cautious_model,
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(result)
+    assert rejected.assistant_response is not None
+    assert rejected.assistant_response.generation_mode.value == "policy_grounded"
+    assert "rủi ro thấp" not in rejected.assistant_response.summary.casefold()
+    assert "cẩn thận" not in rejected.assistant_response.summary.casefold()
 
 
 @pytest.mark.asyncio
