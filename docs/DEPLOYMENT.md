@@ -16,6 +16,19 @@ Giữ Backend Watch Paths trống trong Railway Dashboard; `railway.backend.json
 source, migration, dependency và Dockerfile changes không bị Railway bỏ qua. GitHub Actions chịu trách nhiệm xác
 định service nào thực sự cần deploy.
 
+## CD reconciliation
+
+CD dùng mô hình desired/actual state theo từng service:
+
+- Desired state là SHA hiện tại của `main` tại lúc workflow bắt đầu.
+- Actual state là tag `deploy/backend`, `deploy/worker` hoặc `deploy/frontend`; mỗi tag chỉ được cập nhật sau khi
+  Railway deploy service tương ứng thành công.
+- Workflow chạy `git diff <actual-sha> <desired-sha>` và chỉ deploy service có production build input thay đổi.
+  Chưa có tag actual thì service được deploy lần đầu.
+
+Các tag deployment là mutable state, vì vậy chỉ GitHub Actions production được phép force-update chúng. Deploy
+thất bại không cập nhật tag; lần chạy sau tiếp tục reconcile từ SHA deployed thành công gần nhất.
+
 ## Production configuration
 
 ```dotenv
