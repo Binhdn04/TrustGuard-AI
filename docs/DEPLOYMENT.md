@@ -144,11 +144,14 @@ LANGFUSE_SECRET_KEY=<project-secret-key>
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_SAMPLE_RATE=1.0
 LANGFUSE_DEBUG=false
+# Optional: capture scrubbed request/response content for debugging.
+LANGFUSE_CAPTURE_SANITIZED_CONTENT=false
 ```
 
-SDK chỉ gửi operation names, model/token/cost/latency, trạng thái chuẩn hóa, tags, environment, session UUID và
-user ID đã HMAC. Prompt, completion, private message, provider error, credential, OTP, token và URL payload được
-redact tại export boundary. Giảm `LANGFUSE_SAMPLE_RATE` theo volume/cost; rollback tức thời bằng
+Mặc định SDK chỉ gửi operation names, model/token/cost/latency, trạng thái chuẩn hóa, tags, environment, session UUID và
+user ID đã HMAC. Để debug, đặt `LANGFUSE_CAPTURE_SANITIZED_CONTENT=true`: trace root sẽ có request/response đã scrub
+(credential, OTP, token, email, URL credentials và URL query bị che). Prompt/completion từ provider, private context và
+provider error vẫn bị redact tại export boundary. Giảm `LANGFUSE_SAMPLE_RATE` theo volume/cost; rollback tức thời bằng
 `LANGFUSE_TRACING_ENABLED=false`. Không đưa Langfuse keys vào frontend hoặc log.
 
 Mỗi process ghi `langfuse_observability_initialized` hoặc `langfuse_observability_disabled` lúc startup với

@@ -42,6 +42,7 @@ class RedactingJsonFormatter(logging.Formatter):
             "base_url_host",
             "sample_rate",
             "sdk_debug",
+            "capture_sanitized_content",
             "feature",
             "trace_name",
             "operation",

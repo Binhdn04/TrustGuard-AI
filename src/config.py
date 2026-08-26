@@ -28,13 +28,15 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0.0)
     llm_max_retries: int = Field(default=2, ge=0)
 
-    # Langfuse tracing is opt-in and sends redacted observability metadata only.
+    # Langfuse tracing is opt-in. Sanitized content capture remains separately
+    # gated so a deployment cannot start exporting message content by accident.
     langfuse_tracing_enabled: bool = False
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_base_url: str = "https://cloud.langfuse.com"
     langfuse_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
     langfuse_debug: bool = False
+    langfuse_capture_sanitized_content: bool = False
 
     # Security assistant runtime. AI stages default on but remain independently
     # gated as operational kill switches; policy remains deterministic.
