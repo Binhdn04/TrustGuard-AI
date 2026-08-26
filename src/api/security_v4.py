@@ -500,6 +500,7 @@ async def security_chat_v4(
             feature="chat",
             user_id=principal.user_id,
             session_id=str(request.conversation_id) if request.conversation_id else None,
+            input={"message": request.message},
         ) as trace:
             agent_input = {"query": request.message, "context": retained_context}
             if observability.enabled:
@@ -510,7 +511,7 @@ async def security_chat_v4(
             else:
                 result = await chatbot_agent.ainvoke(agent_input)
             if trace is not None:
-                trace.update(output={"status": "ok"})
+                trace.update(output={"status": "ok", "response": result.get("response", "")})
     except Exception as exc:
         raise PlatformError(
             status_code=503,
@@ -596,6 +597,7 @@ async def create_security_analysis_v4(
             feature="analysis",
             user_id=principal.user_id,
             session_id=str(scoped.conversation_id),
+            input={"message": request.message},
         ) as trace:
             scoped = await pipeline.process(
                 request,

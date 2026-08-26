@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from functools import lru_cache
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from src.config import Settings, get_settings
 
@@ -32,12 +33,48 @@ _PRIVATE_ATTRIBUTE_PARTS = (
 _SAFE_METADATA_KEYS = {"feature", "operation", "privacy"}
 _REDACTED = "[REDACTED_PRIVATE_CONTENT]"
 _SAFE_STRUCTURED = "safe-structured"
+_SANITIZED_CONTENT = "sanitized-content"
+_CONTENT_REDACTED = "content-redacted"
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+_LABELED_SECRET_RE = re.compile(
+    r"(?i)\b(?:otp|one[- ]time(?:\s+password)?|password|passcode|mật\s*khẩu|mat\s*khau|"
+    r"pin|token|secret|api[_ -]?key|credential|authorization)\s*[:=]?\s*\S+"
+)
+_JWT_RE = re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}(?:\.[a-zA-Z0-9_-]{10,})?\b")
+_LONG_TOKEN_RE = re.compile(
+    r"\b(?=[a-zA-Z0-9_-]{20,}\b)(?=[a-zA-Z0-9_-]*[a-zA-Z])(?=[a-zA-Z0-9_-]*\d)[a-zA-Z0-9_-]+\b"
+)
 
 logger = logging.getLogger("trustguard.observability")
 
 
-def mask_private_trace_data(*, params):
-    """Remove private message/provider payloads immediately before export."""
+def sanitize_trace_content(value: Any) -> Any:
+    """Keep debug context while removing secrets, PII, and URL query data."""
+    if isinstance(value, dict):
+        return {str(key): sanitize_trace_content(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_trace_content(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_trace_content(item) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    def scrub_url(match: re.Match[str]) -> str:
+        parsed = urlsplit(match.group(0))
+        if parsed.username or parsed.password:
+            return "[REDACTED_URL]"
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+    sanitized = _URL_RE.sub(scrub_url, value)
+    sanitized = _EMAIL_RE.sub("[REDACTED_EMAIL]", sanitized)
+    sanitized = _LABELED_SECRET_RE.sub("[REDACTED_SECRET]", sanitized)
+    sanitized = _JWT_RE.sub("[REDACTED_TOKEN]", sanitized)
+    return _LONG_TOKEN_RE.sub("[REDACTED_TOKEN]", sanitized)
+
+
+def mask_private_trace_data(*, params, allow_sanitized_content: bool = False):
+    """Remove private/provider payloads immediately before export to Langfuse."""
     from langfuse.types import MaskOtelSpansResult, OtelSpanPatch
 
     patches = {}
@@ -47,13 +84,19 @@ def mask_private_trace_data(*, params):
         privacy = str(span.attributes.get("langfuse.observation.metadata.privacy", "")).strip('"')
         for key in span.attributes:
             lowered = key.casefold()
-            # Application-owned observations only contain policy outputs,
-            # counts, enums, and normalized failure codes. Keep those useful
-            # for debugging while continuing to mask framework/provider I/O.
-            if key in _PRIVATE_ATTRIBUTE_KEYS and not (privacy == _SAFE_STRUCTURED and lowered.endswith(".output")):
-                set_attributes[key] = _REDACTED
-            elif lowered.startswith(("gen_ai.", "llm.")) and any(part in lowered for part in _PRIVATE_ATTRIBUTE_PARTS):
+            # Keep approved structured policy outputs useful for debugging,
+            # while continuing to mask framework/provider I/O.
+            if lowered.startswith(("gen_ai.", "llm.")) and any(part in lowered for part in _PRIVATE_ATTRIBUTE_PARTS):
                 delete_attributes.append(key)
+            elif key in _PRIVATE_ATTRIBUTE_KEYS:
+                if privacy == _SAFE_STRUCTURED and lowered.endswith(".output"):
+                    continue
+                if allow_sanitized_content and privacy == _SANITIZED_CONTENT:
+                    sanitized = sanitize_trace_content(span.attributes[key])
+                    if sanitized != span.attributes[key]:
+                        set_attributes[key] = sanitized
+                else:
+                    set_attributes[key] = _REDACTED
             elif lowered.startswith("langfuse.observation.metadata."):
                 metadata_key = lowered.rsplit(".", 1)[-1]
                 if metadata_key not in _SAFE_METADATA_KEYS:
@@ -90,7 +133,10 @@ class LangfuseObservability:
                 environment=settings.app_env,
                 sample_rate=settings.langfuse_sample_rate,
                 debug=settings.langfuse_debug,
-                mask_otel_spans=mask_private_trace_data,
+                mask_otel_spans=lambda *, params: mask_private_trace_data(
+                    params=params,
+                    allow_sanitized_content=settings.langfuse_capture_sanitized_content,
+                ),
             )
             logger.info(
                 "langfuse_observability_initialized",
@@ -115,6 +161,7 @@ class LangfuseObservability:
             "base_url_host": urlparse(self._settings.langfuse_base_url).hostname or "invalid",
             "sample_rate": self._settings.langfuse_sample_rate,
             "sdk_debug": self._settings.langfuse_debug,
+            "capture_sanitized_content": self._settings.langfuse_capture_sanitized_content,
         }
 
     @property
@@ -137,6 +184,7 @@ class LangfuseObservability:
         feature: str,
         user_id: str | None = None,
         session_id: str | None = None,
+        input: dict[str, Any] | None = None,
     ) -> Iterator[Any | None]:
         if self._client is None:
             with nullcontext(None) as span:
@@ -150,8 +198,11 @@ class LangfuseObservability:
         with self._client.start_as_current_observation(
             name=name,
             as_type="span",
-            input=_REDACTED,
-            metadata={"feature": feature, "privacy": _SAFE_STRUCTURED},
+            input=(sanitize_trace_content(input) if self._settings.langfuse_capture_sanitized_content else _REDACTED),
+            metadata={
+                "feature": feature,
+                "privacy": _SANITIZED_CONTENT if self._settings.langfuse_capture_sanitized_content else _CONTENT_REDACTED,
+            },
         ) as span:
             failure: tuple[BaseException, Any] | None = None
             try:
@@ -222,7 +273,7 @@ class LangfuseObservability:
             metadata={
                 "feature": "security-ai",
                 "operation": operation,
-                "privacy": "content-redacted",
+                "privacy": _CONTENT_REDACTED,
             },
         )
 
@@ -239,7 +290,7 @@ class LangfuseObservability:
                 "langfuse_tags": ["security-triage", "chat"],
                 "feature": "chat",
                 "operation": operation,
-                "privacy": "content-redacted",
+                "privacy": _CONTENT_REDACTED,
             },
         }
 
@@ -283,4 +334,5 @@ __all__ = [
     "close_langfuse_observability",
     "get_langfuse_observability",
     "mask_private_trace_data",
+    "sanitize_trace_content",
 ]

@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.config import Settings
-from src.observability.langfuse import LangfuseObservability, mask_private_trace_data
+from src.observability.langfuse import LangfuseObservability, mask_private_trace_data, sanitize_trace_content
 
 
 class _FakeLangfuse:
@@ -132,3 +132,41 @@ def test_export_mask_preserves_application_owned_safe_structured_output() -> Non
 
     assert patch.set_attributes["langfuse.observation.input"] == "[REDACTED_PRIVATE_CONTENT]"
     assert "langfuse.observation.output" not in patch.set_attributes
+
+
+def test_sanitized_content_capture_keeps_debug_text_without_sensitive_values() -> None:
+    identifier = object()
+    params = SimpleNamespace(
+        spans=MappingProxyType(
+            {
+                identifier: SimpleNamespace(
+                    attributes=MappingProxyType(
+                        {
+                            "langfuse.observation.input": (
+                                "Mã OTP: 123456; email user@example.com; "
+                                "https://example.com/login?token=super-secret"
+                            ),
+                            "langfuse.observation.output": "Đừng chia sẻ token=abc123",
+                            "langfuse.observation.metadata.privacy": "sanitized-content",
+                        }
+                    )
+                )
+            }
+        )
+    )
+
+    patch = mask_private_trace_data(params=params, allow_sanitized_content=True).span_patches[identifier]
+
+    assert patch.set_attributes["langfuse.observation.input"] == (
+        "Mã [REDACTED_SECRET] email [REDACTED_EMAIL]; https://example.com/login"
+    )
+    assert patch.set_attributes["langfuse.observation.output"] == "Đừng chia sẻ [REDACTED_SECRET]"
+    assert patch.set_attributes["trustguard.private_content_redacted"] is True
+
+
+def test_sanitize_trace_content_handles_nested_payloads_and_bearer_tokens() -> None:
+    sanitized = sanitize_trace_content(
+        {"request": ["Authorization: Bearer eyJheader123456.payload123456.signature123456"]}
+    )
+
+    assert sanitized == {"request": ["[REDACTED_SECRET] [REDACTED_TOKEN]"]}
