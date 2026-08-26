@@ -33,7 +33,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # Successful deployments advance service-specific Git tags, which are the
+  # durable actual-state record used by the next reconciliation.
+  contents: write
 
 concurrency:
   group: railway-production
@@ -44,36 +46,49 @@ jobs:
     name: Detect affected services
     runs-on: [self-hosted, linux, x64, p068]
     outputs:
+      desired_sha: ${{ steps.services.outputs.desired_sha }}
       backend: ${{ steps.services.outputs.backend }}
       worker: ${{ steps.services.outputs.worker }}
       frontend: ${{ steps.services.outputs.frontend }}
+      backend_tag_ref: ${{ steps.services.outputs.backend_tag_ref }}
+      worker_tag_ref: ${{ steps.services.outputs.worker_tag_ref }}
+      frontend_tag_ref: ${{ steps.services.outputs.frontend_tag_ref }}
 
     steps:
       - name: Check out repository history
         uses: actions/checkout@v5
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Detect production build changes
+      - name: Reconcile desired revision with deployed revisions
         id: services
         shell: bash
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
-          backend=false
-          worker=false
-          frontend=false
+          set -euo pipefail
 
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]] \
-            || [[ -z "${BEFORE_SHA}" ]] \
-            || [[ "${BEFORE_SHA}" =~ ^0+$ ]] \
-            || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
-            backend=true
-            worker=true
-            frontend=true
-          else
+          # The desired state is the current main revision, not the event's
+          # previous SHA.  Tags are advanced only after `railway up` succeeds.
+          git fetch --force origin main --tags
+          desired_sha="$(git rev-parse origin/main)"
+
+          deployed_tag_ref() {
+            # Keep the tag object's SHA as a compare-and-swap lease.  This is
+            # deliberately distinct from the peeled commit SHA used for diff.
+            git rev-parse -q --verify "refs/tags/deploy/$1" || true
+          }
+
+          service_changed() {
+            local service="$1"
+            local deployed_tag="deploy/${service}"
+            local actual_sha
+
+            if ! actual_sha="$(git rev-parse -q --verify "${deployed_tag}^{commit}")"; then
+              echo "${service}: no successful deployment tag; deployment required."
+              return 0
+            fi
+
+            echo "${service}: desired=${desired_sha}, actual=${actual_sha}"
             while IFS= read -r changed_path; do
               case "${changed_path}" in
                 *.md|tests/*|*/tests/*|frontend/e2e/*|frontend/src/test/*)
@@ -81,36 +96,51 @@ jobs:
                   ;;
               esac
 
-              case "${changed_path}" in
-                src/*|Dockerfile|requirements.txt|.dockerignore)
-                  backend=true
-                  worker=true
+              case "${service}:${changed_path}" in
+                backend:src/*|backend:Dockerfile|backend:requirements.txt|backend:.dockerignore|backend:migrations/*|backend:alembic.ini|backend:railway.backend.json)
+                  return 0
                   ;;
-                migrations/*|alembic.ini|railway.backend.json)
-                  backend=true
+                worker:src/*|worker:Dockerfile|worker:requirements.txt|worker:.dockerignore|worker:railway.worker.json)
+                  return 0
                   ;;
-                railway.worker.json)
-                  worker=true
-                  ;;
-                frontend/src/*|frontend/public/*|frontend/Dockerfile|frontend/railway.json|frontend/package.json|frontend/package-lock.json|frontend/next.config.ts|frontend/postcss.config.mjs|frontend/tsconfig.json|frontend/.dockerignore)
-                  frontend=true
+                frontend:frontend/src/*|frontend:frontend/public/*|frontend:frontend/Dockerfile|frontend:frontend/railway.json|frontend:frontend/package.json|frontend:frontend/package-lock.json|frontend:frontend/next.config.ts|frontend:frontend/postcss.config.mjs|frontend:frontend/tsconfig.json|frontend:frontend/.dockerignore)
+                  return 0
                   ;;
               esac
-            done < <(git diff --name-only "${BEFORE_SHA}" "${CURRENT_SHA}")
-          fi
+            done < <(git diff --name-only "${actual_sha}" "${desired_sha}")
 
+            return 1
+          }
+
+          backend=false
+          worker=false
+          frontend=false
+          backend_tag_ref="$(deployed_tag_ref backend)"
+          worker_tag_ref="$(deployed_tag_ref worker)"
+          frontend_tag_ref="$(deployed_tag_ref frontend)"
+          service_changed backend && backend=true || true
+          service_changed worker && worker=true || true
+          service_changed frontend && frontend=true || true
+
+          echo "desired_sha=${desired_sha}" >> "${GITHUB_OUTPUT}"
           echo "backend=${backend}" >> "${GITHUB_OUTPUT}"
           echo "worker=${worker}" >> "${GITHUB_OUTPUT}"
           echo "frontend=${frontend}" >> "${GITHUB_OUTPUT}"
+          echo "backend_tag_ref=${backend_tag_ref}" >> "${GITHUB_OUTPUT}"
+          echo "worker_tag_ref=${worker_tag_ref}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_tag_ref=${frontend_tag_ref}" >> "${GITHUB_OUTPUT}"
 
   lint-and-test:
     name: Lint and test
+    needs: changes
     runs-on: [self-hosted, linux, x64, p068]
     timeout-minutes: 20
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.changes.outputs.desired_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -148,6 +178,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.changes.outputs.desired_sha }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -177,15 +210,42 @@ jobs:
                 
       - name: Deploy backend
         if: needs.changes.outputs.backend == 'true'
-        run: railway up --service backend --message "GitHub Actions ${GITHUB_SHA}"
+        run: railway up --service backend --message "GitHub Actions ${{ needs.changes.outputs.desired_sha }}"
+
+      - name: Record backend deployment
+        if: needs.changes.outputs.backend == 'true'
+        env:
+          DESIRED_SHA: ${{ needs.changes.outputs.desired_sha }}
+          EXPECTED_TAG_REF: ${{ needs.changes.outputs.backend_tag_ref }}
+        run: |
+          git tag -f deploy/backend "${DESIRED_SHA}"
+          git push --force-with-lease="refs/tags/deploy/backend:${EXPECTED_TAG_REF}" origin refs/tags/deploy/backend
 
       - name: Deploy worker
         if: needs.changes.outputs.worker == 'true'
-        run: railway up --service worker --message "GitHub Actions ${GITHUB_SHA}"
+        run: railway up --service worker --message "GitHub Actions ${{ needs.changes.outputs.desired_sha }}"
+
+      - name: Record worker deployment
+        if: needs.changes.outputs.worker == 'true'
+        env:
+          DESIRED_SHA: ${{ needs.changes.outputs.desired_sha }}
+          EXPECTED_TAG_REF: ${{ needs.changes.outputs.worker_tag_ref }}
+        run: |
+          git tag -f deploy/worker "${DESIRED_SHA}"
+          git push --force-with-lease="refs/tags/deploy/worker:${EXPECTED_TAG_REF}" origin refs/tags/deploy/worker
 
       - name: Deploy frontend
         if: needs.changes.outputs.frontend == 'true'
-        run: railway up --service frontend --message "GitHub Actions ${GITHUB_SHA}"
+        run: railway up --service frontend --message "GitHub Actions ${{ needs.changes.outputs.desired_sha }}"
+
+      - name: Record frontend deployment
+        if: needs.changes.outputs.frontend == 'true'
+        env:
+          DESIRED_SHA: ${{ needs.changes.outputs.desired_sha }}
+          EXPECTED_TAG_REF: ${{ needs.changes.outputs.frontend_tag_ref }}
+        run: |
+          git tag -f deploy/frontend "${DESIRED_SHA}"
+          git push --force-with-lease="refs/tags/deploy/frontend:${EXPECTED_TAG_REF}" origin refs/tags/deploy/frontend
 
       - name: Write deployment summary
         if: success()
@@ -202,7 +262,7 @@ jobs:
             [[ "${DEPLOY_WORKER}" == "true" ]] && echo "- \`worker\`"
             [[ "${DEPLOY_FRONTEND}" == "true" ]] && echo "- \`frontend\`"
             echo ""
-            echo "Commit: \`${GITHUB_SHA}\`"
+            echo "Desired commit: \`${{ needs.changes.outputs.desired_sha }}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   clean:
