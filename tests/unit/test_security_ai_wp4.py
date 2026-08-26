@@ -7,9 +7,19 @@ import pytest
 from src.agents.security_risk import assess_security_risk
 from src.models import (
     AssistantGenerationModeV4,
+    ClaimVerificationV4,
+    OfficialLinkVerificationReportV4,
+    OfficialVerificationComponentV4,
+    PublisherVerificationV4,
+    RequestedActionV4,
+    ResourceVerificationV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
+    SecurityRecommendedActionV4,
+    SecurityRiskV4,
     SecurityTriageCreateRequestV4,
+    VerificationIntentV4,
+    VerificationStatusV4,
 )
 from src.security_ai.contracts import AssistantSynthesis, ModelResponse, SynthesisReason
 from src.security_ai.runtime import SecurityAssistantRuntime
@@ -18,6 +28,7 @@ from src.services.security_response import (
     SynthesisGroundingFailure,
     check_grounded_ai_response,
     grounded_ai_response,
+    policy_grounded_assistant_response,
 )
 from src.services.security_triage import SecurityTriageScopeService
 
@@ -219,3 +230,77 @@ def test_composer_context_excludes_review_workflow_diagnostics() -> None:
     assert payload["important_uncertainties"] == ["Không thể xác nhận đầy đủ hành động được yêu cầu."]
     assert all("description" not in item for item in payload["evidence"])
     assert all("reviewed" not in str(value).casefold() for value in payload.values())
+
+
+def test_composer_and_fallback_receive_case_specific_unverified_verification_truth() -> None:
+    report = OfficialLinkVerificationReportV4(
+        schema_version="official-link-verification-v4",
+        intent=VerificationIntentV4(
+            organization_name="Example Telecom",
+            claim_summary="chương trình hỗ trợ khách hàng 500.000đ",
+            requested_action=RequestedActionV4.SUBMIT_FORM,
+            action_url_indices=[0],
+        ),
+        publisher_verification=PublisherVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="publisher_not_confirmed"
+        ),
+        claim_verification=ClaimVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="claim_not_confirmed"
+        ),
+        resource_verification=ResourceVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="resource_not_confirmed"
+        ),
+        domain_ownership_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="ownership_not_confirmed"
+        ),
+        sender_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
+        ),
+        action_endorsement_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
+        ),
+        overall_status=VerificationStatusV4.UNVERIFIED,
+        reason_code="evidence_insufficient",
+    )
+    redirect = SecurityEvidenceV4(
+        evidence_ref="evidence:fedcba9876543210",
+        type=SecurityEvidenceTypeV4.REDIRECT,
+        source="redirect",
+        target="submitted_url",
+        signal="redirect_destination_unresolved+http_404",
+        description="bounded",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    scoped = _risk_result().model_copy(
+        update={
+            "official_verification": report,
+            "evidence": [redirect],
+            "risk": SecurityRiskV4.LOW_RISK,
+            "recommended_actions": [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION],
+        }
+    )
+
+    payload = GroundedSecurityResponseService._synthesis_payload(scoped)
+
+    assert payload["verification_state"] == {
+        "claimed_organization": "Example Telecom",
+        "program_claim": {
+            "value": "chương trình hỗ trợ khách hàng 500.000đ",
+            "topic": None,
+            "status": "UNVERIFIED",
+        },
+        "requested_action": {"value": "submit_form", "endorsement_status": "UNVERIFIED"},
+        "submitted_resource": {
+            "claimed_platforms": [],
+            "status": "UNVERIFIED",
+            "final_destination": "unresolved",
+        },
+        "domain_ownership": "UNVERIFIED",
+        "sender_identity": "UNVERIFIED",
+        "malicious_evidence": "none_observed",
+        "unverified_is_not_a_risk_signal_by_itself": True,
+    }
+    fallback = policy_grounded_assistant_response(scoped).summary
+    assert "Example Telecom" in fallback
+    assert "chương trình hỗ trợ khách hàng 500.000đ" in fallback
+    assert "Điểm đến cuối của liên kết vẫn chưa xác định được." in fallback

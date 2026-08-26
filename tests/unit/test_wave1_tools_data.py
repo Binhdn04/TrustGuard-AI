@@ -9,7 +9,9 @@ from src.agents.tools import (
     NormalizedRdapProvider,
     NormalizedToolResult,
     RdapDomainIntelligence,
+    RedirectResolutionStatus,
     SsrfGuard,
+    ToolCallError,
     ToolResultStatus,
     UrlReputationFinding,
     UrlReputationService,
@@ -46,6 +48,51 @@ async def test_guarded_redirect_resolver_revalidates_and_normalizes_chain():
     assert envelope.status is ToolResultStatus.SUCCESS
     assert envelope.result is not None
     assert envelope.result.redirect_chain == ["https://start.example/", "https://final.example/landing"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_http_error_is_unresolved_not_successful_no_redirect():
+    async def resolver(_host: str, _port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _request: httpx.Response(404))) as client:
+        envelope = await GuardedRedirectResolver(client=client, guard=SsrfGuard(resolver=resolver)).resolve(
+            "https://short.example/form"
+        )
+
+    assert envelope.status is ToolResultStatus.INCONCLUSIVE
+    assert envelope.result is not None
+    assert envelope.result.status is RedirectResolutionStatus.UNRESOLVED
+    assert envelope.result.http_status_code == 404
+    assert "http_404" in envelope.result.signals
+
+
+@pytest.mark.asyncio
+async def test_redirect_resolver_retries_a_bot_challenge_with_navigation_headers():
+    async def resolver(_host: str, _port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    target = "https://short.example/form"
+    destination = "https://forms.example/d/official-form"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("user-agent", "").startswith("python-httpx"):
+            return httpx.Response(403)
+        assert request.headers["accept-language"] == "en-US,en;q=0.9"
+        if request.url.path == "/form":
+            return httpx.Response(302, headers={"location": destination})
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        envelope = await GuardedRedirectResolver(client=client, guard=SsrfGuard(resolver=resolver)).resolve(target)
+
+    assert envelope.status is ToolResultStatus.SUCCESS
+    assert envelope.result is not None
+    assert envelope.result.status is RedirectResolutionStatus.RESOLVED
+    assert envelope.result.final_url == destination
+    assert envelope.result.redirect_chain == [target, destination]
+    assert envelope.usage.attempts == 2
+    assert envelope.usage.network_calls == 3
 
 
 @pytest.mark.asyncio
@@ -240,3 +287,29 @@ async def test_rdap_missing_bootstrap_service_is_inconclusive_and_cached():
     assert second.cache.status.value == "hit"
     assert second.usage.network_calls == 0
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_rdap_provider_failure_is_inconclusive_and_cached_not_a_tool_error():
+    class _UnavailableRdap:
+        provider = "fixture-rdap/v1"
+        calls = 0
+
+        async def lookup(self, _domain: str):
+            self.calls += 1
+            raise ToolCallError("domain_intelligence", "PROVIDER_ERROR", "registry unavailable", retryable=True)
+
+        async def aclose(self):
+            return None
+
+    adapter = _UnavailableRdap()
+    provider = NormalizedRdapProvider(adapter)  # type: ignore[arg-type]
+    first = await provider.lookup("example.com")
+    second = await provider.lookup("example.com")
+
+    assert first.status is ToolResultStatus.INCONCLUSIVE
+    assert first.error is None
+    assert first.result is not None and first.result.signals == ["provider_unavailable"]
+    assert second.status is ToolResultStatus.INCONCLUSIVE
+    assert second.cache.status.value == "hit"
+    assert adapter.calls == 1

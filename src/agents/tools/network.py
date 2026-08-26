@@ -13,6 +13,19 @@ from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 
 Resolver = Callable[[str, int], Awaitable[list[str]]]
 
+# Static, cookie-free navigation headers used only for public document and
+# redirect retrieval. They improve compatibility with redirectors that reject
+# a library-default user agent, without turning the service into a browser.
+BROWSER_NAVIGATION_HEADERS = {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.9",
+    "user-agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+}
+
 
 async def system_resolver(host: str, port: int) -> list[str]:
     loop = asyncio.get_running_loop()

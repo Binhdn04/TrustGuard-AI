@@ -65,6 +65,28 @@ def test_neutral_context_alone_is_deterministic_out_of_scope(message: str, reaso
     assert reason in result.reason_codes
 
 
+def test_program_claim_and_form_action_are_grounded_independently_of_sensitive_data() -> None:
+    message = (
+        "Viettel triển khai chương trình hỗ trợ khách hàng 500.000đ. "
+        "Điền thông tin tại Google Form chính thức bên dưới: https://shorturl.at/qS12D"
+    )
+
+    context = extract_security_context(message)
+    intent = build_grounded_verification_intent(message, context)
+
+    assert context.claimed_entity == "Viettel"
+    assert context.requested_action is RequestedActionV4.SUBMIT_FORM
+    assert context.personal_information_request is False
+    assert intent is not None
+    assert intent.contract.organization_name == "Viettel"
+    assert intent.contract.claim_summary == "chương trình hỗ trợ khách hàng 500.000đ"
+    assert intent.contract.requested_action is RequestedActionV4.SUBMIT_FORM
+    assert any(
+        query.text == "Viettel chương trình hỗ trợ khách hàng 500.000đ chính thức"
+        for query in OfficialVerificationQueryBuilder().build(intent)
+    )
+
+
 class _MustNotCallModel:
     def __init__(self) -> None:
         self.calls = 0

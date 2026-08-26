@@ -14,6 +14,7 @@ from src.models import (
     BrandRecordV4,
     EntityUrlClaimV4,
     ExposureStateV4,
+    GroundedEntityRoleV4,
     RequestedActionV4,
     ScopeDecisionV4,
     SecurityContextV4,
@@ -52,6 +53,7 @@ from src.services.security_entity_mentions import (
     deterministic_entity_url_claims,
     extract_entity_mentions,
     extract_recovery_phrases,
+    ground_entity_roles,
 )
 from src.services.security_span_candidates import SemanticSpanCandidate, generate_semantic_span_candidates
 
@@ -977,18 +979,26 @@ class SecuritySemanticUnderstandingService:
             return scope
         claims = deterministic_entity_url_claims(message, candidates, len(context.urls))
         entity = context.claimed_entity
+        grounded_mentions = ground_entity_roles(message, candidates)
+        claimed_mentions = [
+            item for item in grounded_mentions if item.role is GroundedEntityRoleV4.CLAIMED_ORGANIZATION
+        ]
         if entity is None:
             if claims:
                 entity = claims[0].entity_name
-            elif len(candidates) == 1:
-                entity = candidates[0].text
+            elif claimed_mentions:
+                entity = claimed_mentions[0].text
         combined_claims = list(
             {
                 (item.entity_name.casefold(), item.url_index, item.relationship): item
                 for item in [*context.entity_url_claims, *claims]
             }.values()
         )
-        if entity == context.claimed_entity and combined_claims == context.entity_url_claims:
+        if (
+            entity == context.claimed_entity
+            and combined_claims == context.entity_url_claims
+            and grounded_mentions == context.entity_mentions
+        ):
             return scope
         # Mentioning an organization is an entity candidate, not evidence that
         # anyone is impersonating it.  Keep any independently grounded
@@ -997,6 +1007,7 @@ class SecuritySemanticUnderstandingService:
         merged = context.model_copy(
             update={
                 "claimed_entity": entity,
+                "entity_mentions": grounded_mentions,
                 "entity_url_claims": combined_claims,
             }
         )

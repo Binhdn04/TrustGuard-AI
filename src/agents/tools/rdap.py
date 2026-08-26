@@ -29,7 +29,7 @@ from src.models import DomainIntelligenceResult
 
 RDAP_SCHEMA_VERSION = "rdap-v1"
 IANA_DNS_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json"
-_INCONCLUSIVE_SIGNALS = {"not_found", "service_unavailable"}
+_INCONCLUSIVE_SIGNALS = {"not_found", "service_unavailable", "provider_unavailable"}
 
 
 @dataclass
@@ -343,18 +343,18 @@ class NormalizedRdapProvider:
             )
         try:
             result = await self._get_adapter().lookup(registrable)
-        except ToolCallError as exc:
-            code = {
-                "RATE_LIMITED": ToolErrorCode.RATE_LIMITED,
-                "PROVIDER_TIMEOUT": ToolErrorCode.PROVIDER_TIMEOUT,
-            }.get(exc.error.code, ToolErrorCode.PROVIDER_ERROR)
-            return self._failure(
-                started,
-                code,
-                exc.error.message,
-                retryable=exc.error.retryable,
-                attempts=1,
-                calls=1,
+        except ToolCallError:
+            # Registration lookup is enrichment, not a prerequisite for URL
+            # resolution. A transient registry/bootstrap/DNS failure is
+            # therefore an inconclusive observation, never a user-visible
+            # tool error and never evidence that the domain is safe. Cache it
+            # briefly to avoid repeatedly hitting an unavailable registry.
+            result = DomainIntelligenceResult(
+                provider=self.provider,
+                domain=registrable,
+                privacy_redacted=False,
+                signals=["provider_unavailable"],
+                observed_at=self._clock(),
             )
         ttl = self._not_found_ttl if set(result.signals) & _INCONCLUSIVE_SIGNALS else self._cache_ttl
         await self._cache.put(

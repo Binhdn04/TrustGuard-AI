@@ -227,6 +227,7 @@ class DnsResolutionEnvelope(ToolContractModel):
 class RedirectResolutionStatus(StrEnum):
     NO_REDIRECT = "no_redirect"
     RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
 
 
 class RedirectResolutionResult(ToolContractModel):
@@ -235,6 +236,7 @@ class RedirectResolutionResult(ToolContractModel):
     redirect_chain: list[str] = Field(min_length=1)
     status: RedirectResolutionStatus
     signals: list[str] = Field(default_factory=list)
+    http_status_code: int | None = Field(default=None, ge=100, le=599)
     observed_at: datetime
 
     @model_validator(mode="after")
@@ -245,6 +247,8 @@ class RedirectResolutionResult(ToolContractModel):
             raise ValueError("no_redirect result must contain exactly one URL")
         if self.status is RedirectResolutionStatus.RESOLVED and len(self.redirect_chain) < 2:
             raise ValueError("resolved redirect requires at least two URLs")
+        if self.status is RedirectResolutionStatus.UNRESOLVED and self.http_status_code is None:
+            raise ValueError("unresolved redirect requires the observed HTTP status")
         return self
 
 

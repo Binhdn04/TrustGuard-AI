@@ -16,7 +16,7 @@ from pydantic import Field, model_validator
 from src.agents.nodes.rules import normalize_url
 from src.agents.tools.errors import ToolCallError, UnsafeUrlError
 from src.agents.tools.models import ToolContractModel
-from src.agents.tools.network import GuardedHttpClient, SsrfGuard, SsrfPolicy
+from src.agents.tools.network import BROWSER_NAVIGATION_HEADERS, GuardedHttpClient, SsrfGuard, SsrfPolicy
 from src.security_ai.runtime import BudgetExceededError, TurnExecutionContext
 
 _MAX_PROVIDER_RESPONSE_BYTES = 1_000_000
@@ -541,7 +541,11 @@ class GuardedHtmlFetcher:
             if remaining <= 0:
                 raise _TransportError(VerificationTransportLimitation.TURN_DEADLINE_EXCEEDED)
             response, chain = await asyncio.wait_for(
-                self._http.get(url, before_request=execution_context.reserve_network_units),
+                self._http.get(
+                    url,
+                    before_request=execution_context.reserve_network_units,
+                    headers=BROWSER_NAVIGATION_HEADERS,
+                ),
                 timeout=min(self._timeout, remaining),
             )
             if response.status_code == 429:

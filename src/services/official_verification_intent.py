@@ -35,6 +35,12 @@ _LONG_TOKEN_RE = re.compile(r"\b(?=[a-zA-Z0-9_-]{20,}\b)(?=[a-zA-Z0-9_-]*[a-zA-Z
 _POSSIBLE_OTP_RE = re.compile(r"(?<!\d)\d{4,8}(?!\d)")
 _SPACE_RE = re.compile(r"\s+")
 _QUOTED_CLAIM_RE = re.compile(r'["“”]([^"“”]{4,200})["“”]')
+# A program/offer assertion is useful verification input even when it is not
+# quoted.  Keep it bounded to its sentence and remove the submitted URL; this
+# is a claim extractor, not a free-form search query from the entire message.
+_PROGRAM_CLAIM_RE = re.compile(
+    r"(?i)\b(?:chương\s*trình|chuong\s*trinh|thông\s*báo|thong\s*bao|ưu\s*đãi|uu\s*dai|hỗ\s*trợ|ho\s*tro)\b"
+)
 
 _TOPIC_QUERY_TERMS = {
     VerificationTopicV4.RECRUITMENT: ("tuyển dụng", "recruitment"),
@@ -217,6 +223,32 @@ def _quoted_claim_source(message: str) -> tuple[str, int, int] | None:
     return None
 
 
+def _program_claim_source(message: str) -> tuple[str, int, int] | None:
+    """Extract a literal, bounded program/offer assertion for verification."""
+    match = _PROGRAM_CLAIM_RE.search(message)
+    if match is None:
+        return None
+    end = len(message)
+    # Decimal amounts commonly contain a period, so only use delimiters that
+    # cannot truncate a literal monetary claim; trailing punctuation is
+    # stripped below.
+    for delimiter in ("\n", "!", "?", "https://", "http://", "www."):
+        candidate = message.find(delimiter, match.start())
+        if candidate >= 0:
+            end = min(end, candidate)
+    sentence_end = re.search(r"\.(?!\d)", message[match.start() :])
+    if sentence_end is not None:
+        end = min(end, match.start() + sentence_end.start())
+    value = _SPACE_RE.sub(" ", message[match.start() : end]).strip(" ,:;-—")
+    if len(value) < 4 or any(
+        pattern.search(value)
+        for pattern in (_EMAIL_RE, _SECRET_ASSIGNMENT_RE, _OTP_RE, _JWT_RE, _LONG_TOKEN_RE, _POSSIBLE_OTP_RE)
+    ):
+        return None
+    start = message.find(value, match.start(), end)
+    return value, start, start + len(value)
+
+
 def _accent_fold(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(char for char in normalized if not unicodedata.combining(char)).replace("đ", "d").replace("Đ", "D")
@@ -272,6 +304,13 @@ def build_grounded_verification_intent(
     quoted_claim = _quoted_claim_source(message)
     if quoted_claim is not None:
         source_value, start, end = quoted_claim
+        claim = GroundedTextValue(
+            source_value,
+            1.0,
+            (AssistantSourceSpanV4(field_name="claim_summary", start=start, end=end),),
+        )
+    elif (program_claim := _program_claim_source(message)) is not None:
+        source_value, start, end = program_claim
         claim = GroundedTextValue(
             source_value,
             1.0,
