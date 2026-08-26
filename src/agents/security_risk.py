@@ -158,7 +158,7 @@ def _association_is_unverified_target(scope: SecurityScopeResponseV4, evidence: 
 
 
 def _has_reviewed_official_match(scope: SecurityScopeResponseV4, target: str | None) -> bool:
-    """Whether reviewed identity evidence independently owns this target.
+    """Whether authoritative reviewed evidence independently owns this target.
 
     A reputation-provider result for a reviewed first-party target conflicts
     with an official fact.  One provider alone is not enough to call that
@@ -166,8 +166,15 @@ def _has_reviewed_official_match(scope: SecurityScopeResponseV4, target: str | N
     still allowed to do so.
     """
     return any(
-        item.type.value == "brand_match"
-        and item.signal.casefold() == "official_match"
+        (
+            (item.type.value == "brand_match" and item.signal.casefold() == "official_match")
+            # Domain familiarity is produced directly from the same reviewed
+            # identity registry.  It remains affirmative first-party ownership
+            # evidence even when semantic entity matching did not emit a
+            # brand_match row (for example, a bare passive domain check).
+            or (item.type.value == "domain_familiarity" and item.signal == "reviewed_first_party_domain")
+            or (item.type.value == "official_verification" and item.signal == "official_domain_verified")
+        )
         and _target_matches(item.target, target)
         for item in scope.evidence
     )
@@ -198,6 +205,29 @@ def _has_reviewed_first_party_domain(scope: SecurityScopeResponseV4, target: str
         item.type.value == "domain_familiarity"
         and item.signal == "reviewed_first_party_domain"
         and _target_matches(item.target, target)
+        for item in scope.evidence
+    )
+
+
+def _is_origin_only_url(url: str) -> bool:
+    """Whether a submitted URL names only a reviewed service origin.
+
+    A reviewed platform controls its own origin, but can host unreviewed user
+    resources below it.  The root URL is therefore a safe passive target while
+    a path, query, or fragment must retain the stricter resource policy.
+    """
+    parsed = urlsplit(url)
+    return parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+
+
+def _has_authoritative_passive_target_ownership(scope: SecurityScopeResponseV4, url: str) -> bool:
+    """Return positive ownership proof appropriate to this passive target."""
+    if _has_reviewed_official_match(scope, url):
+        return True
+    return _is_origin_only_url(url) and any(
+        item.type.value == "domain_familiarity"
+        and item.signal == "reviewed_platform_service"
+        and _target_matches(item.target, url)
         for item in scope.evidence
     )
 
@@ -373,6 +403,9 @@ def assess_security_risk(
     contributions: list[_Contribution] = []
     reviewed_target_ownership = bool(context.urls) and all(
         _has_reviewed_official_match(scope, url) for url in context.urls
+    )
+    passive_target_ownership = bool(context.urls) and all(
+        _has_authoritative_passive_target_ownership(scope, url) for url in context.urls
     )
     # A reviewed exact first-party target is affirmative ownership evidence.
     # It cannot erase blacklist/reputation findings below, but it means that a
@@ -584,7 +617,7 @@ def assess_security_risk(
         risk = SecurityRiskV4.MALICIOUS
     elif (
         _is_neutral_url_inspection(scope)
-        and all(_has_reviewed_official_match(scope, url) for url in context.urls)
+        and passive_target_ownership
         and score == 0
         and not reviewed_risk_refs
         and not identity_confirmed_mismatch
@@ -699,6 +732,20 @@ def assess_security_risk(
             [item.evidence_ref for item in contributions if item.evidence_ref]
             + strong_refs
             + safe_refs
+            + (
+                [
+                    item.evidence_ref
+                    for item in scope.evidence
+                    if item.type.value == "domain_familiarity"
+                    and item.signal == "reviewed_platform_service"
+                    and any(
+                        _is_origin_only_url(url) and _target_matches(item.target, url)
+                        for url in context.urls
+                    )
+                ]
+                if risk is SecurityRiskV4.SAFE and passive_target_ownership
+                else []
+            )
             + reviewed_risk_refs
             + (familiarity_refs if familiarity_enforced and risk is SecurityRiskV4.LOW_RISK else [])
             + ([item.evidence_ref for item in reviewed_suppressions] if memory_enabled else [])
@@ -758,7 +805,7 @@ def assess_security_risk(
         decision_assurance = "action_intent_unavailable"
     elif _has_sensitive_action(scope) or context.requested_action is not None:
         decision_assurance = "action_resource_verified" if action_chain_verified else "verification_incomplete"
-    elif reviewed_target_ownership and risk is SecurityRiskV4.SAFE:
+    elif passive_target_ownership and risk is SecurityRiskV4.SAFE:
         decision_assurance = "passive_target_verified"
     else:
         decision_assurance = "verification_incomplete"

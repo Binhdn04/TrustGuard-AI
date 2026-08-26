@@ -232,13 +232,32 @@ def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> b
         and not context.personal_information_request
     ):
         return False
+    def owns_target(item: SecurityEvidenceV4, url: str) -> bool:
+        if not item.target:
+            return False
+        target_host = (urlsplit(url).hostname or "").casefold().rstrip(".")
+        evidence_host = item.target.casefold().rstrip(".")
+        return target_host == evidence_host or target_host.endswith(f".{evidence_host}")
+
+    def is_origin_only(url: str) -> bool:
+        parsed = urlsplit(url)
+        return parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+
     return all(
         any(
-            item.type.value == "brand_match"
-            and item.signal.casefold() == "official_match"
-            and item.target
-            and item.target.casefold().rstrip(".")
-            == (urlsplit(url).hostname or "").casefold().rstrip(".")
+            (
+                (item.type.value == "brand_match" and item.signal.casefold() == "official_match")
+                or (item.type.value == "domain_familiarity" and item.signal == "reviewed_first_party_domain")
+                or (item.type.value == "official_verification" and item.signal == "official_domain_verified")
+                # A reviewed platform owns its origin, but this intentionally
+                # does not extend to user-controlled resources beneath it.
+                or (
+                    item.type.value == "domain_familiarity"
+                    and item.signal == "reviewed_platform_service"
+                    and is_origin_only(url)
+                )
+            )
+            and owns_target(item, url)
             for item in scope.evidence
         )
         for url in context.urls
@@ -318,12 +337,16 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
 
 def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
     """Last-resort response when the composer cannot produce a safe answer."""
+    verified_passive_target = _has_verified_passive_target_allow_open(scope)
     return AssistantResponseV4(
         summary=_friendly_summary(scope),
-        top_reasons=_grounded_plain_reasons(scope),
-        uncertainties=_public_uncertainties(scope.limitations),
+        # Keep the failure path consistent with the same established security
+        # truth. Provider/consent diagnostics are not a user-facing caveat for
+        # a verified passive target.
+        top_reasons=[] if verified_passive_target else _grounded_plain_reasons(scope),
+        uncertainties=[] if verified_passive_target else _public_uncertainties(scope.limitations),
         immediate_steps=_immediate_steps(scope),
-        follow_up_offer=_FOLLOW_UP_OFFER,
+        follow_up_offer=None if verified_passive_target else _FOLLOW_UP_OFFER,
         generation_mode=AssistantGenerationModeV4.POLICY_GROUNDED,
     )
 
@@ -480,9 +503,25 @@ class GroundedSecurityResponseService:
             )
             for item in scope.evidence
         )
+        verified_passive_target = _has_verified_passive_target_allow_open(scope)
         return {
             "contract": "grounded-security-response-context-v1",
             "verdict": scope.risk.value if scope.risk else None,
+            # This is the deterministic security conclusion, deliberately
+            # separate from the raw evidence list.  The composer owns prose,
+            # but it must not infer a weaker conclusion from investigation
+            # limitations once policy has established this passive target.
+            "authoritative_security_truth": {
+                "verified_passive_target": verified_passive_target,
+                "credible_malicious_evidence": malicious_evidence_observed,
+                "no_risky_requested_action": bool(
+                    scope.security_context is not None
+                    and not scope.security_context.credential_request
+                    and not scope.security_context.otp_request
+                    and not scope.security_context.payment_request
+                    and not scope.security_context.personal_information_request
+                ),
+            },
             "allowed_actions": [
                 {"code": action.value, "user_guidance": _ACTION_GUIDANCE[action]}
                 for action in scope.recommended_actions
@@ -500,7 +539,9 @@ class GroundedSecurityResponseService:
                 if item.signal
                 not in {"claimed_identity_unverified", "entity_target_unverified", "entity_url_relation_unresolved"}
             ],
-            "important_uncertainties": _public_uncertainties(scope.limitations),
+            # Investigation availability is not user-relevant uncertainty
+            # once policy has established a safe passive origin.
+            "important_uncertainties": [] if verified_passive_target else _public_uncertainties(scope.limitations),
             "verification_state": (
                 {
                     "claimed_organization": verification.intent.organization_name,
