@@ -50,6 +50,9 @@ jobs:
       backend: ${{ steps.services.outputs.backend }}
       worker: ${{ steps.services.outputs.worker }}
       frontend: ${{ steps.services.outputs.frontend }}
+      backend_tag_ref: ${{ steps.services.outputs.backend_tag_ref }}
+      worker_tag_ref: ${{ steps.services.outputs.worker_tag_ref }}
+      frontend_tag_ref: ${{ steps.services.outputs.frontend_tag_ref }}
 
     steps:
       - name: Check out repository history
@@ -68,6 +71,12 @@ jobs:
           # previous SHA.  Tags are advanced only after `railway up` succeeds.
           git fetch --force origin main --tags
           desired_sha="$(git rev-parse origin/main)"
+
+          deployed_tag_ref() {
+            # Keep the tag object's SHA as a compare-and-swap lease.  This is
+            # deliberately distinct from the peeled commit SHA used for diff.
+            git rev-parse -q --verify "refs/tags/deploy/$1" || true
+          }
 
           service_changed() {
             local service="$1"
@@ -106,6 +115,9 @@ jobs:
           backend=false
           worker=false
           frontend=false
+          backend_tag_ref="$(deployed_tag_ref backend)"
+          worker_tag_ref="$(deployed_tag_ref worker)"
+          frontend_tag_ref="$(deployed_tag_ref frontend)"
           service_changed backend && backend=true || true
           service_changed worker && worker=true || true
           service_changed frontend && frontend=true || true
@@ -114,6 +126,9 @@ jobs:
           echo "backend=${backend}" >> "${GITHUB_OUTPUT}"
           echo "worker=${worker}" >> "${GITHUB_OUTPUT}"
           echo "frontend=${frontend}" >> "${GITHUB_OUTPUT}"
+          echo "backend_tag_ref=${backend_tag_ref}" >> "${GITHUB_OUTPUT}"
+          echo "worker_tag_ref=${worker_tag_ref}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_tag_ref=${frontend_tag_ref}" >> "${GITHUB_OUTPUT}"
 
   lint-and-test:
     name: Lint and test
@@ -201,9 +216,10 @@ jobs:
         if: needs.changes.outputs.backend == 'true'
         env:
           DESIRED_SHA: ${{ needs.changes.outputs.desired_sha }}
+          EXPECTED_TAG_REF: ${{ needs.changes.outputs.backend_tag_ref }}
         run: |
           git tag -f deploy/backend "${DESIRED_SHA}"
-          git push --force origin refs/tags/deploy/backend
+          git push --force-with-lease="refs/tags/deploy/backend:${EXPECTED_TAG_REF}" origin refs/tags/deploy/backend
 
       - name: Deploy worker
         if: needs.changes.outputs.worker == 'true'
@@ -213,9 +229,10 @@ jobs:
         if: needs.changes.outputs.worker == 'true'
         env:
           DESIRED_SHA: ${{ needs.changes.outputs.desired_sha }}
+          EXPECTED_TAG_REF: ${{ needs.changes.outputs.worker_tag_ref }}
         run: |
           git tag -f deploy/worker "${DESIRED_SHA}"
-          git push --force origin refs/tags/deploy/worker
+          git push --force-with-lease="refs/tags/deploy/worker:${EXPECTED_TAG_REF}" origin refs/tags/deploy/worker
 
       - name: Deploy frontend
         if: needs.changes.outputs.frontend == 'true'
@@ -225,9 +242,10 @@ jobs:
         if: needs.changes.outputs.frontend == 'true'
         env:
           DESIRED_SHA: ${{ needs.changes.outputs.desired_sha }}
+          EXPECTED_TAG_REF: ${{ needs.changes.outputs.frontend_tag_ref }}
         run: |
           git tag -f deploy/frontend "${DESIRED_SHA}"
-          git push --force origin refs/tags/deploy/frontend
+          git push --force-with-lease="refs/tags/deploy/frontend:${EXPECTED_TAG_REF}" origin refs/tags/deploy/frontend
 
       - name: Write deployment summary
         if: success()

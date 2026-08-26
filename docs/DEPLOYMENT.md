@@ -26,8 +26,10 @@ CD dùng mô hình desired/actual state theo từng service:
 - Workflow chạy `git diff <actual-sha> <desired-sha>` và chỉ deploy service có production build input thay đổi.
   Chưa có tag actual thì service được deploy lần đầu.
 
-Các tag deployment là mutable state, vì vậy chỉ GitHub Actions production được phép force-update chúng. Deploy
-thất bại không cập nhật tag; lần chạy sau tiếp tục reconcile từ SHA deployed thành công gần nhất.
+Các tag deployment là mutable state, vì vậy chỉ GitHub Actions production được phép cập nhật chúng. Mỗi cập nhật
+dùng Git force-with-lease với ref đã đọc khi reconcile; workflow sẽ fail thay vì ghi đè nếu tag bị thay đổi trong
+lúc deploy. Workflow concurrency `railway-production` cũng tuần tự hóa các lần CD. Deploy thất bại không cập nhật
+tag; lần chạy sau tiếp tục reconcile từ SHA deployed thành công gần nhất.
 
 ## Production configuration
 
