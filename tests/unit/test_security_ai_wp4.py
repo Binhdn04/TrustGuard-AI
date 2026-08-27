@@ -109,6 +109,64 @@ def test_grounding_verifier_allows_a_single_natural_reply_without_report_section
     assert checked.failure is None
 
 
+def test_composer_receives_and_must_cover_semantic_identity_mismatch_reasoning() -> None:
+    """A valid domain must not be mistaken for validation of the message claim."""
+    scoped = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(message="Tổ chức A yêu cầu bạn mở liên kết.")
+    )
+    assert scoped.security_context is not None
+    context = scoped.security_context.model_copy(update={"claimed_entity": "Tổ chức A"})
+    mismatch = SecurityEvidenceV4(
+        evidence_ref="evidence:aaaaaaaaaaaaaaaa",
+        type=SecurityEvidenceTypeV4.BRAND_MATCH,
+        source="brand-registry",
+        target="organization-b.example",
+        signal="entity_target_mismatch",
+        description="internal diagnostic deliberately excluded from synthesis",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+        confidence=1,
+    )
+    result = assess_security_risk(scoped.model_copy(update={"security_context": context, "evidence": [mismatch]}))
+
+    payload = GroundedSecurityResponseService._synthesis_payload(result)
+
+    assert payload["decisive_facts"] == [
+        {
+            "category": "claimed_entity_target_mismatch",
+            "finding": (
+                    "Tên miền organization-b.example đã được đối chiếu thuộc một tổ chức khác, "
+                "trong khi nội dung gắn nó với Tổ chức A."
+            ),
+            "security_meaning": (
+                "Tên miền có thể là một địa chỉ hợp lệ, nhưng điều đó không xác minh nó được "
+                "tổ chức trong tin nhắn sử dụng cho yêu cầu này."
+            ),
+            "evidence_refs": ["evidence:aaaaaaaaaaaaaaaa"],
+        }
+    ]
+    assert payload["required_explanation_evidence_refs"] == ["evidence:aaaaaaaaaaaaaaaa"]
+    assert "internal diagnostic" not in str(payload)
+
+    omitted = check_grounded_ai_response(result, AssistantSynthesis(summary="Nội dung này đáng ngờ."))
+    assert omitted.failure is SynthesisGroundingFailure.MISSING_DECISIVE_EXPLANATION
+    covered = check_grounded_ai_response(
+        result,
+        AssistantSynthesis(
+            summary=(
+                "Tin nhắn gắn liên kết với Tổ chức A, nhưng tên miền này thuộc một tổ chức khác; "
+                "vì vậy tên miền hợp lệ không xác minh yêu cầu trong tin nhắn."
+            ),
+            top_reasons=[
+                SynthesisReason(
+                    text="Tên miền đã được đối chiếu với một tổ chức khác.",
+                    evidence_refs=["evidence:aaaaaaaaaaaaaaaa"],
+                )
+            ],
+        ),
+    )
+    assert covered.response is not None
+
+
 class _ValidSynthesisModel:
     async def synthesize(self, result):
         ref = result["evidence"][0]["evidence_ref"]
@@ -296,7 +354,11 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
             "topic": None,
             "status": "UNVERIFIED",
         },
-        "requested_action": {"value": "submit_form", "endorsement_status": "UNVERIFIED"},
+        "requested_action": {
+            "value": "submit_form",
+            "endorsement_status": "UNVERIFIED",
+            "exact_resource_endorsed": False,
+        },
         "submitted_resource": {
             "claimed_platforms": [],
             "status": "UNVERIFIED",
@@ -305,6 +367,10 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
         },
         "domain_ownership": "UNVERIFIED",
         "sender_identity": "UNVERIFIED",
+        "uncertainty_boundaries": {
+            "sender_identity": "The sender identity is a separate fact from resource and action verification.",
+            "domain_ownership": None,
+        },
         "malicious_evidence": "none_observed",
         "unverified_is_not_a_risk_signal_by_itself": True,
     }
@@ -404,6 +470,7 @@ def test_exact_resource_endorsement_survives_grounding_without_granting_domain_o
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
     assert payload["verification_state"]["domain_ownership"] == "UNVERIFIED"
     assert payload["verification_state"]["sender_identity"] == "UNVERIFIED"
+    assert payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is False
 
     contradiction = AssistantSynthesis(
         summary="The claimed campaign could not be verified from an official source."
@@ -426,3 +493,38 @@ def test_exact_resource_endorsement_survives_grounding_without_granting_domain_o
     fallback = policy_grounded_assistant_response(scoped).summary.casefold()
     assert "tài nguyên bạn gửi đã được nguồn chính thức xác nhận" in fallback
     assert "chưa xác nhận được thông tin về" not in fallback
+
+    assert scoped.official_verification is not None
+    action_endorsed = scoped.model_copy(
+        update={
+            "official_verification": scoped.official_verification.model_copy(
+                update={
+                    "action_endorsement_verification": OfficialVerificationComponentV4(
+                        applicable=True,
+                        status=VerificationStatusV4.VERIFIED,
+                        reason_code="official_exact_resource_action_confirmed",
+                    )
+                }
+            )
+        }
+    )
+    action_payload = GroundedSecurityResponseService._synthesis_payload(action_endorsed)
+    assert action_payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is True
+    assert action_payload["important_uncertainties"] == []
+    assert "does not change" in action_payload["verification_state"]["uncertainty_boundaries"]["sender_identity"]
+    rejected = check_grounded_ai_response(
+        action_endorsed,
+        AssistantSynthesis(summary="Chưa có xác nhận chính thức cho hành động đăng ký này."),
+    )
+    assert rejected.failure is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT
+
+    endorsed_allow_open = action_endorsed.model_copy(
+        update={"recommended_actions": [SecurityRecommendedActionV4.ALLOW_OPEN]}
+    )
+    generic_caution = check_grounded_ai_response(
+        endorsed_allow_open,
+        AssistantSynthesis(
+            summary="Biểu mẫu đã được xác nhận, nhưng hãy xác minh thêm trước khi tiếp tục đăng ký."
+        ),
+    )
+    assert generic_caution.failure is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT

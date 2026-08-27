@@ -480,6 +480,23 @@ def has_verified_exact_resource_endorsement(
     return user_canonical is not None and bool(submitted_resources)
 
 
+def has_verified_exact_resource_action_endorsement(
+    report: OfficialLinkVerificationReportV4 | None,
+    submitted_resources: Sequence[str],
+) -> bool:
+    """Whether an exact-resource endorsement also covers the requested action.
+
+    This is independent of publisher/domain ownership: an organization can
+    endorse a specific third-party workflow without owning that platform.
+    """
+    return bool(
+        report is not None
+        and report.intent.requested_action is not None
+        and report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+        and has_verified_exact_resource_endorsement(report, submitted_resources)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _Candidate:
     fetch_url: str
@@ -2410,16 +2427,37 @@ class OfficialLinkVerificationCoordinator:
             status=(VerificationStatusV4.UNVERIFIED if intent.contract.requested_action is not None else None),
             reason_code=("official_action_not_confirmed" if intent.contract.requested_action else "not_applicable"),
         )
+        action_targets = {_canonical_discovery_url(url) for url in user_urls}
+        exact_resource_action_endorsed = bool(
+            action.applicable
+            and action_evidence_refs
+            and any(
+                association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                and association.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                and association.canonical_url in action_targets
+                and bool(association.evidence_refs)
+                for association in identity_associations
+            )
+        )
         if (
             action.applicable
-            and resource.status is VerificationStatusV4.VERIFIED
-            and (not claim.applicable or claim.status is VerificationStatusV4.VERIFIED)
             and action_evidence_refs
+            and (
+                (
+                    resource.status is VerificationStatusV4.VERIFIED
+                    and (not claim.applicable or claim.status is VerificationStatusV4.VERIFIED)
+                )
+                or exact_resource_action_endorsed
+            )
         ):
             action = action.model_copy(
                 update={
                     "status": VerificationStatusV4.VERIFIED,
-                    "reason_code": "official_action_and_resource_confirmed",
+                    "reason_code": (
+                        "official_exact_resource_action_confirmed"
+                        if exact_resource_action_endorsed
+                        else "official_action_and_resource_confirmed"
+                    ),
                     "evidence_refs": list(
                         dict.fromkeys([*claim.evidence_refs, *resource.evidence_refs, *action_evidence_refs])
                     ),
@@ -2495,6 +2533,7 @@ __all__ = [
     "OfficialLinkVerificationCoordinator",
     "OfficialVerificationCoordinatorOutcome",
     "apply_official_verification_outcome",
+    "has_verified_exact_resource_action_endorsement",
     "has_verified_exact_resource_endorsement",
     "verified_exact_resource_endorsement_associations",
     "VerificationComparisonOutput",

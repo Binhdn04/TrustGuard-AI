@@ -290,7 +290,7 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
         "action_endorsement_unverified",
     }
     assert "chinhphu.vn" in response.summary
-    assert "chưa đủ bằng chứng" in response.summary
+    assert "Danh tính người gửi chưa được xác minh riêng." in response.summary
     assert "mật khẩu hoặc OTP" in response.summary
 
     search.calls.clear()
@@ -919,6 +919,8 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     assert outcome.report.publisher_verification.status is VerificationStatusV4.UNVERIFIED
     assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
     assert outcome.report.resource_verification.reason_code == "discovered_exact_resource_endorsement_chain"
+    assert outcome.report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.action_endorsement_verification.reason_code == "official_exact_resource_action_confirmed"
     assert outcome.report.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
     assert short_link not in fetcher.calls
     assert social_post in fetcher.calls
@@ -952,6 +954,8 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     risk_result = assess_security_risk(reconciled)
     assert "Official verification đã xác nhận chuỗi endorsement" in risk_result.explanation
     assert "Không có reviewed identity để xác nhận domain" not in risk_result.explanation
+    assert SecurityRecommendedActionV4.ALLOW_OPEN in risk_result.recommended_actions
+    assert SecurityRecommendedActionV4.VERIFY_VIA_OFFICIAL_CHANNEL not in risk_result.recommended_actions
 
     # This is the real coordinator result: the resource component remains
     # PARTIALLY_VERIFIED because publisher/campaign coverage is separate, but
@@ -959,6 +963,8 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     payload = GroundedSecurityResponseService._synthesis_payload(risk_result)
     assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
+    assert payload["decisive_facts"][0]["category"] == "exact_resource_action_endorsed"
+    assert "evidence:dddddddddddddddd" in payload["required_explanation_evidence_refs"]
     raw_gpt_output = AssistantSynthesis(
         summary="The submitted resource could not be verified from an official source."
     )
@@ -968,6 +974,8 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     )
     fallback = policy_grounded_assistant_response(risk_result).summary
     assert "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này." in fallback
+    assert "Danh tính người gửi chưa được xác minh riêng." in fallback
+    assert "Chưa có xác nhận chính thức cho đúng hành động" not in fallback
 
     class _ContradictorySynthesisModel:
         async def synthesize(self, payload):

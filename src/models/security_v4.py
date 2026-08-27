@@ -495,6 +495,10 @@ class SecurityEvidenceV4(SecurityContractModel):
     observed_at: datetime
     confidence: float | None = Field(default=None, ge=0, le=1)
     provenance_ref: str | None = None
+    # A separately identified organization relevant to this evidence.  This
+    # keeps an entity/domain contradiction structured instead of forcing a
+    # response composer to parse a technical evidence description.
+    related_entity: str | None = Field(default=None, max_length=200)
     domain_familiarity: DomainFamiliarityDetailsV4 | None = None
 
     @model_validator(mode="after")
