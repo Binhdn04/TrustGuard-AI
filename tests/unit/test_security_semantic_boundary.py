@@ -12,9 +12,9 @@ from src.security_ai.contracts import (
     SemanticStance,
     Understanding,
 )
+from src.services.official_verification_intent import build_grounded_verification_intent
 from src.services.security_span_candidates import generate_semantic_span_candidates
 from src.services.security_triage import SecurityTriageScopeService
-from src.services.official_verification_intent import build_grounded_verification_intent
 from src.services.security_understanding import merge_semantic_understanding
 
 
@@ -122,6 +122,17 @@ def test_literal_apply_action_survives_semantic_omission_and_binds_its_url() -> 
     assert merged.security_context is not None
     assert merged.security_context.requested_action is RequestedActionV4.REGISTER_OR_APPLY
     intent = build_grounded_verification_intent(message, merged.security_context, merged.assistant_context)
+    assert intent is not None
+    assert intent.contract.action_url_indices == [0]
+
+
+def test_inline_markdown_login_url_remains_bound_to_the_action() -> None:
+    message = "Northstar Institute yêu cầu đăng nhập tại `https://northstar.example/contact`"
+    scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+
+    assert scope.security_context is not None
+    intent = build_grounded_verification_intent(message, scope.security_context)
+
     assert intent is not None
     assert intent.contract.action_url_indices == [0]
 

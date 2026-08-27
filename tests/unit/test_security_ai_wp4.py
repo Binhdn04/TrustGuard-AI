@@ -233,7 +233,7 @@ def test_composer_prefers_verified_domain_and_unverified_action_over_sender_stat
 
     assert [fact["category"] for fact in payload["decisive_facts"]] == [
         "official_domain_verified",
-        "requested_claim_or_action_unverified",
+        "requested_action_unverified",
     ]
     assert payload["available_explanation_evidence_refs"] == [
         "evidence:1111111111111111",
@@ -241,6 +241,77 @@ def test_composer_prefers_verified_domain_and_unverified_action_over_sender_stat
     ]
     instruction = payload["presentation_constraints"]["explain_decisive_facts"]
     assert instruction is not None and "Do not serialize facts" in instruction
+
+
+@pytest.mark.asyncio
+async def test_composer_keeps_structured_verified_ownership_without_projected_evidence() -> None:
+    """Ownership status must survive context, prompt, validator, and AI output."""
+    scoped = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(
+            message="Vingroup hoàn 20 triệu cho khách hàng. Đăng nhập tại https://vingroup.net/vi/lien-he"
+        )
+    )
+    report = OfficialLinkVerificationReportV4(
+        schema_version="official-link-verification-v4",
+        intent=VerificationIntentV4(
+            organization_name="Vingroup",
+            claim_summary="hoàn 20 triệu cho khách hàng",
+            requested_action=RequestedActionV4.LOGIN,
+            action_url_indices=[0],
+        ),
+        publisher_verification=PublisherVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="publisher_not_confirmed"
+        ),
+        claim_verification=ClaimVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="claim_not_confirmed"
+        ),
+        resource_verification=ResourceVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="resource_not_confirmed"
+        ),
+        domain_ownership_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.VERIFIED, reason_code="official_domain_confirmed"
+        ),
+        sender_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
+        ),
+        action_endorsement_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
+        ),
+        overall_status=VerificationStatusV4.PARTIALLY_VERIFIED,
+        reason_code="ownership_only",
+    )
+    result = assess_security_risk(scoped.model_copy(update={"official_verification": report}))
+    payload = GroundedSecurityResponseService._synthesis_payload(result)
+
+    assert [fact["category"] for fact in payload["decisive_facts"]] == [
+        "official_domain_verified",
+        "requested_claim_unverified",
+        "requested_action_unverified",
+    ]
+    assert payload["decisive_facts"][0]["finding"] == "Tên miền vingroup.net đã được xác minh thuộc tổ chức được nêu."
+    assert all(fact["category"] != "sender_identity_unverified" for fact in payload["decisive_facts"])
+
+    expected = (
+        "Đây là website chính thức của Vingroup. Tuy nhiên, chưa tìm thấy nguồn chính thức xác nhận "
+        "thông tin hoàn 20 triệu hoặc việc Vingroup yêu cầu đăng nhập tại trang liên hệ này. "
+        "Vì vậy, website chính thức không đồng nghĩa với nội dung tin nhắn là thật. "
+        "Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này."
+    )
+
+    class _NaturalComposer:
+        async def synthesize(self, composer_payload):
+            assert composer_payload["decisive_facts"] == payload["decisive_facts"]
+            return ModelResponse(output=AssistantSynthesis(summary=expected), provider="fake", model="synthesis-v1")
+
+    enriched = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_NaturalComposer(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(result)
+
+    assert enriched.assistant_response is not None
+    assert enriched.assistant_response.generation_mode is AssistantGenerationModeV4.AI
+    assert enriched.assistant_response.summary == expected
 
 
 class _ValidSynthesisModel:

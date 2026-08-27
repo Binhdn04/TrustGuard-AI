@@ -1671,6 +1671,53 @@ async def test_runtime_pipeline_bootstraps_generic_first_party_domain_without_ca
 
 
 @pytest.mark.asyncio
+async def test_generic_editorial_scam_warning_does_not_negate_host_bound_ownership() -> None:
+    """Only a relation-specific statement about the candidate host can conflict."""
+    organization = "Northstar Institute"
+    submitted = "https://northstar.example/contact"
+    about = "https://northstar.example/about"
+    directory = "https://directory.example/entities/northstar"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} hoàn 20 triệu cho khách hàng. Đăng nhập tại {submitted}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scoped = SecurityTriageScopeService().assess(request)
+    assert scoped.security_context is not None
+    scoped = scoped.model_copy(
+        update={"security_context": scoped.security_context.model_copy(update={"claimed_entity": organization})}
+    )
+    outcome = await _coordinator(
+        brands=[],
+        search=_SearchProvider([_hit(about), _hit(directory)]),
+        fetcher=_HtmlFetcher(
+            {
+                submitted: f"<html><body>{organization}</body></html>",
+                about: f"<html><body>{organization} parent company information</body></html>",
+                directory: (
+                    f"<html><body>Editorial scam warning for contributors. {organization}. "
+                    f"Website: <a href='{submitted}'>northstar.example</a>.</body></html>"
+                ),
+            }
+        ),
+    ).coordinate(request, scoped, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.claim_verification.status is VerificationStatusV4.UNVERIFIED
+    assert outcome.report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    assert any(
+        item.canonical_domain == "northstar.example"
+        and item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+        and item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+        for item in outcome.report.identity_associations
+    )
+    assert all(
+        observation.family.value != "explicit_ownership_conflict"
+        for observation in outcome.report.identity_evidence
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_pipeline_bootstraps_generic_third_party_exact_resource_without_cache() -> None:
     """A self-identifying hosted form is not thereby an owned publisher domain."""
     organization = "Northstar Institute"

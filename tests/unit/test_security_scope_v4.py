@@ -112,6 +112,12 @@ def test_otp_account_verification_context() -> None:
     assert context.impersonation_signals == []
 
 
+def test_inline_markdown_url_does_not_include_the_closing_backtick() -> None:
+    context = extract_security_context("Northstar Institute yêu cầu đăng nhập tại `https://northstar.example/contact`")
+
+    assert context.urls == ["https://northstar.example/contact"]
+
+
 @pytest.mark.parametrize(
     "message",
     [

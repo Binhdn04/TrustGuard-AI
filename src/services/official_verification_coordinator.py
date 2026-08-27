@@ -178,6 +178,19 @@ _CONTRADICTION_TERMS = (
     "not recruiting",
     "scam warning",
 )
+# Domain ownership conflicts need a stricter predicate than a claim conflict.
+# A general site warning (for example, Wikipedia's editing scam warning) says
+# nothing about the organization-to-domain edge being evaluated.
+_OWNERSHIP_CONFLICT_TERMS = (
+    "not affiliated",
+    "unaffiliated",
+    "not related",
+    "not owned by",
+    "does not own",
+    "khong lien quan",
+    "khong phai",
+    "khong thuoc",
+)
 _QUALIFIER_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _TIME_QUALIFIER_RE = re.compile(r"\b(?:20\d{2}|\d{1,2}[/-]\d{1,2}[/-]20\d{2}|thang\s+\d{1,2})\b")
 _AUDIENCE_QUALIFIERS = (
@@ -701,6 +714,21 @@ def _links_to_host(text: str, source_url: str, target_host: str) -> bool:
             _fold(visible),
         )
     )
+
+
+def _has_explicit_ownership_conflict(text: str, target_host: str) -> bool:
+    """Return only a host-bound statement that negates an ownership relation.
+
+    Claim-level warning words are intentionally insufficient: third-party
+    pages frequently contain generic anti-scam or editorial boilerplate while
+    also correctly listing an organization's website.
+    """
+    visible = " ".join(BeautifulSoup(text, "html.parser").get_text(" ", strip=True).split())
+    folded_host = re.escape(target_host.casefold())
+    host_pattern = rf"(?:https?://)?(?:www\.)?{folded_host}(?=$|[/?#\s,;.)])"
+    for sentence in re.split(r"[.!?;]+|\n+", _fold(visible)):
+        if re.search(host_pattern, sentence) and any(term in sentence for term in _OWNERSHIP_CONFLICT_TERMS):
+            return True
     return False
 
 
@@ -1403,6 +1431,8 @@ class OfficialLinkVerificationCoordinator:
             return [], [], 0, 0, 0, [*stale, "official_web_search_unavailable"]
 
         candidate_urls: list[str] = list(sorted(requested_targets)) if external_consent else []
+        identity_candidate_urls: set[str] = set()
+        authority_candidate_urls: set[str] = set()
         target_host = (urlsplit(first_target).hostname or "").casefold() if first_target is not None else ""
         planner = EvidenceRetrievalPlanner(
             # Keep claim discovery independent from the submitted host.  The
@@ -1468,15 +1498,30 @@ class OfficialLinkVerificationCoordinator:
         # source that can explicitly associate the submitted host with the
         # entity.  This is not evidence by itself; it merely prevents an
         # encyclopedia-heavy result page from starving the cross-source edge.
-        if (
-            self._search is not None
-            and target_host
-            and searches < min(search_cap, _MAX_SEARCH_ATTEMPTS)
-            and not any(
-                (urlsplit(url).hostname or "").casefold() != target_host
-                for url in candidate_urls
+        if self._search is not None and target_host and searches < min(search_cap, _MAX_SEARCH_ATTEMPTS):
+            # Keep the entity-to-site edge independent from claim recall. A
+            # campaign query can return many topical articles and otherwise
+            # starve the organization identity evidence under the fetch cap.
+            identity_query = entity
+            last_query = identity_query
+            result = await self._search.search_one(
+                identity_query,
+                execution_context=execution_context,
+                max_results=_MAX_SEARCH_RESULTS,
             )
-        ):
+            searches += 1
+            calls += result.tool_calls_used
+            if result.status is VerificationTransportStatus.SUCCESS:
+                for hit in result.results:
+                    canonical = _canonical_discovery_url(hit.url)
+                    if canonical is not None:
+                        identity_candidate_urls.add(canonical)
+                        if canonical not in candidate_urls:
+                            candidate_urls.append(canonical)
+            elif result.limitation is not None:
+                limitations.append(f"identity_entity_search_{result.limitation.value}")
+
+        if self._search is not None and target_host and searches < min(search_cap, _MAX_SEARCH_ATTEMPTS):
             authority_query = f'{entity} "{target_host}" registry'
             last_query = authority_query
             result = await self._search.search_one(
@@ -1489,8 +1534,10 @@ class OfficialLinkVerificationCoordinator:
             if result.status is VerificationTransportStatus.SUCCESS:
                 for hit in result.results:
                     canonical = _canonical_discovery_url(hit.url)
-                    if canonical is not None and canonical not in candidate_urls:
-                        candidate_urls.append(canonical)
+                    if canonical is not None:
+                        authority_candidate_urls.add(canonical)
+                        if canonical not in candidate_urls:
+                            candidate_urls.append(canonical)
                     if len(candidate_urls) >= _MAX_CANDIDATES:
                         break
             elif result.limitation is not None:
@@ -1509,16 +1556,37 @@ class OfficialLinkVerificationCoordinator:
             host = (urlsplit(url).hostname or "").casefold()
             if host in target_hosts:
                 return (0, url)
-            if self._is_basic_independent_identity_source(url, now):
+            if any(host.endswith(f".{target_host}") for target_host in target_hosts):
+                # A same-site page can provide the entity self-identification
+                # half of ownership proof even when the submitted path blocks
+                # automated fetching.
                 return (1, url)
-            return (2, url)
+            canonical = _canonical_discovery_url(url)
+            if canonical in identity_candidate_urls:
+                return (2, url)
+            if canonical in authority_candidate_urls:
+                return (3, url)
+            if self._is_basic_independent_identity_source(url, now):
+                return (4, url)
+            return (5, url)
 
-        fetch_urls.extend(
-            sorted(
-                (url for url in candidate_urls if url not in requested_targets and url not in fetch_urls),
-                key=fetch_priority,
-            )
+        ordered_candidates = sorted(
+            (url for url in candidate_urls if url not in requested_targets and url not in fetch_urls),
+            key=fetch_priority,
         )
+        # One same-site page is enough to obtain self-identification. Reserve
+        # the remaining bounded fetches for an independent identity source.
+        same_site = [
+            url
+            for url in ordered_candidates
+            if any(
+                (host := (urlsplit(url).hostname or "").casefold()) == target_host
+                or host.endswith(f".{target_host}")
+                for target_host in target_hosts
+            )
+        ]
+        same_site_keys = set(same_site)
+        fetch_urls.extend([*same_site[:1], *(url for url in ordered_candidates if url not in same_site_keys)])
         fetched_pages: dict[str, tuple[str, str, str]] = {}
         discovery_endorsements: dict[str, list[IdentityEvidenceObservationV4]] = {}
         pending_endorsements: dict[str, list[tuple[str, str]]] = {}
@@ -1632,15 +1700,18 @@ class OfficialLinkVerificationCoordinator:
             page = fetched_pages.get(canonical)
             exact_resource_endorsed = canonical in discovery_endorsements
             if page is not None and _entity_self_identified(entity, page[0]):
-                family = (
-                    IdentityEvidenceFamilyV4.PARENT_DECLARATION
-                    if any(
-                        term in _fold(page[0])
-                        for term in ("parent organization", "parent company", "truc thuoc", "thuoc to chuc")
+                # A page hosted on the candidate domain identifying the named
+                # organization establishes the domain-to-entity edge. Generic
+                # mentions of a corporate hierarchy on that page cannot turn
+                # its host into a different "parent organization" identity.
+                candidate_observations.append(
+                    _identity_observation(
+                        IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION,
+                        canonical,
+                        page[1],
+                        now,
                     )
-                    else IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION
                 )
-                candidate_observations.append(_identity_observation(family, canonical, page[1], now))
                 # A reviewed exact source-policy entry is authoritative
                 # ownership evidence even when this organization has not yet
                 # been added to the brand registry. It is deliberately bound
@@ -1671,7 +1742,6 @@ class OfficialLinkVerificationCoordinator:
                         and not self._is_authoritative_identity_attestor(source_url, now)
                     ):
                         continue
-                    folded_source = _fold(text)
                     # Search hits only nominate URLs; fetched content from an
                     # independent source that passes the existing basic source
                     # checks may corroborate this exact hostname.  Reviewed
@@ -1679,7 +1749,7 @@ class OfficialLinkVerificationCoordinator:
                     # not a prerequisite for ownership bootstrap.
                     if (
                         self._is_basic_independent_identity_source(source_url, now)
-                        and any(term in folded_source for term in _CONTRADICTION_TERMS)
+                        and _has_explicit_ownership_conflict(text, host)
                     ):
                         candidate_observations.append(
                             _identity_observation(
@@ -1687,39 +1757,18 @@ class OfficialLinkVerificationCoordinator:
                             )
                         )
                     elif self._is_basic_independent_identity_source(source_url, now):
-                        family = (
-                            IdentityEvidenceFamilyV4.PARENT_DECLARATION
-                            if any(
-                                term in folded_source
-                                for term in (
-                                    "parent organization", "parent company", "subsidiary", "member of",
-                                    "truc thuoc", "don vi thuoc",
-                                )
+                        candidate_observations.append(
+                            _identity_observation(
+                                IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
+                                source_url,
+                                content_hash,
+                                now,
                             )
-                            else IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK
                         )
-                        candidate_observations.append(_identity_observation(family, source_url, content_hash, now))
-            relationship = (
-                IdentityRelationshipV4.PARENT_ORGANIZATION
-                if any(item.family is IdentityEvidenceFamilyV4.PARENT_DECLARATION for item in candidate_observations)
-                else IdentityRelationshipV4.OFFICIAL_CONTROLLED
-            )
-            if relationship is IdentityRelationshipV4.PARENT_ORGANIZATION:
-                candidate_observations = [
-                    _identity_observation(
-                        IdentityEvidenceFamilyV4.CANDIDATE_CORROBORATION,
-                        item.canonical_url,
-                        item.content_hash,
-                        now,
-                    )
-                    if item.family is IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION
-                    else item
-                    for item in candidate_observations
-                ]
             association = self._association_from_observations(
                 entity,
                 canonical,
-                relationship,
+                IdentityRelationshipV4.OFFICIAL_CONTROLLED,
                 candidate_observations,
                 now,
             )

@@ -87,6 +87,15 @@ def test_program_claim_and_form_action_are_grounded_independently_of_sensitive_d
     )
 
 
+def test_monetary_refund_offer_is_a_grounded_claim() -> None:
+    message = "Northstar Institute hoàn 20 triệu cho khách hàng. Đăng nhập tại https://northstar.example/contact"
+
+    intent = build_grounded_verification_intent(message, extract_security_context(message))
+
+    assert intent is not None
+    assert intent.contract.claim_summary == "hoàn 20 triệu cho khách hàng"
+
+
 @pytest.mark.asyncio
 async def test_hybrid_discovery_preserves_literal_signals_and_bounds_gpt_recall_queries() -> None:
     message = (

@@ -451,7 +451,13 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
     claimed = context.claimed_entity if context is not None else None
     facts: list[dict[str, object]] = []
 
-    def add(*, category: str, evidence: SecurityEvidenceV4, finding: str, implication: str) -> None:
+    def add(
+        *,
+        category: str,
+        evidence: SecurityEvidenceV4 | None,
+        finding: str,
+        implication: str,
+    ) -> None:
         if len(facts) >= 3:
             return
         facts.append(
@@ -459,7 +465,11 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
                 "category": category,
                 "finding": finding,
                 "security_meaning": implication,
-                "evidence_refs": [evidence.evidence_ref],
+                # Verification components are structured policy facts.  A
+                # projected evidence row is useful for audit when present,
+                # but its absence must not erase a VERIFIED component before
+                # the composer sees it.
+                "evidence_refs": [evidence.evidence_ref] if evidence is not None else [],
             }
         )
 
@@ -532,29 +542,52 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
     # affirmative domain fact before the unresolved requested action regardless
     # of their record order, so the composer receives the intended narrative
     # flow rather than an implementation-order listing.
+    verification = scope.official_verification
     domain_evidence = official_evidence_by_signal.get("official_domain_verified")
-    if domain_evidence is not None:
-        target = _display_target(domain_evidence.target)
+    if domain_evidence is not None or (
+        verification is not None
+        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    ):
+        target = _display_target(domain_evidence.target) if domain_evidence is not None else next(
+            (_display_target(url) for url in (context.urls if context is not None else []) if _display_target(url)),
+            None,
+        )
         add(
             category="official_domain_verified",
             evidence=domain_evidence,
             finding=f"Tên miền {target or 'được gửi'} đã được xác minh thuộc tổ chức được nêu.",
             implication="Điều này xác nhận nguồn của tên miền, không tự xác nhận người gửi hay nội dung yêu cầu.",
         )
+    claim_unverified = bool(
+        verification is not None
+        and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
+    )
+    if claim_unverified:
+        claim = verification.intent.claim_summary
+        add(
+            category="requested_claim_unverified",
+            evidence=None,
+            finding=(
+                f"Nguồn chính thức chưa xác nhận thông tin về {claim}."
+                if claim
+                else "Nguồn chính thức chưa xác nhận thông tin được nêu trong tin nhắn."
+            ),
+            implication="Tên miền chính thức không tự xác nhận nội dung tin nhắn là thật.",
+        )
     action_evidence = official_evidence_by_signal.get("action_endorsement_unverified")
-    if action_evidence is not None:
-        verification = scope.official_verification
-        claim = verification.intent.claim_summary if verification is not None else None
+    if action_evidence is not None or (
+        verification is not None
+        and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    ):
         action = (
             verification.intent.requested_action.value.replace("_", " ")
             if verification is not None and verification.intent.requested_action is not None
             else "hành động"
         )
-        requested = f"thông tin về {claim} hoặc {action}" if claim else action
         add(
-            category="requested_claim_or_action_unverified",
+            category="requested_action_unverified",
             evidence=action_evidence,
-            finding=f"Nguồn chính thức chưa xác nhận {requested} mà tin nhắn yêu cầu.",
+            finding=f"Nguồn chính thức chưa xác nhận việc {action} mà tin nhắn yêu cầu.",
             implication="Vì vậy, chưa nên thực hiện hành động này chỉ dựa trên tin nhắn.",
         )
 
@@ -584,8 +617,14 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
             # resource/action fact explaining the decision. It must not crowd
             # out the actual claim the user is being asked to act on.
             if (
-                "official_domain_verified" in official_evidence_by_signal
-                and "action_endorsement_unverified" in official_evidence_by_signal
+                (domain_evidence is not None or (
+                    verification is not None
+                    and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+                ))
+                and (action_evidence is not None or (
+                    verification is not None
+                    and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+                ))
             ):
                 continue
             add(
@@ -656,9 +695,22 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     sender = evidence_by_signal.get("sender_identity_unverified")
     action = evidence_by_signal.get("action_endorsement_unverified")
     verification_sentences: list[str] = []
-    if ownership is not None and ownership.target:
-        verification_sentences.append(f"{ownership.target} đã được xác minh là tên miền chính thức.")
-    if sender is not None:
+    verification = scope.official_verification
+    if (ownership is not None and ownership.target) or (
+        verification is not None and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    ):
+        domain = _display_target(ownership.target) if ownership is not None else next(
+            (_display_target(url) for url in (scope.security_context.urls if scope.security_context else []) if _display_target(url)),
+            None,
+        )
+        verification_sentences.append(f"{domain or 'Tên miền được gửi'} đã được xác minh là tên miền chính thức.")
+    # A text-and-URL submission does not identify a sender. Keep this separate
+    # observation out of the fallback unless it is the only material fact.
+    if sender is not None and not (
+        verification is not None
+        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+        and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    ):
         verification_sentences.append(
             "Danh tính người gửi chưa được xác minh riêng."
         )
@@ -670,7 +722,6 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     # The fallback is normally rare, but it must retain the same case facts as
     # the composer.  Risk is a decision; it is not a substitute for the
     # independent organization, claim, resource, and action conclusions.
-    verification = scope.official_verification
     if verification is not None and verification.overall_status is not VerificationStatusV4.VERIFIED:
         intent = verification.intent
         facts: list[str] = []
@@ -828,11 +879,18 @@ def check_grounded_ai_response(
             )
         if not _POSITIVE_VERIFICATION_AFFIRMATION.search(summary):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
-    signals = {item.signal for item in scope.evidence if item.type.value == "official_verification"}
+    domain_ownership_verified = bool(
+        scope.official_verification is not None
+        and scope.official_verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    )
+    projected_domain_verified = any(
+        item.type.value == "official_verification" and item.signal == "official_domain_verified"
+        for item in scope.evidence
+    )
     if (
         ("tên miền chính thức" in combined or "domain chính thức" in combined)
         and "đã được xác minh" in combined
-        and "official_domain_verified" not in signals
+        and not (domain_ownership_verified or projected_domain_verified)
     ) or (
         re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", combined) is not None
         and scope.official_verification is not None

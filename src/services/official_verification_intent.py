@@ -42,6 +42,11 @@ _QUOTED_CLAIM_RE = re.compile(r'["“”]([^"“”]{4,200})["“”]')
 _PROGRAM_CLAIM_RE = re.compile(
     r"(?i)\b(?:chương\s*trình|chuong\s*trinh|thông\s*báo|thong\s*bao|ưu\s*đãi|uu\s*dai|hỗ\s*trợ|ho\s*tro)\b"
 )
+_MONETARY_OFFER_CLAIM_RE = re.compile(
+    r"(?i)\b(?:hoàn|hoan|refund)\s+(?:lên\s+tới|den\s+toi|đến)?\s*"
+    r"\d[\d., ]*\s*(?:triệu|trieu|nghìn|nghin|đồng|dong|vnđ|vnd|usd|\$)"
+    r"(?:\s+(?:cho|to)\s+[^.!?\n]{1,80})?"
+)
 
 _TOPIC_QUERY_TERMS = {
     VerificationTopicV4.RECRUITMENT: ("tuyển dụng", "recruitment"),
@@ -330,6 +335,15 @@ def _program_claim_source(message: str) -> tuple[str, int, int] | None:
     return value, start, start + len(value)
 
 
+def _monetary_offer_claim_source(message: str) -> tuple[str, int, int] | None:
+    """Extract a bounded refund/offer assertion without treating an amount alone as a claim."""
+    match = _MONETARY_OFFER_CLAIM_RE.search(message)
+    if match is None:
+        return None
+    value = _SPACE_RE.sub(" ", match.group()).strip(" ,:;-—")
+    return value, match.start(), match.start() + len(match.group())
+
+
 def _accent_fold(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(char for char in normalized if not unicodedata.combining(char)).replace("đ", "d").replace("Đ", "D")
@@ -392,6 +406,13 @@ def build_grounded_verification_intent(
         )
     elif (program_claim := _program_claim_source(message)) is not None:
         source_value, start, end = program_claim
+        claim = GroundedTextValue(
+            source_value,
+            1.0,
+            (AssistantSourceSpanV4(field_name="claim_summary", start=start, end=end),),
+        )
+    elif (monetary_offer_claim := _monetary_offer_claim_source(message)) is not None:
+        source_value, start, end = monetary_offer_claim
         claim = GroundedTextValue(
             source_value,
             1.0,
