@@ -54,7 +54,10 @@ async def test_required_hard_case_executes_english_query_and_matches_redirected_
     fixture = next(item for item in load_evaluation_set(DATASET_V2) if item.id == hard["id"])
 
     assert fixture.official_source_kind == "social_announcement"
-    assert hard["queries"][-1] == "Dai hoc VinUni recruitment official"
+    # Discovery now also reserves an ownership query for the submitted host;
+    # preserve the English campaign-recall requirement without coupling this
+    # release gate to query ordering or the number of bounded queries.
+    assert "Dai hoc VinUni recruitment official" in hard["queries"]
     assert hard["overall_status"] == "VERIFIED"
     assert hard["resource_match_status"] == "EXACT_RESOURCE"
     assert hard["reference_closure_pass"] is True

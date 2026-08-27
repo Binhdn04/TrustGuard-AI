@@ -17,6 +17,7 @@ from src.models import (
     SecurityScopeResponseV4,
     VerificationStatusV4,
 )
+from src.services.official_verification_coordinator import has_verified_exact_resource_action_endorsement
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +233,14 @@ def _has_authoritative_passive_target_ownership(scope: SecurityScopeResponseV4, 
     )
 
 
+def _has_verified_exact_resource_action(scope: SecurityScopeResponseV4) -> bool:
+    context = scope.security_context
+    return has_verified_exact_resource_action_endorsement(
+        scope.official_verification,
+        context.urls if context is not None else (),
+    )
+
+
 def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     report = scope.official_verification
     if report is None or report.overall_status is VerificationStatusV4.CONFLICTING:
@@ -311,6 +320,7 @@ def _actions(
     exposure = (
         scope.assistant_context.exposure_state if scope.assistant_context is not None else ExposureStateV4.UNKNOWN
     )
+    exact_resource_action_endorsed = _has_verified_exact_resource_action(scope)
     incident_actions = {
         ExposureStateV4.LINK_OPENED: [
             SecurityRecommendedActionV4.CLOSE_PAGE_AND_DO_NOT_RETURN,
@@ -339,6 +349,10 @@ def _actions(
         actions.append(
             SecurityRecommendedActionV4.ALLOW_OPEN
             if risk is SecurityRiskV4.SAFE
+            or (
+                exact_resource_action_endorsed
+                and risk in {SecurityRiskV4.INSUFFICIENT_EVIDENCE, SecurityRiskV4.LOW_RISK}
+            )
             else SecurityRecommendedActionV4.PROCEED_WITH_CAUTION
             if familiarity_low_risk or risk in {SecurityRiskV4.INSUFFICIENT_EVIDENCE, SecurityRiskV4.LOW_RISK}
             else SecurityRecommendedActionV4.DO_NOT_OPEN_LINK
@@ -363,7 +377,11 @@ def _actions(
     }:
         actions.append(SecurityRecommendedActionV4.DO_NOT_TRANSFER_MONEY)
         actions.append(SecurityRecommendedActionV4.CONTACT_BANK_IF_ALREADY_PAID)
-    if (context.claimed_entity or context.impersonation_signals) and risk is not SecurityRiskV4.SAFE:
+    if (
+        (context.claimed_entity or context.impersonation_signals)
+        and risk is not SecurityRiskV4.SAFE
+        and not exact_resource_action_endorsed
+    ):
         actions.append(SecurityRecommendedActionV4.VERIFY_VIA_OFFICIAL_CHANNEL)
     if risk in {SecurityRiskV4.HIGH_RISK, SecurityRiskV4.MALICIOUS}:
         actions.append(SecurityRecommendedActionV4.REPORT_AND_BLOCK_SENDER)
@@ -738,10 +756,7 @@ def assess_security_risk(
                     for item in scope.evidence
                     if item.type.value == "domain_familiarity"
                     and item.signal == "reviewed_platform_service"
-                    and any(
-                        _is_origin_only_url(url) and _target_matches(item.target, url)
-                        for url in context.urls
-                    )
+                    and any(_is_origin_only_url(url) and _target_matches(item.target, url) for url in context.urls)
                 ]
                 if risk is SecurityRiskV4.SAFE and passive_target_ownership
                 else []

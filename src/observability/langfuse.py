@@ -42,9 +42,7 @@ _LABELED_SECRET_RE = re.compile(
     r"pin|token|secret|api[_ -]?key|credential|authorization)\s*[:=]?\s*\S+"
 )
 _JWT_RE = re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}(?:\.[a-zA-Z0-9_-]{10,})?\b")
-_LONG_TOKEN_RE = re.compile(
-    r"\b(?=[a-zA-Z0-9_-]{20,}\b)(?=[a-zA-Z0-9_-]*[a-zA-Z])(?=[a-zA-Z0-9_-]*\d)[a-zA-Z0-9_-]+\b"
-)
+_LONG_TOKEN_RE = re.compile(r"\b(?=[a-zA-Z0-9_-]{20,}\b)(?=[a-zA-Z0-9_-]*[a-zA-Z])(?=[a-zA-Z0-9_-]*\d)[a-zA-Z0-9_-]+\b")
 
 logger = logging.getLogger("trustguard.observability")
 
@@ -201,7 +199,9 @@ class LangfuseObservability:
             input=(sanitize_trace_content(input) if self._settings.langfuse_capture_sanitized_content else _REDACTED),
             metadata={
                 "feature": feature,
-                "privacy": _SANITIZED_CONTENT if self._settings.langfuse_capture_sanitized_content else _CONTENT_REDACTED,
+                "privacy": _SANITIZED_CONTENT
+                if self._settings.langfuse_capture_sanitized_content
+                else _CONTENT_REDACTED,
             },
         ) as span:
             failure: tuple[BaseException, Any] | None = None

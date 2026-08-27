@@ -12,6 +12,7 @@ from src.security_ai.contracts import (
     SemanticStance,
     Understanding,
 )
+from src.services.official_verification_intent import build_grounded_verification_intent
 from src.services.security_span_candidates import generate_semantic_span_candidates
 from src.services.security_triage import SecurityTriageScopeService
 from src.services.security_understanding import merge_semantic_understanding
@@ -110,3 +111,82 @@ def test_invalid_mention_is_dropped_without_discarding_valid_sibling() -> None:
     assert merged.security_context is not None
     assert merged.security_context.otp_request is True
     assert merged.security_context.requested_action is RequestedActionV4.SHARE_OTP
+
+
+def test_literal_apply_action_survives_semantic_omission_and_binds_its_url() -> None:
+    message = "Please visit https://forms.example/apply to apply."
+    scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+
+    merged = merge_semantic_understanding(message, scope, Understanding(), model_version="semantic-test")
+
+    assert merged.security_context is not None
+    assert merged.security_context.requested_action is RequestedActionV4.REGISTER_OR_APPLY
+    intent = build_grounded_verification_intent(message, merged.security_context, merged.assistant_context)
+    assert intent is not None
+    assert intent.contract.action_url_indices == [0]
+
+
+def test_inline_markdown_login_url_remains_bound_to_the_action() -> None:
+    message = "Northstar Institute yêu cầu đăng nhập tại `https://northstar.example/contact`"
+    scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+
+    assert scope.security_context is not None
+    intent = build_grounded_verification_intent(message, scope.security_context)
+
+    assert intent is not None
+    assert intent.contract.action_url_indices == [0]
+
+
+def test_requested_user_to_service_action_projects_and_binds_its_url() -> None:
+    message = "Please visit https://forms.example/apply to apply."
+    scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+    candidates = generate_semantic_span_candidates(message)
+    action_span = next(item for item in candidates if message[item.start : item.end] == "apply")
+    output = Understanding(
+        action_mentions=[
+            SemanticActionMention(
+                action_kind=SemanticActionKind.REGISTER_OR_APPLY,
+                sensitive_object=SemanticSensitiveObject.NONE,
+                actor=SemanticParticipant.USER,
+                recipient=SemanticParticipant.FORM_OR_SERVICE,
+                direction=SemanticDirection.USER_TO_FORM_OR_SERVICE,
+                modality=SemanticModality.REQUESTED,
+                stance=SemanticStance.ASSERTED,
+                interaction_type=SemanticInteractionType.ROUTINE_WORKFLOW,
+                span_ids=[action_span.span_id],
+                url_indices=[0],
+                confidence=0.95,
+            )
+        ]
+    )
+
+    merged = merge_semantic_understanding(message, scope, output, model_version="semantic-test")
+
+    assert merged.security_context is not None
+    assert merged.security_context.requested_action is RequestedActionV4.REGISTER_OR_APPLY
+    intent = build_grounded_verification_intent(message, merged.security_context, merged.assistant_context)
+    assert intent is not None
+    assert intent.contract.action_url_indices == [0]
+
+
+def test_reference_only_url_does_not_become_an_action_url() -> None:
+    message = "Reference material: https://docs.example/overview."
+    scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+
+    merged = merge_semantic_understanding(message, scope, Understanding(), model_version="semantic-test")
+
+    assert merged.security_context is not None
+    assert merged.security_context.requested_action is None
+    intent = build_grounded_verification_intent(message, merged.security_context, merged.assistant_context)
+    assert intent is None or intent.contract.action_url_indices == []
+
+
+def test_action_binds_only_the_url_in_its_clause() -> None:
+    message = "Reference: https://docs.example/overview. Please visit https://forms.example/apply to apply."
+    scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
+    assert scope.security_context is not None
+
+    intent = build_grounded_verification_intent(message, scope.security_context)
+
+    assert intent is not None
+    assert intent.contract.action_url_indices == [1]

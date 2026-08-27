@@ -159,6 +159,7 @@ class WebSearchProvider(Protocol):
         *,
         execution_context: TurnExecutionContext,
         max_results: int = 5,
+        include_domains: Sequence[str] = (),
     ) -> WebSearchEnvelope: ...
 
 
@@ -310,23 +311,28 @@ class TavilyWebSearchProvider:
         *,
         execution_context: TurnExecutionContext,
         max_results: int = 5,
+        include_domains: Sequence[str] = (),
     ) -> WebSearchEnvelope:
         started = perf_counter()
         starting_units = execution_context.network_units
         try:
             safe_query = _validate_query(query)
             maximum = min(max(1, max_results), _MAX_SEARCH_RESULTS)
+            domains = list(dict.fromkeys(domain.casefold() for domain in include_domains if domain.strip()))[:10]
+            body = {
+                "query": safe_query,
+                "max_results": maximum,
+                "search_depth": "basic",
+                "include_answer": False,
+                "include_raw_content": False,
+                "include_images": False,
+            }
+            if domains:
+                body["include_domains"] = domains
             payload, response_bytes = await self._transport.post_json(
                 self.endpoint,
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                body={
-                    "query": safe_query,
-                    "max_results": maximum,
-                    "search_depth": "basic",
-                    "include_answer": False,
-                    "include_raw_content": False,
-                    "include_images": False,
-                },
+                body=body,
                 execution_context=execution_context,
             )
             results: list[WebSearchHit] = []

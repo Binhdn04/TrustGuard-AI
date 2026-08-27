@@ -408,6 +408,37 @@ def test_reputation_evidence_preserves_conflict_and_independent_hit_count() -> N
     assert evidence[0].signal == "malicious+provider_conflict+corroborated_provider_hit"
 
 
+def test_http_error_redirect_evidence_keeps_the_known_destination_distinct_from_retrieval() -> None:
+    url = "https://portal.northstar.example/contact"
+    context = _scope(_request(f"Kiểm tra {url}", consent=True)).security_context
+    assert context is not None
+    step = next(
+        item
+        for item in build_security_investigation_plan(context, external_url_lookup=True)
+        if item.tool is SecurityInvestigationToolV4.REDIRECT_RESOLVER
+    )
+    envelope = NormalizedToolResult(
+        status=ToolResultStatus.INCONCLUSIVE,
+        result=RedirectResolutionResult(
+            normalized_url=url,
+            final_url=url,
+            redirect_chain=[url],
+            status=RedirectResolutionStatus.UNRESOLVED,
+            signals=["http_404"],
+            http_status_code=404,
+            observed_at=NOW,
+        ),
+        cache=CacheMetadata(status=CacheStatus.BYPASS, bypass_reason="fixture"),
+        usage=_usage(ToolName.REDIRECT_RESOLVER),
+    )
+
+    evidence, limitations = SecurityInvestigationService()._provider_evidence(step, envelope)
+
+    assert limitations == []
+    assert evidence[0].signal == "redirect_resolution_inconclusive+http_404"
+    assert "redirect_destination_unresolved" not in evidence[0].signal
+
+
 @pytest.mark.asyncio
 async def test_retry_is_bounded_and_counts_each_attempt_against_budget() -> None:
     request = _request("Kiểm tra https://example.com/login", consent=True)

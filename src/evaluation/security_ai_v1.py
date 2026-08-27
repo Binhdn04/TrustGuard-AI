@@ -371,7 +371,12 @@ async def evaluate_ai_case(case: SecurityAIEvaluationCase) -> SecurityAICaseResu
         if scoped.scope_decision is ScopeDecisionV4.IN_SCOPE and verdict_turn is None:
             verdict_turn = turn_number
         elif verdict_turn is None:
-            follow_up_before_verdict = follow_up_before_verdict and bool(scoped.follow_up_question)
+            # The evaluation exercises policy/understanding directly, before
+            # the pipeline's terminal composer fills user-facing prose.  A
+            # selected slot is therefore the authoritative completion signal.
+            follow_up_before_verdict = follow_up_before_verdict and bool(
+                scoped.follow_up_question or scoped.follow_up_slot
+            )
 
     assert final is not None
     grounded_reasons = total_reasons = hallucinated_evidence = hallucinated_actions = 0

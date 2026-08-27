@@ -21,6 +21,10 @@ from src.models import (
 )
 from src.security_ai.contracts import AssistantOperation, AssistantSynthesis, SecurityAssistantModel
 from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.official_verification_coordinator import (
+    has_verified_exact_resource_action_endorsement,
+    has_verified_exact_resource_endorsement,
+)
 
 _UNSAFE_LINK_TEXT = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
 _TECHNICAL_METRIC_TEXT = re.compile(
@@ -138,6 +142,56 @@ class SynthesisGroundingFailure(StrEnum):
     OFFICIAL_VERIFICATION_OVERREACH = "official_verification_overreach"
     MISSING_REQUIRED_AFFIRMATION = "missing_required_affirmation"
     CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET = "caution_contradicts_verified_passive_target"
+    CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT = "contradicts_verified_exact_resource_endorsement"
+    MISSING_DECISIVE_EXPLANATION = "missing_decisive_explanation"
+
+
+def _degradation_reason(reason: str) -> str:
+    """Normalize all degraded paths into stable, non-sensitive telemetry codes."""
+    return {
+        "timeout": "provider_timeout",
+        "turn_deadline_exceeded": "provider_timeout",
+        "invalid_structured_output": "invalid_output",
+        "provider_error": "provider_unavailable",
+    }.get(reason, "grounding_rejected" if reason in SynthesisGroundingFailure._value2member_map_ else reason)
+
+
+def _emergency_terminal_prose(scope: SecurityScopeResponseV4) -> str:
+    """Small emergency copy only; normal terminal prose is model composed."""
+    if scope.scope_decision.value == "OUT_OF_SCOPE_GENERAL_FACT_CHECK":
+        if "assistant_greeting" in scope.scope_reasons:
+            return "TrustGuard có thể giúp kiểm tra tin nhắn, liên kết hoặc yêu cầu đáng ngờ."
+        if "assistant_capabilities" in scope.scope_reasons:
+            return (
+                "TrustGuard hỗ trợ nhận diện phishing, lừa đảo, giả mạo và yêu cầu có thể làm mất tài khoản hoặc tiền."
+            )
+        return "TrustGuard chỉ đánh giá rủi ro phishing, lừa đảo, giả mạo và các yêu cầu có thể gây mất tài khoản hoặc tiền."
+    return {
+        "action_taken": "Bạn đã bấm liên kết, nhập thông tin, gửi OTP hoặc chuyển tiền chưa?",
+        "requested_sensitive_action": "Người gửi đang yêu cầu bạn đăng nhập, cung cấp thông tin hay chuyển tiền gì?",
+        "url_or_contact": "Tin nhắn có liên kết, tên miền hoặc thông tin liên hệ nào không?",
+        "claimed_organization": "Người gửi tự xưng là tổ chức hoặc thương hiệu nào?",
+        "amount_deadline_channel": "Họ có nêu số tiền, thời hạn hoặc kênh liên hệ nào không?",
+    }.get(
+        scope.follow_up_slot.value if scope.follow_up_slot is not None else "",
+        "Bạn có thể cho biết thêm nội dung tin nhắn, liên kết hoặc hành động mà người gửi yêu cầu không?",
+    )
+
+
+def _terminal_grounding_failure(scope: SecurityScopeResponseV4, prose: str | None) -> str | None:
+    if prose is None:
+        return "invalid_output"
+    if _UNSAFE_LINK_TEXT.search(prose) or _TECHNICAL_METRIC_TEXT.search(prose):
+        return "invalid_output"
+    normalized = prose.casefold()
+    if any(marker in normalized for marker in ("đã được xác minh", "được xác nhận là an toàn", "đã điều tra")):
+        return "grounding_rejected"
+    if scope.scope_decision.value == "OUT_OF_SCOPE_GENERAL_FACT_CHECK":
+        if "?" in prose:
+            return "grounding_rejected"
+    elif prose.count("?") != 1:
+        return "grounding_rejected"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,16 +258,114 @@ def _grounded_plain_reasons(scope: SecurityScopeResponseV4) -> list[AssistantRea
 
 
 def _has_verified_official_allow_open(scope: SecurityScopeResponseV4) -> bool:
-    """Whether policy requires an affirmative answer about the submitted action."""
+    """Whether policy requires an affirmative answer about the submitted action.
+
+    The submitted resource can be third-party hosted.  Its verified, exact
+    official endorsement is sufficient here; domain ownership remains a
+    separate fact and must not be implied by the affirmative response.
+    """
     verification = scope.official_verification
     return bool(
         scope.risk is SecurityRiskV4.SAFE
         and SecurityRecommendedActionV4.ALLOW_OPEN in scope.recommended_actions
         and verification is not None
-        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
         and verification.resource_verification.status is VerificationStatusV4.VERIFIED
         and verification.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
     )
+
+
+def _has_verified_exact_resource_endorsement(scope: SecurityScopeResponseV4) -> bool:
+    """Whether accepted provenance endorses this exact submitted resource.
+
+    This is deliberately narrower than publisher/domain ownership and broader
+    than a SAFE decision.  It remains true when sender identity, a separate
+    requested action, or wider campaign details are unresolved.
+    """
+    context = scope.security_context
+    return has_verified_exact_resource_endorsement(
+        scope.official_verification,
+        context.urls if context is not None else (),
+    )
+
+
+def _has_verified_exact_resource_action_endorsement(scope: SecurityScopeResponseV4) -> bool:
+    context = scope.security_context
+    return has_verified_exact_resource_action_endorsement(
+        scope.official_verification,
+        context.urls if context is not None else (),
+    )
+
+
+_GENERIC_VERIFY_BEFORE_CONTINUING = re.compile(
+    r"(?:xác\s+minh|kiểm\s+tra).{0,80}(?:trước\s+khi|trước\s+khi\s+tiếp\s+tục|mới\s+nên).{0,80}(?:tiếp\s+tục|thực\s+hiện|làm\s+theo|đăng\s+ký|điền)",
+    re.IGNORECASE,
+)
+
+_RESOURCE_WORDS = re.compile(r"(?:liên kết|đường dẫn|tài nguyên|biểu mẫu|form|resource|link|url)", re.IGNORECASE)
+_ACTION_WORDS = re.compile(r"(?:hành động|thao tác|điền(?:\s+biểu)?\s*mẫu|apply|resource|form|action)", re.IGNORECASE)
+_NEGATION_WORDS = re.compile(
+    r"(?:chưa|không|không thể|không có|no|not|cannot|could not|unable to|insufficient)", re.IGNORECASE
+)
+_OFFICIAL_EVIDENCE_WORDS = re.compile(
+    r"(?:nguồn|kênh|trang|website).{0,20}chính thức|official (?:source|evidence|verification)", re.IGNORECASE
+)
+_POSITIVE_VERIFICATION_AFFIRMATION = re.compile(
+    r"(?:có thể mở|có thể tiếp tục|an toàn|tên miền chính thức|được xác minh|đã xác nhận|"
+    r"đã được.{0,80}(?:xác minh|xác nhận|kiểm chứng))",
+    re.IGNORECASE,
+)
+
+
+def _sentence_denies_official_fact(
+    text: str,
+    subject: re.Pattern[str],
+    *,
+    requires_explicit_official_source: bool = True,
+) -> bool:
+    """Reject only a denial of the same scoped fact, never a nearby claim.
+
+    A natural mixed conclusion can confirm an exact form in one sentence and
+    leave a program or invitation unverified in the next.  Cross-sentence
+    matching would erase that distinction and force the response fallback.
+    """
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        negation = _NEGATION_WORDS.search(sentence)
+        official = _OFFICIAL_EVIDENCE_WORDS.search(sentence)
+        subjects = list(subject.finditer(sentence))
+        denial = re.search(
+            r"(?:xác minh|xác nhận|kiểm chứng|bằng chứng|verified|confirmed|verification)", sentence, re.IGNORECASE
+        )
+        if negation is None or denial is None or not subjects:
+            continue
+        if not requires_explicit_official_source:
+            # A sentence can contrast an unverified campaign invitation with
+            # an endorsed form.  Treat it as an action denial only when the
+            # action subject is local to the negated verification statement,
+            # not merely another noun later in the sentence.
+            if any(
+                item.start() >= negation.start()
+                and min(abs(item.start() - negation.start()), abs(item.start() - denial.start())) <= 80
+                for item in subjects
+            ):
+                return True
+            continue
+        if official is None:
+            continue
+        # English often places the subject before the denial. Keep this tight
+        # enough that a later campaign boundary is not mistaken for a denial
+        # of the previously mentioned form.
+        if re.search(
+            r"(?:resource|link|url|form)\s+(?:could not|cannot|is not|isn't|not).{0,80}"
+            r"(?:official (?:source|evidence|verification)|(?:source|evidence).{0,20}official)",
+            sentence,
+            re.IGNORECASE,
+        ):
+            return True
+        # Vietnamese often places the denial first, but the denied subject
+        # should immediately follow the official-evidence phrase.
+        if any(negation.start() < item.start() and 0 <= item.start() - official.end() <= 48 for item in subjects):
+            return True
+    return False
 
 
 def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> bool:
@@ -232,6 +384,7 @@ def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> b
         and not context.personal_information_request
     ):
         return False
+
     def owns_target(item: SecurityEvidenceV4, url: str) -> bool:
         if not item.target:
             return False
@@ -264,6 +417,233 @@ def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> b
     )
 
 
+def _composer_uncertainties(scope: SecurityScopeResponseV4) -> list[str]:
+    """Return only uncertainties that can still change the user's next step.
+
+    A sender identity is a separate provenance question.  Once official
+    evidence endorses the exact submitted resource *and* requested action, it
+    must not be presented to the composer as a reason to re-verify that action
+    before proceeding.  The model still receives the scoped sender fact below
+    so it may state that boundary accurately.
+    """
+    if _has_verified_exact_resource_action_endorsement(scope):
+        return []
+    if _has_verified_passive_target_allow_open(scope):
+        return []
+    return _public_uncertainties(scope.limitations)
+
+
+def _display_target(target: str | None) -> str | None:
+    """Expose a host-level target without leaking a path or URL query."""
+    if not target:
+        return None
+    parsed = urlsplit(target if "://" in target else f"//{target}")
+    return (parsed.hostname or target).casefold().rstrip(".")
+
+
+def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, object]]:
+    """Select the few evidence facts that explain the decision to a person.
+
+    Evidence records are intentionally exhaustive for the detailed panel.  The
+    synthesis model needs a small, semantic subset instead of opaque signals or
+    provider descriptions.  These facts are not response prose: the model
+    retains control of wording and ordering.
+    """
+    context = scope.security_context
+    claimed = context.claimed_entity if context is not None else None
+    facts: list[dict[str, object]] = []
+
+    def add(
+        *,
+        category: str,
+        evidence: SecurityEvidenceV4 | None,
+        finding: str,
+        implication: str,
+    ) -> None:
+        if len(facts) >= 3:
+            return
+        facts.append(
+            {
+                "category": category,
+                "finding": finding,
+                "security_meaning": implication,
+                # Verification components are structured policy facts.  A
+                # projected evidence row is useful for audit when present,
+                # but its absence must not erase a VERIFIED component before
+                # the composer sees it.
+                "evidence_refs": [evidence.evidence_ref] if evidence is not None else [],
+            }
+        )
+
+    exact_resource_evidence = next(
+        (
+            item
+            for item in scope.evidence
+            if item.type.value == "official_verification"
+            or item.description.startswith("Official verification đã xác nhận chuỗi endorsement")
+        ),
+        None,
+    )
+    official_evidence_by_signal = {
+        item.signal.casefold(): item for item in scope.evidence if item.type.value == "official_verification"
+    }
+
+    # Contradictions come first: they most directly explain why an otherwise
+    # legitimate-looking domain does not validate this particular message.
+    for evidence in scope.evidence:
+        signal = evidence.signal.casefold()
+        target = _display_target(evidence.target)
+        if signal == "entity_target_mismatch":
+            named = claimed or "tổ chức được nhắc tới"
+            domain = f"Tên miền {target}" if target else "Liên kết này"
+            owner = evidence.related_entity or "một tổ chức khác"
+            add(
+                category="claimed_entity_target_mismatch",
+                evidence=evidence,
+                finding=f"{domain} đã được đối chiếu thuộc {owner}, trong khi nội dung gắn nó với {named}.",
+                implication=(
+                    "Tên miền có thể là một địa chỉ hợp lệ, nhưng điều đó không xác minh nó được "
+                    "tổ chức trong tin nhắn sử dụng cho yêu cầu này."
+                ),
+            )
+        elif "redirect_destination_unresolved" in signal and not _has_verified_exact_resource_endorsement(scope):
+            add(
+                category="redirect_destination_unresolved",
+                evidence=evidence,
+                finding="Điểm đến cuối của liên kết vẫn chưa xác định được.",
+                implication="Không thể dùng tên miền ban đầu để kết luận điểm đến cuối an toàn hoặc thuộc tổ chức được nhắc tới.",
+            )
+        elif any(
+            marker in signal
+            for marker in ("malicious", "confirmed_threat", "approved_blacklist_hit", "threat_intelligence_hit")
+        ):
+            add(
+                category="credible_harmful_target_signal",
+                evidence=evidence,
+                finding="Các kiểm tra bảo mật có bằng chứng đáng tin cậy rằng mục tiêu này nguy hiểm.",
+                implication="Không nên tiếp tục tương tác với liên kết hoặc làm theo yêu cầu trong tin nhắn.",
+            )
+
+    if _has_verified_exact_resource_action_endorsement(scope):
+        if exact_resource_evidence is not None:
+            add(
+                category="exact_resource_action_endorsed",
+                evidence=exact_resource_evidence,
+                finding="Nguồn chính thức đã xác nhận đúng tài nguyên được gửi và hành động cần thực hiện tại đó.",
+                implication="Xác nhận này chỉ áp dụng cho tài nguyên cụ thể, không suy ra danh tính người gửi hoặc toàn bộ tên miền.",
+            )
+    elif _has_verified_exact_resource_endorsement(scope):
+        if exact_resource_evidence is not None:
+            add(
+                category="exact_resource_endorsed",
+                evidence=exact_resource_evidence,
+                finding="Nguồn chính thức đã xác nhận tài nguyên cụ thể được gửi.",
+                implication="Điều này không tự xác nhận người gửi hoặc mọi hành động được nêu trong tin nhắn.",
+            )
+
+    # Verification evidence is emitted by independent components. Rank the
+    # affirmative domain fact before the unresolved requested action regardless
+    # of their record order, so the composer receives the intended narrative
+    # flow rather than an implementation-order listing.
+    verification = scope.official_verification
+    domain_evidence = official_evidence_by_signal.get("official_domain_verified")
+    if domain_evidence is not None or (
+        verification is not None and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    ):
+        target = (
+            _display_target(domain_evidence.target)
+            if domain_evidence is not None
+            else next(
+                (_display_target(url) for url in (context.urls if context is not None else []) if _display_target(url)),
+                None,
+            )
+        )
+        add(
+            category="official_domain_verified",
+            evidence=domain_evidence,
+            finding=f"Tên miền {target or 'được gửi'} đã được xác minh thuộc tổ chức được nêu.",
+            implication="Điều này xác nhận nguồn của tên miền, không tự xác nhận người gửi hay nội dung yêu cầu.",
+        )
+    claim_unverified = bool(
+        verification is not None and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
+    )
+    if claim_unverified:
+        claim = verification.intent.claim_summary
+        add(
+            category="requested_claim_unverified",
+            evidence=None,
+            finding=(
+                f"Nguồn chính thức chưa xác nhận thông tin về {claim}."
+                if claim
+                else "Nguồn chính thức chưa xác nhận thông tin được nêu trong tin nhắn."
+            ),
+            implication="Tên miền chính thức không tự xác nhận nội dung tin nhắn là thật.",
+        )
+    action_evidence = official_evidence_by_signal.get("action_endorsement_unverified")
+    if action_evidence is not None or (
+        verification is not None
+        and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    ):
+        action = (
+            verification.intent.requested_action.value.replace("_", " ")
+            if verification is not None and verification.intent.requested_action is not None
+            else "hành động"
+        )
+        add(
+            category="requested_action_unverified",
+            evidence=action_evidence,
+            finding=f"Nguồn chính thức chưa xác nhận việc {action} mà tin nhắn yêu cầu.",
+            implication="Vì vậy, chưa nên thực hiện hành động này chỉ dựa trên tin nhắn.",
+        )
+
+    for evidence in scope.evidence:
+        if len(facts) >= 3:
+            break
+        signal = evidence.signal.casefold()
+        target = _display_target(evidence.target)
+        if signal in {"official_domain_verified", "action_endorsement_unverified"}:
+            continue
+        if signal in {"domain_mismatch", "lookalike_domain", "homograph_domain"}:
+            add(
+                category="domain_identity_mismatch",
+                evidence=evidence,
+                finding="Tên miền không khớp rõ ràng với tổ chức mà nội dung tự nhận.",
+                implication="Không nên coi liên kết là kênh của tổ chức chỉ dựa vào nội dung tin nhắn.",
+            )
+        elif signal == "safe" and evidence.type.value == "url_reputation":
+            add(
+                category="no_known_harmful_reputation_signal",
+                evidence=evidence,
+                finding="Kiểm tra uy tín không ghi nhận cảnh báo độc hại cho địa chỉ này.",
+                implication="Kết quả này chỉ nói về tín hiệu nguy hại của địa chỉ, không xác nhận tổ chức được nhắc tới hoặc hành động trong tin nhắn.",
+            )
+        elif signal == "sender_identity_unverified":
+            # Sender provenance is useful only when there is no stronger
+            # resource/action fact explaining the decision. It must not crowd
+            # out the actual claim the user is being asked to act on.
+            if (
+                domain_evidence is not None
+                or (
+                    verification is not None
+                    and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+                )
+            ) and (
+                action_evidence is not None
+                or (
+                    verification is not None
+                    and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+                )
+            ):
+                continue
+            add(
+                category="sender_identity_unverified",
+                evidence=evidence,
+                finding="Danh tính người gửi chưa được xác minh riêng.",
+                implication="Điều này chỉ giới hạn kết luận về người gửi; cần phân biệt với kết quả kiểm tra liên kết và hành động.",
+            )
+    return facts[:3]
+
+
 def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     assert scope.risk is not None
     # This is a response-selection invariant, not merely an explanation
@@ -281,40 +661,94 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     if _has_verified_passive_target_allow_open(scope):
         return "Tên miền bạn hỏi là tên miền chính thức đã được xác minh và an toàn để mở."
 
+    # The normal path is GPT composition.  If it is unavailable or rejected,
+    # retain the same decisive human meaning instead of collapsing a concrete
+    # identity contradiction into generic risk wording.
+    decisive_facts = _decisive_response_facts(scope)
+    if decisive_facts:
+        explanation_parts: list[str] = []
+        verification = scope.official_verification
+        if verification is not None and verification.intent.organization_name:
+            explanation_parts.append(f"Tin nhắn tự nhận liên quan đến {verification.intent.organization_name}.")
+        if (
+            verification is not None
+            and verification.intent.claim_summary
+            and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
+        ):
+            explanation_parts.append(f"Thông tin về {verification.intent.claim_summary} chưa được xác nhận riêng.")
+        if _has_verified_exact_resource_endorsement(scope):
+            explanation_parts.append("Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này.")
+        explanation_parts.append(" ".join(f"{fact['finding']} {fact['security_meaning']}" for fact in decisive_facts))
+        if scope.risk is not None:
+            explanation_parts.append(_RISK_GUIDANCE[scope.risk])
+        if (
+            verification is not None
+            and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+        ):
+            explanation_parts.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
+        explanation = " ".join(explanation_parts)
+        if scope.recommended_actions:
+            explanation = f"{explanation} {_ACTION_GUIDANCE[scope.recommended_actions[0]]}"
+        return explanation
+
     summary = _RISK_GUIDANCE[scope.risk]
     # A verified submitted resource is affirmative truth even when the message
     # sender has not been authenticated. Do not collapse that distinction into
     # the generic INSUFFICIENT_EVIDENCE caution fallback.
-    if (
-        scope.official_verification is not None
-        and scope.official_verification.resource_verification.status is VerificationStatusV4.VERIFIED
-        and scope.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
-    ):
+    if _has_verified_exact_resource_endorsement(scope) and scope.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE:
         summary = "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này."
     evidence_by_signal = {item.signal: item for item in scope.evidence if item.type.value == "official_verification"}
     ownership = evidence_by_signal.get("official_domain_verified")
     sender = evidence_by_signal.get("sender_identity_unverified")
     action = evidence_by_signal.get("action_endorsement_unverified")
     verification_sentences: list[str] = []
-    if ownership is not None and ownership.target:
-        verification_sentences.append(f"{ownership.target} đã được xác minh là tên miền chính thức.")
-    if sender is not None or action is not None:
-        verification_sentences.append(
-            "Tuy nhiên, chưa đủ bằng chứng xác nhận người gửi và yêu cầu đăng nhập trong tin nhắn."
+    verification = scope.official_verification
+    if (ownership is not None and ownership.target) or (
+        verification is not None and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    ):
+        domain = (
+            _display_target(ownership.target)
+            if ownership is not None
+            else next(
+                (
+                    _display_target(url)
+                    for url in (scope.security_context.urls if scope.security_context else [])
+                    if _display_target(url)
+                ),
+                None,
+            )
         )
+        verification_sentences.append(f"{domain or 'Tên miền được gửi'} đã được xác minh là tên miền chính thức.")
+    # A text-and-URL submission does not identify a sender. Keep this separate
+    # observation out of the fallback unless it is the only material fact.
+    if sender is not None and not (
+        verification is not None
+        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+        and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    ):
+        verification_sentences.append("Danh tính người gửi chưa được xác minh riêng.")
+    if action is not None:
+        verification_sentences.append("Chưa có xác nhận chính thức cho đúng hành động mà tin nhắn yêu cầu.")
         verification_sentences.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
     if verification_sentences:
         summary = " ".join([*verification_sentences, summary])
     # The fallback is normally rare, but it must retain the same case facts as
     # the composer.  Risk is a decision; it is not a substitute for the
     # independent organization, claim, resource, and action conclusions.
-    verification = scope.official_verification
     if verification is not None and verification.overall_status is not VerificationStatusV4.VERIFIED:
         intent = verification.intent
         facts: list[str] = []
+        exact_resource_endorsed = _has_verified_exact_resource_endorsement(scope)
         if intent.organization_name:
             facts.append(f"Tin nhắn tự nhận liên quan đến {intent.organization_name}.")
-        if intent.claim_summary and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED:
+        # An unreviewed publisher is not a reason to erase the accepted
+        # provenance fact for the exact resource.  Do not turn a separate,
+        # unresolved campaign component into "no official source" prose.
+        if (
+            intent.claim_summary
+            and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
+            and not exact_resource_endorsed
+        ):
             facts.append(f"Chưa xác nhận được thông tin về {intent.claim_summary} từ nguồn chính thức.")
         if verification.resource_verification.status is VerificationStatusV4.UNVERIFIED:
             facts.append("Chưa xác nhận được liên kết được gửi là tài nguyên do tổ chức này công bố.")
@@ -335,8 +769,15 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     return summary
 
 
-def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> AssistantResponseV4:
-    """Last-resort response when the composer cannot produce a safe answer."""
+def emergency_assistant_response(
+    scope: SecurityScopeResponseV4,
+    reason: str = "composer_unavailable",
+) -> AssistantResponseV4:
+    """Emergency-only degraded response when composition cannot run safely.
+
+    This renderer is deliberately not a parallel response strategy: normal
+    turns must be composed by the model and carry ``generation_mode=ai``.
+    """
     verified_passive_target = _has_verified_passive_target_allow_open(scope)
     return AssistantResponseV4(
         summary=_friendly_summary(scope),
@@ -344,16 +785,17 @@ def policy_grounded_assistant_response(scope: SecurityScopeResponseV4) -> Assist
         # truth. Provider/consent diagnostics are not a user-facing caveat for
         # a verified passive target.
         top_reasons=[] if verified_passive_target else _grounded_plain_reasons(scope),
-        uncertainties=[] if verified_passive_target else _public_uncertainties(scope.limitations),
+        uncertainties=_composer_uncertainties(scope),
         immediate_steps=_immediate_steps(scope),
         follow_up_offer=None if verified_passive_target else _FOLLOW_UP_OFFER,
         generation_mode=AssistantGenerationModeV4.POLICY_GROUNDED,
+        degradation_reason=reason,
     )
 
 
-# Compatibility import for integrations that have not migrated to the new
-# name. New responses produced through it are still policy-grounded.
-template_assistant_response = policy_grounded_assistant_response
+# Compatibility names retained for persisted-data readers and old imports.
+policy_grounded_assistant_response = emergency_assistant_response
+template_assistant_response = emergency_assistant_response
 
 
 def check_grounded_ai_response(
@@ -379,13 +821,64 @@ def check_grounded_ai_response(
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.TECHNICAL_METRIC)
     combined = " ".join(texts).casefold()
-    if _has_verified_official_allow_open(scope) and not re.search(
-        r"(?:có thể mở|được xác minh|đã xác nhận)",
-        synthesis.summary.casefold(),
+    verification = scope.official_verification
+    # A partial or unverified edge is never promotable by wording.  Each
+    # verification edge is checked independently: a verified resource must
+    # not become evidence that the sender, domain, or requested action is
+    # verified too.
+    if verification is not None:
+        affirmative = r"(?:đã được|được|đã)\s*(?:xác minh|xác nhận|kiểm chứng)"
+        if verification.domain_ownership_verification.status is not VerificationStatusV4.VERIFIED and re.search(
+            rf"(?:tên miền|domain).{{0,60}}{affirmative}", combined
+        ):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
+        if (
+            verification.resource_verification.status is not VerificationStatusV4.VERIFIED
+            and not _has_verified_exact_resource_endorsement(scope)
+            and re.search(rf"(?:liên kết|đường link|tài nguyên).{{0,60}}{affirmative}", combined)
+        ):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
+        if verification.sender_verification.status is not VerificationStatusV4.VERIFIED and re.search(
+            rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined
+        ):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
+        if (
+            verification.action_endorsement_verification.status is not VerificationStatusV4.VERIFIED
+            and not _has_verified_exact_resource_action_endorsement(scope)
+            # A verified form/resource may be described positively even when
+            # the separate requested action remains unverified.
+            and re.search(rf"(?:hành động|yêu cầu|đăng ký|điền(?:\s+biểu)?\s*mẫu).{{0,60}}{affirmative}", combined)
+        ):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
+    if _has_verified_exact_resource_endorsement(scope) and _sentence_denies_official_fact(combined, _RESOURCE_WORDS):
+        return SynthesisGroundingCheck(
+            None,
+            SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT,
+        )
+    if _has_verified_exact_resource_action_endorsement(scope) and _sentence_denies_official_fact(
+        combined,
+        _ACTION_WORDS,
+        requires_explicit_official_source=False,
     ):
+        return SynthesisGroundingCheck(
+            None,
+            SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT,
+        )
+    if _has_verified_official_allow_open(scope) and not _POSITIVE_VERIFICATION_AFFIRMATION.search(synthesis.summary):
         # A composer may mention an unverified sender, but it cannot omit the
         # affirmative conclusion that policy has already established.
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
+    if (
+        _has_verified_exact_resource_action_endorsement(scope)
+        and SecurityRecommendedActionV4.ALLOW_OPEN in scope.recommended_actions
+    ):
+        if _GENERIC_VERIFY_BEFORE_CONTINUING.search(combined):
+            return SynthesisGroundingCheck(
+                None,
+                SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT,
+            )
+        if not _POSITIVE_VERIFICATION_AFFIRMATION.search(synthesis.summary):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
     if _has_verified_passive_target_allow_open(scope):
         summary = synthesis.summary.casefold()
         if _CAUTIONARY_SAFE_CONTRADICTION.search(summary):
@@ -393,13 +886,20 @@ def check_grounded_ai_response(
                 None,
                 SynthesisGroundingFailure.CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET,
             )
-        if not re.search(r"(?:an toàn|tên miền chính thức|có thể mở|được xác minh|đã xác nhận)", summary):
+        if not _POSITIVE_VERIFICATION_AFFIRMATION.search(summary):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
-    signals = {item.signal for item in scope.evidence if item.type.value == "official_verification"}
+    domain_ownership_verified = bool(
+        scope.official_verification is not None
+        and scope.official_verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    )
+    projected_domain_verified = any(
+        item.type.value == "official_verification" and item.signal == "official_domain_verified"
+        for item in scope.evidence
+    )
     if (
         ("tên miền chính thức" in combined or "domain chính thức" in combined)
         and "đã được xác minh" in combined
-        and "official_domain_verified" not in signals
+        and not (domain_ownership_verified or projected_domain_verified)
     ) or (
         re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", combined) is not None
         and scope.official_verification is not None
@@ -451,9 +951,11 @@ class GroundedSecurityResponseService:
         if scope.risk is None or scope.policy_version is None:
             return scope
         if not self._ai_enabled:
-            return scope.model_copy(update={"assistant_response": policy_grounded_assistant_response(scope)})
+            return scope.model_copy(update={"assistant_response": emergency_assistant_response(scope, "ai_disabled")})
         if self._model is None:
-            return scope.model_copy(update={"assistant_response": policy_grounded_assistant_response(scope)})
+            return scope.model_copy(
+                update={"assistant_response": emergency_assistant_response(scope, "provider_unavailable")}
+            )
 
         result = await self._runtime.invoke(
             AssistantOperation.SYNTHESIZE,
@@ -477,8 +979,17 @@ class GroundedSecurityResponseService:
             # Do not expose provider, validator, or policy diagnostics to the
             # user.  The deterministic renderer exists solely for this failure
             # path; normal answers are always composer-owned prose.
-            logger.warning("security_ai_composer_fallback", extra={"failure_code": reason})
-            return scope.model_copy(update={"assistant_response": policy_grounded_assistant_response(scope)})
+            logger.warning(
+                "security_ai_composer_fallback",
+                extra={
+                    "operation": AssistantOperation.SYNTHESIZE.value,
+                    "failure_code": reason,
+                    "final_response_source": "policy_grounded",
+                },
+            )
+            return scope.model_copy(
+                update={"assistant_response": emergency_assistant_response(scope, _degradation_reason(reason))}
+            )
         logger.info(
             "security_ai_response_trace",
             extra={
@@ -489,10 +1000,64 @@ class GroundedSecurityResponseService:
         )
         return scope.model_copy(update={"assistant_response": grounded})
 
+    async def enrich_terminal(self, scope: SecurityScopeResponseV4) -> SecurityScopeResponseV4:
+        """Compose terminal boundary and clarification prose from policy context.
+
+        Scope selection and the clarification slot are already authoritative.
+        The model receives no ability to alter either one.
+        """
+        if scope.risk is not None or (scope.boundary_message is not None and scope.follow_up_question is not None):
+            return scope
+        field = (
+            "boundary_message"
+            if scope.scope_decision.value == "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+            else "follow_up_question"
+        )
+        if not self._ai_enabled or self._model is None:
+            return scope.model_copy(update={field: _emergency_terminal_prose(scope)})
+        result = await self._runtime.invoke(
+            AssistantOperation.SYNTHESIZE,
+            lambda: self._model.synthesize(self._terminal_payload(scope)),
+            AssistantSynthesis,
+        )
+        prose = result.output.summary if result.output is not None else None
+        failure = _terminal_grounding_failure(scope, prose)
+        if failure is not None:
+            reason = _degradation_reason(result.error or failure)
+            logger.warning("security_ai_terminal_composer_fallback", extra={"failure_code": reason, "field": field})
+            return scope.model_copy(update={field: _emergency_terminal_prose(scope)})
+        return scope.model_copy(update={field: prose})
+
+    @staticmethod
+    def _terminal_payload(scope: SecurityScopeResponseV4) -> dict[str, object]:
+        is_boundary = scope.scope_decision.value == "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+        return {
+            "contract": "security-terminal-message-context-v1",
+            "response_kind": "boundary" if is_boundary else "clarification",
+            "boundary_reason": list(scope.scope_reasons) if is_boundary else None,
+            "clarification_needed": scope.follow_up_slot.value
+            if scope.follow_up_slot is not None
+            else "general_security_context",
+            "allowed_actions": [],
+            "decisive_facts": [],
+            "missing_evidence": list(scope.limitations),
+            "presentation_constraints": {
+                "write_one_natural_vietnamese_message": True,
+                "do_not_claim_verification_or_investigation": True,
+                "do_not_include_urls_or_contact_details": True,
+                "boundary_only_explains_security_triage_scope": is_boundary,
+                "clarification_only_asks_one_question_for_the_supplied_slot": not is_boundary,
+            },
+        }
+
     @staticmethod
     def _synthesis_payload(scope: SecurityScopeResponseV4) -> dict[str, object]:
         verification = scope.official_verification
-        redirect_unresolved = any(
+        # Older/in-flight evidence may still carry the former redirect label.
+        # An official endorsement of this exact resource is authoritative over
+        # that stale projection: it cannot simultaneously mean that the final
+        # destination is unknown.
+        redirect_unresolved = not _has_verified_exact_resource_endorsement(scope) and any(
             item.type.value == "redirect" and "redirect_destination_unresolved" in item.signal
             for item in scope.evidence
         )
@@ -504,6 +1069,8 @@ class GroundedSecurityResponseService:
             for item in scope.evidence
         )
         verified_passive_target = _has_verified_passive_target_allow_open(scope)
+        verified_exact_resource_endorsement = _has_verified_exact_resource_endorsement(scope)
+        decisive_facts = _decisive_response_facts(scope)
         return {
             "contract": "grounded-security-response-context-v1",
             "verdict": scope.risk.value if scope.risk else None,
@@ -513,6 +1080,9 @@ class GroundedSecurityResponseService:
             # limitations once policy has established this passive target.
             "authoritative_security_truth": {
                 "verified_passive_target": verified_passive_target,
+                # This fact is intentionally independent from risk, domain
+                # ownership, sender identity, and campaign-wide verification.
+                **({"verified_exact_resource_endorsement": True} if verified_exact_resource_endorsement else {}),
                 "credible_malicious_evidence": malicious_evidence_observed,
                 "no_risky_requested_action": bool(
                     scope.security_context is not None
@@ -522,9 +1092,19 @@ class GroundedSecurityResponseService:
                     and not scope.security_context.personal_information_request
                 ),
             },
-            "allowed_actions": [
-                {"code": action.value, "user_guidance": _ACTION_GUIDANCE[action]}
-                for action in scope.recommended_actions
+            # Codes are policy-owned constraints. The composer chooses prose
+            # and must not treat a prewritten action sentence as a template.
+            "allowed_actions": [action.value for action in scope.recommended_actions],
+            # These are deliberately semantic, ranked facts rather than the
+            # detailed evidence stream.  They preserve the explanation path
+            # through synthesis without exposing provider vocabulary or codes.
+            "decisive_facts": decisive_facts,
+            # Citations are optional audit metadata.  Do not make a natural
+            # summary contingent on serializing each decisive fact into a
+            # second, machine-facing field: that would reject otherwise sound
+            # GPT prose and route it through the deterministic renderer.
+            "available_explanation_evidence_refs": [
+                ref for fact in decisive_facts for ref in fact["evidence_refs"] if isinstance(ref, str)
             ],
             # Evidence descriptions are operational records and can contain
             # review/provenance vocabulary.  The composer receives only the
@@ -541,7 +1121,7 @@ class GroundedSecurityResponseService:
             ],
             # Investigation availability is not user-relevant uncertainty
             # once policy has established a safe passive origin.
-            "important_uncertainties": [] if verified_passive_target else _public_uncertainties(scope.limitations),
+            "important_uncertainties": _composer_uncertainties(scope),
             "verification_state": (
                 {
                     "claimed_organization": verification.intent.organization_name,
@@ -559,6 +1139,7 @@ class GroundedSecurityResponseService:
                         "endorsement_status": verification.action_endorsement_verification.status.value
                         if verification.action_endorsement_verification.status is not None
                         else None,
+                        "exact_resource_endorsed": _has_verified_exact_resource_action_endorsement(scope),
                     },
                     "submitted_resource": {
                         "claimed_platforms": [
@@ -570,9 +1151,31 @@ class GroundedSecurityResponseService:
                         if verification.resource_verification.status is not None
                         else None,
                         "final_destination": "unresolved" if redirect_unresolved else "not_reported",
+                        "official_association": (
+                            "officially_owned"
+                            if verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+                            else "exact_resource_endorsed"
+                            if verified_exact_resource_endorsement
+                            else "not_established"
+                        ),
                     },
                     "domain_ownership": verification.domain_ownership_verification.status.value,
                     "sender_identity": verification.sender_verification.status.value,
+                    "uncertainty_boundaries": {
+                        "sender_identity": (
+                            "The sender identity is not independently verified. This fact does not change "
+                            "the official endorsement of the exact submitted resource or requested action."
+                            if _has_verified_exact_resource_action_endorsement(scope)
+                            else "The sender identity is a separate fact from resource and action verification."
+                        ),
+                        "domain_ownership": (
+                            "The submitted resource is third-party hosted; do not infer that its entire domain "
+                            "is owned by the organization."
+                            if verified_exact_resource_endorsement
+                            and verification.domain_ownership_verification.status is not VerificationStatusV4.VERIFIED
+                            else None
+                        ),
+                    },
                     "malicious_evidence": "observed" if malicious_evidence_observed else "none_observed",
                     "unverified_is_not_a_risk_signal_by_itself": True,
                 }
@@ -584,6 +1187,34 @@ class GroundedSecurityResponseService:
                 "do_not_use_a_fixed_report_structure": True,
                 "may_choose_order_headings_brevity_and_emphasis": True,
                 "do_not_expose_internal_diagnostics": True,
+                "explain_decisive_facts": (
+                    "Select only the one to three decisive_facts needed for one natural conclusion. Synthesize "
+                    "them in this flow: what has been verified; which claim or requested action remains "
+                    "unverified; what that means; what the user should do. Do not serialize facts, evidence "
+                    "statuses, or uncertainty boundaries into separate sentences. Mention uncertainty only when "
+                    "it directly changes the conclusion. Keep URL/domain safety, organization association, and "
+                    "message action endorsement as separate facts; never infer one from another."
+                    if decisive_facts
+                    else None
+                ),
+                "verified_exact_resource_endorsement": (
+                    "When true, state that an official provenance chain endorses the exact submitted resource. "
+                    "Do not say that no official source or evidence verifies that campaign, claim, or resource. "
+                    "This does not establish publisher/domain ownership, sender identity, every campaign detail, "
+                    "or the overall risk verdict."
+                    if verified_exact_resource_endorsement
+                    else None
+                ),
+                "verified_exact_resource_action_endorsement": (
+                    "When true, the official evidence endorses the requested action at the exact submitted resource. "
+                    "Do not say that the action, form, or resource lacks official confirmation. "
+                    "If sender identity is unverified, limit that statement to sender identity only; never turn it "
+                    "into generic advice to verify before continuing, a caution about this action, or a qualification "
+                    "of the exact-resource endorsement. This does not establish publisher/domain ownership or trust "
+                    "for other resources."
+                    if _has_verified_exact_resource_action_endorsement(scope)
+                    else None
+                ),
             },
         }
 

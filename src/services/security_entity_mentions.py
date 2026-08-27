@@ -109,8 +109,25 @@ _ATTRIBUTION_REJECTED_TOKENS = {
 _ATTRIBUTION_BOUNDARY_WORDS = {"duoc", "nhan", "rang", "tin", "tu"}
 _DOMAIN_RE = re.compile(r"(?<![\w.-])(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s<>()]*)?", re.IGNORECASE)
 _TITLE_STOPWORDS = {
-    "please", "this", "that", "the", "a", "an", "i", "we", "you", "he", "she", "they",
-    "ho", "toi", "nguoi", "ban", "anh", "chi", "safe",
+    "please",
+    "this",
+    "that",
+    "the",
+    "a",
+    "an",
+    "i",
+    "we",
+    "you",
+    "he",
+    "she",
+    "they",
+    "ho",
+    "toi",
+    "nguoi",
+    "ban",
+    "anh",
+    "chi",
+    "safe",
 }
 _PLATFORM_NOUNS = {"form", "forms", "drive", "docs", "sheet", "sheets", "survey", "portal", "platform"}
 
@@ -269,9 +286,12 @@ def extract_entity_mentions(
         while end_index < len(tokens) and end_index - index < 5:
             separator = message[tokens[end_index - 1].end() : tokens[end_index].start()]
             next_value = tokens[end_index].group(0)
-            if separator.strip() or any(char in separator for char in ".!?;,:\n") or not (
-                next_value[:1].isupper() or next_value.isupper()
-            ) or _is_boundary(folded, end_index):
+            if (
+                separator.strip()
+                or any(char in separator for char in ".!?;,:\n")
+                or not (next_value[:1].isupper() or next_value.isupper())
+                or _is_boundary(folded, end_index)
+            ):
                 break
             end_index += 1
         # A lone capital at sentence start is common prose. Admit a proper-name
@@ -319,10 +339,7 @@ def extract_entity_mentions(
     merged.extend(
         item
         for item in rule_mentions
-        if not any(
-            item.start <= known.start < item.end or known.start <= item.start < known.end
-            for known in merged
-        )
+        if not any(item.start <= known.start < item.end or known.start <= item.start < known.end for known in merged)
     )
     merged.sort(key=lambda item: (item.start, item.end))
     return [

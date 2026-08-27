@@ -46,6 +46,7 @@ from src.models import (
     VerificationTopicV4,
 )
 from src.security_ai.runtime import TurnExecutionContext
+from src.services.official_evidence_planner import EvidenceRetrievalPlanner, RetrievalDirection
 from src.services.official_identity_registry import (
     BrandResolutionStatus,
     OfficialIdentityRegistry,
@@ -176,6 +177,19 @@ _CONTRADICTION_TERMS = (
     "not affiliated",
     "not recruiting",
     "scam warning",
+)
+# Domain ownership conflicts need a stricter predicate than a claim conflict.
+# A general site warning (for example, Wikipedia's editing scam warning) says
+# nothing about the organization-to-domain edge being evaluated.
+_OWNERSHIP_CONFLICT_TERMS = (
+    "not affiliated",
+    "unaffiliated",
+    "not related",
+    "not owned by",
+    "does not own",
+    "khong lien quan",
+    "khong phai",
+    "khong thuoc",
 )
 _QUALIFIER_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _TIME_QUALIFIER_RE = re.compile(r"\b(?:20\d{2}|\d{1,2}[/-]\d{1,2}[/-]20\d{2}|thang\s+\d{1,2})\b")
@@ -320,37 +334,47 @@ def apply_official_verification_outcome(
         for url in (context.urls if context is not None else [])
         if (canonical := _canonical_discovery_url(url)) is not None
     }
-    verified_associations = [
-        item
+    verified_associations = verified_exact_resource_endorsement_associations(report, submitted_urls)
+    verified_resource_hosts = {item.canonical_domain for item in verified_associations}
+    ownership_refs = set(report.domain_ownership_verification.evidence_refs)
+    verified_ownership_hosts = {
+        item.canonical_domain
         for item in report.identity_associations
         if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
-        and item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
-        and item.canonical_url in submitted_urls
-    ]
-    verified_hosts = {item.canonical_domain for item in verified_associations}
+        and item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+        and bool(set(item.evidence_refs) & ownership_refs)
+        and any(
+            (urlsplit(url).hostname or "").casefold() == item.canonical_domain
+            or (urlsplit(url).hostname or "").casefold().endswith(f".{item.canonical_domain}")
+            for url in submitted_urls
+        )
+    }
     evidence = list(scope.evidence)
-    if verified_hosts:
+    if verified_resource_hosts or verified_ownership_hosts:
         evidence = [
             item.model_copy(
                 update={
                     "description": (
-                        "Official verification đã xác nhận chuỗi endorsement cho đúng resource đã gửi trên "
+                        f"Official verification đã xác nhận tên miền {item.target} thuộc tổ chức được nêu. "
+                        "Xác nhận ownership này không tự xác nhận claim hoặc hành động trong tin nhắn."
+                        if item.target in verified_ownership_hosts
+                        else "Official verification đã xác nhận chuỗi endorsement cho đúng resource đã gửi trên "
                         f"{item.target}. Publisher/domain identity chưa được review; kết quả không áp dụng "
                         "cho resource khác trên cùng domain."
                     )
                 }
             )
             if item.signal in {"claimed_identity_unverified", "entity_target_unverified"}
-            and item.target in verified_hosts
+            and item.target in (verified_resource_hosts | verified_ownership_hosts)
             else item
             for item in evidence
         ]
     limitations = [
         item
         for item in [*scope.limitations, *outcome.limitations]
-        if not (verified_hosts and item == _UNREVIEWED_IDENTITY_LIMITATION)
+        if not ((verified_resource_hosts or verified_ownership_hosts) and item == _UNREVIEWED_IDENTITY_LIMITATION)
     ]
-    if verified_hosts and report.publisher_verification.status is VerificationStatusV4.UNVERIFIED:
+    if verified_resource_hosts and report.publisher_verification.status is VerificationStatusV4.UNVERIFIED:
         limitations.append(_SCOPED_RESOURCE_LIMITATION)
 
     verification_evidence: list[SecurityEvidenceV4] = []
@@ -421,17 +445,102 @@ def apply_official_verification_outcome(
     )
 
 
+def verified_exact_resource_endorsement_associations(
+    report: OfficialLinkVerificationReportV4,
+    submitted_resources: Sequence[str],
+) -> list[IdentityAssociationV4]:
+    """Return accepted official endorsement chains for the exact submitted resource.
+
+    This deliberately establishes neither publisher/domain ownership nor a
+    SAFE verdict. The association is authoritative only when it is VERIFIED,
+    carries provenance evidence, and matches both the report's exact-resource
+    match and a canonical resource submitted in this request.
+    """
+    match = report.resource_verification.match
+    user_resource = match.user_resource if match is not None else None
+    if (
+        match is None
+        or user_resource is None
+        or not user_resource.canonical_url
+        or match.status not in {ResourceMatchStatusV4.EXACT_RESOURCE, ResourceMatchStatusV4.EXACT_CANONICAL_URL}
+    ):
+        return []
+    user_canonical = _canonical_discovery_url(user_resource.canonical_url)
+    # ``user_resource`` is the coordinator's canonical identity for a
+    # submitted URL, including a guarded redirect destination. The original
+    # input can therefore differ from this canonical URL (for example, a
+    # short link); requiring an input URL prevents detached reports from
+    # gaining this meaning while preserving the resolved submitted resource.
+    if user_canonical is None or not submitted_resources:
+        return []
+    return [
+        association
+        for association in report.identity_associations
+        if association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+        and association.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+        and association.canonical_url == user_canonical
+        and bool(association.evidence_refs)
+    ]
+
+
+def has_verified_exact_resource_endorsement(
+    report: OfficialLinkVerificationReportV4 | None,
+    submitted_resources: Sequence[str],
+) -> bool:
+    """Whether an accepted official provenance chain endorses this request's resource."""
+    if report is None:
+        return False
+    if verified_exact_resource_endorsement_associations(report, submitted_resources):
+        return True
+    match = report.resource_verification.match
+    user_resource = match.user_resource if match is not None else None
+    if (
+        match is None
+        or user_resource is None
+        or not user_resource.canonical_url
+        or match.status not in {ResourceMatchStatusV4.EXACT_RESOURCE, ResourceMatchStatusV4.EXACT_CANONICAL_URL}
+        or report.resource_verification.status is not VerificationStatusV4.VERIFIED
+        or not report.resource_verification.evidence_refs
+    ):
+        return False
+    user_canonical = _canonical_discovery_url(user_resource.canonical_url)
+    return user_canonical is not None and bool(submitted_resources)
+
+
+def has_verified_exact_resource_action_endorsement(
+    report: OfficialLinkVerificationReportV4 | None,
+    submitted_resources: Sequence[str],
+) -> bool:
+    """Whether an exact-resource endorsement also covers the requested action.
+
+    This is independent of publisher/domain ownership: an organization can
+    endorse a specific third-party workflow without owning that platform.
+    """
+    return bool(
+        report is not None
+        and report.intent.requested_action is not None
+        and report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+        and has_verified_exact_resource_endorsement(report, submitted_resources)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _Candidate:
     fetch_url: str
     canonical_url: str
+    priority: tuple[int, int, str]
+    # ``identity`` is a fetch-time capability.  For a cross-link it is an
+    # ephemeral exact-URL identity derived from a reviewed source, never a
+    # reviewed identity for the social account or its host.
     identity: OfficialIdentityV4
+    source_identity: OfficialIdentityV4
 
 
 @dataclass(frozen=True, slots=True)
 class _PageEvidence:
     extraction: OfficialPageExtraction
     visible_text: str
+    source_identity: OfficialIdentityV4
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,6 +670,78 @@ def _entity_appears(entity: str, text: str) -> bool:
     folded_text = _fold(text)
     tokens = [token for token in _fold(entity).split() if len(token) >= 3]
     return bool(tokens) and sum(token in folded_text for token in set(tokens)) >= min(2, len(set(tokens)))
+
+
+def _entity_self_identified(entity: str, text: str) -> bool:
+    """Require an exact normalized organization phrase for a root identity.
+
+    This deliberately does not reuse the token-overlap matcher used for claim
+    relevance: a name-like fragment is supporting evidence, never a domain
+    ownership anchor.
+    """
+    candidate = _fold(entity)
+    return bool(candidate) and re.search(rf"(?<!\\w){re.escape(candidate)}(?!\\w)", _fold(text)) is not None
+
+
+def _links_to_host(text: str, source_url: str, target_host: str) -> bool:
+    """Find an exact host declaration on an independently fetched source.
+
+    An HTML anchor remains the normal path.  Some authoritative listings and
+    extracted filings, however, expose the registered website as labelled
+    text rather than a clickable link (for example, ``Website: example.com``).
+    That is still a domain-specific ownership edge after the caller has
+    independently established the source entity and host separation.  A bare
+    domain mention is deliberately not enough: it needs a website/official
+    site label and an exact host boundary.
+    """
+    soup = BeautifulSoup(text, "html.parser")
+    for anchor in soup.find_all("a", href=True):
+        try:
+            link = normalize_verification_url(str(anchor["href"]), base_url=source_url)
+        except UrlNormalizationError:
+            continue
+        host = (urlsplit(link.canonical_url).hostname or "").casefold()
+        if host == target_host:
+            return True
+    visible = " ".join(soup.get_text(" ", strip=True).split())
+    escaped_host = re.escape(target_host.casefold())
+    return bool(
+        re.search(
+            rf"(?:website|web\s*site|official\s+(?:website|site)|trang\s+web(?:\s+chinh\s+thuc)?)"
+            rf"\s*(?::|[-–—|])?\s*(?:https?://)?(?:www\.)?{escaped_host}(?=$|[/?#\s,;.)])",
+            _fold(visible),
+        )
+    )
+
+
+def _has_explicit_ownership_conflict(text: str, target_host: str) -> bool:
+    """Return only a host-bound statement that negates an ownership relation.
+
+    Claim-level warning words are intentionally insufficient: third-party
+    pages frequently contain generic anti-scam or editorial boilerplate while
+    also correctly listing an organization's website.
+    """
+    visible = " ".join(BeautifulSoup(text, "html.parser").get_text(" ", strip=True).split())
+    folded_host = re.escape(target_host.casefold())
+    host_pattern = rf"(?:https?://)?(?:www\.)?{folded_host}(?=$|[/?#\s,;.)])"
+    for sentence in re.split(r"[.!?;]+|\n+", _fold(visible)):
+        if re.search(host_pattern, sentence) and any(term in sentence for term in _OWNERSHIP_CONFLICT_TERMS):
+            return True
+    return False
+
+
+def _links_to_exact_resource(text: str, source_url: str, target_urls: set[str]) -> bool:
+    """Whether fetched provenance points to one exact submitted resource."""
+    soup = BeautifulSoup(text, "html.parser")
+    for anchor in soup.find_all("a", href=True):
+        try:
+            link = normalize_verification_url(str(anchor["href"]), base_url=source_url)
+        except UrlNormalizationError:
+            continue
+        canonical = _canonical_discovery_url(link.canonical_url)
+        if canonical in target_urls:
+            return True
+    return False
 
 
 def _grounded_claim_appears(intent: GroundedVerificationIntent, text: str) -> bool:
@@ -712,10 +893,21 @@ class OfficialLinkVerificationCoordinator:
         claim_qualifiers = _claim_qualifiers(request.message)
         identity_associations: list[IdentityAssociationV4] = []
         identity_evidence: list[IdentityEvidenceObservationV4] = []
+        # Search is discovery-only until an association passes the independent
+        # identity-evidence rule below.  Keep its URLs so the discovery phase
+        # can inspect them without treating the provider result as identity.
+        discovery_seed_urls: list[str] = []
 
-        def add_candidate(url: str) -> None:
-            if len(candidates) >= _MAX_CANDIDATES:
-                return
+        def enqueue(candidate: _Candidate) -> None:
+            """Keep the bounded, unfetched queue ordered by provenance value."""
+            nonlocal candidates
+            candidates.append(candidate)
+            candidates[fetch_cursor:] = sorted(candidates[fetch_cursor:], key=lambda item: item.priority)
+            if len(candidates) > _MAX_CANDIDATES:
+                removed = candidates.pop()
+                candidate_keys.discard(removed.canonical_url)
+
+        def add_candidate(url: str, *, title: str = "") -> None:
             try:
                 normalized = normalize_verification_url(url)
             except UrlNormalizationError:
@@ -738,13 +930,73 @@ class OfficialLinkVerificationCoordinator:
                     continue
                 if assessment.status is FinalPageIdentityStatus.ACCEPTED:
                     candidate_keys.add(normalized.canonical_url)
-                    candidates.append(_Candidate(normalized.fetch_url, normalized.canonical_url, identity))
+                    enqueue(
+                        _Candidate(
+                            normalized.fetch_url,
+                            normalized.canonical_url,
+                            (
+                                5 if normalized.fetch_url == _identity_url(identity) else 10,
+                                0 if _fold(title) == _fold(intent.contract.claim_summary or "") else 1,
+                                normalized.canonical_url,
+                            ),
+                            identity,
+                            identity,
+                        )
+                    )
                     return
+
+        def add_exact_cross_link_candidate(link: ExtractedOfficialLink, page: _PageEvidence) -> None:
+            """Continue one exact social URL explicitly linked by an accepted source.
+
+            This grants no host-wide or account-wide identity.  Redirects and
+            sibling pages still fail the normal final-page identity check.
+            """
+            if _link_role(link) is not LinkRoleV4.SOCIAL_PROFILE:
+                return
+            if link.canonical_url in candidate_keys:
+                return
+            try:
+                normalized = normalize_verification_url(link.fetch_url)
+            except UrlNormalizationError:
+                return
+            trusted_identity = OfficialIdentityV4(
+                identity_type=OfficialIdentityTypeV4.SOCIAL_PROFILE,
+                canonical_value=normalized.canonical_url,
+                display_value=normalized.display_url,
+                entity_name=page.source_identity.entity_name,
+                relationship="official_cross_link_exact",
+                provenance=f"exact-cross-link:{link.link_ref}",
+                policy_version="official-identity-cross-link-v1",
+                reviewed=True,
+            )
+            source_identity = trusted_identity.model_copy(
+                update={"relationship": "official_cross_link", "reviewed": False}
+            )
+            candidate_keys.add(normalized.canonical_url)
+            enqueue(
+                _Candidate(
+                    normalized.fetch_url,
+                    normalized.canonical_url,
+                    (0, 0, normalized.canonical_url),
+                    trusted_identity,
+                    source_identity,
+                )
+            )
 
         local_candidate_urls = [
             value for identity in verifiable_identities if (value := _identity_url(identity)) is not None
         ]
-        queries = self._queries.build(intent)
+        # Discovery is driven by missing evidence edges, never by increasingly
+        # paraphrased searches.  Query text is merely the transport for a
+        # selected edge and is bounded by the planner.
+        planner = EvidenceRetrievalPlanner(
+            entity=brand.name if brand is not None else (intent.contract.organization_name or ""),
+            campaign=intent.contract.claim_summary or "",
+            resource_url=user_urls[0] if user_urls else "",
+            normalized_entity=(intent.derived_organizations[0].value if intent.derived_organizations else ""),
+            normalized_topic=(intent.contract.topic.value if intent.contract.topic is not None else ""),
+        )
+        queries: list[VerificationQuery] = []
         online_verification_needed = (
             intent.contract.claim_summary is not None or intent.contract.topic is not None or bool(user_urls)
         )
@@ -774,40 +1026,82 @@ class OfficialLinkVerificationCoordinator:
                 limitations.extend(page_limitations)
                 if page is not None:
                     pages.append(page)
+                    # A source may prove that this exact social post/page is
+                    # official.  Follow only that exact link; do not infer an
+                    # identity from its display name, platform, or host.
+                    for link in page.extraction.links:
+                        add_exact_cross_link_candidate(link, page)
 
+        # Reviewed identities enter the continuation queue immediately.
+        # Registry misses use the separate two-consent evidence-discovery path
+        # below; source policy can corroborate an attestor there, never admit
+        # the candidate organization/domain by itself.
+        for url in local_candidate_urls:
+            add_candidate(url)
         if verifiable_identities and online_verification_needed and request.consent.official_source_lookup:
-            if self._search is not None and queries:
-                for index, query in enumerate(queries[:_MAX_SEARCH_ATTEMPTS]):
-                    result = await self._search.search_one(
-                        query.text,
-                        execution_context=execution_context,
-                        max_results=_MAX_SEARCH_RESULTS,
-                    )
-                    search_attempts += 1
-                    adapter_attempts += result.tool_calls_used
-                    if result.status is VerificationTransportStatus.SUCCESS:
-                        for hit in result.results[:_MAX_SEARCH_RESULTS]:
-                            add_candidate(hit.url)
-                    elif result.limitation is not None:
-                        limitations.append(f"search_{result.limitation.value}")
-                    if index == 0:
-                        for url in local_candidate_urls:
-                            add_candidate(url)
-                    await fetch_next_batch(query)
-                    early_stop_reason = self._early_stop_reason(
-                        intent,
-                        publisher,
-                        pages,
-                        user_urls,
-                        claim_qualifiers,
-                    )
-                    if early_stop_reason is not None or official_fetches >= _MAX_OFFICIAL_FETCHES:
+            if self._search is not None:
+                while search_attempts < _MAX_SEARCH_ATTEMPTS:
+                    frontier = planner.next_frontier()
+                    if frontier is None:
+                        break
+                    if frontier.direction is RetrievalDirection.SOURCE_CENTRIC:
+                        # Candidate material must be extracted before another
+                        # search can be justified.
+                        break
+                    gained = False
+                    frontier_early_stop: str | None = None
+                    for text in frontier.queries:
+                        query = VerificationQuery(
+                            query_id=f"frontier:{frontier.edge.value}:{hashlib.sha256(text.encode()).hexdigest()[:16]}",
+                            text=text,
+                            source_fields=(frontier.edge.value,),
+                            derivations=(f"evidence_{frontier.direction.value}",),
+                        )
+                        queries.append(query)
+                        result = await self._search.search_one(
+                            query.text, execution_context=execution_context, max_results=_MAX_SEARCH_RESULTS
+                        )
+                        search_attempts += 1
+                        adapter_attempts += result.tool_calls_used
+                        if result.status is VerificationTransportStatus.SUCCESS:
+                            urls = [
+                                canonical
+                                for hit in result.results[:_MAX_SEARCH_RESULTS]
+                                if (canonical := _canonical_discovery_url(hit.url)) is not None
+                            ]
+                            gained = planner.observe_candidates(urls) or gained
+                            for hit in result.results[:_MAX_SEARCH_RESULTS]:
+                                canonical = _canonical_discovery_url(hit.url)
+                                if canonical is not None and canonical not in discovery_seed_urls:
+                                    discovery_seed_urls.append(canonical)
+                                add_candidate(hit.url, title=hit.title)
+                        elif result.limitation is not None:
+                            limitations.append(f"search_{result.limitation.value}")
+                        if gained:
+                            # Candidate URLs are not verification evidence.
+                            # Fetch them before deciding whether this frontier
+                            # has supplied enough support to skip its next,
+                            # non-equivalent query.
+                            await fetch_next_batch(query)
+                            frontier_early_stop = self._early_stop_reason(
+                                intent,
+                                publisher,
+                                pages,
+                                user_urls,
+                                claim_qualifiers,
+                            )
+                            if frontier_early_stop is not None:
+                                break
+                    planner.complete_frontier(frontier, new_evidence=gained)
+                    if frontier_early_stop is not None:
+                        early_stop_reason = frontier_early_stop
+                        break
+                    if planner.stop_reason is not None:
+                        early_stop_reason = planner.stop_reason
                         break
             else:
                 if self._search is None:
                     limitations.append("official_web_search_unavailable")
-                for url in local_candidate_urls:
-                    add_candidate(url)
 
             while (
                 early_stop_reason is None
@@ -825,18 +1119,10 @@ class OfficialLinkVerificationCoordinator:
         elif verifiable_identities and online_verification_needed:
             limitations.append("official_source_consent_required")
 
-        discovery_persistence_available = all(
-            callable(getattr(self._brands, method, None))
-            for method in ("list_identity_candidates", "save_identity_candidate")
-        )
-        discovery_needed = (
-            discovery_persistence_available
-            and early_stop_reason != "strong_official_contradiction"
-            and (
-                resolution.status in {BrandResolutionStatus.NOT_FOUND, BrandResolutionStatus.AMBIGUOUS}
-                or not identities
-                or bool(user_urls)
-            )
+        discovery_needed = early_stop_reason != "strong_official_contradiction" and (
+            resolution.status in {BrandResolutionStatus.NOT_FOUND, BrandResolutionStatus.AMBIGUOUS}
+            or not identities
+            or bool(user_urls)
         )
         if discovery_needed:
             (
@@ -856,23 +1142,22 @@ class OfficialLinkVerificationCoordinator:
                 external_consent=request.consent.external_url_lookup,
                 search_cap=max(0, _MAX_SEARCH_ATTEMPTS - search_attempts),
                 fetch_cap=max(0, _MAX_OFFICIAL_FETCHES - official_fetches),
+                candidate_seed_urls=discovery_seed_urls,
                 execution_context=execution_context,
             )
             search_attempts += discovery_searches
             official_fetches += discovery_fetches
             adapter_attempts += discovery_calls
             limitations.extend(discovery_limitations)
+            if early_stop_reason is None and "identity_consecutive_retrievals_no_new_evidence" in discovery_limitations:
+                early_stop_reason = "consecutive_retrievals_no_new_evidence"
 
-        action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
         discovered_publisher = next(
             (
                 item
                 for item in identity_associations
                 if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
                 and item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
-                and any(
-                    host == item.canonical_domain or host.endswith(f".{item.canonical_domain}") for host in action_hosts
-                )
             ),
             None,
         )
@@ -898,7 +1183,6 @@ class OfficialLinkVerificationCoordinator:
 
         source_refs, link_evidence = self._public_evidence(
             brand,
-            verifiable_identities,
             local_sources,
             pages,
         )
@@ -999,6 +1283,7 @@ class OfficialLinkVerificationCoordinator:
         external_consent: bool,
         search_cap: int,
         fetch_cap: int,
+        candidate_seed_urls: Sequence[str] = (),
         execution_context: TurnExecutionContext,
     ) -> tuple[list[IdentityAssociationV4], list[IdentityEvidenceObservationV4], int, int, int, list[str]]:
         requested_url_map = {
@@ -1134,31 +1419,127 @@ class OfficialLinkVerificationCoordinator:
         if not official_consent:
             stale = ["identity_stale_revalidation"] if stale_found else []
             return [], [], 0, 0, 0, [*stale, "official_source_consent_required"]
-        if self._search is None:
+        # The submitted URL is already a consent-scoped discovery candidate.
+        # Do not abandon its guarded fetch merely because optional web search
+        # is unavailable; otherwise direct authoritative domain evidence can
+        # never be reconciled in deployments without a search provider.
+        if self._search is None and not candidate_seed_urls and not requested_targets:
             stale = ["identity_stale_revalidation"] if stale_found else []
             return [], [], 0, 0, 0, [*stale, "official_web_search_unavailable"]
 
-        queries = self._identity_discovery_queries(intent, fallback_entity=entity)
-        candidate_urls: list[str] = list(sorted(requested_targets))
+        candidate_urls: list[str] = list(sorted(requested_targets)) if external_consent else []
+        identity_candidate_urls: set[str] = set()
+        authority_candidate_urls: set[str] = set()
+        target_host = (urlsplit(first_target).hostname or "").casefold() if first_target is not None else ""
+        planner = EvidenceRetrievalPlanner(
+            # Keep claim discovery independent from the submitted host.  The
+            # exact-resource edge has its own resource-centric query; adding a
+            # third-party host here makes the official provenance search miss
+            # otherwise relevant entity/campaign pages.
+            entity=entity,
+            campaign=intent.contract.claim_summary or "",
+            resource_url=first_target or "",
+            normalized_entity=(intent.derived_organizations[0].value if intent.derived_organizations else ""),
+            normalized_topic=(intent.contract.topic.value if intent.contract.topic is not None else ""),
+        )
+        for candidate in candidate_seed_urls:
+            if candidate in requested_targets and not external_consent:
+                continue
+            if candidate not in candidate_urls:
+                candidate_urls.append(candidate)
+                planner.observe_candidates([candidate])
         searches = calls = fetches = 0
         limitations: list[str] = ["identity_stale_revalidation"] if stale_found else []
-        for query in queries[: min(3, search_cap)]:
+        last_query = entity
+        while (
+            self._search is not None
+            and searches < min(search_cap, _MAX_SEARCH_ATTEMPTS)
+            and len(candidate_urls) < _MAX_CANDIDATES
+        ):
+            frontier = planner.next_frontier()
+            if frontier is None:
+                if planner.stop_reason is not None:
+                    limitations.append(f"identity_{planner.stop_reason}")
+                break
+            if frontier.direction is RetrievalDirection.SOURCE_CENTRIC:
+                # Fetch and extract useful candidates before considering a new
+                # search.  Search results are evidence material, not rejects.
+                break
+            gained = False
+            for query in frontier.queries:
+                last_query = query
+                result = await self._search.search_one(
+                    query, execution_context=execution_context, max_results=_MAX_SEARCH_RESULTS
+                )
+                searches += 1
+                calls += result.tool_calls_used
+                if result.status is VerificationTransportStatus.SUCCESS:
+                    urls = [
+                        canonical
+                        for hit in result.results
+                        if (canonical := _canonical_discovery_url(hit.url)) is not None
+                    ]
+                    gained = planner.observe_candidates(urls) or gained
+                    for canonical in urls:
+                        if canonical not in candidate_urls:
+                            candidate_urls.append(canonical)
+                        if len(candidate_urls) >= _MAX_CANDIDATES:
+                            break
+                elif result.limitation is not None:
+                    limitations.append(f"identity_search_{result.limitation.value}")
+                if searches >= min(search_cap, _MAX_SEARCH_ATTEMPTS) or len(candidate_urls) >= _MAX_CANDIDATES:
+                    break
+            planner.complete_frontier(frontier, new_evidence=gained)
+
+        # Candidate discovery normally stops to fetch material after the first
+        # useful query.  For ownership, reserve one distinct lookup for a
+        # source that can explicitly associate the submitted host with the
+        # entity.  This is not evidence by itself; it merely prevents an
+        # encyclopedia-heavy result page from starving the cross-source edge.
+        if self._search is not None and target_host and searches < min(search_cap, _MAX_SEARCH_ATTEMPTS):
+            # Keep the entity-to-site edge independent from claim recall. A
+            # campaign query can return many topical articles and otherwise
+            # starve the organization identity evidence under the fetch cap.
+            identity_query = entity
+            last_query = identity_query
             result = await self._search.search_one(
-                query, execution_context=execution_context, max_results=_MAX_SEARCH_RESULTS
+                identity_query,
+                execution_context=execution_context,
+                max_results=_MAX_SEARCH_RESULTS,
             )
             searches += 1
             calls += result.tool_calls_used
             if result.status is VerificationTransportStatus.SUCCESS:
                 for hit in result.results:
                     canonical = _canonical_discovery_url(hit.url)
-                    if canonical and canonical not in candidate_urls:
-                        candidate_urls.append(canonical)
+                    if canonical is not None:
+                        identity_candidate_urls.add(canonical)
+                        if canonical not in candidate_urls:
+                            candidate_urls.append(canonical)
+            elif result.limitation is not None:
+                limitations.append(f"identity_entity_search_{result.limitation.value}")
+
+        if self._search is not None and target_host and searches < min(search_cap, _MAX_SEARCH_ATTEMPTS):
+            authority_query = f'{entity} "{target_host}" registry'
+            last_query = authority_query
+            result = await self._search.search_one(
+                authority_query,
+                execution_context=execution_context,
+                max_results=_MAX_SEARCH_RESULTS,
+            )
+            searches += 1
+            calls += result.tool_calls_used
+            if result.status is VerificationTransportStatus.SUCCESS:
+                for hit in result.results:
+                    canonical = _canonical_discovery_url(hit.url)
+                    if canonical is not None:
+                        authority_candidate_urls.add(canonical)
+                        if canonical not in candidate_urls:
+                            candidate_urls.append(canonical)
                     if len(candidate_urls) >= _MAX_CANDIDATES:
                         break
             elif result.limitation is not None:
-                limitations.append(f"identity_search_{result.limitation.value}")
-            if len(candidate_urls) >= _MAX_CANDIDATES:
-                break
+                limitations.append(f"identity_authority_search_{result.limitation.value}")
 
         # A user target is only fetched under its separate consent. Search candidates
         # are fetched under official-source consent and every redirect remains guarded.
@@ -1167,7 +1548,42 @@ class OfficialLinkVerificationCoordinator:
             for url in requested_url_map.values():
                 if url not in fetch_urls:
                     fetch_urls.append(url)
-        fetch_urls.extend(url for url in candidate_urls if url not in requested_targets and url not in fetch_urls)
+        target_hosts = {(urlsplit(url).hostname or "").casefold() for url in requested_targets}
+
+        def fetch_priority(url: str) -> tuple[int, str]:
+            host = (urlsplit(url).hostname or "").casefold()
+            if host in target_hosts:
+                return (0, url)
+            if any(host.endswith(f".{target_host}") for target_host in target_hosts):
+                # A same-site page can provide the entity self-identification
+                # half of ownership proof even when the submitted path blocks
+                # automated fetching.
+                return (1, url)
+            canonical = _canonical_discovery_url(url)
+            if canonical in identity_candidate_urls:
+                return (2, url)
+            if canonical in authority_candidate_urls:
+                return (3, url)
+            if self._is_basic_independent_identity_source(url, now):
+                return (4, url)
+            return (5, url)
+
+        ordered_candidates = sorted(
+            (url for url in candidate_urls if url not in requested_targets and url not in fetch_urls),
+            key=fetch_priority,
+        )
+        # One same-site page is enough to obtain self-identification. Reserve
+        # the remaining bounded fetches for an independent identity source.
+        same_site = [
+            url
+            for url in ordered_candidates
+            if any(
+                (host := (urlsplit(url).hostname or "").casefold()) == target_host or host.endswith(f".{target_host}")
+                for target_host in target_hosts
+            )
+        ]
+        same_site_keys = set(same_site)
+        fetch_urls.extend([*same_site[:1], *(url for url in ordered_candidates if url not in same_site_keys)])
         fetched_pages: dict[str, tuple[str, str, str]] = {}
         discovery_endorsements: dict[str, list[IdentityEvidenceObservationV4]] = {}
         pending_endorsements: dict[str, list[tuple[str, str]]] = {}
@@ -1234,10 +1650,9 @@ class OfficialLinkVerificationCoordinator:
                 elif fetched.limitation is not None:
                     recovered = False
                     if fetched.limitation in _FALLBACK_ELIGIBLE and self._extract is not None:
-                        fallback_query = self._identity_discovery_queries(intent, fallback_entity=entity)[0]
                         extracted = await self._extract.extract(
                             [url],
-                            query=fallback_query,
+                            query=last_query,
                             execution_context=execution_context,
                         )
                         calls += extracted.tool_calls_used
@@ -1276,64 +1691,80 @@ class OfficialLinkVerificationCoordinator:
         observations: list[IdentityEvidenceObservationV4] = []
         for canonical in candidate_urls:
             host = (urlsplit(canonical).hostname or "").casefold()
+            if not self._is_root_identity_candidate(canonical, now):
+                continue
             candidate_observations: list[IdentityEvidenceObservationV4] = []
             page = fetched_pages.get(canonical)
-            if page is not None and _entity_appears(entity, page[0]):
-                family = (
-                    IdentityEvidenceFamilyV4.PARENT_DECLARATION
-                    if any(
-                        term in _fold(page[0])
-                        for term in ("parent organization", "parent company", "truc thuoc", "thuoc to chuc")
+            exact_resource_endorsed = canonical in discovery_endorsements
+            if page is not None and _entity_self_identified(entity, page[0]):
+                # A page hosted on the candidate domain identifying the named
+                # organization establishes the domain-to-entity edge. Generic
+                # mentions of a corporate hierarchy on that page cannot turn
+                # its host into a different "parent organization" identity.
+                candidate_observations.append(
+                    _identity_observation(
+                        IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION,
+                        canonical,
+                        page[1],
+                        now,
                     )
-                    else IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION
                 )
-                candidate_observations.append(_identity_observation(family, canonical, page[1], now))
+                # A reviewed exact source-policy entry is authoritative
+                # ownership evidence even when this organization has not yet
+                # been added to the brand registry. It is deliberately bound
+                # to both the exact host and the entity name; a wildcard,
+                # search hit, or a page merely mentioning the entity cannot
+                # take this path.
+                if self._is_direct_authoritative_domain_identity(canonical, entity, now):
+                    candidate_observations.append(
+                        _identity_observation(
+                            IdentityEvidenceFamilyV4.AUTHORITATIVE_DOMAIN_ATTESTATION,
+                            canonical,
+                            page[1],
+                            now,
+                        )
+                    )
             for source_url, (text, content_hash, source_host) in fetched_pages.items():
                 if source_host == host or source_url == canonical:
                     continue
-                if canonical in text and _entity_appears(entity, text):
-                    folded_source = _fold(text)
-                    family = (
-                        IdentityEvidenceFamilyV4.EXPLICIT_OWNERSHIP_CONFLICT
-                        if any(term in _fold(text) for term in _CONTRADICTION_TERMS)
-                        else (
-                            IdentityEvidenceFamilyV4.PARENT_DECLARATION
-                            if any(
-                                term in folded_source
-                                for term in (
-                                    "parent organization",
-                                    "parent company",
-                                    "subsidiary",
-                                    "member of",
-                                    "truc thuoc",
-                                    "don vi thuoc",
-                                )
+                if _links_to_host(text, source_url, host) and _entity_self_identified(entity, text):
+                    # An independently fetched page that points to the exact
+                    # submitted resource proves the narrower endorsement path.
+                    # Do not inflate that provenance into control of the whole
+                    # third-party host merely because the target page repeats
+                    # the entity's name.
+                    if (
+                        exact_resource_endorsed
+                        and _links_to_exact_resource(text, source_url, requested_targets)
+                        and not self._is_authoritative_identity_attestor(source_url, now)
+                    ):
+                        continue
+                    # Search hits only nominate URLs; fetched content from an
+                    # independent source that passes the existing basic source
+                    # checks may corroborate this exact hostname.  Reviewed
+                    # attestor policy can still prioritize a source, but is
+                    # not a prerequisite for ownership bootstrap.
+                    if self._is_basic_independent_identity_source(source_url, now) and _has_explicit_ownership_conflict(
+                        text, host
+                    ):
+                        candidate_observations.append(
+                            _identity_observation(
+                                IdentityEvidenceFamilyV4.EXPLICIT_OWNERSHIP_CONFLICT, source_url, content_hash, now
                             )
-                            else IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK
                         )
-                    )
-                    candidate_observations.append(_identity_observation(family, source_url, content_hash, now))
-            relationship = (
-                IdentityRelationshipV4.PARENT_ORGANIZATION
-                if any(item.family is IdentityEvidenceFamilyV4.PARENT_DECLARATION for item in candidate_observations)
-                else IdentityRelationshipV4.OFFICIAL_CONTROLLED
-            )
-            if relationship is IdentityRelationshipV4.PARENT_ORGANIZATION:
-                candidate_observations = [
-                    _identity_observation(
-                        IdentityEvidenceFamilyV4.CANDIDATE_CORROBORATION,
-                        item.canonical_url,
-                        item.content_hash,
-                        now,
-                    )
-                    if item.family is IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION
-                    else item
-                    for item in candidate_observations
-                ]
+                    elif self._is_basic_independent_identity_source(source_url, now):
+                        candidate_observations.append(
+                            _identity_observation(
+                                IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
+                                source_url,
+                                content_hash,
+                                now,
+                            )
+                        )
             association = self._association_from_observations(
                 entity,
                 canonical,
-                relationship,
+                IdentityRelationshipV4.OFFICIAL_CONTROLLED,
                 candidate_observations,
                 now,
             )
@@ -1348,6 +1779,16 @@ class OfficialLinkVerificationCoordinator:
         for user_url in user_urls:
             canonical = _canonical_discovery_url(user_url)
             if canonical is None:
+                continue
+            # A root-domain association is stronger and semantically distinct
+            # from an endorsed third-party resource.  Never overwrite it just
+            # because the submitted URL happens to be on the official host.
+            if any(
+                item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                and item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                and (urlsplit(canonical).hostname or "").casefold() == item.canonical_domain
+                for item in associations
+            ):
                 continue
             anchor: list[IdentityEvidenceObservationV4] = []
             for page in reviewed_pages:
@@ -1427,6 +1868,7 @@ class OfficialLinkVerificationCoordinator:
                 )
                 stored_associations.append(await save(candidate))
             associations = stored_associations
+        await self._observe_authoritative_domain_bootstraps(entity, associations)
         return (
             associations[:20],
             list({item.evidence_ref: item for item in observations}.values())[:50],
@@ -1435,6 +1877,152 @@ class OfficialLinkVerificationCoordinator:
             calls,
             _unique(limitations),
         )
+
+    async def _observe_authoritative_domain_bootstraps(
+        self,
+        entity: str,
+        associations: Sequence[IdentityAssociationV4],
+    ) -> None:
+        """Queue, but never activate, a source-policy proposal from cross-source ownership proof.
+
+        A newly established domain remains an ephemeral identity candidate.  We
+        only feed it into the separate source-discovery review queue after the
+        exact entity phrase on the candidate host and an independent fetched
+        source's exact link have already produced a verified association.
+        This deliberately excludes self-identification, search rank and
+        claim/action/resource endorsements from source-policy bootstrap.
+        """
+        observe = getattr(self._source_registry, "observe_discovery", None)
+        if observe is None:
+            return
+        for association in associations:
+            families = (
+                {item.family for item in association.observations}
+                if isinstance(association, IdentityCandidateV4)
+                else set()
+            )
+            # Associations returned from the coordinator are normally
+            # IdentityCandidateV4 records.  Keep the guard robust for a
+            # repository adapter that returns the base association model.
+            if not families:
+                continue
+            if (
+                association.assurance is not IdentityAssociationAssuranceV4.VERIFIED
+                or association.relationship is not IdentityRelationshipV4.OFFICIAL_CONTROLLED
+                or not {
+                    IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION,
+                    IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
+                }
+                <= families
+            ):
+                continue
+            claim_hash = hashlib.sha256(f"{_fold(entity)}\0{association.canonical_domain}".encode()).hexdigest()
+            observed = observe(
+                url=association.canonical_url,
+                publisher=entity,
+                event="extract",
+                claim_hash=claim_hash,
+            )
+            if hasattr(observed, "__await__"):
+                await observed
+            observed = observe(
+                url=association.canonical_url,
+                publisher=entity,
+                event="comparison",
+                claim_hash=claim_hash,
+                agrees_with_curated=True,
+            )
+            if hasattr(observed, "__await__"):
+                await observed
+
+    def _is_root_identity_candidate(self, url: str, at: datetime) -> bool:
+        """Reject hosts that cannot establish an organization root by themselves."""
+        host = (urlsplit(url).hostname or "").casefold().rstrip(".")
+        if not host or any(
+            host == value or host.endswith(f".{value}") for value in (*_SOCIAL_HOSTS, *_SHORT_LINK_HOSTS)
+        ):
+            return False
+        if self._source_registry is None:
+            return True
+        # An explicit reviewed deny is a veto, not a reason to fall back to
+        # provider-derived identity evidence.
+        return not any(
+            getattr(entry, "explicit_deny", False) for entry in self._source_registry.matching_entries(url, at)
+        )
+
+    def _is_basic_independent_identity_source(self, url: str, at: datetime) -> bool:
+        """Apply the existing root-source checks to fetched corroboration.
+
+        This intentionally does not require an attestor policy.  A search hit
+        remains only a candidate: it must be fetched, name the exact entity,
+        and contain an exact-host anchor before it can be used.
+        """
+        return self._is_root_identity_candidate(url, at)
+
+    def _is_authoritative_identity_attestor(self, url: str, at: datetime) -> bool:
+        """Accept a reviewed policy only for the independent attestor host.
+
+        The policy does not name or approve the candidate organization/domain;
+        it merely constrains which external sources are eligible to corroborate
+        a new identity.
+        """
+        if self._source_registry is None:
+            return False
+        for entry in self._source_registry.matching_entries(url, at):
+            source_type = str(getattr(entry, "source_type", "")).casefold()
+            effective_from = getattr(entry, "effective_from", None)
+            effective_to = getattr(entry, "effective_to", None)
+            reviewed_at = getattr(entry, "reviewed_at", None)
+            operations = set(getattr(entry, "allowed_operations", set()))
+            if (
+                source_type in _IDENTITY_CONFIRMING_SOURCE_TYPES
+                and not getattr(entry, "explicit_deny", False)
+                and getattr(entry, "active", False)
+                and effective_from is not None
+                and effective_from <= at
+                and (effective_to is None or at < effective_to)
+                and reviewed_at is not None
+                and reviewed_at <= at
+                and "read" in operations
+            ):
+                return True
+        return False
+
+    def _is_direct_authoritative_domain_identity(self, url: str, entity: str, at: datetime) -> bool:
+        """Whether a reviewed exact source policy independently binds entity to host.
+
+        This is intentionally narrower than an attestor policy: it accepts
+        only an exact host entry whose reviewed publisher matches the claimed
+        entity. The fetched page must still self-identify that entity before
+        this evidence is emitted. It establishes domain ownership only, never
+        campaign, resource, sender, or requested-action endorsement.
+        """
+        if self._source_registry is None:
+            return False
+        host = (urlsplit(url).hostname or "").casefold().rstrip(".")
+        if not host:
+            return False
+        for entry in self._source_registry.matching_entries(url, at):
+            source_type = str(getattr(entry, "source_type", "")).casefold()
+            effective_from = getattr(entry, "effective_from", None)
+            effective_to = getattr(entry, "effective_to", None)
+            reviewed_at = getattr(entry, "reviewed_at", None)
+            operations = set(getattr(entry, "allowed_operations", set()))
+            if (
+                str(getattr(entry, "normalized_pattern", "")).casefold().rstrip(".") == host
+                and source_type in _IDENTITY_CONFIRMING_SOURCE_TYPES
+                and not getattr(entry, "explicit_deny", False)
+                and getattr(entry, "active", False)
+                and effective_from is not None
+                and effective_from <= at
+                and (effective_to is None or at < effective_to)
+                and reviewed_at is not None
+                and reviewed_at <= at
+                and "read" in operations
+                and _fold(str(getattr(entry, "publisher", ""))) == _fold(entity)
+            ):
+                return True
+        return False
 
     @staticmethod
     def _identity_discovery_queries(
@@ -1491,10 +2079,15 @@ class OfficialLinkVerificationCoordinator:
             if item.family is IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT and item.source_host != target_host
         }
         fully_corroborated = len(hosts) >= 2 and bool(families & required[0]) and bool(families & required[1])
+        direct_authoritative_ownership = (
+            relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+            and IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION in families
+            and IdentityEvidenceFamilyV4.AUTHORITATIVE_DOMAIN_ATTESTATION in families
+        )
         verified = (
             bool(external_endorsement_hosts)
             if relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
-            else fully_corroborated
+            else fully_corroborated or direct_authoritative_ownership
         )
         conflicting = IdentityEvidenceFamilyV4.EXPLICIT_OWNERSHIP_CONFLICT in families
         return IdentityAssociationV4(
@@ -1509,7 +2102,11 @@ class OfficialLinkVerificationCoordinator:
                     IdentityAssociationAssuranceV4.VERIFIED if verified else IdentityAssociationAssuranceV4.DISCOVERED
                 )
             ),
-            confidence=(0.9 if conflicting else (0.85 if fully_corroborated else (0.7 if verified else 0.35))),
+            confidence=(
+                0.9
+                if conflicting
+                else (0.85 if fully_corroborated or direct_authoritative_ownership else (0.7 if verified else 0.35))
+            ),
             evidence_refs=[item.evidence_ref for item in observations],
             discovered_at=now,
             verified_at=now if verified or conflicting else None,
@@ -1604,7 +2201,15 @@ class OfficialLinkVerificationCoordinator:
             )
             if extraction.identity_assessment.status is not FinalPageIdentityStatus.ACCEPTED:
                 return None, calls, ["final_page_identity_not_accepted"]
-            return _PageEvidence(extraction, _visible_html_text(fetched.document.body)), calls, []
+            return (
+                _PageEvidence(
+                    extraction,
+                    _visible_html_text(fetched.document.body),
+                    candidate.source_identity,
+                ),
+                calls,
+                [],
+            )
 
         limitation = fetched.limitation
         limitations = [f"official_fetch_{limitation.value}"] if limitation is not None else ["official_fetch_failed"]
@@ -1641,7 +2246,7 @@ class OfficialLinkVerificationCoordinator:
                         "limitation": None,
                     }
                 )
-                return _PageEvidence(merged, document.content), calls, limitations
+                return _PageEvidence(merged, document.content, candidate.source_identity), calls, limitations
         limitations.append("provider_fallback_no_explicit_url")
         return None, calls, limitations
 
@@ -1687,11 +2292,9 @@ class OfficialLinkVerificationCoordinator:
     @staticmethod
     def _public_evidence(
         brand: BrandRecordV4 | None,
-        identities: Sequence[OfficialIdentityV4],
         local_sources: Sequence[OfficialSourceReferenceV4],
         pages: Sequence[_PageEvidence],
     ) -> tuple[list[OfficialSourceReferenceV4], list[_LinkEvidence]]:
-        by_identity = {str(identity.identity_id): identity for identity in identities}
         # Keep the publisher-cited local identity first, then every fetched
         # page cited by link refs. Additional registry descriptors are appended
         # only after reference closure has been secured within the public cap.
@@ -1699,9 +2302,7 @@ class OfficialLinkVerificationCoordinator:
         links: dict[str, _LinkEvidence] = {}
         for page in pages:
             extraction = page.extraction
-            identity_id = extraction.identity_assessment.identity_id
-            identity = by_identity.get(identity_id or "")
-            linked_identity = identity.model_copy(update={"source_ref": extraction.source_ref}) if identity else None
+            linked_identity = page.source_identity.model_copy(update={"source_ref": extraction.source_ref})
             sources[extraction.source_ref] = OfficialSourceReferenceV4(
                 source_ref=extraction.source_ref,
                 identity=linked_identity,
@@ -2023,20 +2624,8 @@ class OfficialLinkVerificationCoordinator:
                 item
                 for item in associations
                 if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
-                and (
-                    (
-                        item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
-                        and item.canonical_url in requested
-                    )
-                    or (
-                        item.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
-                        and any(
-                            (urlsplit(url).hostname or "").casefold() == item.canonical_domain
-                            or (urlsplit(url).hostname or "").casefold().endswith(f".{item.canonical_domain}")
-                            for url in requested
-                        )
-                    )
-                )
+                and item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                and item.canonical_url in requested
             ),
             None,
         )
@@ -2054,16 +2643,8 @@ class OfficialLinkVerificationCoordinator:
         )
         return ResourceVerificationV4(
             applicable=True,
-            status=(
-                VerificationStatusV4.VERIFIED
-                if association.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
-                else VerificationStatusV4.PARTIALLY_VERIFIED
-            ),
-            reason_code=(
-                "discovered_official_resource_ownership_chain"
-                if association.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
-                else "discovered_exact_resource_endorsement_chain"
-            ),
+            status=VerificationStatusV4.PARTIALLY_VERIFIED,
+            reason_code="discovered_exact_resource_endorsement_chain",
             evidence_refs=association.evidence_refs,
             match=match,
         )
@@ -2147,16 +2728,37 @@ class OfficialLinkVerificationCoordinator:
             status=(VerificationStatusV4.UNVERIFIED if intent.contract.requested_action is not None else None),
             reason_code=("official_action_not_confirmed" if intent.contract.requested_action else "not_applicable"),
         )
+        action_targets = {_canonical_discovery_url(url) for url in user_urls}
+        exact_resource_action_endorsed = bool(
+            action.applicable
+            and action_evidence_refs
+            and any(
+                association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                and association.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                and association.canonical_url in action_targets
+                and bool(association.evidence_refs)
+                for association in identity_associations
+            )
+        )
         if (
             action.applicable
-            and resource.status is VerificationStatusV4.VERIFIED
-            and (not claim.applicable or claim.status is VerificationStatusV4.VERIFIED)
             and action_evidence_refs
+            and (
+                (
+                    resource.status is VerificationStatusV4.VERIFIED
+                    and (not claim.applicable or claim.status is VerificationStatusV4.VERIFIED)
+                )
+                or exact_resource_action_endorsed
+            )
         ):
             action = action.model_copy(
                 update={
                     "status": VerificationStatusV4.VERIFIED,
-                    "reason_code": "official_action_and_resource_confirmed",
+                    "reason_code": (
+                        "official_exact_resource_action_confirmed"
+                        if exact_resource_action_endorsed
+                        else "official_action_and_resource_confirmed"
+                    ),
                     "evidence_refs": list(
                         dict.fromkeys([*claim.evidence_refs, *resource.evidence_refs, *action_evidence_refs])
                     ),
@@ -2232,6 +2834,9 @@ __all__ = [
     "OfficialLinkVerificationCoordinator",
     "OfficialVerificationCoordinatorOutcome",
     "apply_official_verification_outcome",
+    "has_verified_exact_resource_action_endorsement",
+    "has_verified_exact_resource_endorsement",
+    "verified_exact_resource_endorsement_associations",
     "VerificationComparisonOutput",
     "validate_comparison_output",
 ]

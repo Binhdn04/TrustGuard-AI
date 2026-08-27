@@ -68,6 +68,7 @@ def _evidence(
     target: str | None = None,
     confidence: float | None = None,
     provenance_ref: str | None = None,
+    related_entity: str | None = None,
     domain_familiarity: DomainFamiliarityDetailsV4 | None = None,
 ) -> SecurityEvidenceV4:
     return SecurityEvidenceV4(
@@ -80,6 +81,7 @@ def _evidence(
         observed_at=observed_at,
         confidence=confidence,
         provenance_ref=provenance_ref,
+        related_entity=related_entity,
         domain_familiarity=domain_familiarity,
     )
 
@@ -344,6 +346,7 @@ class BrandMatcher:
                     target=host,
                     confidence=confidence,
                     provenance_ref=evidence_provenance,
+                    related_entity=owner[0] if signal == "entity_target_mismatch" and owner is not None else None,
                 )
             )
         official_contacts = {_fold(item) for item in brand.official_contacts} if brand else set()

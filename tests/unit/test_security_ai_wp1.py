@@ -457,7 +457,9 @@ async def test_local_conversation_intents_are_terminal_without_model_call(messag
 
     assert result.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
     assert result.assistant_context.processing_mode is AssistantProcessingModeV4.RULES_ONLY
-    assert result.boundary_message is not None
+    # The local semantic boundary selects the terminal state only.  Terminal
+    # prose is composed later by GroundedSecurityResponseService.
+    assert result.boundary_message is None
     assert result.risk is None
 
 

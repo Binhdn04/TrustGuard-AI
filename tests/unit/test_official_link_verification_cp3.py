@@ -87,6 +87,57 @@ def test_program_claim_and_form_action_are_grounded_independently_of_sensitive_d
     )
 
 
+def test_monetary_refund_offer_is_a_grounded_claim() -> None:
+    message = "Northstar Institute hoàn 20 triệu cho khách hàng. Đăng nhập tại https://northstar.example/contact"
+
+    intent = build_grounded_verification_intent(message, extract_security_context(message))
+
+    assert intent is not None
+    assert intent.contract.claim_summary == "hoàn 20 triệu cho khách hàng"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_discovery_preserves_literal_signals_and_bounds_gpt_recall_queries() -> None:
+    message = (
+        '[Online] Chương Trình Trải Nghiệm "Future Learning With AI" Do Đại Học Thanh Hoa Tổ Chức 2026 '
+        "Please visit https://v.example.cn/form/ABC-123 to apply."
+    )
+    context = extract_security_context(message)
+    intent = build_grounded_verification_intent(message, context)
+    assert intent is not None
+
+    class _Expander:
+        async def expand(self, signals, *, max_queries):
+            assert signals.campaign_phrases == ("Future Learning With AI",)
+            assert signals.entity_names == ("Example University", "Đại Học Thanh Hoa")
+            assert signals.resource_hosts == ("v.example.cn",)
+            assert signals.resource_identifiers == ("ABC-123",)
+            assert signals.action_terms == ("đăng ký ứng tuyển",)
+            assert max_queries == 4
+            return [
+                "Future Learning With AI Example University",
+                "Future Learning With AI Example University",  # deduped
+                "Example University School of Education AI programme",
+                "Future Learning With AI v.example.cn ABC-123",
+                "Unrelated University other programme",  # invented alias: rejected
+            ]
+
+    queries = await OfficialVerificationQueryBuilder().build_hybrid(
+        intent,
+        message=message,
+        canonical_entity="Example University",
+        resource_urls=["https://v.example.cn/form/ABC-123"],
+        expander=_Expander(),
+    )
+
+    assert 4 <= len(queries) <= 8
+    assert queries[0].text == "Example University Future Learning With AI"
+    assert len({item.text.casefold() for item in queries}) == len(queries)
+    assert any(item.derivations == ("gpt_recall_expansion",) for item in queries)
+    assert all("Unrelated University" not in item.text for item in queries)
+    assert all("v.example.cn" not in item.text for item in queries[:2])
+
+
 class _MustNotCallModel:
     def __init__(self) -> None:
         self.calls = 0

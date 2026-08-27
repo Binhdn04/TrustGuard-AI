@@ -404,7 +404,10 @@ async def test_reviewed_passive_domains_have_one_safe_invariant_regardless_of_en
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("domain", ["youtube.com", "facebook.com", "chatgpt.com"])
-@pytest.mark.parametrize(("path", "expected_risk"), [("", SecurityRiskV4.SAFE), ("/channel/unreviewed", SecurityRiskV4.INSUFFICIENT_EVIDENCE)])
+@pytest.mark.parametrize(
+    ("path", "expected_risk"),
+    [("", SecurityRiskV4.SAFE), ("/channel/unreviewed", SecurityRiskV4.INSUFFICIENT_EVIDENCE)],
+)
 async def test_reviewed_platform_origin_is_safe_but_hosted_resources_are_not(
     domain: str,
     path: str,
@@ -456,7 +459,9 @@ async def test_reviewed_platform_origin_is_safe_but_hosted_resources_are_not(
 @pytest.mark.asyncio
 async def test_verified_platform_origin_reaches_gpt_and_rejects_cautionary_composition() -> None:
     request = SecurityTriageCreateRequestV4(message="youtube.com")
-    investigated = await SecurityInvestigationService().investigate(request, SecurityTriageScopeService().assess(request))
+    investigated = await SecurityInvestigationService().investigate(
+        request, SecurityTriageScopeService().assess(request)
+    )
     platform = SecurityEvidenceV4(
         evidence_ref="evidence:0123456789abcdef",
         type=SecurityEvidenceTypeV4.DOMAIN_FAMILIARITY,

@@ -7,7 +7,11 @@ from src.agents.state import AgentState
 from src.models import InputType
 
 _URL_RE = re.compile(r"(?i)(?:https?://|www\.)[^\s<>\"']+|(?<![@\w])(?:[a-z0-9-]+\.)+[a-z]{2,63}(?:/[^\s<>\"']*)?")
-_TRAILING_PUNCTUATION = ".,;:!?)]}>'\""
+# URLs are often pasted as inline Markdown (``https://example.test/path``).
+# The regex intentionally consumes non-whitespace characters, so strip the
+# closing delimiter as well; otherwise it is percent-encoded into the stored
+# URL and later literal action-to-URL grounding cannot find the source span.
+_TRAILING_PUNCTUATION = ".,;:!?)]}>'\"`"
 _CLAIM_MARKERS = (
     "tặng",
     "quà",

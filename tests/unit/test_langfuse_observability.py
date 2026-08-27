@@ -143,8 +143,7 @@ def test_sanitized_content_capture_keeps_debug_text_without_sensitive_values() -
                     attributes=MappingProxyType(
                         {
                             "langfuse.observation.input": (
-                                "Mã OTP: 123456; email user@example.com; "
-                                "https://example.com/login?token=super-secret"
+                                "Mã OTP: 123456; email user@example.com; https://example.com/login?token=super-secret"
                             ),
                             "langfuse.observation.output": "Đừng chia sẻ token=abc123",
                             "langfuse.observation.metadata.privacy": "sanitized-content",

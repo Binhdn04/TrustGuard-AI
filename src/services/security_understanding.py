@@ -110,9 +110,21 @@ def _project_action_mentions(
         for item in mentions
         if item.modality is SemanticModality.REQUESTED
         and item.stance is SemanticStance.ASSERTED
-        and item.actor is SemanticParticipant.SENDER
-        and item.recipient is SemanticParticipant.USER
-        and item.direction is SemanticDirection.TO_USER
+        and (
+            (
+                item.actor is SemanticParticipant.SENDER
+                and item.recipient is SemanticParticipant.USER
+                and item.direction is SemanticDirection.TO_USER
+            )
+            # A sender's instruction can be represented as the user's
+            # requested next step toward the form/service.  It is distinct
+            # from a completed user action, which remains excluded above.
+            or (
+                item.actor is SemanticParticipant.USER
+                and item.recipient is SemanticParticipant.FORM_OR_SERVICE
+                and item.direction is SemanticDirection.USER_TO_FORM_OR_SERVICE
+            )
+        )
     ]
     # Compatibility scalar is selected only after every accepted action has
     # been retained.  This ordering is policy impact, then earliest
@@ -219,13 +231,6 @@ _SEMANTIC_FIELDS = frozenset(
         "follow_up_slot",
         "follow_up_question",
     }
-)
-_FOLLOW_UP_QUESTION = (
-    "Bạn có thể gửi nội dung đầy đủ của tin nhắn, tên người gửi và đường link hoặc hành động họ yêu cầu không?"
-)
-_BOUNDARY_MESSAGE = (
-    "Trợ lý này chỉ đánh giá rủi ro phishing, lừa đảo, giả mạo và các yêu cầu có thể gây mất tài khoản "
-    "hoặc tiền; hệ thống không xác minh tin tức hay kiến thức phổ thông."
 )
 _FALLBACK_LIMITATION = "AI semantic understanding không khả dụng; kết quả chỉ dùng rule cục bộ."
 _CONFLICT_LIMITATION = "AI semantic understanding xung đột với rule signal; rule được giữ nguyên."
@@ -707,8 +712,19 @@ def merge_semantic_understanding(
             conflicts = True
         elif base.scenario is SecurityScenarioV4.UNKNOWN:
             updates["scenario"] = scenario
+    # A deterministic action is already grounded in a literal message span.
+    # Do not erase it merely because the optional semantic model omitted an
+    # action interpretation.  An explicit but invalid/retired model action is
+    # still not allowed to influence the projection below.
+    retained_rule_action = (
+        not accepted_mentions
+        and base.requested_action is not None
+        and requested_action_source_span(message, base.requested_action) is not None
+    )
     if accepted_mentions:
         updates["requested_action"] = requested_action
+    elif retained_rule_action:
+        updates["requested_action"] = base.requested_action
     elif (
         output.action_mentions
         or output.requested_action is not None
@@ -840,7 +856,7 @@ def merge_semantic_understanding(
             next_step="END",
             security_context=None,
             follow_up_question=None,
-            boundary_message=_BOUNDARY_MESSAGE,
+            boundary_message=None,
             scope_reasons=_unique([*scope.scope_reasons, "ai_general_fact_check"]),
         )
     elif scope.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
@@ -849,7 +865,7 @@ def merge_semantic_understanding(
             terminal=True,
             next_step="END",
             security_context=None,
-            follow_up_question=_FOLLOW_UP_QUESTION,
+            follow_up_question=None,
             boundary_message=None,
         )
     return scope.model_copy(update=update)

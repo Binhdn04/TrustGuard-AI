@@ -76,6 +76,13 @@ not you, owns the verdict, evidence, verification state, and allowed actions. Do
 of them. You may decide the wording, order, headings (or no headings), brevity, and emphasis; do not force a
 summary/reasons/actions/limitations template.
 
+The input may instead have contract `security-terminal-message-context-v1`. For `response_kind=boundary`,
+write a short, warm boundary that reflects only boundary_reason and TrustGuard's security-triage scope; do
+not ask a question, claim an investigation happened, or make verification/risk claims. For
+`response_kind=clarification`, write exactly one concise Vietnamese question for clarification_needed; do
+not answer the case, add advice, URLs, contact details, or claims about verification. For both terminal kinds,
+put all prose in `summary` and leave top_reasons, uncertainties, and follow_up_offer empty.
+
 Be calm, direct, and conversational. For a straightforward safe case, be short and confident without listing
 every check. For mixed verification, make the important distinction clear: a verified official resource does
 not verify the sender or a requested action. For a dangerous case, clearly recommend the supplied safe action
@@ -96,8 +103,9 @@ other implementation details.
 Never invent evidence, URLs, ownership, sender verification, action endorsement, reputation findings, scores,
 policies, or actions. Never reproduce suspicious URLs. Do not expose evidence IDs, provider details, validator
 results, internal errors, policy branches, scores, confidence, percentages, or raw codes. `summary` is the
-complete reply. `top_reasons` is optional audit metadata only: if provided, every factual item must cite supplied
-evidence_ref values; do not use it to impose visible sections. Leave uncertainties and follow_up_offer empty.
+complete reply. `top_reasons` is optional audit metadata only: omit it unless a compact citation genuinely helps;
+if provided, every factual item must cite supplied evidence_ref values. Do not use it to impose visible sections.
+Leave uncertainties and follow_up_offer empty.
 Return no reasoning."""
 
 _ADMIN_REVIEW_INSTRUCTIONS = """Draft a non-executing Security Admin suggestion from only the supplied

@@ -92,17 +92,6 @@ _EXPOSURE_PATTERNS = (
         ),
     ),
 )
-_QUESTION_TEMPLATES = {
-    MissingInformationSlotV4.ACTION_TAKEN: ("Bạn đã bấm link, nhập thông tin, gửi OTP hoặc chuyển tiền chưa?"),
-    MissingInformationSlotV4.REQUESTED_SENSITIVE_ACTION: (
-        "Người gửi yêu cầu bạn đăng nhập, cung cấp mật khẩu/OTP hay chuyển tiền gì?"
-    ),
-    MissingInformationSlotV4.URL_OR_CONTACT: (
-        "Tin nhắn có đường link, tên miền, số điện thoại hoặc tài khoản liên hệ nào?"
-    ),
-    MissingInformationSlotV4.CLAIMED_ORGANIZATION: ("Người gửi tự xưng là tổ chức hoặc thương hiệu nào?"),
-    MissingInformationSlotV4.AMOUNT_DEADLINE_CHANNEL: ("Họ nêu số tiền, thời hạn hoặc kênh liên hệ nào?"),
-}
 _UNSAFE_DRAFT = re.compile(r"https?://|www\.|\b\d{4,8}\b|[\w.+-]+@[\w.-]+", re.IGNORECASE)
 
 
@@ -150,10 +139,6 @@ def select_missing_slot(
 ) -> MissingInformationSlotV4 | None:
     slots = unresolved_slots(context, exposure_state)
     return slots[0] if slots else None
-
-
-def deterministic_question(slot: MissingInformationSlotV4) -> str:
-    return _QUESTION_TEMPLATES[slot]
 
 
 def _safe_drafted_question(
@@ -224,7 +209,9 @@ def apply_adaptive_conversation_policy(
                 drafted_question,
             )
             or (scope.follow_up_question if scope.follow_up_slot is selected else None)
-            or deterministic_question(selected)
+            # Wording is composed by the response composer after this policy
+            # selects the one permitted slot.  Keep this layer prose-free.
+            or None
         )
         update.update(
             follow_up_slot=selected,
@@ -236,7 +223,6 @@ def apply_adaptive_conversation_policy(
 __all__ = [
     "apply_adaptive_conversation_policy",
     "detect_local_exposure",
-    "deterministic_question",
     "highest_exposure",
     "is_incident_exposure",
     "select_missing_slot",
