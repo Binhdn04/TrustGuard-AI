@@ -5,7 +5,8 @@ import re
 import unicodedata
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Generic, Literal, TypeVar
+from typing import Generic, Literal, Protocol, TypeVar
+from urllib.parse import urlsplit
 
 from src.agents.security_scope import requested_action_source_span, verification_topic_source
 from src.models import (
@@ -81,6 +82,8 @@ _URL_RELEVANT_ACTIONS = {
     RequestedActionV4.APPLY_FOR_PASSPORT,
 }
 
+_ACTION_URL_BOUNDARY_RE = re.compile(r"[.!?;](?=\s|$)|\n")
+
 
 @dataclass(frozen=True, slots=True)
 class GroundedTextValue:
@@ -150,6 +153,25 @@ class VerificationQuery:
     derivations: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class DiscoveryQuerySignals:
+    """Bounded, literal signals passed to a recall-only query expander."""
+
+    canonical_entity: str | None
+    organization: str | None
+    entity_names: tuple[str, ...]
+    campaign_phrases: tuple[str, ...]
+    resource_hosts: tuple[str, ...]
+    resource_identifiers: tuple[str, ...]
+    action_terms: tuple[str, ...]
+
+
+class DiscoveryQueryExpander(Protocol):
+    """May return search strings only; it has no verification capability."""
+
+    async def expand(self, signals: DiscoveryQuerySignals, *, max_queries: int) -> Sequence[str]: ...
+
+
 QueryResultT = TypeVar("QueryResultT")
 
 
@@ -181,6 +203,65 @@ def _literal_span(message: str, value: str, field_name: str) -> AssistantSourceS
     if start < 0:
         return None
     return AssistantSourceSpanV4(field_name=field_name, start=start, end=start + len(value))
+
+
+def _url_positions(message: str, urls: Sequence[str]) -> list[tuple[int, int, int]]:
+    """Locate normalized context URLs in message order without broad matching."""
+    positions: list[tuple[int, int, int]] = []
+    cursor = 0
+    for index, url in enumerate(urls):
+        start = message.find(url, cursor)
+        if start < 0:
+            start = message.find(url)
+        if start < 0:
+            continue
+        positions.append((index, start, start + len(url)))
+        cursor = start + len(url)
+    return positions
+
+
+def _action_url_indices(
+    message: str,
+    urls: Sequence[str],
+    action: GroundedActionValue | None,
+) -> list[int]:
+    """Bind a grounded action to its nearest URL in the same literal clause.
+
+    URLs are not action evidence by themselves.  The action must already have
+    a validated source span, and a neighbouring URL must occur in the same
+    sentence/clause.  This keeps unrelated reference URLs out of official
+    verification while supporting action-before-URL and URL-before-action
+    wording.
+    """
+    if action is None or action.value not in _URL_RELEVANT_ACTIONS:
+        return []
+    positions = _url_positions(message, urls)
+    if not positions:
+        return []
+    action_start = action.source_spans[0].start
+    action_end = action.source_spans[0].end
+    boundaries = [match.start() for match in _ACTION_URL_BOUNDARY_RE.finditer(message)]
+    clause_start = max((boundary for boundary in boundaries if boundary < action_start), default=-1) + 1
+    clause_end = min((boundary for boundary in boundaries if boundary >= action_end), default=len(message))
+    candidates = [
+        position
+        for position in positions
+        if position[1] >= clause_start and position[2] <= clause_end
+    ]
+    if not candidates:
+        return []
+    nearest_distance = min(
+        max(action_start - end, start - action_end, 0)
+        for _, start, end in candidates
+    )
+    nearest = [
+        index
+        for index, start, end in candidates
+        if max(action_start - end, start - action_end, 0) == nearest_distance
+    ]
+    # An equally-close pair is ambiguous; do not convert either URL into
+    # action evidence.
+    return nearest if len(nearest) == 1 else []
 
 
 def _is_whole_message(value: str, message: str) -> bool:
@@ -355,9 +436,7 @@ def build_grounded_verification_intent(
         if folded.casefold() != organization.value.casefold():
             derived.append(DerivedOrganizationName(folded, "accent_fold"))
     derived_unique = _unique_derived(derived)
-    action_url_indices = (
-        list(range(len(context.urls))) if action is not None and action.value in _URL_RELEVANT_ACTIONS else []
-    )
+    action_url_indices = _action_url_indices(message, context.urls, action)
     contract = VerificationIntentV4(
         organization_name=organization.value if organization else None,
         derived_organization_names=[item.value for item in derived_unique],
@@ -394,6 +473,129 @@ def _sanitize_query_segment(value: str) -> str:
 class OfficialVerificationQueryBuilder:
     max_variants = _MAX_QUERY_VARIANTS
     max_attempts = _MAX_QUERY_ATTEMPTS
+
+    @staticmethod
+    def discovery_signals(
+        intent: GroundedVerificationIntent,
+        *,
+        message: str,
+        canonical_entity: str | None = None,
+        entity_aliases: Sequence[str] = (),
+        resource_urls: Sequence[str] = (),
+    ) -> DiscoveryQuerySignals:
+        phrases = [intent.contract.claim_summary or ""]
+        phrases.extend(match.group(1) for match in _QUOTED_CLAIM_RE.finditer(message))
+        hosts = [(urlsplit(url).hostname or "").casefold() for url in resource_urls]
+        identifiers = [urlsplit(url).path.rstrip("/").split("/")[-1] for url in resource_urls]
+        action = _ACTION_QUERY_TERMS.get(intent.contract.requested_action, "")
+        entity_names = tuple(
+            dict.fromkeys(
+                value
+                for value in (
+                    _sanitize_query_segment(canonical_entity or ""),
+                    *(_sanitize_query_segment(item) for item in entity_aliases),
+                    _sanitize_query_segment(intent.contract.organization_name or ""),
+                )
+                if value
+            )
+        )[:6]
+        return DiscoveryQuerySignals(
+            canonical_entity=_sanitize_query_segment(canonical_entity or "") or None,
+            organization=_sanitize_query_segment(intent.contract.organization_name or "") or None,
+            entity_names=entity_names,
+            campaign_phrases=tuple(
+                dict.fromkeys(_sanitize_query_segment(item) for item in phrases if _sanitize_query_segment(item))
+            )[:3],
+            resource_hosts=tuple(dict.fromkeys(host for host in hosts if host))[:3],
+            resource_identifiers=tuple(
+                dict.fromkeys(value for value in identifiers if 3 <= len(value) <= 120)
+            )[:3],
+            action_terms=(action,) if action else (),
+        )
+
+    async def build_hybrid(
+        self,
+        intent: GroundedVerificationIntent,
+        *,
+        message: str,
+        canonical_entity: str | None = None,
+        entity_aliases: Sequence[str] = (),
+        resource_urls: Sequence[str] = (),
+        expander: DiscoveryQueryExpander | None = None,
+    ) -> list[VerificationQuery]:
+        """Keep deterministic evidence while using GPT only for bounded recall."""
+        signals = self.discovery_signals(
+            intent,
+            message=message,
+            canonical_entity=canonical_entity,
+            entity_aliases=entity_aliases,
+            resource_urls=resource_urls,
+        )
+        deterministic: list[VerificationQuery] = []
+        primary_entity = signals.canonical_entity or signals.organization
+        for phrase in signals.campaign_phrases[:1]:
+            for entity in (primary_entity, *signals.entity_names[1:2]):
+                text = _sanitize_query_segment(" ".join(filter(None, (entity, phrase))))
+                if text:
+                    deterministic.append(
+                        VerificationQuery(
+                            query_id=f"query:{hashlib.sha256(text.encode()).hexdigest()[:16]}",
+                            text=text,
+                            source_fields=("organization_name", "claim_summary"),
+                            derivations=("deterministic_core_semantic",),
+                        )
+                    )
+        # URL/action clues are useful recovery paths only after natural
+        # entity-plus-subject searches; they must not contaminate recall.
+        if signals.campaign_phrases and signals.resource_hosts:
+            text = _sanitize_query_segment(f'{signals.campaign_phrases[0]} {signals.resource_hosts[0]}')
+            deterministic.append(
+                VerificationQuery(
+                    query_id=f"query:{hashlib.sha256(text.encode()).hexdigest()[:16]}",
+                    text=text,
+                    source_fields=("claim_summary", "action_url_indices"),
+                    derivations=("deterministic_resource_fallback",),
+                )
+            )
+        expanded: Sequence[str] = ()
+        if expander is not None:
+            try:
+                expanded = await expander.expand(signals, max_queries=4)
+            except Exception:
+                expanded = ()
+        output: list[VerificationQuery] = []
+        seen: set[str] = set()
+        # Reserve room for recall expansion: otherwise legacy rule variants
+        # could consume the complete query budget before GPT is consulted.
+        for candidate in [*deterministic, *expanded, *self.build(intent)]:
+            text = candidate.text if isinstance(candidate, VerificationQuery) else _sanitize_query_segment(str(candidate))
+            if not isinstance(candidate, VerificationQuery):
+                folded = text.casefold()
+                grounded_names = tuple(name.casefold() for name in signals.entity_names)
+                grounded_phrases = tuple(phrase.casefold() for phrase in signals.campaign_phrases)
+                # A generated query must retain either a reviewed/literal name
+                # or the distinctive literal subject; this rejects invented
+                # aliases while allowing a subject-plus-resource fallback.
+                if not any(name in folded for name in grounded_names) and not any(
+                    phrase in folded for phrase in grounded_phrases
+                ):
+                    continue
+            if not text or len(text) > _MAX_QUERY_LENGTH or text.casefold() in seen:
+                continue
+            seen.add(text.casefold())
+            output.append(
+                candidate
+                if isinstance(candidate, VerificationQuery)
+                else VerificationQuery(
+                    query_id=f"query:{hashlib.sha256(text.encode()).hexdigest()[:16]}",
+                    text=text,
+                    source_fields=(),
+                    derivations=("gpt_recall_expansion",),
+                )
+            )
+            if len(output) == 8:
+                break
+        return output
 
     def build(self, intent: GroundedVerificationIntent) -> list[VerificationQuery]:
         contract = intent.contract

@@ -121,6 +121,15 @@ Ownership của domain và parent relationship vẫn cần hai evidence family t
 Chỉ admin review mới promote thành immutable brand version; third-party endorsement luôn giới hạn ở exact
 URL/resource.
 
+Với organization/domain chưa từng được review, search chỉ tạo candidate để guarded-fetch, không tạo identity.
+Coordinator chỉ tạo `official_controlled` ephemeral khi candidate host tự định danh entity bằng exact normalized
+phrase và một host độc lập đã review như authoritative attestor chứa exact anchor về host đó; hai observations phải
+khác host và không có explicit ownership conflict/deny/redirect mismatch. Source policy có thể phân loại attestor,
+nhưng không được yêu cầu record cho candidate organization/domain. Social, short-link, DNS/RDAP, title/rank và
+name similarity chỉ là supporting hoặc bị loại khỏi root establishment. Identity ephemeral chỉ xác minh publisher/
+domain ownership; không xác minh arbitrary URL cùng host, social account, hay third-party resource nếu không có
+exact provenance riêng.
+
 Report v3 tách domain ownership, sender identity và action endorsement thành ba component độc lập. Việc entity
 được nhắc trước “gửi/yêu cầu/thông báo” chỉ tạo grounded claim, không phải impersonation signal. Ownership
 discovery/cache chỉ được công bố khi request có cả `official_source_lookup` và `external_url_lookup`; verified

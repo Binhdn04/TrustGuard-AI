@@ -59,7 +59,7 @@ def test_registration_and_id_card_mention_is_not_personal_information_disclosure
     assert len(merged.assistant_context.grounded_actions) == 1
 
 
-def test_retired_scalar_action_is_ignored_and_candidate_blocks_safe() -> None:
+def test_retired_scalar_action_cannot_erase_literal_rule_action() -> None:
     message = "Mở link https://example.com ngay"
     scope = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
     merged = merge_semantic_understanding(
@@ -67,7 +67,7 @@ def test_retired_scalar_action_is_ignored_and_candidate_blocks_safe() -> None:
     )
     decision = assess_security_risk(merged, familiarity_enforced=True)
     assert decision.security_context is not None
-    assert decision.security_context.requested_action is None
+    assert decision.security_context.requested_action is RequestedActionV4.OPEN_LINK
     assert decision.risk is not SecurityRiskV4.SAFE
     assert decision.policy_version == "security-risk-v7"
     assert decision.policy_metadata is not None

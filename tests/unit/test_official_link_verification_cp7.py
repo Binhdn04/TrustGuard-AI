@@ -25,11 +25,12 @@ from src.models import (
     SecurityEvidenceV4,
     SecurityInvestigationStatusV4,
     SecurityRecommendedActionV4,
+    SecurityRiskV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
     VerificationStatusV4,
 )
-from src.security_ai.contracts import AssistantSynthesis
+from src.security_ai.contracts import AssistantSynthesis, ModelResponse
 from src.security_ai.runtime import SecurityAssistantRuntime, TurnExecutionContext
 from src.services.official_verification_coordinator import (
     ComparisonDimension,
@@ -51,9 +52,15 @@ from src.services.official_verification_transport import (
     WebSearchEnvelope,
     WebSearchHit,
 )
-from src.services.platform_wave2 import SourceRegistryEntry, SourceTier, VersionedSourceRegistry
+from src.services.platform_wave2 import (
+    SourceRegistryEntry,
+    SourceTier,
+    VersionedSourceRegistry,
+    default_source_policies,
+)
 from src.services.security_pipeline import SecurityTriagePipeline
 from src.services.security_response import (
+    GroundedSecurityResponseService,
     SynthesisGroundingFailure,
     check_grounded_ai_response,
     policy_grounded_assistant_response,
@@ -127,13 +134,16 @@ class _SearchProvider:
         self,
         hits: list[WebSearchHit] | None = None,
         *,
+        hits_by_call: list[list[WebSearchHit]] | None = None,
         limitation: VerificationTransportLimitation | None = None,
     ) -> None:
         self.hits = hits or []
+        self.hits_by_call = hits_by_call
         self.limitation = limitation
         self.calls: list[tuple[str, int]] = []
 
-    async def search_one(self, query: str, *, execution_context, max_results: int = 5):
+    async def search_one(self, query: str, *, execution_context, max_results: int = 5, include_domains=()):
+        del include_domains
         self.calls.append((query, max_results))
         execution_context.reserve_network_units()
         if self.limitation is not None:
@@ -142,7 +152,12 @@ class _SearchProvider:
                 limitation=self.limitation,
                 usage=_usage("search_one"),
             )
-        selected = self.hits[:max_results]
+        call_index = len(self.calls) - 1
+        selected = (
+            self.hits_by_call[min(call_index, len(self.hits_by_call) - 1)][:max_results]
+            if self.hits_by_call
+            else self.hits[:max_results]
+        )
         return WebSearchEnvelope(
             status=(VerificationTransportStatus.SUCCESS if selected else VerificationTransportStatus.NO_HIT),
             results=selected,
@@ -242,10 +257,18 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
     fetcher = _HtmlFetcher(
         {
             target: "<html><body>Cổng thông tin điện tử Chính phủ Việt Nam.</body></html>",
-            corroboration: (f"<html><body>Danh bạ Chính phủ Việt Nam: trang chính thức {target}</body></html>"),
+    corroboration: (
+        "<html><body>Danh bạ Chính phủ Việt Nam: trang chính thức "
+        f"<a href='{target}'>Cổng thông tin</a></body></html>"
+    ),
         }
     )
-    coordinator = _coordinator(repository=repository, search=search, fetcher=fetcher)
+    coordinator = _coordinator(
+        repository=repository,
+        search=search,
+        fetcher=fetcher,
+        source_registry=VersionedSourceRegistry([_identity_attestor(host="authority.example")]),
+    )
 
     first = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
     assert first.report is not None
@@ -622,6 +645,218 @@ async def test_reviewed_social_account_post_can_endorse_an_exact_third_party_for
 
 
 @pytest.mark.asyncio
+async def test_exact_social_post_cross_linked_by_official_page_can_endorse_third_party_resource() -> None:
+    """A first-party source can prove an exact social page, never its whole host."""
+    user_short = "https://forms.gle/ApplicantAlias"
+    final_form = "https://docs.google.com/forms/d/e/FORM-CROSS-LINK/viewform"
+    social_post = "https://www.linkedin.com/posts/vingroup_recruitment-2026"
+    official_page = "https://official.example/news/recruitment-2026"
+    request, scope = _request_scope(user_url=user_short, official_consent=True, external_consent=True)
+    fetcher = _HtmlFetcher(
+        {
+            official_page: (
+                "<html><body>Vingroup thông báo tuyển dụng. "
+                f"<a href='{social_post}'>Official announcement</a></body></html>"
+            ),
+            social_post: (
+                "<html><body>Vingroup tuyển dụng. Ứng viên hãy đăng ký tại "
+                f"<a href='{final_form}'>Application form</a>.</body></html>"
+            ),
+        },
+        redirects={user_short: [user_short, final_form]},
+    )
+
+    outcome = await _coordinator(
+        search=_SearchProvider([_hit(official_page)]),
+        fetcher=fetcher,
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    report = outcome.report
+    assert social_post in fetcher.calls
+    assert report.domain_ownership_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.claim_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.match is not None
+    assert report.resource_verification.match.status is ResourceMatchStatusV4.EXACT_RESOURCE
+    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    assert report.overall_status is VerificationStatusV4.VERIFIED
+    social_source = next(source for source in report.source_refs if source.canonical_url == social_post)
+    assert social_source.identity is not None
+    assert social_source.identity.relationship == "official_cross_link"
+    assert social_source.identity.reviewed is False
+
+    completed = assess_security_risk(
+        apply_official_verification_outcome(scope, outcome), official_verification_enforced=True
+    )
+    assert completed.risk is SecurityRiskV4.SAFE
+    payload = GroundedSecurityResponseService._synthesis_payload(completed)
+    assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
+    assert "Liên kết và thủ tục bạn hỏi đã được nguồn chính thức xác nhận." in (
+        policy_grounded_assistant_response(completed).summary
+    )
+
+
+def _identity_attestor(*, host: str) -> SourceRegistryEntry:
+    return SourceRegistryEntry(
+        publisher="Independent education authority",
+        normalized_pattern=host,
+        tier=SourceTier.A,
+        source_type="academic_institution",
+        allowed_operations={"search", "read"},
+        policy_version="identity-attestor-v1",
+        effective_from=NOW - timedelta(days=1),
+        default_freshness_seconds=3600,
+        reviewer_id="reviewer",
+        reviewed_at=NOW - timedelta(hours=1),
+    )
+
+
+@pytest.mark.asyncio
+async def test_absent_organization_establishes_an_ephemeral_domain_from_independent_evidence() -> None:
+    organization = "Vingroup"
+    official = "https://northstar.example/notices/apply"
+    authority = "https://directory.example/organizations/viettel"
+    user_form = "https://forms.example/northstar-apply"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} tuyển sinh, đăng ký tại {user_form}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
+    outcome = await _coordinator(
+        brands=[],
+        source_registry=VersionedSourceRegistry([_identity_attestor(host="directory.example")]),
+        search=_SearchProvider([_hit(official), _hit(authority)]),
+        fetcher=_HtmlFetcher(
+            {
+                official: f"<html><body>{organization} tuyển sinh <a href='{user_form}'>Apply</a></body></html>",
+                authority: f"<html><body>{organization} official website <a href='https://northstar.example/'>Website</a></body></html>",
+            }
+        ),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.publisher_verification.reason_code == "publisher_discovered_from_official_evidence"
+    assert outcome.report.publisher_verification.identity is not None
+    assert outcome.report.publisher_verification.identity.canonical_value == "northstar.example"
+    assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+
+
+@pytest.mark.asyncio
+async def test_reviewed_domain_authenticates_only_its_exact_social_post_and_its_exact_resource_link() -> None:
+    organization = "Vingroup"
+    official = "https://official.example/notices/apply"
+    social_post = "https://www.linkedin.com/posts/northstar-apply-2026"
+    user_form = "https://forms.example/northstar-apply"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} tuyển sinh, đăng ký tại {user_form}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
+    outcome = await _coordinator(
+        brands=[_brand()],
+        search=_SearchProvider([_hit(official)]),
+        fetcher=_HtmlFetcher(
+            {
+                official: f"<html><body>{organization}<a href='{social_post}'>Official social update</a></body></html>",
+                social_post: f"<html><body>{organization} tuyển sinh <a href='{user_form}'>Apply</a></body></html>",
+            }
+        ),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert social_post in [item.canonical_url for item in outcome.report.source_refs]
+    assert outcome.report.resource_verification.status is VerificationStatusV4.VERIFIED
+    source = next(item for item in outcome.report.source_refs if item.canonical_url == social_post)
+    assert source.identity is not None
+    assert source.identity.relationship == "official_cross_link"
+    assert source.identity.reviewed is False
+
+
+@pytest.mark.asyncio
+async def test_same_name_social_result_is_not_an_identity_without_an_official_outbound_link() -> None:
+    organization = "Viettel"
+    social_post = "https://www.linkedin.com/posts/northstar-apply-2026"
+    request, scope = _request_scope(user_url="https://forms.example/northstar-apply", external_consent=True)
+    request = request.model_copy(
+        update={"message": f"{organization} tuyển sinh, đăng ký tại https://forms.example/northstar-apply"}
+    )
+    assert scope.security_context is not None
+    scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
+    outcome = await _coordinator(
+        brands=[],
+        search=_SearchProvider([_hit(social_post)]),
+        fetcher=_HtmlFetcher({social_post: f"<html><body>{organization} <a href='https://forms.example/northstar-apply'>Apply</a></body></html>"}),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.publisher_verification.status is VerificationStatusV4.UNVERIFIED
+    assert social_post not in [item.canonical_url for item in outcome.report.source_refs]
+
+
+@pytest.mark.asyncio
+async def test_unlisted_institutional_search_result_does_not_bootstrap_from_a_raw_search_hit() -> None:
+    """A Tavily hit can be fetched, but cannot satisfy independent attestation."""
+    message = (
+        '[Online] Chương Trình Trải Nghiệm "Future Learning With AI" '
+        "Do Đại Học Thanh Hoa Tổ Chức 2026 (Miễn Phí Tham Dự) "
+        "Please visit https://v.wjx.cn/vm/to3MR3b.aspx to apply"
+    )
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    official = "https://www.tsinghua.edu.cn/en"
+    fetcher = _HtmlFetcher({official: "<html><body>Tsinghua University</body></html>"})
+
+    outcome = await _coordinator(
+        brands=[],
+        source_registry=VersionedSourceRegistry(default_source_policies()),
+        search=_SearchProvider([_hit(official)]),
+        fetcher=fetcher,
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.candidate_count == 0
+    assert official in fetcher.calls
+    assert outcome.report.publisher_verification.status is VerificationStatusV4.UNVERIFIED
+    assert outcome.report.publisher_verification.reason_code == "reviewed_identity_not_found"
+
+
+@pytest.mark.asyncio
+async def test_low_ranked_reviewed_exact_candidate_survives_fetch_budget() -> None:
+    exact = "https://official.example/notices/recruitment-2026"
+    brand = _brand().model_copy(
+        update={
+            "official_identities": [
+                OfficialIdentityV4(
+                    identity_type=OfficialIdentityTypeV4.WEBSITE,
+                    canonical_value=exact,
+                    display_value=exact,
+                    entity_name="Vingroup",
+                    provenance="reviewed exact fixture",
+                    reviewed=True,
+                )
+            ]
+        }
+    )
+    request, scope = _request_scope()
+    noise = [_hit(f"https://official.example/noise/{index}") for index in range(5)]
+    fetcher = _HtmlFetcher({exact: _positive_page()})
+    outcome = await _coordinator(brands=[brand], search=_SearchProvider(noise), fetcher=fetcher).coordinate(
+        request, scope, execution_context=TurnExecutionContext()
+    )
+
+    assert outcome.official_fetches <= 3
+    assert exact in fetcher.calls
+
+
+@pytest.mark.asyncio
 async def test_discovered_entity_resource_chain_is_automatically_verified_without_promotion() -> None:
     user_form = "https://v.wjx.cn/vm/to3MR3b.aspx"
     social_post = (
@@ -717,6 +952,79 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     risk_result = assess_security_risk(reconciled)
     assert "Official verification đã xác nhận chuỗi endorsement" in risk_result.explanation
     assert "Không có reviewed identity để xác nhận domain" not in risk_result.explanation
+
+    # This is the real coordinator result: the resource component remains
+    # PARTIALLY_VERIFIED because publisher/campaign coverage is separate, but
+    # its accepted association must still reach response grounding.
+    payload = GroundedSecurityResponseService._synthesis_payload(risk_result)
+    assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
+    assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
+    raw_gpt_output = AssistantSynthesis(
+        summary="The submitted resource could not be verified from an official source."
+    )
+    assert (
+        check_grounded_ai_response(risk_result, raw_gpt_output).failure
+        is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT
+    )
+    fallback = policy_grounded_assistant_response(risk_result).summary
+    assert "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này." in fallback
+
+    class _ContradictorySynthesisModel:
+        async def synthesize(self, payload):
+            del payload
+            return ModelResponse(output=raw_gpt_output, provider="test", model="test")
+
+    final = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_ContradictorySynthesisModel(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(risk_result)
+    assert final.assistant_response is not None
+    assert final.assistant_response.generation_mode.value == "policy_grounded"
+    assert "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này." in (
+        final.assistant_response.summary
+    )
+
+
+@pytest.mark.asyncio
+async def test_discovery_fetches_each_claim_frontier_query_before_declaring_no_exact_resource_association() -> None:
+    """Equivalent evidence from a later provider result must not depend on ranking."""
+    user_form = "https://forms.example/future-learning-2026"
+    official_source = "https://events.example/future-learning-with-ai"
+    social_source = "https://social.example/posts/future-learning-2026"
+    noise = "https://unrelated.example/notice"
+    message = f'Đại Học Example tổ chức "Future Learning With AI". Apply at {user_form}.'
+    request = SecurityTriageCreateRequestV4(
+        message=message,
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    fetcher = _HtmlFetcher(
+        {
+            official_source: (
+                "<html><body>Đại Học Example tổ chức Future Learning With AI. "
+                f"<a href='{user_form}'>Apply</a></body></html>"
+            ),
+            social_source: "<html><body>Future Learning With AI</body></html>",
+        }
+    )
+    search = _SearchProvider(
+        hits_by_call=[
+            [_hit(noise)],
+            [_hit(official_source), _hit(social_source)],
+        ]
+    )
+
+    outcome = await _coordinator(search=search, fetcher=fetcher).coordinate(
+        request, scope, execution_context=TurnExecutionContext()
+    )
+
+    assert outcome.report is not None
+    association = next(item for item in outcome.report.identity_associations if item.canonical_url == user_form)
+    assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+    assert association.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+    assert len(search.calls) >= 2
+    assert official_source in fetcher.calls
 
 
 def test_neutral_anchor_is_kept_when_it_points_to_the_exact_submitted_resource() -> None:
@@ -820,7 +1128,7 @@ async def test_policy_caps_search_candidates_fetch_concurrency_and_outbound_reso
         execution_context=TurnExecutionContext(),
     )
 
-    assert outcome.search_attempts <= 4
+    assert outcome.search_attempts <= 8
     assert outcome.candidate_count <= 8
     assert outcome.official_fetches == 3
     assert outcome.outbound_resolutions == 3
@@ -1130,7 +1438,7 @@ async def test_bare_url_keeps_official_report_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_passport_resource_verification_is_safe_without_authenticating_sender() -> None:
+async def test_official_domain_identity_does_not_endorse_an_arbitrary_passport_resource() -> None:
     target = "https://dichvucong.bocongan.gov.vn/?home=1"
     authority = "https://authority.example/government-directory"
     message = f"Cán bộ phường hướng dẫn tôi vào\n{target} để làm hộ chiếu"
@@ -1142,12 +1450,16 @@ async def test_passport_resource_verification_is_safe_without_authenticating_sen
     coordinator = _coordinator(
         repository=_BrandRepository([]),
         search=_SearchProvider([_hit(target), _hit(authority)]),
+        source_registry=VersionedSourceRegistry([_identity_attestor(host="authority.example")]),
         fetcher=_HtmlFetcher(
             {
                 target: (
                     "<html><body>dichvucong.bocongan.gov.vn — Cổng dịch vụ công hướng dẫn làm hộ chiếu.</body></html>"
                 ),
-                authority: (f"<html><body>Danh bạ dịch vụ công chính thức: {target} làm hộ chiếu.</body></html>"),
+                authority: (
+                    "<html><body>Danh bạ dịch vụ công chính thức: "
+                    f"<a href='{target}'>dichvucong.bocongan.gov.vn</a> làm hộ chiếu.</body></html>"
+                ),
             }
         ),
     )
@@ -1160,32 +1472,16 @@ async def test_passport_resource_verification_is_safe_without_authenticating_sen
     assert scope.security_context.requested_action is RequestedActionV4.APPLY_FOR_PASSPORT
     assert report.publisher_verification.status is VerificationStatusV4.VERIFIED
     assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
-    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
-    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
     assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
 
     completed = assess_security_risk(
         apply_official_verification_outcome(scope, outcome),
         official_verification_enforced=True,
     )
-    assert completed.risk.value == "SAFE"
-    assert completed.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
+    assert completed.risk.value == "INSUFFICIENT_EVIDENCE"
+    assert completed.recommended_actions != [SecurityRecommendedActionV4.ALLOW_OPEN]
 
-    # The simple conversation UI renders assistant_response.summary verbatim.
-    # Assert the user-visible response, not only the underlying truth fields.
     rendered_response = policy_grounded_assistant_response(completed).summary
-    assert "Bạn có thể mở liên kết này." in rendered_response
-    assert "chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm" not in rendered_response
-    assert "người gửi chưa được xác minh" in rendered_response.casefold()
-
-    rejected = check_grounded_ai_response(
-        completed,
-        AssistantSynthesis(
-            summary=(
-                "Mình chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm. "
-                "Trong lúc chưa rõ, bạn nên coi đây là tình huống cần thận trọng."
-            )
-        ),
-    )
-    assert rejected.response is None
-    assert rejected.failure is SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION
+    assert "chưa có đủ dữ liệu" in rendered_response.casefold()

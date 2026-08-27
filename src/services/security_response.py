@@ -21,6 +21,7 @@ from src.models import (
 )
 from src.security_ai.contracts import AssistantOperation, AssistantSynthesis, SecurityAssistantModel
 from src.security_ai.runtime import SecurityAssistantRuntime
+from src.services.official_verification_coordinator import has_verified_exact_resource_endorsement
 
 _UNSAFE_LINK_TEXT = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
 _TECHNICAL_METRIC_TEXT = re.compile(
@@ -138,6 +139,7 @@ class SynthesisGroundingFailure(StrEnum):
     OFFICIAL_VERIFICATION_OVERREACH = "official_verification_overreach"
     MISSING_REQUIRED_AFFIRMATION = "missing_required_affirmation"
     CAUTION_CONTRADICTS_VERIFIED_PASSIVE_TARGET = "caution_contradicts_verified_passive_target"
+    CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT = "contradicts_verified_exact_resource_endorsement"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,16 +206,58 @@ def _grounded_plain_reasons(scope: SecurityScopeResponseV4) -> list[AssistantRea
 
 
 def _has_verified_official_allow_open(scope: SecurityScopeResponseV4) -> bool:
-    """Whether policy requires an affirmative answer about the submitted action."""
+    """Whether policy requires an affirmative answer about the submitted action.
+
+    The submitted resource can be third-party hosted.  Its verified, exact
+    official endorsement is sufficient here; domain ownership remains a
+    separate fact and must not be implied by the affirmative response.
+    """
     verification = scope.official_verification
     return bool(
         scope.risk is SecurityRiskV4.SAFE
         and SecurityRecommendedActionV4.ALLOW_OPEN in scope.recommended_actions
         and verification is not None
-        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
         and verification.resource_verification.status is VerificationStatusV4.VERIFIED
         and verification.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
     )
+
+
+def _has_verified_exact_resource_endorsement(scope: SecurityScopeResponseV4) -> bool:
+    """Whether accepted provenance endorses this exact submitted resource.
+
+    This is deliberately narrower than publisher/domain ownership and broader
+    than a SAFE decision.  It remains true when sender identity, a separate
+    requested action, or wider campaign details are unresolved.
+    """
+    context = scope.security_context
+    return has_verified_exact_resource_endorsement(
+        scope.official_verification,
+        context.urls if context is not None else (),
+    )
+
+
+_NEGATES_OFFICIAL_RESOURCE_EVIDENCE = re.compile(
+    r"(?:"
+    # Vietnamese: the negative conclusion is about official verification of a
+    # campaign/claim/resource, not an independent sender or domain question.
+    r"(?:chưa|không|không thể|không có).{0,80}"
+    r"(?:xác minh|xác nhận|kiểm chứng|bằng chứng).{0,80}"
+    r"(?:nguồn|kênh|trang|website).{0,20}chính thức.{0,100}"
+    r"(?:chiến dịch|chương trình|thông tin|yêu cầu|liên kết|đường dẫn|tài nguyên|biểu mẫu)"
+    r"|(?:chiến dịch|chương trình|thông tin|yêu cầu|liên kết|đường dẫn|tài nguyên|biểu mẫu).{0,100}"
+    r"(?:chưa|không|không thể|không có).{0,80}"
+    r"(?:xác minh|xác nhận|kiểm chứng|bằng chứng).{0,80}"
+    r"(?:nguồn|kênh|trang|website).{0,20}chính thức"
+    # English equivalents, in either natural word order.
+    r"|(?:no|not|cannot|could not|unable to|insufficient).{0,80}"
+    r"(?:official (?:source|evidence|verification)|(?:source|evidence).{0,20}official).{0,100}"
+    r"(?:campaign|claim|program|resource|link|url|form)"
+    r"|(?:campaign|claim|program|resource|link|url|form).{0,100}"
+    r"(?:no|not|cannot|could not|unable to|insufficient).{0,80}"
+    r"(?:official (?:source|evidence|verification)|(?:source|evidence).{0,20}official)"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> bool:
@@ -285,11 +329,7 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     # A verified submitted resource is affirmative truth even when the message
     # sender has not been authenticated. Do not collapse that distinction into
     # the generic INSUFFICIENT_EVIDENCE caution fallback.
-    if (
-        scope.official_verification is not None
-        and scope.official_verification.resource_verification.status is VerificationStatusV4.VERIFIED
-        and scope.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
-    ):
+    if _has_verified_exact_resource_endorsement(scope) and scope.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE:
         summary = "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này."
     evidence_by_signal = {item.signal: item for item in scope.evidence if item.type.value == "official_verification"}
     ownership = evidence_by_signal.get("official_domain_verified")
@@ -312,9 +352,17 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     if verification is not None and verification.overall_status is not VerificationStatusV4.VERIFIED:
         intent = verification.intent
         facts: list[str] = []
+        exact_resource_endorsed = _has_verified_exact_resource_endorsement(scope)
         if intent.organization_name:
             facts.append(f"Tin nhắn tự nhận liên quan đến {intent.organization_name}.")
-        if intent.claim_summary and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED:
+        # An unreviewed publisher is not a reason to erase the accepted
+        # provenance fact for the exact resource.  Do not turn a separate,
+        # unresolved campaign component into "no official source" prose.
+        if (
+            intent.claim_summary
+            and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
+            and not exact_resource_endorsed
+        ):
             facts.append(f"Chưa xác nhận được thông tin về {intent.claim_summary} từ nguồn chính thức.")
         if verification.resource_verification.status is VerificationStatusV4.UNVERIFIED:
             facts.append("Chưa xác nhận được liên kết được gửi là tài nguyên do tổ chức này công bố.")
@@ -379,6 +427,11 @@ def check_grounded_ai_response(
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.TECHNICAL_METRIC)
     combined = " ".join(texts).casefold()
+    if _has_verified_exact_resource_endorsement(scope) and _NEGATES_OFFICIAL_RESOURCE_EVIDENCE.search(combined):
+        return SynthesisGroundingCheck(
+            None,
+            SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT,
+        )
     if _has_verified_official_allow_open(scope) and not re.search(
         r"(?:có thể mở|được xác minh|đã xác nhận)",
         synthesis.summary.casefold(),
@@ -504,6 +557,7 @@ class GroundedSecurityResponseService:
             for item in scope.evidence
         )
         verified_passive_target = _has_verified_passive_target_allow_open(scope)
+        verified_exact_resource_endorsement = _has_verified_exact_resource_endorsement(scope)
         return {
             "contract": "grounded-security-response-context-v1",
             "verdict": scope.risk.value if scope.risk else None,
@@ -513,6 +567,13 @@ class GroundedSecurityResponseService:
             # limitations once policy has established this passive target.
             "authoritative_security_truth": {
                 "verified_passive_target": verified_passive_target,
+                # This fact is intentionally independent from risk, domain
+                # ownership, sender identity, and campaign-wide verification.
+                **(
+                    {"verified_exact_resource_endorsement": True}
+                    if verified_exact_resource_endorsement
+                    else {}
+                ),
                 "credible_malicious_evidence": malicious_evidence_observed,
                 "no_risky_requested_action": bool(
                     scope.security_context is not None
@@ -570,6 +631,13 @@ class GroundedSecurityResponseService:
                         if verification.resource_verification.status is not None
                         else None,
                         "final_destination": "unresolved" if redirect_unresolved else "not_reported",
+                        "official_association": (
+                            "officially_owned"
+                            if verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+                            else "exact_resource_endorsed"
+                            if verified_exact_resource_endorsement
+                            else "not_established"
+                        ),
                     },
                     "domain_ownership": verification.domain_ownership_verification.status.value,
                     "sender_identity": verification.sender_verification.status.value,
@@ -584,6 +652,14 @@ class GroundedSecurityResponseService:
                 "do_not_use_a_fixed_report_structure": True,
                 "may_choose_order_headings_brevity_and_emphasis": True,
                 "do_not_expose_internal_diagnostics": True,
+                "verified_exact_resource_endorsement": (
+                    "When true, state that an official provenance chain endorses the exact submitted resource. "
+                    "Do not say that no official source or evidence verifies that campaign, claim, or resource. "
+                    "This does not establish publisher/domain ownership, sender identity, every campaign detail, "
+                    "or the overall risk verdict."
+                    if verified_exact_resource_endorsement
+                    else None
+                ),
             },
         }
 

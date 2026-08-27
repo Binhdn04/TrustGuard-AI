@@ -110,9 +110,21 @@ def _project_action_mentions(
         for item in mentions
         if item.modality is SemanticModality.REQUESTED
         and item.stance is SemanticStance.ASSERTED
-        and item.actor is SemanticParticipant.SENDER
-        and item.recipient is SemanticParticipant.USER
-        and item.direction is SemanticDirection.TO_USER
+        and (
+            (
+                item.actor is SemanticParticipant.SENDER
+                and item.recipient is SemanticParticipant.USER
+                and item.direction is SemanticDirection.TO_USER
+            )
+            # A sender's instruction can be represented as the user's
+            # requested next step toward the form/service.  It is distinct
+            # from a completed user action, which remains excluded above.
+            or (
+                item.actor is SemanticParticipant.USER
+                and item.recipient is SemanticParticipant.FORM_OR_SERVICE
+                and item.direction is SemanticDirection.USER_TO_FORM_OR_SERVICE
+            )
+        )
     ]
     # Compatibility scalar is selected only after every accepted action has
     # been retained.  This ordering is policy impact, then earliest
@@ -707,8 +719,19 @@ def merge_semantic_understanding(
             conflicts = True
         elif base.scenario is SecurityScenarioV4.UNKNOWN:
             updates["scenario"] = scenario
+    # A deterministic action is already grounded in a literal message span.
+    # Do not erase it merely because the optional semantic model omitted an
+    # action interpretation.  An explicit but invalid/retired model action is
+    # still not allowed to influence the projection below.
+    retained_rule_action = (
+        not accepted_mentions
+        and base.requested_action is not None
+        and requested_action_source_span(message, base.requested_action) is not None
+    )
     if accepted_mentions:
         updates["requested_action"] = requested_action
+    elif retained_rule_action:
+        updates["requested_action"] = base.requested_action
     elif (
         output.action_mentions
         or output.requested_action is not None

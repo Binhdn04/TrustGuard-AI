@@ -8,10 +8,17 @@ from src.agents.security_risk import assess_security_risk
 from src.models import (
     AssistantGenerationModeV4,
     ClaimVerificationV4,
+    IdentityAssociationAssuranceV4,
+    IdentityAssociationV4,
+    IdentityRelationshipV4,
     OfficialLinkVerificationReportV4,
     OfficialVerificationComponentV4,
     PublisherVerificationV4,
     RequestedActionV4,
+    ResourceIdentityV4,
+    ResourceMatchStatusV4,
+    ResourceMatchV4,
+    ResourceTypeV4,
     ResourceVerificationV4,
     SecurityEvidenceTypeV4,
     SecurityEvidenceV4,
@@ -294,6 +301,7 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
             "claimed_platforms": [],
             "status": "UNVERIFIED",
             "final_destination": "unresolved",
+            "official_association": "not_established",
         },
         "domain_ownership": "UNVERIFIED",
         "sender_identity": "UNVERIFIED",
@@ -304,3 +312,117 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
     assert "Example Telecom" in fallback
     assert "chương trình hỗ trợ khách hàng 500.000đ" in fallback
     assert "Điểm đến cuối của liên kết vẫn chưa xác định được." in fallback
+
+
+def _exact_resource_endorsement_scope(*, organization: str, resource_url: str):
+    scoped = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(message=f"Please use {resource_url} for the enrollment.")
+    )
+    report = OfficialLinkVerificationReportV4(
+        schema_version="official-link-verification-v4",
+        intent=VerificationIntentV4(
+            organization_name=organization,
+            claim_summary="a public enrollment campaign",
+            requested_action=RequestedActionV4.SUBMIT_FORM,
+            action_url_indices=[0],
+        ),
+        publisher_verification=PublisherVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="publisher_not_reviewed"
+        ),
+        claim_verification=ClaimVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="claim_not_separately_confirmed"
+        ),
+        resource_verification=ResourceVerificationV4(
+            applicable=True,
+            status=VerificationStatusV4.VERIFIED,
+            reason_code="official_exact_resource",
+            evidence_refs=["identity-evidence:0123456789abcdef"],
+            match=ResourceMatchV4(
+                status=ResourceMatchStatusV4.EXACT_RESOURCE,
+                user_resource=ResourceIdentityV4(
+                    resource_type=ResourceTypeV4.URL,
+                    canonical_url=resource_url,
+                    match_key=resource_url,
+                ),
+                official_resource=ResourceIdentityV4(
+                    resource_type=ResourceTypeV4.URL,
+                    canonical_url=resource_url,
+                    match_key=resource_url,
+                ),
+                reason_code="exact_resource",
+            ),
+        ),
+        domain_ownership_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="ownership_not_confirmed"
+        ),
+        sender_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
+        ),
+        action_endorsement_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
+        ),
+        overall_status=VerificationStatusV4.PARTIALLY_VERIFIED,
+        reason_code="publisher_unreviewed_exact_resource_endorsed",
+        identity_associations=[
+            IdentityAssociationV4(
+                entity_name=organization,
+                canonical_url=resource_url,
+                canonical_domain=resource_url.split("/")[2],
+                relationship=IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE,
+                assurance=IdentityAssociationAssuranceV4.VERIFIED,
+                confidence=1,
+                evidence_refs=["identity-evidence:0123456789abcdef"],
+                discovered_at=datetime(2026, 8, 14, tzinfo=UTC),
+                verified_at=datetime(2026, 8, 14, tzinfo=UTC),
+            )
+        ],
+    )
+    assessed = assess_security_risk(scoped.model_copy(update={"official_verification": report}))
+    return assessed.model_copy(
+        update={
+            "risk": SecurityRiskV4.INSUFFICIENT_EVIDENCE,
+            "recommended_actions": [SecurityRecommendedActionV4.PROCEED_WITH_CAUTION],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("organization", "resource_url"),
+    [
+        ("Harbor Arts Council", "https://forms.pacific.example/open-call-2026"),
+        ("North Valley Library", "https://apply.river.example/summer-reading"),
+    ],
+)
+def test_exact_resource_endorsement_survives_grounding_without_granting_domain_or_campaign_assurance(
+    organization: str, resource_url: str
+) -> None:
+    """Regression: resource endorsement must not disappear behind publisher uncertainty."""
+    scoped = _exact_resource_endorsement_scope(organization=organization, resource_url=resource_url)
+
+    payload = GroundedSecurityResponseService._synthesis_payload(scoped)
+    assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
+    assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
+    assert payload["verification_state"]["domain_ownership"] == "UNVERIFIED"
+    assert payload["verification_state"]["sender_identity"] == "UNVERIFIED"
+
+    contradiction = AssistantSynthesis(
+        summary="The claimed campaign could not be verified from an official source."
+    )
+    assert (
+        check_grounded_ai_response(scoped, contradiction).failure
+        is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT
+    )
+    accepted = check_grounded_ai_response(
+        scoped,
+        AssistantSynthesis(
+            summary=(
+                "An official provenance chain endorses this exact submitted resource; "
+                "the publisher domain and sender are not independently verified."
+            )
+        ),
+    )
+    assert accepted.response is not None
+
+    fallback = policy_grounded_assistant_response(scoped).summary.casefold()
+    assert "tài nguyên bạn gửi đã được nguồn chính thức xác nhận" in fallback
+    assert "chưa xác nhận được thông tin về" not in fallback
