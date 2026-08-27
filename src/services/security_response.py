@@ -266,11 +266,13 @@ def _has_verified_official_allow_open(scope: SecurityScopeResponseV4) -> bool:
     """
     verification = scope.official_verification
     return bool(
-        scope.risk is SecurityRiskV4.SAFE
-        and SecurityRecommendedActionV4.ALLOW_OPEN in scope.recommended_actions
-        and verification is not None
+        verification is not None
         and verification.resource_verification.status is VerificationStatusV4.VERIFIED
         and verification.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+        and (
+            not verification.claim_verification.applicable
+            or verification.claim_verification.status is VerificationStatusV4.VERIFIED
+        )
     )
 
 
@@ -654,7 +656,10 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
         verification = scope.official_verification
         assert verification is not None
         summary = "Liên kết và thủ tục bạn hỏi đã được nguồn chính thức xác nhận. Bạn có thể mở liên kết này."
-        if verification.sender_verification.status is VerificationStatusV4.UNVERIFIED:
+        if (
+            verification.sender_verification.applicable
+            and verification.sender_verification.status is VerificationStatusV4.UNVERIFIED
+        ):
             summary += " Danh tính người gửi chưa được xác minh riêng, nhưng điều đó không thay đổi kết luận về liên kết và thủ tục này."
         return summary
 
@@ -833,13 +838,22 @@ def check_grounded_ai_response(
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
+            not verification.sender_verification.applicable
+            and re.search(r"(?:danh tính )?(?:người gửi|sender).{0,60}(?:chưa|không)", combined)
+        ):
+            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
+        if (
             verification.resource_verification.status is not VerificationStatusV4.VERIFIED
             and not _has_verified_exact_resource_endorsement(scope)
             and re.search(rf"(?:liên kết|đường link|tài nguyên).{{0,60}}{affirmative}", combined)
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-        if verification.sender_verification.status is not VerificationStatusV4.VERIFIED and re.search(
+        if (
+            verification.sender_verification.applicable
+            and verification.sender_verification.status is not VerificationStatusV4.VERIFIED
+            and re.search(
             rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined
+            )
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
@@ -903,6 +917,7 @@ def check_grounded_ai_response(
     ) or (
         re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", combined) is not None
         and scope.official_verification is not None
+        and scope.official_verification.sender_verification.applicable
         and scope.official_verification.sender_verification.status is not VerificationStatusV4.VERIFIED
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
@@ -916,7 +931,7 @@ def check_grounded_ai_response(
                 ],
                 # These remain machine-readable metadata.  The composer, not a
                 # frontend template, decides whether and how to mention them.
-                uncertainties=_public_uncertainties(scope.limitations),
+                uncertainties=_composer_uncertainties(scope),
                 immediate_steps=_immediate_steps(scope),
                 follow_up_offer=_FOLLOW_UP_OFFER,
                 response_version=SECURITY_ASSISTANT_RESPONSE_VERSION,
@@ -1159,14 +1174,30 @@ class GroundedSecurityResponseService:
                             else "not_established"
                         ),
                     },
-                    "domain_ownership": verification.domain_ownership_verification.status.value,
-                    "sender_identity": verification.sender_verification.status.value,
+                    "domain_ownership": (
+                        verification.domain_ownership_verification.status.value
+                        if verification.domain_ownership_verification.status is not None
+                        else None
+                    ),
+                    **(
+                        {"sender_identity": verification.sender_verification.status.value}
+                        if verification.sender_verification.applicable
+                        and verification.sender_verification.status is not None
+                        else {}
+                    ),
                     "uncertainty_boundaries": {
-                        "sender_identity": (
-                            "The sender identity is not independently verified. This fact does not change "
-                            "the official endorsement of the exact submitted resource or requested action."
-                            if _has_verified_exact_resource_action_endorsement(scope)
-                            else "The sender identity is a separate fact from resource and action verification."
+                        **(
+                            {
+                                "sender_identity": (
+                                    "The sender identity is not independently verified. This fact does not change "
+                                    "the official endorsement of the exact submitted resource or requested action."
+                                    if _has_verified_exact_resource_action_endorsement(scope)
+                                    else "The sender identity is a separate fact from resource and action verification."
+                                )
+                            }
+                            if verification.sender_verification.applicable
+                            and verification.sender_verification.status is not None
+                            else {}
                         ),
                         "domain_ownership": (
                             "The submitted resource is third-party hosted; do not infer that its entire domain "
@@ -1213,6 +1244,14 @@ class GroundedSecurityResponseService:
                     "of the exact-resource endorsement. This does not establish publisher/domain ownership or trust "
                     "for other resources."
                     if _has_verified_exact_resource_action_endorsement(scope)
+                    else None
+                ),
+                "decisive_verified_action_conclusion": (
+                    "The exact resource, requested action, and the claim material to that action are verified. "
+                    "Lead with a coherent affirmative conclusion that the user may proceed. Do not add generic "
+                    "caution or say evidence is insufficient merely because the third-party host is not owned by "
+                    "the named organization."
+                    if _has_verified_official_allow_open(scope)
                     else None
                 ),
             },

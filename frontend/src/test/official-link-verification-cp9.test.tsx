@@ -41,7 +41,7 @@ describe("CP9 official link verification presentation", () => {
     ["UNVERIFIED", "Chưa xác minh quan hệ chính thức"], ["CONFLICTING", "Thông tin mâu thuẫn"],
   ] as const)("renders %s in simple view with API actions", (status, label) => {
     render(<OfficialVerificationPanel viewModel={viewModel(status)} mode="simple" />);
-    expect(screen.getAllByText(label)).toHaveLength(1);
+    expect(screen.getAllByText(label)).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "Xác minh quan hệ chính thức" })).toBeInTheDocument();
     expect(screen.queryByText(/overall_/)).not.toBeInTheDocument();
     expect(screen.getByText("Bước an toàn tiếp theo")).toBeInTheDocument();
@@ -92,15 +92,12 @@ describe("CP9 official link verification presentation", () => {
     expect(screen.getByText("Đã xác minh")).toBeInTheDocument();
   });
 
-  it("shows ownership, sender, and action as independent verification layers", () => {
+  it("shows ownership, resource relationship, and action as independent verification layers", () => {
     const value = report("PARTIALLY_VERIFIED");
     value.schema_version = "official-link-verification-v3";
     value.policy_version = "official-link-verification-v3";
     value.domain_ownership_verification = {
       applicable: true, status: "VERIFIED", reason_code: "independent_domain_ownership_verified", evidence_refs: [],
-    };
-    value.sender_verification = {
-      applicable: true, status: "UNVERIFIED", reason_code: "message_sender_not_authenticated", evidence_refs: [],
     };
     value.action_endorsement_verification = {
       applicable: true, status: "UNVERIFIED", reason_code: "official_action_not_confirmed", evidence_refs: [],
@@ -109,7 +106,8 @@ describe("CP9 official link verification presentation", () => {
     render(<OfficialVerificationPanel viewModel={mapSecurityCaseViewModel(completedSecurityCase({ official_verification: value }))} mode="simple" />);
 
     expect(screen.getByText("Quyền sở hữu domain")).toBeInTheDocument();
-    expect(screen.getByText("Danh tính người gửi")).toBeInTheDocument();
+    expect(screen.getByText("Tài nguyên / quan hệ tổ chức")).toBeInTheDocument();
+    expect(screen.queryByText("Danh tính người gửi")).not.toBeInTheDocument();
     expect(screen.getByText("Xác nhận hành động")).toBeInTheDocument();
     expect(screen.getByText(/Không nhập mật khẩu hay OTP/i)).toBeInTheDocument();
   });

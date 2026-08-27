@@ -87,6 +87,19 @@ def test_program_claim_and_form_action_are_grounded_independently_of_sensitive_d
     )
 
 
+def test_form_semantic_action_refines_to_literal_application_for_resource_verification() -> None:
+    message = 'Please visit https://forms.example/register to apply.'
+    context = extract_security_context(message).model_copy(
+        update={"claimed_entity": "Example University", "requested_action": RequestedActionV4.SUBMIT_FORM}
+    )
+
+    intent = build_grounded_verification_intent(message, context)
+
+    assert intent is not None
+    assert intent.contract.requested_action is RequestedActionV4.REGISTER_OR_APPLY
+    assert intent.contract.action_url_indices == [0]
+
+
 def test_monetary_refund_offer_is_a_grounded_claim() -> None:
     message = "Northstar Institute hoàn 20 triệu cho khách hàng. Đăng nhập tại https://northstar.example/contact"
 
