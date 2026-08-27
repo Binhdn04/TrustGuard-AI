@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, type ClipboardEvent, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { ArrowUp, Loader2, ShieldCheck } from "lucide-react";
 
 import {
   AUTOMATIC_LOOKUP_DISCLOSURE,
   OFFICIAL_SOURCE_LOOKUP_DISCLOSURE,
 } from "@/lib/security/automatic-lookup-policy";
-import { richClipboardTextWithLinks } from "@/lib/security/message-links";
+import {
+  messageTextParts,
+  richClipboardMessageParts,
+  richClipboardTextWithLinks,
+  safeHttpHref,
+  type MessageTextPart,
+} from "@/lib/security/message-links";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -78,6 +84,67 @@ function useTypewriterPlaceholder(enabled: boolean): string {
   return characterCount === 0 ? "" : `Ví dụ: ${current.slice(0, characterCount)}`;
 }
 
+function serializeEditableNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (!(node instanceof HTMLElement)) return "";
+  if (node.tagName === "BR") return "\n";
+
+  const content = Array.from(node.childNodes).map(serializeEditableNode).join("");
+  if (node.tagName === "A") {
+    const href = safeHttpHref(node.getAttribute("href") ?? "");
+    if (!href) return content;
+    const label = content.trim();
+    return !label || label.includes(href) ? (label || href) : `${label} (${href})`;
+  }
+  return node.tagName === "DIV" || node.tagName === "P" ? `${content}\n` : content;
+}
+
+function textFromEditable(element: HTMLElement): string {
+  return Array.from(element.childNodes).map(serializeEditableNode).join("");
+}
+
+function messageFragmentFromParts(parts: MessageTextPart[]): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  for (const part of parts) {
+    if (!part.href) {
+      fragment.append(document.createTextNode(part.text));
+      continue;
+    }
+    const link = document.createElement("a");
+    link.href = part.href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer nofollow";
+    link.referrerPolicy = "no-referrer";
+    link.className = "break-all font-medium underline decoration-current/50 underline-offset-2 hover:decoration-current";
+    link.title = "Mở liên kết trong tab mới; liên kết chưa được xác nhận an toàn";
+    link.textContent = part.text;
+    fragment.append(link);
+  }
+  return fragment;
+}
+
+function messageFragment(value: string): DocumentFragment {
+  return messageFragmentFromParts(messageTextParts(value));
+}
+
+function insertFragmentAtSelection(element: HTMLElement, fragment: DocumentFragment): void {
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  if (!range || !element.contains(range.commonAncestorContainer)) {
+    element.append(fragment);
+    return;
+  }
+
+  range.deleteContents();
+  const lastNode = fragment.lastChild;
+  range.insertNode(fragment);
+  if (!lastNode || !selection) return;
+  range.setStartAfter(lastNode);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 export function SecurityChatComposer({
   onSubmit,
   busy,
@@ -85,32 +152,60 @@ export function SecurityChatComposer({
   variant = "intake",
 }: Props) {
   const [message, setMessage] = useState("");
+  const editorRef = useRef<HTMLDivElement>(null);
   const animatedPlaceholder = useTypewriterPlaceholder(variant === "intake" && !followUp);
+
+  useEffect(() => {
+    if (!message) editorRef.current?.replaceChildren();
+  }, [message]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const value = message.trim();
+    const value = (editorRef.current ? textFromEditable(editorRef.current) : message).trim();
     if (!value || busy) return;
     onSubmit(value);
     setMessage("");
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (!message.trim() || busy) return;
-    event.currentTarget.form?.requestSubmit();
+    if (!textFromEditable(event.currentTarget).trim() || busy) return;
+    event.currentTarget.closest("form")?.requestSubmit();
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const richText = richClipboardTextWithLinks(event.clipboardData.getData("text/html"));
-    if (richText === null) return;
+  const handleInput = (event: FormEvent<HTMLDivElement>) => {
+    const rawValue = textFromEditable(event.currentTarget);
+    const value = rawValue.slice(0, 5000);
+    if (value !== rawValue) event.currentTarget.textContent = value;
+    setMessage(value);
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const clipboardHtml = event.clipboardData.getData("text/html");
+    const richText = richClipboardTextWithLinks(clipboardHtml);
+    const richParts = richClipboardMessageParts(clipboardHtml);
+    const clipboardText = richText ?? event.clipboardData.getData("text/plain");
+    if (!clipboardText) return;
     event.preventDefault();
-    const start = event.currentTarget.selectionStart ?? message.length;
-    const end = event.currentTarget.selectionEnd ?? start;
-    const available = Math.max(0, 5000 - (message.length - (end - start)));
-    const insertion = richText.slice(0, available);
-    setMessage(`${message.slice(0, start)}${insertion}${message.slice(end)}`);
+    const selection = window.getSelection();
+    const selectedLength = selection?.rangeCount ? selection.getRangeAt(0).toString().length : 0;
+    const available = Math.max(0, 5000 - (message.length - selectedLength));
+    const insertion = clipboardText.slice(0, available);
+    const fragment = richParts && insertion === clipboardText
+      ? messageFragmentFromParts(richParts)
+      : messageFragment(insertion);
+    insertFragmentAtSelection(event.currentTarget, fragment);
+    setMessage(textFromEditable(event.currentTarget));
+  };
+
+  const handleLinkClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const link = target.closest<HTMLAnchorElement>("a[href]");
+    if (!link || !event.currentTarget.contains(link)) return;
+    event.preventDefault();
+    window.open(link.href, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -121,21 +216,25 @@ export function SecurityChatComposer({
       )}
     >
       <div>
-        <label htmlFor="security-message" className={followUp ? "text-sm font-semibold leading-6" : "sr-only"}>
+        <label id="security-message-label" htmlFor="security-message" className={followUp ? "text-sm font-semibold leading-6" : "sr-only"}>
           {followUp ?? "Dán tin nhắn đáng ngờ hoặc mô tả hành động người gửi yêu cầu"}
         </label>
         <div className={cn("relative", followUp && "mt-2")}>
-          <textarea
+          <div
+            ref={editorRef}
             id="security-message"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
+            role="textbox"
+            aria-labelledby="security-message-label"
+            aria-multiline="true"
+            contentEditable={!busy}
+            suppressContentEditableWarning
             onKeyDown={handleKeyDown}
+            onInput={handleInput}
             onPaste={handlePaste}
-            disabled={busy}
-            maxLength={5000}
-            placeholder={followUp ? "Nhập câu trả lời của bạn…" : animatedPlaceholder}
+            onClick={handleLinkClick}
+            data-placeholder={followUp ? "Nhập câu trả lời của bạn…" : animatedPlaceholder}
             className={cn(
-              "w-full resize-y rounded-xl border border-input bg-background/75 px-4 py-3 pr-14 text-sm leading-6 outline-none transition-shadow focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60",
+              "w-full resize-y overflow-auto whitespace-pre-wrap break-words rounded-xl border border-input bg-background/75 px-4 py-3 pr-14 text-sm leading-6 outline-none transition-shadow focus:border-primary focus:ring-2 focus:ring-primary/15 empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)] disabled:opacity-60",
               variant === "intake" ? "min-h-36" : "min-h-24",
             )}
           />

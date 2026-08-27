@@ -51,6 +51,23 @@ function serializeClipboardNode(node: Node, foundLink: { current: boolean }): st
   return BLOCK_TAGS.has(node.tagName) ? `${content}\n` : content;
 }
 
+function clipboardMessageParts(node: Node, foundLink: { current: boolean }): MessageTextPart[] {
+  if (node.nodeType === Node.TEXT_NODE) return [{ text: node.textContent ?? "" }];
+  if (!(node instanceof HTMLElement) || IGNORED_TAGS.has(node.tagName)) return [];
+  if (node.tagName === "BR") return [{ text: "\n" }];
+
+  const content = Array.from(node.childNodes)
+    .flatMap((child) => clipboardMessageParts(child, foundLink));
+  if (node.tagName === "A") {
+    const href = safeHttpHref(node.getAttribute("href") ?? "");
+    if (!href) return content;
+    foundLink.current = true;
+    const label = content.map((part) => part.text).join("").trim();
+    return [{ text: label || href, href }];
+  }
+  return BLOCK_TAGS.has(node.tagName) ? [...content, { text: "\n" }] : content;
+}
+
 /** Preserve HTTP(S) hrefs that a textarea would otherwise discard from rich clipboard HTML. */
 export function richClipboardTextWithLinks(html: string): string | null {
   if (!html.trim() || typeof DOMParser === "undefined") return null;
@@ -62,6 +79,15 @@ export function richClipboardTextWithLinks(html: string): string | null {
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
   return foundLink.current && value ? value : null;
+}
+
+/** Preserve the visible labels of HTTP(S) links from rich clipboard HTML. */
+export function richClipboardMessageParts(html: string): MessageTextPart[] | null {
+  if (!html.trim() || typeof DOMParser === "undefined") return null;
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const foundLink = { current: false };
+  const parts = clipboardMessageParts(document.body, foundLink);
+  return foundLink.current && parts.length ? parts : null;
 }
 
 /** Split display text into escaped text and validated HTTP(S) link parts. */
