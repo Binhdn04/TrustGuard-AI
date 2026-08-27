@@ -180,6 +180,23 @@ def test_old_official_report_defaults_new_verification_layers_to_not_applicable(
     assert restored.action_endorsement_verification.status is None
 
 
+def test_stored_legacy_report_does_not_fabricate_sender_unverified_from_action() -> None:
+    payload = _response(report=_report(schema_version="official-link-verification-v1")).model_dump(mode="json")
+    legacy_report = payload["official_verification"]
+    assert legacy_report is not None
+    legacy_report.pop("domain_ownership_verification", None)
+    legacy_report.pop("sender_verification", None)
+    legacy_report.pop("action_endorsement_verification", None)
+
+    restored = SecurityScopeResponseV4.model_validate_stored(payload)
+
+    assert restored.official_verification is not None
+    sender = restored.official_verification.sender_verification
+    assert sender.applicable is False
+    assert sender.status is None
+    assert sender.reason_code == "sender_provenance_unavailable_in_legacy_report"
+
+
 def test_understanding_reads_v1_and_new_contracts_emit_v2() -> None:
     old_provider_output = Understanding(understanding_version="security-understanding-v1")
     old_public_context = AssistantContextV4(

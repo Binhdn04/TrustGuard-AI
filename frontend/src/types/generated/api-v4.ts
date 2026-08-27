@@ -297,7 +297,7 @@ export interface ClaimVerificationV4 extends OfficialVerificationComponentV4 { t
 export interface ResourceVerificationV4 extends OfficialVerificationComponentV4 { match: ResourceMatchV4 | null; }
 
 export interface OfficialLinkVerificationReportV4 {
-  schema_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3";
+  schema_version: "official-link-verification-v1" | "official-link-verification-v2" | "official-link-verification-v3" | "official-link-verification-v4";
   intent: VerificationIntentV4;
   publisher_verification: PublisherVerificationV4;
   claim_verification: ClaimVerificationV4;

@@ -13,6 +13,18 @@ function verificationLabel(status: string | null | undefined, applicable = true)
   }[status ?? ""] ?? "Chưa có dữ liệu xác minh";
 }
 
+function combinedVerificationStatus(statuses: Array<string | null | undefined>): string | null {
+  const present = statuses.filter((status): status is string => status !== null && status !== undefined);
+  if (present.includes("CONFLICTING")) return "CONFLICTING";
+  if (present.includes("VERIFIED") && (present.includes("UNVERIFIED") || present.includes("PARTIALLY_VERIFIED"))) {
+    return "PARTIALLY_VERIFIED";
+  }
+  if (present.includes("UNVERIFIED")) return "UNVERIFIED";
+  if (present.includes("PARTIALLY_VERIFIED")) return "PARTIALLY_VERIFIED";
+  if (present.includes("VERIFIED")) return "VERIFIED";
+  return null;
+}
+
 export function DomainIdentitySummary({ viewModel, mode }: {
   viewModel: SecurityCaseViewModel;
   mode: SecurityPresentationMode;
@@ -32,8 +44,23 @@ export function DomainIdentitySummary({ viewModel, mode }: {
         ? `Tên miền có dữ liệu xếp hạng${ranked.details.popularity_rank ? ` #${ranked.details.popularity_rank}` : ranked.details.popularity_bucket ? `, nhóm ${ranked.details.popularity_bucket}` : ""}`
         : "Chưa có dữ liệu mức độ quen thuộc cho tên miền";
   const report = viewModel.officialVerification;
-  const publisher = report?.publisher_verification;
+  const ownership = report?.domain_ownership_verification;
   const resource = report?.resource_verification;
+  const claim = report?.claim_verification;
+  const action = report?.action_endorsement_verification;
+  const exactResourceAssociation = (report?.identity_associations ?? []).some(
+    (item) => item.assurance === "verified" && item.relationship === "endorsed_third_party_service",
+  );
+  const organizationRelationshipStatus = combinedVerificationStatus([
+    ownership?.applicable ? ownership.status : null,
+    resource?.applicable ? resource.status : null,
+    exactResourceAssociation ? "VERIFIED" : null,
+  ]);
+  const contentActionStatus = combinedVerificationStatus([
+    claim?.applicable ? claim.status : null,
+    resource?.applicable ? resource.status : null,
+    action?.applicable ? action.status : null,
+  ]);
   const axes = [
     {
       title: "Tên miền/nền tảng",
@@ -43,21 +70,27 @@ export function DomainIdentitySummary({ viewModel, mode }: {
       Icon: Globe2,
     },
     {
-      title: "Danh tính đơn vị phát hành",
-      value: publisher ? verificationLabel(publisher.status, publisher.applicable) : "Chưa có dữ liệu xác minh đơn vị phát hành",
-      detail: publisher?.identity?.entity_name ?? "Không suy diễn đơn vị phát hành từ chủ sở hữu nền tảng.",
-      reason: publisher?.reason_code,
+      title: "Quan hệ với tổ chức",
+      value: organizationRelationshipStatus
+        ? verificationLabel(organizationRelationshipStatus)
+        : "Chưa xác minh quan hệ với tổ chức",
+      detail: exactResourceAssociation
+        ? "Nguồn chính thức đã endorse đúng tài nguyên được gửi; không suy ra quyền sở hữu toàn domain."
+        : "Tổng hợp ownership tên miền và đối chiếu tài nguyên cụ thể; không suy diễn từ độ quen thuộc nền tảng.",
+      reason: ownership?.reason_code ?? resource?.reason_code,
       Icon: Building2,
     },
     {
-      title: "Tài nguyên/hành động cụ thể",
-      value: resource
-        ? verificationLabel(resource.status, resource.applicable)
-        : viewModel.context?.urls.length
-          ? "Chưa xác minh tài nguyên cụ thể"
-          : "Không áp dụng",
-      detail: resource?.match?.status ? `Đối chiếu tài nguyên: ${securityLabel(resource.match.status)}` : "Mức độ quen thuộc không xác minh biểu mẫu, video, bài đăng hoặc tệp cụ thể.",
-      reason: resource?.reason_code,
+      title: "Nội dung / hành động",
+      value: contentActionStatus
+        ? verificationLabel(contentActionStatus)
+        : "Chưa có nội dung hoặc hành động cần xác minh",
+      detail: action?.applicable
+        ? "Tổng hợp claim, tài nguyên và endorsement của hành động được yêu cầu."
+        : resource?.match?.status
+          ? `Đối chiếu tài nguyên: ${securityLabel(resource.match.status)}`
+          : "Mức độ quen thuộc không xác minh claim, biểu mẫu, bài đăng, tệp hoặc hành động.",
+      reason: action?.reason_code ?? claim?.reason_code ?? resource?.reason_code,
       Icon: FileQuestion,
     },
   ];
@@ -79,4 +112,3 @@ export function DomainIdentitySummary({ viewModel, mode }: {
     </section>
   );
 }
-

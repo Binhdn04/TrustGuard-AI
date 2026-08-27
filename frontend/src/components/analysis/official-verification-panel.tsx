@@ -56,7 +56,7 @@ export function OfficialVerificationPanel({ viewModel, mode }: {
   const status = STATUS[report.overall_status];
   const verificationLayers = [
     ["Quyền sở hữu domain", report.domain_ownership_verification],
-    ["Danh tính người gửi", report.sender_verification],
+    ["Tài nguyên / quan hệ tổ chức", report.resource_verification],
     ["Xác nhận hành động", report.action_endorsement_verification],
   ] as const;
   const conflictComponents: Array<[string, OfficialVerificationComponentV4 | undefined]> = [

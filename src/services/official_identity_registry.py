@@ -31,6 +31,7 @@ class BrandResolutionMatch(StrEnum):
     EXACT_CANONICAL_NAME = "exact_canonical_name"
     EXACT_ALIAS = "exact_alias"
     BOUNDED_PHRASE = "bounded_phrase"
+    RESOURCE_IDENTITY = "resource_identity"
 
 
 class SourceIdentityAssessment(StrEnum):
@@ -213,6 +214,49 @@ def active_brand_versions(brands: Sequence[BrandRecordV4], at: datetime) -> list
 
 
 class OfficialIdentityRegistry:
+    def resolve_resource_url(
+        self,
+        urls: Sequence[str],
+        brands: Sequence[BrandRecordV4],
+        at: datetime,
+    ) -> BrandIdentityResolution:
+        """Resolve a reviewed first-party identity from a submitted resource.
+
+        This is intentionally separate from ``resolve``: a name mentioned in
+        message text is not evidence about who operates a URL.  Shared
+        platform identities are excluded because their presence establishes
+        platform familiarity, never an organization owner for the resource.
+        """
+        matches: list[BrandRecordV4] = []
+        for brand in active_brand_versions(brands, at):
+            for url in urls:
+                candidate = normalize_url(url)
+                if candidate is None:
+                    continue
+                parsed = urlsplit(candidate)
+                host = (parsed.hostname or "").casefold().rstrip(".")
+                for identity in runtime_official_identities(brand, at):
+                    if not identity.reviewed or identity.relationship == "platform_service":
+                        continue
+                    identity_host = _identity_host(identity)
+                    if identity_host is None:
+                        continue
+                    if identity.match_scope is OfficialIdentityMatchScopeV4.HOST_AND_SUBDOMAINS:
+                        matched = host == identity_host or host.endswith(f".{identity_host}")
+                    else:
+                        identity_url = normalize_url(identity.canonical_value)
+                        matched = identity_url == candidate
+                    if matched:
+                        matches.append(brand)
+                        break
+                else:
+                    continue
+                break
+        unique_matches = list({str(item.brand_id): item for item in matches}.values())
+        return self._select(unique_matches, BrandResolutionMatch.RESOURCE_IDENTITY, at) or BrandIdentityResolution(
+            status=BrandResolutionStatus.NOT_FOUND
+        )
+
     def resolve(
         self,
         organization_name: str,

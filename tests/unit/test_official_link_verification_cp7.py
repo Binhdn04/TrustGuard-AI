@@ -28,6 +28,8 @@ from src.models import (
     SecurityRiskV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
+    SenderProvenanceKindV4,
+    SenderProvenanceV4,
     VerificationStatusV4,
 )
 from src.security_ai.contracts import AssistantSynthesis, ModelResponse
@@ -255,7 +257,7 @@ def _positive_page(link: str = USER_FORM) -> str:
 
 
 @pytest.mark.asyncio
-async def test_discovered_official_domain_keeps_sender_and_login_action_unverified_and_cached() -> None:
+async def test_plain_text_organization_url_and_action_do_not_fabricate_sender_verification() -> None:
     target = "https://chinhphu.vn/dang-nhap"
     corroboration = "https://authority.example/government-directory"
     message = f"Chính phủ gửi liên kết {target} và yêu cầu đăng nhập."
@@ -285,7 +287,8 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
     first = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
     assert first.report is not None
     assert first.report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
-    assert first.report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+    assert first.report.sender_verification.applicable is False
+    assert first.report.sender_verification.status is None
     assert first.report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
     assert first.report.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
 
@@ -298,7 +301,6 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
         item.signal for item in completed.evidence if item.type is SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION
     } == {
         "official_domain_verified",
-        "sender_identity_unverified",
         "action_endorsement_unverified",
     }
     assert "chinhphu.vn" in response.summary
@@ -309,6 +311,28 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
     second = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
     assert second.identity_cache_hits > 0
     assert search.calls == []
+
+
+@pytest.mark.asyncio
+async def test_trusted_sender_provenance_activates_the_independent_sender_guard() -> None:
+    request, scope = _request_scope()
+
+    outcome = await _coordinator().coordinate(
+        request,
+        scope,
+        execution_context=TurnExecutionContext(
+            sender_provenance=SenderProvenanceV4(
+                kind=SenderProvenanceKindV4.AUTHENTICATED_ACCOUNT,
+                provenance_ref="integration:turn-123",
+            )
+        ),
+    )
+
+    assert outcome.report is not None
+    assert outcome.report.sender_verification.applicable is True
+    assert outcome.report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+    completed = apply_official_verification_outcome(scope, outcome)
+    assert "sender_identity_unverified" in {item.signal for item in completed.evidence}
 
 
 @pytest.mark.asyncio
@@ -1085,8 +1109,8 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
     assert association.relationship.value == "endorsed_third_party_service"
     assert outcome.report.publisher_verification.status is VerificationStatusV4.UNVERIFIED
-    assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
-    assert outcome.report.resource_verification.reason_code == "discovered_exact_resource_endorsement_chain"
+    assert outcome.report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.resource_verification.reason_code == "exact_resource_endorsement_chain"
     assert outcome.report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
     assert outcome.report.action_endorsement_verification.reason_code == "official_exact_resource_action_confirmed"
     assert outcome.report.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
@@ -1140,7 +1164,7 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     )
     fallback = policy_grounded_assistant_response(risk_result).summary
     assert "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này." in fallback
-    assert "Danh tính người gửi chưa được xác minh riêng." in fallback
+    assert "Danh tính người gửi chưa được xác minh riêng." not in fallback
     assert "Chưa có xác nhận chính thức cho đúng hành động" not in fallback
 
     natural_reply = AssistantSynthesis(
@@ -1285,7 +1309,7 @@ async def test_cache_ignores_superseded_candidate_versions_and_preserves_exact_r
     )
 
     assert outcome.report is not None
-    assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert outcome.report.resource_verification.status is VerificationStatusV4.VERIFIED
     assert len(outcome.report.identity_associations) == 1
     assert previous is not None
     assert outcome.report.identity_associations[0].association_id == previous.association_id
@@ -1724,8 +1748,8 @@ async def test_generic_editorial_scam_warning_does_not_negate_host_bound_ownersh
 
 
 @pytest.mark.asyncio
-async def test_runtime_pipeline_bootstraps_generic_third_party_exact_resource_without_cache() -> None:
-    """A self-identifying hosted form is not thereby an owned publisher domain."""
+async def test_runtime_pipeline_reuses_exact_source_campaign_evidence_without_cache() -> None:
+    """One exact endorsement source can prove its matching campaign as well."""
     organization = "Northstar Institute"
     submitted = "https://forms.example/apply/future-learning"
     provenance = "https://events.example/future-learning"
@@ -1777,16 +1801,18 @@ async def test_runtime_pipeline_bootstraps_generic_third_party_exact_resource_wi
     assert association.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
     assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
     assert report.domain_ownership_verification.status is VerificationStatusV4.UNVERIFIED
-    assert report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
     assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
-    assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
-    assert report.claim_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.sender_verification.applicable is False
+    assert report.sender_verification.status is None
+    assert report.claim_verification.status is VerificationStatusV4.VERIFIED
+    assert report.claim_verification.reason_code == "exact_resource_source_claim_match"
     assert result.risk is not SecurityRiskV4.SAFE
     payload = GroundedSecurityResponseService._synthesis_payload(result)
     assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
     assert payload["verification_state"]["domain_ownership"] == "UNVERIFIED"
-    assert payload["verification_state"]["sender_identity"] == "UNVERIFIED"
+    assert "sender_identity" not in payload["verification_state"]
 
 
 @pytest.mark.asyncio
@@ -1843,7 +1869,8 @@ async def test_official_domain_identity_does_not_endorse_an_arbitrary_passport_r
     assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
     assert report.resource_verification.status is VerificationStatusV4.UNVERIFIED
     assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
-    assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.sender_verification.applicable is False
+    assert report.sender_verification.status is None
 
     completed = assess_security_risk(
         apply_official_verification_outcome(scope, outcome),
@@ -1854,3 +1881,112 @@ async def test_official_domain_identity_does_not_endorse_an_arbitrary_passport_r
 
     rendered_response = policy_grounded_assistant_response(completed).summary
     assert "chưa có đủ dữ liệu" in rendered_response.casefold()
+
+
+@pytest.mark.asyncio
+async def test_submitted_first_party_resource_routes_capability_away_from_mentioned_entity() -> None:
+    """A named authority is not the operator of an independently reviewed portal."""
+    submitted = "https://portal.example/passport"
+    portal = BrandRecordV4(
+        name="Public Service Portal",
+        official_domains=["portal.example"],
+        provenance="reviewed portal fixture",
+        effective_from=NOW - timedelta(days=1),
+        reviewer_id="network-security-reviewer",
+        created_at=NOW - timedelta(days=1),
+    )
+    request = SecurityTriageCreateRequestV4(
+        message=f"Công an phường bảo tôi vào {submitted} để làm hộ chiếu.",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    assert scope.security_context.claimed_entity == "công an"
+    outcome = await _coordinator(
+        brands=[portal],
+        fetcher=_HtmlFetcher({submitted: "<html><body>Cấp hộ chiếu phổ thông: nộp hồ sơ trực tuyến.</body></html>"}),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    report = outcome.report
+    assert report.intent.organization_name == "công an"
+    assert report.publisher_verification.identity is not None
+    assert report.publisher_verification.identity.entity_name == "Public Service Portal"
+    assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.reason_code == "official_first_party_resource_capability"
+    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+
+
+@pytest.mark.asyncio
+async def test_reviewed_resource_operator_capability_does_not_require_claimed_entity_relationship() -> None:
+    """A shared official portal can verify its own service for a different named entity."""
+    submitted = "https://portal.example/passport"
+    operator = SourceRegistryEntry(
+        publisher="Public Service Operator",
+        normalized_pattern="portal.example",
+        tier=SourceTier.A,
+        source_type="government_or_official",
+        allowed_operations={"read"},
+        policy_version="portal-operator-fixture-v1",
+        effective_from=NOW - timedelta(days=1),
+        default_freshness_seconds=3600,
+        reviewer_id="reviewer",
+        reviewed_at=NOW - timedelta(hours=1),
+    )
+    request = SecurityTriageCreateRequestV4(
+        message=f"Agency A directed me to {submitted} to apply for a passport.",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": "Agency A"})}
+    )
+    outcome = await _coordinator(
+        brands=[],
+        source_registry=VersionedSourceRegistry([operator]),
+        fetcher=_HtmlFetcher({submitted: "<html><body>Passport application: submit online.</body></html>"}),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    report = outcome.report
+    assert report.publisher_verification.identity is not None
+    assert report.publisher_verification.identity.entity_name == "Public Service Operator"
+    assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.VERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+
+
+@pytest.mark.asyncio
+async def test_short_submitted_resource_is_resolved_without_official_endorsement() -> None:
+    """Redirect/platform facts precede, and cannot substitute for, organization endorsement."""
+    short = "https://short.example/apply"
+    final = "https://docs.google.com/forms/d/e/FORM-UNENDORSED/viewform"
+    request = SecurityTriageCreateRequestV4(
+        message=f"Example Telecom hỗ trợ khách hàng 500.000đ. Điền thông tin tại {short}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": "Example Telecom"})}
+    )
+    fetcher = _HtmlFetcher(redirects={short: [short, final]})
+    outcome = await _coordinator(brands=[], fetcher=fetcher).coordinate(
+        request, scope, execution_context=TurnExecutionContext()
+    )
+
+    assert outcome.report is not None
+    report = outcome.report
+    resolution = report.resource_verification.submitted_resources[0]
+    assert resolution.submitted_url == short
+    assert resolution.redirect_chain == [short, final]
+    assert resolution.canonical_final_url == final
+    assert resolution.final_host == "docs.google.com"
+    assert resolution.platform_provider is not None
+    assert report.resource_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.claim_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    assert not any(item.assurance is IdentityAssociationAssuranceV4.VERIFIED for item in report.identity_associations)
+    assert short in fetcher.calls
