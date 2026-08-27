@@ -136,7 +136,7 @@ class SecurityAdminCopilotService:
                 input_tokens=self._runtime.budget.input_tokens,
                 output_tokens=self._runtime.budget.output_tokens,
                 cost_usd=self._runtime.budget.cost_usd,
-                status="ok" if grounded else "policy_grounded",
+                status="ok" if grounded else "fallback",
             ),
             generated_at=completed_at,
         )

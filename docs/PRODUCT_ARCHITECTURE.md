@@ -119,14 +119,17 @@ hơn; target không được tự endorse chính nó. Nếu target page independ
 Ownership của domain và parent relationship vẫn cần hai evidence family trên hai source host. Kết quả resource
 được hiển thị `partially_verified`, có TTL 7 ngày, không ghi vào `BrandRecordV4` và không tự tạo kết luận `SAFE`.
 Chỉ admin review mới promote thành immutable brand version; third-party endorsement luôn giới hạn ở exact
-URL/resource.
+URL/resource. Khi provenance chỉ tới đúng submitted resource trên third-party host, coordinator giữ path
+endorsement hẹp này thay vì suy rộng thành ownership của publisher domain; reviewed authoritative attestor cho
+first-party domain vẫn là path ownership riêng.
 
 Với organization/domain chưa từng được review, search chỉ tạo candidate để guarded-fetch, không tạo identity.
 Coordinator chỉ tạo `official_controlled` ephemeral khi candidate host tự định danh entity bằng exact normalized
-phrase và một host độc lập đã review như authoritative attestor chứa exact anchor về host đó; hai observations phải
-khác host và không có explicit ownership conflict/deny/redirect mismatch. Source policy có thể phân loại attestor,
-nhưng không được yêu cầu record cho candidate organization/domain. Social, short-link, DNS/RDAP, title/rank và
-name similarity chỉ là supporting hoặc bị loại khỏi root establishment. Identity ephemeral chỉ xác minh publisher/
+phrase và một host độc lập đã được fetched, qua basic source-quality checks hiện có, chứa exact anchor về host đó;
+hai observations phải khác host và không có explicit ownership conflict/deny/redirect mismatch. Source policy có
+thể phân loại và ưu tiên attestor, nhưng không được yêu cầu record cho corroborating source hay candidate
+organization/domain. Search hit thô không phải evidence. Social, short-link, DNS/RDAP, title/rank và name
+similarity chỉ là supporting hoặc bị loại khỏi root establishment. Identity ephemeral chỉ xác minh publisher/
 domain ownership; không xác minh arbitrary URL cùng host, social account, hay third-party resource nếu không có
 exact provenance riêng.
 

@@ -874,7 +874,13 @@ class SecurityInvestigationService:
         if step.tool is SecurityInvestigationToolV4.REDIRECT_RESOLVER:
             signal = "+".join(result.signals) if result.signals else result.status.value
             if result.status.value == "unresolved":
-                signal = "redirect_destination_unresolved+" + signal
+                # A guarded request can establish the final URL even when its
+                # response is unusable (for example, a 404 or bot challenge).
+                # ``UNRESOLVED`` here describes retrieval, not an unknown final
+                # destination: ``final_url`` and ``redirect_chain`` are already
+                # concrete. Do not project that availability limitation as the
+                # much stronger and false user-facing redirect claim.
+                signal = "redirect_resolution_inconclusive+" + signal
             return [
                 _evidence(
                     SecurityEvidenceTypeV4.REDIRECT,

@@ -204,6 +204,7 @@ class IdentityAssociationAssuranceV4(StrEnum):
 
 class IdentityEvidenceFamilyV4(StrEnum):
     ENTITY_SELF_IDENTIFICATION = "entity_self_identification"
+    AUTHORITATIVE_DOMAIN_ATTESTATION = "authoritative_domain_attestation"
     INDEPENDENT_ENTITY_LINK = "independent_entity_link"
     PARENT_DECLARATION = "parent_declaration"
     CANDIDATE_CORROBORATION = "candidate_corroboration"
@@ -322,6 +323,9 @@ class AssistantResponseV4(SecurityContractModel):
     follow_up_offer: str | None = Field(default=None, max_length=500)
     response_version: Literal["security-assistant-response-v1"] = SECURITY_ASSISTANT_RESPONSE_VERSION
     generation_mode: AssistantGenerationModeV4
+    # Present only for the emergency degradation path.  It is a normalized
+    # operational code, never a provider payload or internal exception.
+    degradation_reason: str | None = Field(default=None, max_length=100, pattern=r"^[a-z0-9_:-]+$")
 
     @model_validator(mode="after")
     def validate_unique_grounding(self) -> Self:
@@ -1216,13 +1220,13 @@ class SecurityScopeResponseV4(SecurityContractModel):
             if self.next_step == "END" and self.risk is None:
                 raise ValueError("completed in-scope response requires risk result")
         elif self.scope_decision is ScopeDecisionV4.NEED_MORE_INFO:
-            if not self.terminal or self.next_step != "END" or self.follow_up_question is None:
-                raise ValueError("need-more-info response requires a terminal follow-up question")
+            if not self.terminal or self.next_step != "END":
+                raise ValueError("need-more-info response requires a terminal end state")
             if self.boundary_message is not None:
                 raise ValueError("need-more-info response cannot contain a boundary message")
         else:
-            if not self.terminal or self.next_step != "END" or self.boundary_message is None:
-                raise ValueError("out-of-scope response requires a terminal boundary message")
+            if not self.terminal or self.next_step != "END":
+                raise ValueError("out-of-scope response requires a terminal end state")
             if (
                 self.follow_up_question is not None
                 or self.follow_up_slot is not None

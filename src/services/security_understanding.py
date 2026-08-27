@@ -232,13 +232,6 @@ _SEMANTIC_FIELDS = frozenset(
         "follow_up_question",
     }
 )
-_FOLLOW_UP_QUESTION = (
-    "Bạn có thể gửi nội dung đầy đủ của tin nhắn, tên người gửi và đường link hoặc hành động họ yêu cầu không?"
-)
-_BOUNDARY_MESSAGE = (
-    "Trợ lý này chỉ đánh giá rủi ro phishing, lừa đảo, giả mạo và các yêu cầu có thể gây mất tài khoản "
-    "hoặc tiền; hệ thống không xác minh tin tức hay kiến thức phổ thông."
-)
 _FALLBACK_LIMITATION = "AI semantic understanding không khả dụng; kết quả chỉ dùng rule cục bộ."
 _CONFLICT_LIMITATION = "AI semantic understanding xung đột với rule signal; rule được giữ nguyên."
 _BOUNDARY_CONFLICT_LIMITATION = "AI và rule xung đột về phạm vi; cần thêm thông tin trước khi điều tra."
@@ -863,7 +856,7 @@ def merge_semantic_understanding(
             next_step="END",
             security_context=None,
             follow_up_question=None,
-            boundary_message=_BOUNDARY_MESSAGE,
+            boundary_message=None,
             scope_reasons=_unique([*scope.scope_reasons, "ai_general_fact_check"]),
         )
     elif scope.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK:
@@ -872,7 +865,7 @@ def merge_semantic_understanding(
             terminal=True,
             next_step="END",
             security_context=None,
-            follow_up_question=_FOLLOW_UP_QUESTION,
+            follow_up_question=None,
             boundary_message=None,
         )
     return scope.model_copy(update=update)

@@ -470,6 +470,7 @@ async def security_chat_v4(
     principal: PrincipalDependency,
     service: SecurityTriageScopeServiceDependency,
     analyses: SecurityAnalysisServiceDependency,
+    responses: SecurityResponseServiceDependency,
 ) -> SecurityChatResponseV4:
     """Route a follow-up through the bounded chatbot before opening another analysis turn."""
     retained_context = ""
@@ -487,9 +488,11 @@ async def security_chat_v4(
         retained_context = _chat_context_document(conversation, active)
     local = service.assess(SecurityTriageCreateRequestV4(message=request.message))
     if set(local.scope_reasons) & {"assistant_capabilities", "assistant_greeting"}:
+        local = await responses.enrich_terminal(local)
+        assert local.boundary_message is not None
         return SecurityChatResponseV4(
             route=SecurityChatRouteV4.CONVERSATION,
-            response=local.boundary_message or "Tôi có thể hỗ trợ bạn kiểm tra rủi ro bảo mật.",
+            response=local.boundary_message,
         )
     from src.agents.graph import agent as chatbot_agent  # noqa: PLC0415
 

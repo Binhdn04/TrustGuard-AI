@@ -45,7 +45,7 @@ from src.models import (
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
 )
-from src.services.security_conversation_policy import deterministic_question, highest_exposure
+from src.services.security_conversation_policy import highest_exposure
 
 _EXPLICIT_GENERAL_FACT_REASONS = {
     "general_fact_check_sports",
@@ -249,7 +249,7 @@ class SecurityAnalysisService:
                     "scope_reasons": [*response.scope_reasons, "active_security_conversation"],
                     "security_context": existing.summary.security_context,
                     "assistant_context": previous_assistant,
-                    "follow_up_question": deterministic_question(MissingInformationSlotV4.ACTION_TAKEN),
+                    "follow_up_question": None,
                     "follow_up_slot": MissingInformationSlotV4.ACTION_TAKEN,
                     "boundary_message": None,
                 }

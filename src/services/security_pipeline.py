@@ -103,6 +103,11 @@ class SecurityTriagePipeline:
         if progress is not None:
             await progress("understanding", "Đã hợp nhất ngữ cảnh rule và AI.", [], None)
         if scoped.scope_decision is not ScopeDecisionV4.IN_SCOPE:
+            # Legacy test/dry-run response doubles may intentionally omit the
+            # composer. Production always supplies GroundedSecurityResponseService.
+            compose_terminal = getattr(self._responses, "enrich_terminal", None)
+            if compose_terminal is not None:
+                scoped = await compose_terminal(scoped)
             return self._complete(scoped)
 
         exposure = (

@@ -144,11 +144,11 @@ def test_composer_receives_and_must_cover_semantic_identity_mismatch_reasoning()
             "evidence_refs": ["evidence:aaaaaaaaaaaaaaaa"],
         }
     ]
-    assert payload["required_explanation_evidence_refs"] == ["evidence:aaaaaaaaaaaaaaaa"]
+    assert payload["available_explanation_evidence_refs"] == ["evidence:aaaaaaaaaaaaaaaa"]
     assert "internal diagnostic" not in str(payload)
 
     omitted = check_grounded_ai_response(result, AssistantSynthesis(summary="Nội dung này đáng ngờ."))
-    assert omitted.failure is SynthesisGroundingFailure.MISSING_DECISIVE_EXPLANATION
+    assert omitted.response is not None
     covered = check_grounded_ai_response(
         result,
         AssistantSynthesis(
@@ -165,6 +165,82 @@ def test_composer_receives_and_must_cover_semantic_identity_mismatch_reasoning()
         ),
     )
     assert covered.response is not None
+
+
+@pytest.mark.asyncio
+async def test_natural_composer_summary_without_audit_reasons_stays_on_ai_happy_path() -> None:
+    """A valid prose-only GPT response must not be replaced by field templates."""
+    scoped = _exact_resource_endorsement_scope(
+        organization="Example University",
+        resource_url="https://forms.example/enrollment",
+    )
+    natural_reply = AssistantSynthesis(
+        summary=(
+            "Biểu mẫu này đã được nguồn chính thức của Example University xác nhận sử dụng. "
+            "Tuy nhiên, chương trình được nhắc trong tin nhắn chưa có xác nhận riêng; "
+            "vì vậy biểu mẫu có cơ sở chính thức nhưng chưa đủ để xác nhận toàn bộ nội dung tin nhắn."
+        )
+    )
+
+    class _ProseOnlyComposer:
+        async def synthesize(self, payload):
+            del payload
+            return ModelResponse(output=natural_reply, provider="fake", model="synthesis-v1")
+
+    result = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_ProseOnlyComposer(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(scoped)
+
+    assert result.assistant_response is not None
+    assert result.assistant_response.generation_mode is AssistantGenerationModeV4.AI
+    assert result.assistant_response.summary == natural_reply.summary
+
+
+def test_composer_prefers_verified_domain_and_unverified_action_over_sender_status() -> None:
+    """The response should explain the decision, not enumerate verification fields."""
+    domain = SecurityEvidenceV4(
+        evidence_ref="evidence:1111111111111111",
+        type=SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
+        source="official-verification",
+        target="northstar.example",
+        signal="official_domain_verified",
+        description="fixture",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    sender = SecurityEvidenceV4(
+        evidence_ref="evidence:2222222222222222",
+        type=SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
+        source="official-verification",
+        target="Northstar Utilities",
+        signal="sender_identity_unverified",
+        description="fixture",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    action = SecurityEvidenceV4(
+        evidence_ref="evidence:3333333333333333",
+        type=SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
+        source="official-verification",
+        target="login",
+        signal="action_endorsement_unverified",
+        description="fixture",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    scoped = _risk_result().model_copy(update={"evidence": [domain, sender, action]})
+
+    payload = GroundedSecurityResponseService._synthesis_payload(scoped)
+
+    assert [fact["category"] for fact in payload["decisive_facts"]] == [
+        "official_domain_verified",
+        "requested_claim_or_action_unverified",
+    ]
+    assert payload["available_explanation_evidence_refs"] == [
+        "evidence:1111111111111111",
+        "evidence:3333333333333333",
+    ]
+    instruction = payload["presentation_constraints"]["explain_decisive_facts"]
+    assert instruction is not None and "Do not serialize facts" in instruction
 
 
 class _ValidSynthesisModel:
@@ -193,6 +269,55 @@ class _MalformedSynthesisModel:
             provider="fake",
             model="synthesis-v1",
         )
+
+
+class _TerminalComposer:
+    def __init__(self, prose: str) -> None:
+        self.prose = prose
+        self.payload: dict | None = None
+
+    async def synthesize(self, result):
+        self.payload = result
+        return ModelResponse(
+            output=AssistantSynthesis(summary=self.prose),
+            provider="fake",
+            model="terminal-composer-v1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_boundary_is_composed_from_structured_reason_not_a_template() -> None:
+    scoped = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message="xin chào"))
+    composer = _TerminalComposer("Chào bạn, mình có thể hỗ trợ kiểm tra tin nhắn hoặc liên kết đáng ngờ.")
+
+    result = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=composer,
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich_terminal(scoped)
+
+    assert result.boundary_message == composer.prose
+    assert composer.payload is not None
+    assert composer.payload["contract"] == "security-terminal-message-context-v1"
+    assert composer.payload["response_kind"] == "boundary"
+    assert composer.payload["boundary_reason"] == scoped.scope_reasons
+
+
+@pytest.mark.asyncio
+async def test_terminal_clarification_rejects_invalid_composer_output_and_uses_emergency_copy(caplog) -> None:
+    scoped = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message="có vẻ lừa đảo"))
+    composer = _TerminalComposer("Liên kết này đã được xác minh là an toàn?")
+
+    with caplog.at_level("WARNING", logger="trustguard.security_ai"):
+        result = await GroundedSecurityResponseService(
+            ai_enabled=True,
+            model=composer,
+            runtime=SecurityAssistantRuntime(max_retries=0),
+        ).enrich_terminal(scoped)
+
+    assert result.follow_up_question is not None
+    assert result.follow_up_question != composer.prose
+    assert any(item.getMessage() == "security_ai_terminal_composer_fallback" for item in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -225,6 +350,7 @@ async def test_invalid_synthesis_uses_the_deterministic_fallback_only_when_compo
     response = result.assistant_response
     assert response is not None
     assert response.generation_mode is AssistantGenerationModeV4.POLICY_GROUNDED
+    assert response.degradation_reason == "grounding_rejected"
     assert "Unsupported claim" not in response.summary
     assert not any("grounding" in item.casefold() for item in response.uncertainties)
     assert any(item.getMessage() == "security_ai_composer_fallback" for item in caplog.records)
@@ -380,6 +506,31 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
     assert "Điểm đến cuối của liên kết vẫn chưa xác định được." in fallback
 
 
+def test_verified_resource_does_not_project_http_failure_as_unknown_final_destination() -> None:
+    """A retrieval failure is not evidence that the already-known URL redirects elsewhere."""
+    scoped = _exact_resource_endorsement_scope(
+        organization="Northstar Utilities",
+        resource_url="https://portal.northstar.example/contact",
+    )
+    redirect = SecurityEvidenceV4(
+        evidence_ref="evidence:1234567890abcdef",
+        type=SecurityEvidenceTypeV4.REDIRECT,
+        source="redirect",
+        target="https://portal.northstar.example/contact",
+        # Regression coverage for an in-flight/older projection as well as
+        # the corrected source signal tested in security_investigation_v4.
+        signal="redirect_destination_unresolved+http_404",
+        description="The guarded request reached the submitted URL but returned HTTP 404.",
+        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    result = scoped.model_copy(update={"evidence": [*scoped.evidence, redirect]})
+
+    payload = GroundedSecurityResponseService._synthesis_payload(result)
+
+    assert payload["verification_state"]["submitted_resource"]["final_destination"] == "not_reported"
+    assert all(fact["category"] != "redirect_destination_unresolved" for fact in payload["decisive_facts"])
+
+
 def _exact_resource_endorsement_scope(*, organization: str, resource_url: str):
     scoped = SecurityTriageScopeService().assess(
         SecurityTriageCreateRequestV4(message=f"Please use {resource_url} for the enrollment.")
@@ -459,7 +610,8 @@ def _exact_resource_endorsement_scope(*, organization: str, resource_url: str):
         ("North Valley Library", "https://apply.river.example/summer-reading"),
     ],
 )
-def test_exact_resource_endorsement_survives_grounding_without_granting_domain_or_campaign_assurance(
+@pytest.mark.asyncio
+async def test_exact_resource_endorsement_survives_grounding_without_granting_domain_or_campaign_assurance(
     organization: str, resource_url: str
 ) -> None:
     """Regression: resource endorsement must not disappear behind publisher uncertainty."""
@@ -473,12 +625,55 @@ def test_exact_resource_endorsement_survives_grounding_without_granting_domain_o
     assert payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is False
 
     contradiction = AssistantSynthesis(
-        summary="The claimed campaign could not be verified from an official source."
+        summary="The exact submitted form could not be verified from an official source."
     )
     assert (
         check_grounded_ai_response(scoped, contradiction).failure
         is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT
     )
+    mixed_scope = scoped.model_copy(
+        update={
+            "evidence": [
+                SecurityEvidenceV4(
+                    evidence_ref="evidence:fedcba9876543210",
+                    type=SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
+                    source="official-verification",
+                    target=resource_url.split("/")[2],
+                    signal="exact_resource_endorsed",
+                    description="fixture",
+                    observed_at=datetime(2026, 8, 14, tzinfo=UTC),
+                )
+            ]
+        }
+    )
+    natural_mixed_reply = AssistantSynthesis(
+        summary=(
+            f"Biểu mẫu này đã được nguồn chính thức của {organization} xác nhận sử dụng. "
+            "Tuy nhiên, chưa tìm thấy bằng chứng chính thức xác nhận riêng chương trình hoặc lời mời đăng ký "
+            "trong tin nhắn này; vì vậy biểu mẫu có cơ sở chính thức nhưng chưa đủ để xác nhận toàn bộ nội dung."
+        ),
+        top_reasons=[
+            SynthesisReason(
+                text="Nguồn chính thức xác nhận biểu mẫu cụ thể; chương trình vẫn chưa được xác nhận riêng.",
+                evidence_refs=["evidence:fedcba9876543210"],
+            )
+        ],
+    )
+    assert check_grounded_ai_response(mixed_scope, natural_mixed_reply).response is not None
+
+    class _NaturalMixedComposer:
+        async def synthesize(self, payload):
+            del payload
+            return ModelResponse(output=natural_mixed_reply, provider="fake", model="synthesis-v1")
+
+    composed = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_NaturalMixedComposer(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(mixed_scope)
+    assert composed.assistant_response is not None
+    assert composed.assistant_response.generation_mode is AssistantGenerationModeV4.AI
+    assert composed.assistant_response.summary == natural_mixed_reply.summary
     accepted = check_grounded_ai_response(
         scoped,
         AssistantSynthesis(

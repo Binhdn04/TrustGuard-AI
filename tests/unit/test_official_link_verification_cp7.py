@@ -53,6 +53,7 @@ from src.services.official_verification_transport import (
     WebSearchHit,
 )
 from src.services.platform_wave2 import (
+    MemoryWave2Repository,
     SourceRegistryEntry,
     SourceTier,
     VersionedSourceRegistry,
@@ -89,6 +90,17 @@ class _BrandRepository:
     async def save_identity_candidate(self, record: IdentityCandidateV4) -> IdentityCandidateV4:
         self.candidates.append(record)
         return record
+
+
+class _ColdCacheBrandRepository:
+    """Production-compatible read path before an observing store is available."""
+
+    def __init__(self, brands: list[BrandRecordV4] | None = None) -> None:
+        self.brands = brands or []
+
+    async def list_active_brands(self, at: datetime) -> list[BrandRecordV4]:
+        assert at.tzinfo is not None
+        return list(self.brands)
 
 
 def _brand() -> BrandRecordV4:
@@ -290,13 +302,81 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
         "action_endorsement_unverified",
     }
     assert "chinhphu.vn" in response.summary
-    assert "Danh tính người gửi chưa được xác minh riêng." in response.summary
+    assert "Danh tính người gửi chưa được xác minh riêng." not in response.summary
     assert "mật khẩu hoặc OTP" in response.summary
 
     search.calls.clear()
     second = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
     assert second.identity_cache_hits > 0
     assert search.calls == []
+
+
+@pytest.mark.asyncio
+async def test_exact_authoritative_source_policy_verifies_unlisted_domain_without_endorsing_login_or_claim() -> None:
+    """An exact reviewed ownership record is distinct from campaign endorsement."""
+    organization = "Northstar Utilities"
+    target = "https://northstar.example/contact"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} hoàn tiền cho khách hàng; hãy đăng nhập tại {target}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})}
+    )
+    authoritative_domain = SourceRegistryEntry(
+        publisher=organization,
+        normalized_pattern="northstar.example",
+        tier=SourceTier.A,
+        source_type="official_enterprise",
+        allowed_operations={"read"},
+        policy_version="authoritative-domain-fixture-v1",
+        effective_from=NOW - timedelta(days=1),
+        default_freshness_seconds=3600,
+        reviewer_id="reviewer",
+        reviewed_at=NOW - timedelta(hours=1),
+    )
+    outcome = await _coordinator(
+        brands=[],
+        source_registry=VersionedSourceRegistry([authoritative_domain]),
+        fetcher=_HtmlFetcher({target: f"<html><body>{organization}</body></html>"}),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    report = outcome.report
+    association = next(item for item in report.identity_associations if item.canonical_url == target)
+    assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+    assert association.relationship is IdentityRelationshipV4.OFFICIAL_CONTROLLED
+    assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.claim_verification.status is not VerificationStatusV4.VERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.UNVERIFIED
+
+    stale_brand_gap = SecurityEvidenceV4(
+        evidence_ref="evidence:1234567890abcdef",
+        type=SecurityEvidenceTypeV4.BRAND_MATCH,
+        source="brand-registry",
+        target="northstar.example",
+        signal="claimed_identity_unverified",
+        description="Registry has no reviewed identity for this entity.",
+        observed_at=NOW,
+    )
+    reconciled = apply_official_verification_outcome(
+        scope.model_copy(
+            update={
+                "evidence": [stale_brand_gap],
+                "limitations": [
+                    "Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ giữa URL và tổ chức."
+                ],
+            }
+        ),
+        outcome,
+    )
+    assert all("Chưa có reviewed identity hoặc exact-resource" not in item for item in reconciled.limitations)
+    assert any(
+        item.signal == "official_domain_verified" for item in reconciled.evidence
+    )
 
 
 @pytest.mark.asyncio
@@ -330,7 +410,7 @@ async def test_domain_discovery_requires_both_consents_without_provider_calls(co
 def _coordinator(
     *,
     brands: list[BrandRecordV4] | None = None,
-    repository: _BrandRepository | None = None,
+    repository: object | None = None,
     search=None,
     fetcher=None,
     extract=None,
@@ -717,9 +797,8 @@ async def test_absent_organization_establishes_an_ephemeral_domain_from_independ
     organization = "Vingroup"
     official = "https://northstar.example/notices/apply"
     authority = "https://directory.example/organizations/viettel"
-    user_form = "https://forms.example/northstar-apply"
     request = SecurityTriageCreateRequestV4(
-        message=f"{organization} tuyển sinh, đăng ký tại {user_form}",
+        message=f"{organization} tuyển sinh, đăng ký tại {official}",
         consent={"official_source_lookup": True, "external_url_lookup": True},
     )
     scope = SecurityTriageScopeService().assess(request)
@@ -727,11 +806,10 @@ async def test_absent_organization_establishes_an_ephemeral_domain_from_independ
     scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
     outcome = await _coordinator(
         brands=[],
-        source_registry=VersionedSourceRegistry([_identity_attestor(host="directory.example")]),
         search=_SearchProvider([_hit(official), _hit(authority)]),
         fetcher=_HtmlFetcher(
             {
-                official: f"<html><body>{organization} tuyển sinh <a href='{user_form}'>Apply</a></body></html>",
+                official: f"<html><body>{organization} tuyển sinh</body></html>",
                 authority: f"<html><body>{organization} official website <a href='https://northstar.example/'>Website</a></body></html>",
             }
         ),
@@ -741,7 +819,89 @@ async def test_absent_organization_establishes_an_ephemeral_domain_from_independ
     assert outcome.report.publisher_verification.reason_code == "publisher_discovered_from_official_evidence"
     assert outcome.report.publisher_verification.identity is not None
     assert outcome.report.publisher_verification.identity.canonical_value == "northstar.example"
-    assert outcome.report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert outcome.report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.claim_verification.status is not VerificationStatusV4.VERIFIED
+    assert outcome.report.resource_verification.status is VerificationStatusV4.UNVERIFIED
+
+
+@pytest.mark.asyncio
+async def test_social_search_hit_cannot_bootstrap_domain_ownership() -> None:
+    """A fetched social post is not a basic-quality independent source."""
+    organization = "Vingroup"
+    official = "https://vingroup.example/"
+    social = "https://facebook.com/vingroup-fans"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} yêu cầu đăng nhập tại {official}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})}
+    )
+
+    outcome = await _coordinator(
+        brands=[],
+        search=_SearchProvider([_hit(official), _hit(social)]),
+        fetcher=_HtmlFetcher(
+            {
+                official: f"<html><body>{organization}</body></html>",
+                social: f"<html><body>{organization} official website <a href='{official}'>Website</a></body></html>",
+            }
+        ),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.domain_ownership_verification.status is VerificationStatusV4.UNVERIFIED
+    assert outcome.report.claim_verification.status is not VerificationStatusV4.VERIFIED
+    assert outcome.report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+
+
+@pytest.mark.asyncio
+async def test_cross_source_bootstraps_unregistered_domain_as_reviewable_source_proposal() -> None:
+    """A reviewed attestor can establish a new domain without pre-seeding that domain."""
+    organization = "Aurora Holdings"
+    official = "https://aurora-holdings.example/"
+    authority = "https://registry.example/entities/aurora"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} yêu cầu đăng nhập tại {official}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scope = SecurityTriageScopeService().assess(request)
+    assert scope.security_context is not None
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})}
+    )
+    registry = VersionedSourceRegistry([_identity_attestor(host="registry.example")])
+    discoveries = MemoryWave2Repository()
+    registry.bind_discovery_store(discoveries)
+
+    outcome = await _coordinator(
+        brands=[],
+        source_registry=registry,
+        search=_SearchProvider([_hit(official), _hit(authority)]),
+        fetcher=_HtmlFetcher(
+            {
+                official: f"<html><body>{organization}</body></html>",
+                authority: (
+                    f"<html><body>{organization} registered website "
+                    f"<a href='{official}'>Official website</a></body></html>"
+                ),
+            }
+        ),
+    ).coordinate(request, scope, execution_context=TurnExecutionContext())
+
+    assert outcome.report is not None
+    assert outcome.report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert outcome.report.claim_verification.status is not VerificationStatusV4.VERIFIED
+    assert outcome.report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    assert registry.matching_entries(official, NOW) == ()
+
+    proposals = await discoveries.list_source_discoveries()
+    proposal = next(item for item in proposals if item.domain == "aurora-holdings.example")
+    assert proposal.status == "observing"
+    assert proposal.publisher == organization
+    assert (proposal.extract_success_count, proposal.curated_agreement_count) == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -964,7 +1124,7 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
     assert payload["decisive_facts"][0]["category"] == "exact_resource_action_endorsed"
-    assert "evidence:dddddddddddddddd" in payload["required_explanation_evidence_refs"]
+    assert "evidence:dddddddddddddddd" in payload["available_explanation_evidence_refs"]
     raw_gpt_output = AssistantSynthesis(
         summary="The submitted resource could not be verified from an official source."
     )
@@ -976,6 +1136,31 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     assert "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này." in fallback
     assert "Danh tính người gửi chưa được xác minh riêng." in fallback
     assert "Chưa có xác nhận chính thức cho đúng hành động" not in fallback
+
+    natural_reply = AssistantSynthesis(
+        summary=(
+            "Biểu mẫu này đã được nguồn chính thức của Đại Học Thanh Hoa xác nhận sử dụng. "
+            "Tuy nhiên, chưa tìm thấy bằng chứng chính thức xác nhận riêng chương trình Future Learning With AI "
+            "hoặc lời mời đăng ký trong tin nhắn này. Vì vậy, link biểu mẫu có cơ sở chính thức nhưng chưa đủ "
+            "để xác nhận toàn bộ nội dung tin nhắn."
+        )
+    )
+    natural_check = check_grounded_ai_response(risk_result, natural_reply)
+    assert natural_check.failure is None
+
+    class _NaturalSynthesisModel:
+        async def synthesize(self, payload):
+            del payload
+            return ModelResponse(output=natural_reply, provider="test", model="test")
+
+    natural_final = await GroundedSecurityResponseService(
+        ai_enabled=True,
+        model=_NaturalSynthesisModel(),
+        runtime=SecurityAssistantRuntime(max_retries=0),
+    ).enrich(risk_result)
+    assert natural_final.assistant_response is not None
+    assert natural_final.assistant_response.generation_mode.value == "ai"
+    assert natural_final.assistant_response.summary == natural_reply.summary
 
     class _ContradictorySynthesisModel:
         async def synthesize(self, payload):
@@ -1426,6 +1611,129 @@ async def test_shared_pipeline_runs_verification_after_trust_and_before_risk_res
         "risk_assessment",
         "assistant_response",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_pipeline_bootstraps_generic_first_party_domain_without_cache_or_attestor() -> None:
+    """Cold-cache ownership is usable now; persistence is not a trust prerequisite."""
+    organization = "Northstar Institute"
+    submitted = "https://northstar.example/vi/contact"
+    about = "https://northstar.example/en/about"
+    authority = "https://directory.example/entities/northstar"
+    raw_hit = "https://untrusted.example/wiki/northstar"
+    request = SecurityTriageCreateRequestV4(
+        message=f"{organization} hoàn tiền; đăng nhập tại {submitted}",
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scoped = SecurityTriageScopeService().assess(request)
+    assert scoped.security_context is not None
+    scoped = scoped.model_copy(
+        update={"security_context": scoped.security_context.model_copy(update={"claimed_entity": organization})}
+    )
+    fetcher = _HtmlFetcher(
+        {
+            submitted: f"<html><body>{organization}</body></html>",
+            about: f"<html><body>{organization}</body></html>",
+            authority: f"<html><body>{organization} — Website: northstar.example</body></html>",
+            raw_hit: f"<html><body>{organization} not affiliated <a href='{submitted}'>link</a></body></html>",
+        }
+    )
+    coordinator = _coordinator(
+        repository=_ColdCacheBrandRepository(),
+        search=_SearchProvider([_hit(raw_hit), _hit(about), _hit(authority)]),
+        fetcher=fetcher,
+    )
+    pipeline = SecurityTriagePipeline(
+        understanding=_PassthroughUnderstanding(),
+        investigation=_PassthroughInvestigation(),
+        trust=_RecordingTrust([]),
+        official_verification=coordinator,
+        responses=_PassthroughResponse(),
+    )
+
+    result = await pipeline.process(request, scoped, runtime=SecurityAssistantRuntime(max_retries=0))
+
+    assert result.official_verification is not None
+    report = result.official_verification
+    assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+    assert report.claim_verification.status is not VerificationStatusV4.VERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+    assert not any(item.assurance is IdentityAssociationAssuranceV4.CONFLICTING for item in report.identity_associations)
+    assert any(
+        item.signal == "official_domain_verified" and item.target == "northstar.example"
+        for item in result.evidence
+    )
+    assert (
+        "Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ giữa URL và tổ chức."
+        not in result.limitations
+    )
+    assert fetcher.calls[:3] == [submitted, about, authority]
+
+
+@pytest.mark.asyncio
+async def test_runtime_pipeline_bootstraps_generic_third_party_exact_resource_without_cache() -> None:
+    """A self-identifying hosted form is not thereby an owned publisher domain."""
+    organization = "Northstar Institute"
+    submitted = "https://forms.example/apply/future-learning"
+    provenance = "https://events.example/future-learning"
+    request = SecurityTriageCreateRequestV4(
+        message=f'{organization} presents "Future Learning With AI"; apply at {submitted}',
+        consent={"official_source_lookup": True, "external_url_lookup": True},
+    )
+    scoped = SecurityTriageScopeService().assess(request)
+    assert scoped.security_context is not None
+    scoped = scoped.model_copy(
+        update={"security_context": scoped.security_context.model_copy(update={"claimed_entity": organization})}
+    )
+    coordinator = _coordinator(
+        repository=_ColdCacheBrandRepository(),
+        search=_SearchProvider([_hit(provenance)]),
+        fetcher=_HtmlFetcher(
+            {
+                submitted: f"<html><body>{organization} — Future Learning With AI</body></html>",
+                provenance: (
+                    f"<html><body>{organization} presents Future Learning With AI. "
+                    f"<a href='{submitted}'>Apply</a></body></html>"
+                ),
+            }
+        ),
+    )
+    pipeline = SecurityTriagePipeline(
+        understanding=_PassthroughUnderstanding(),
+        investigation=_PassthroughInvestigation(),
+        trust=_RecordingTrust([]),
+        official_verification=coordinator,
+        responses=_PassthroughResponse(),
+    )
+
+    result = await pipeline.process(request, scoped, runtime=SecurityAssistantRuntime(max_retries=0))
+
+    assert result.official_verification is not None
+    report = result.official_verification
+    # The provenance-search edge must retain the entity/campaign query.  The
+    # submitted third-party host is checked on the separate exact-resource
+    # edge; putting it into this query caused relevant official sources to be
+    # omitted by query-sensitive providers.
+    assert coordinator._search is not None
+    assert coordinator._search.calls[0][0] == 'Northstar Institute "Future Learning With AI"'
+    assert result.security_context is not None
+    assert result.security_context.urls == [submitted]
+    assert report.intent.requested_action is not None
+    assert report.intent.action_url_indices == [0]
+    association = next(item for item in report.identity_associations if item.canonical_url == submitted)
+    assert association.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+    assert association.assurance is IdentityAssociationAssuranceV4.VERIFIED
+    assert report.domain_ownership_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.resource_verification.status is VerificationStatusV4.PARTIALLY_VERIFIED
+    assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
+    assert report.sender_verification.status is VerificationStatusV4.UNVERIFIED
+    assert report.claim_verification.status is VerificationStatusV4.UNVERIFIED
+    assert result.risk is not SecurityRiskV4.SAFE
+    payload = GroundedSecurityResponseService._synthesis_payload(result)
+    assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
+    assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
+    assert payload["verification_state"]["domain_ownership"] == "UNVERIFIED"
+    assert payload["verification_state"]["sender_identity"] == "UNVERIFIED"
 
 
 @pytest.mark.asyncio
