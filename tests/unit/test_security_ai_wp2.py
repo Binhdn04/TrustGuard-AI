@@ -36,7 +36,9 @@ def test_missing_slot_policy_is_ordered_and_asks_exactly_one_question() -> None:
     result = apply_adaptive_conversation_policy("Tôi nhận được tin nhắn lạ", scoped)
 
     assert result.follow_up_slot is MissingInformationSlotV4.ACTION_TAKEN
-    assert result.follow_up_question.count("?") == 1
+    # Policy selects the only allowed slot; the response composer supplies
+    # user-facing wording after that selection.
+    assert result.follow_up_question is None
     assert result.assistant_context.missing_information == [slot.value for slot in MissingInformationSlotV4]
 
 
@@ -60,7 +62,7 @@ def test_llm_can_only_phrase_the_policy_selected_slot() -> None:
     )
 
     assert result.follow_up_slot is MissingInformationSlotV4.ACTION_TAKEN
-    assert "123456" not in result.follow_up_question
+    assert result.follow_up_question is None
 
 
 def test_exposure_is_local_and_monotonic() -> None:

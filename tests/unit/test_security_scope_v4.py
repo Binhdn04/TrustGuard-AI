@@ -44,26 +44,23 @@ def test_explicit_impersonation_is_in_scope() -> None:
 
 
 @pytest.mark.parametrize("message", ["Xin chào", "Chào bạn!", "Hello", "Hi TrustGuard"])
-def test_basic_greeting_gets_a_local_conversational_response(message: str) -> None:
+def test_basic_greeting_is_a_terminal_local_boundary(message: str) -> None:
     response = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
 
     assert response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
     assert response.scope_reasons == ["assistant_greeting"]
-    assert response.boundary_message is not None
-    assert response.boundary_message.startswith("Chào bạn!")
+    assert response.boundary_message is None
     assert response.risk is None
     assert response.tool_calls_used == 0
 
 
 @pytest.mark.parametrize("message", ["Bạn là ai?", "TrustGuard là gì?", "Hướng dẫn sử dụng"])
-def test_basic_capability_questions_explain_the_security_assistant(message: str) -> None:
+def test_basic_capability_questions_are_a_terminal_local_boundary(message: str) -> None:
     response = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message=message))
 
     assert response.scope_decision is ScopeDecisionV4.OUT_OF_SCOPE_GENERAL_FACT_CHECK
     assert response.scope_reasons == ["assistant_capabilities"]
-    assert response.boundary_message is not None
-    assert "TrustGuard" in response.boundary_message
-    assert "hỏi lại" in response.boundary_message
+    assert response.boundary_message is None
 
 
 def test_security_content_takes_precedence_over_a_greeting() -> None:
@@ -79,14 +76,13 @@ def test_vague_phishing_question_needs_context() -> None:
     assert result.decision is ScopeDecisionV4.NEED_MORE_INFO
 
 
-def test_vague_security_concern_needs_one_focused_follow_up() -> None:
+def test_vague_security_concern_defers_follow_up_prose_to_response_composer() -> None:
     response = SecurityTriageScopeService().assess(SecurityTriageCreateRequestV4(message="Tôi nhận được tin nhắn lạ"))
 
     assert response.scope_decision is ScopeDecisionV4.NEED_MORE_INFO
     assert response.terminal is True
     assert response.next_step == "END"
-    assert response.follow_up_question is not None
-    assert response.follow_up_question.count("?") == 1
+    assert response.follow_up_question is None
     assert response.security_context is None
 
 

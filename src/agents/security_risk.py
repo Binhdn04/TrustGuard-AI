@@ -756,10 +756,7 @@ def assess_security_risk(
                     for item in scope.evidence
                     if item.type.value == "domain_familiarity"
                     and item.signal == "reviewed_platform_service"
-                    and any(
-                        _is_origin_only_url(url) and _target_matches(item.target, url)
-                        for url in context.urls
-                    )
+                    and any(_is_origin_only_url(url) and _target_matches(item.target, url) for url in context.urls)
                 ]
                 if risk is SecurityRiskV4.SAFE and passive_target_ownership
                 else []

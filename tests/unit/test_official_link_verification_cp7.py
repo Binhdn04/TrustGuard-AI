@@ -269,10 +269,10 @@ async def test_discovered_official_domain_keeps_sender_and_login_action_unverifi
     fetcher = _HtmlFetcher(
         {
             target: "<html><body>Cổng thông tin điện tử Chính phủ Việt Nam.</body></html>",
-    corroboration: (
-        "<html><body>Danh bạ Chính phủ Việt Nam: trang chính thức "
-        f"<a href='{target}'>Cổng thông tin</a></body></html>"
-    ),
+            corroboration: (
+                "<html><body>Danh bạ Chính phủ Việt Nam: trang chính thức "
+                f"<a href='{target}'>Cổng thông tin</a></body></html>"
+            ),
         }
     )
     coordinator = _coordinator(
@@ -374,9 +374,7 @@ async def test_exact_authoritative_source_policy_verifies_unlisted_domain_withou
         outcome,
     )
     assert all("Chưa có reviewed identity hoặc exact-resource" not in item for item in reconciled.limitations)
-    assert any(
-        item.signal == "official_domain_verified" for item in reconciled.evidence
-    )
+    assert any(item.signal == "official_domain_verified" for item in reconciled.evidence)
 
 
 @pytest.mark.asyncio
@@ -803,7 +801,9 @@ async def test_absent_organization_establishes_an_ephemeral_domain_from_independ
     )
     scope = SecurityTriageScopeService().assess(request)
     assert scope.security_context is not None
-    scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})}
+    )
     outcome = await _coordinator(
         brands=[],
         search=_SearchProvider([_hit(official), _hit(authority)]),
@@ -916,7 +916,9 @@ async def test_reviewed_domain_authenticates_only_its_exact_social_post_and_its_
     )
     scope = SecurityTriageScopeService().assess(request)
     assert scope.security_context is not None
-    scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})}
+    )
     outcome = await _coordinator(
         brands=[_brand()],
         search=_SearchProvider([_hit(official)]),
@@ -946,11 +948,17 @@ async def test_same_name_social_result_is_not_an_identity_without_an_official_ou
         update={"message": f"{organization} tuyển sinh, đăng ký tại https://forms.example/northstar-apply"}
     )
     assert scope.security_context is not None
-    scope = scope.model_copy(update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})})
+    scope = scope.model_copy(
+        update={"security_context": scope.security_context.model_copy(update={"claimed_entity": organization})}
+    )
     outcome = await _coordinator(
         brands=[],
         search=_SearchProvider([_hit(social_post)]),
-        fetcher=_HtmlFetcher({social_post: f"<html><body>{organization} <a href='https://forms.example/northstar-apply'>Apply</a></body></html>"}),
+        fetcher=_HtmlFetcher(
+            {
+                social_post: f"<html><body>{organization} <a href='https://forms.example/northstar-apply'>Apply</a></body></html>"
+            }
+        ),
     ).coordinate(request, scope, execution_context=TurnExecutionContext())
 
     assert outcome.report is not None
@@ -1125,9 +1133,7 @@ async def test_discovered_entity_resource_chain_is_automatically_verified_withou
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
     assert payload["decisive_facts"][0]["category"] == "exact_resource_action_endorsed"
     assert "evidence:dddddddddddddddd" in payload["available_explanation_evidence_refs"]
-    raw_gpt_output = AssistantSynthesis(
-        summary="The submitted resource could not be verified from an official source."
-    )
+    raw_gpt_output = AssistantSynthesis(summary="The submitted resource could not be verified from an official source.")
     assert (
         check_grounded_ai_response(risk_result, raw_gpt_output).failure
         is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT
@@ -1658,10 +1664,11 @@ async def test_runtime_pipeline_bootstraps_generic_first_party_domain_without_ca
     assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
     assert report.claim_verification.status is not VerificationStatusV4.VERIFIED
     assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
-    assert not any(item.assurance is IdentityAssociationAssuranceV4.CONFLICTING for item in report.identity_associations)
+    assert not any(
+        item.assurance is IdentityAssociationAssuranceV4.CONFLICTING for item in report.identity_associations
+    )
     assert any(
-        item.signal == "official_domain_verified" and item.target == "northstar.example"
-        for item in result.evidence
+        item.signal == "official_domain_verified" and item.target == "northstar.example" for item in result.evidence
     )
     assert (
         "Chưa có reviewed identity hoặc exact-resource association để xác nhận quan hệ giữa URL và tổ chức."
@@ -1712,8 +1719,7 @@ async def test_generic_editorial_scam_warning_does_not_negate_host_bound_ownersh
         for item in outcome.report.identity_associations
     )
     assert all(
-        observation.family.value != "explicit_ownership_conflict"
-        for observation in outcome.report.identity_evidence
+        observation.family.value != "explicit_ownership_conflict" for observation in outcome.report.identity_evidence
     )
 
 

@@ -462,8 +462,7 @@ def verified_exact_resource_endorsement_associations(
         match is None
         or user_resource is None
         or not user_resource.canonical_url
-        or match.status
-        not in {ResourceMatchStatusV4.EXACT_RESOURCE, ResourceMatchStatusV4.EXACT_CANONICAL_URL}
+        or match.status not in {ResourceMatchStatusV4.EXACT_RESOURCE, ResourceMatchStatusV4.EXACT_CANONICAL_URL}
     ):
         return []
     user_canonical = _canonical_discovery_url(user_resource.canonical_url)
@@ -499,8 +498,7 @@ def has_verified_exact_resource_endorsement(
         match is None
         or user_resource is None
         or not user_resource.canonical_url
-        or match.status
-        not in {ResourceMatchStatusV4.EXACT_RESOURCE, ResourceMatchStatusV4.EXACT_CANONICAL_URL}
+        or match.status not in {ResourceMatchStatusV4.EXACT_RESOURCE, ResourceMatchStatusV4.EXACT_CANONICAL_URL}
         or report.resource_verification.status is not VerificationStatusV4.VERIFIED
         or not report.resource_verification.evidence_refs
     ):
@@ -946,6 +944,7 @@ class OfficialLinkVerificationCoordinator:
                         )
                     )
                     return
+
         def add_exact_cross_link_candidate(link: ExtractedOfficialLink, page: _PageEvidence) -> None:
             """Continue one exact social URL explicitly linked by an accepted source.
 
@@ -1066,7 +1065,8 @@ class OfficialLinkVerificationCoordinator:
                         adapter_attempts += result.tool_calls_used
                         if result.status is VerificationTransportStatus.SUCCESS:
                             urls = [
-                                canonical for hit in result.results[:_MAX_SEARCH_RESULTS]
+                                canonical
+                                for hit in result.results[:_MAX_SEARCH_RESULTS]
                                 if (canonical := _canonical_discovery_url(hit.url)) is not None
                             ]
                             gained = planner.observe_candidates(urls) or gained
@@ -1119,13 +1119,10 @@ class OfficialLinkVerificationCoordinator:
         elif verifiable_identities and online_verification_needed:
             limitations.append("official_source_consent_required")
 
-        discovery_needed = (
-            early_stop_reason != "strong_official_contradiction"
-            and (
-                resolution.status in {BrandResolutionStatus.NOT_FOUND, BrandResolutionStatus.AMBIGUOUS}
-                or not identities
-                or bool(user_urls)
-            )
+        discovery_needed = early_stop_reason != "strong_official_contradiction" and (
+            resolution.status in {BrandResolutionStatus.NOT_FOUND, BrandResolutionStatus.AMBIGUOUS}
+            or not identities
+            or bool(user_urls)
         )
         if discovery_needed:
             (
@@ -1478,7 +1475,8 @@ class OfficialLinkVerificationCoordinator:
                 calls += result.tool_calls_used
                 if result.status is VerificationTransportStatus.SUCCESS:
                     urls = [
-                        canonical for hit in result.results
+                        canonical
+                        for hit in result.results
                         if (canonical := _canonical_discovery_url(hit.url)) is not None
                     ]
                     gained = planner.observe_candidates(urls) or gained
@@ -1580,8 +1578,7 @@ class OfficialLinkVerificationCoordinator:
             url
             for url in ordered_candidates
             if any(
-                (host := (urlsplit(url).hostname or "").casefold()) == target_host
-                or host.endswith(f".{target_host}")
+                (host := (urlsplit(url).hostname or "").casefold()) == target_host or host.endswith(f".{target_host}")
                 for target_host in target_hosts
             )
         ]
@@ -1747,9 +1744,8 @@ class OfficialLinkVerificationCoordinator:
                     # checks may corroborate this exact hostname.  Reviewed
                     # attestor policy can still prioritize a source, but is
                     # not a prerequisite for ownership bootstrap.
-                    if (
-                        self._is_basic_independent_identity_source(source_url, now)
-                        and _has_explicit_ownership_conflict(text, host)
+                    if self._is_basic_independent_identity_source(source_url, now) and _has_explicit_ownership_conflict(
+                        text, host
                     ):
                         candidate_observations.append(
                             _identity_observation(
@@ -1916,12 +1912,11 @@ class OfficialLinkVerificationCoordinator:
                 or not {
                     IdentityEvidenceFamilyV4.ENTITY_SELF_IDENTIFICATION,
                     IdentityEvidenceFamilyV4.INDEPENDENT_ENTITY_LINK,
-                } <= families
+                }
+                <= families
             ):
                 continue
-            claim_hash = hashlib.sha256(
-                f"{_fold(entity)}\0{association.canonical_domain}".encode()
-            ).hexdigest()
+            claim_hash = hashlib.sha256(f"{_fold(entity)}\0{association.canonical_domain}".encode()).hexdigest()
             observed = observe(
                 url=association.canonical_url,
                 publisher=entity,
@@ -1943,15 +1938,16 @@ class OfficialLinkVerificationCoordinator:
     def _is_root_identity_candidate(self, url: str, at: datetime) -> bool:
         """Reject hosts that cannot establish an organization root by themselves."""
         host = (urlsplit(url).hostname or "").casefold().rstrip(".")
-        if not host or any(host == value or host.endswith(f".{value}") for value in (*_SOCIAL_HOSTS, *_SHORT_LINK_HOSTS)):
+        if not host or any(
+            host == value or host.endswith(f".{value}") for value in (*_SOCIAL_HOSTS, *_SHORT_LINK_HOSTS)
+        ):
             return False
         if self._source_registry is None:
             return True
         # An explicit reviewed deny is a veto, not a reason to fall back to
         # provider-derived identity evidence.
         return not any(
-            getattr(entry, "explicit_deny", False)
-            for entry in self._source_registry.matching_entries(url, at)
+            getattr(entry, "explicit_deny", False) for entry in self._source_registry.matching_entries(url, at)
         )
 
     def _is_basic_independent_identity_source(self, url: str, at: datetime) -> bool:
@@ -2205,11 +2201,15 @@ class OfficialLinkVerificationCoordinator:
             )
             if extraction.identity_assessment.status is not FinalPageIdentityStatus.ACCEPTED:
                 return None, calls, ["final_page_identity_not_accepted"]
-            return _PageEvidence(
-                extraction,
-                _visible_html_text(fetched.document.body),
-                candidate.source_identity,
-            ), calls, []
+            return (
+                _PageEvidence(
+                    extraction,
+                    _visible_html_text(fetched.document.body),
+                    candidate.source_identity,
+                ),
+                calls,
+                [],
+            )
 
         limitation = fetched.limitation
         limitations = [f"official_fetch_{limitation.value}"] if limitation is not None else ["official_fetch_failed"]

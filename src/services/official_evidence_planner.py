@@ -4,6 +4,7 @@ The planner has no trust authority.  It records candidate material and chooses
 the next *missing evidence edge*; deterministic verification consumes the
 material separately.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -61,7 +62,9 @@ class EvidenceRetrievalPlanner:
         normalized_entity: str = "",
         normalized_topic: str = "",
     ) -> None:
-        self.graph = EvidenceGraph(entity=" ".join(entity.split()), campaign=" ".join(campaign.split()), resource_url=resource_url)
+        self.graph = EvidenceGraph(
+            entity=" ".join(entity.split()), campaign=" ".join(campaign.split()), resource_url=resource_url
+        )
         self._normalized_entity = " ".join(normalized_entity.split())
         self._normalized_topic = " ".join(normalized_topic.split())
         self._completed: set[tuple[EvidenceEdge, RetrievalDirection]] = set()
@@ -79,12 +82,21 @@ class EvidenceRetrievalPlanner:
         self.graph.candidate_sources.update(urls)
         return self._record_progress(len(self.graph.candidate_sources) > before)
 
-    def observe_source(self, url: str, *, resource_links: list[str] | tuple[str, ...] = (), social_urls: list[str] | tuple[str, ...] = ()) -> bool:
+    def observe_source(
+        self,
+        url: str,
+        *,
+        resource_links: list[str] | tuple[str, ...] = (),
+        social_urls: list[str] | tuple[str, ...] = (),
+    ) -> bool:
         before = (len(self.graph.fetched_sources), len(self.graph.resource_links), len(self.graph.social_publications))
         self.graph.fetched_sources.add(url)
         self.graph.resource_links.update(resource_links)
         self.graph.social_publications.update(social_urls)
-        return self._record_progress(before != (len(self.graph.fetched_sources), len(self.graph.resource_links), len(self.graph.social_publications)))
+        return self._record_progress(
+            before
+            != (len(self.graph.fetched_sources), len(self.graph.resource_links), len(self.graph.social_publications))
+        )
 
     def next_frontier(self) -> EvidenceFrontier | None:
         if self.stop_reason is not None:
@@ -93,7 +105,9 @@ class EvidenceRetrievalPlanner:
         # again; this is the key guard against a query-paraphrase loop.
         unfetched = sorted(self.graph.candidate_sources - self.graph.fetched_sources)
         if unfetched:
-            return self._frontier(EvidenceEdge.ENTITY_CAMPAIGN, RetrievalDirection.SOURCE_CENTRIC, candidates=unfetched[:2])
+            return self._frontier(
+                EvidenceEdge.ENTITY_CAMPAIGN, RetrievalDirection.SOURCE_CENTRIC, candidates=unfetched[:2]
+            )
         if not self.graph.candidate_sources:
             identity = self._frontier(
                 EvidenceEdge.ENTITY_OFFICIAL_IDENTITY,
@@ -120,11 +134,20 @@ class EvidenceRetrievalPlanner:
         self._completed.add((frontier.edge, frontier.direction))
         self._record_progress(new_evidence)
 
-    def _frontier(self, edge: EvidenceEdge, direction: RetrievalDirection, *, queries: tuple[str, ...] = (), candidates: tuple[str, ...] = ()) -> EvidenceFrontier | None:
+    def _frontier(
+        self,
+        edge: EvidenceEdge,
+        direction: RetrievalDirection,
+        *,
+        queries: tuple[str, ...] = (),
+        candidates: tuple[str, ...] = (),
+    ) -> EvidenceFrontier | None:
         key = (edge, direction)
         if key in self._completed:
             return None
-        filtered = tuple(query for query in queries if self._remember_work(direction, query))[: self.max_queries_per_frontier]
+        filtered = tuple(query for query in queries if self._remember_work(direction, query))[
+            : self.max_queries_per_frontier
+        ]
         if direction is not RetrievalDirection.SOURCE_CENTRIC and not filtered:
             return None
         return EvidenceFrontier(edge=edge, direction=direction, queries=filtered, candidate_urls=tuple(candidates))
@@ -132,7 +155,9 @@ class EvidenceRetrievalPlanner:
     def _claim_queries(self) -> tuple[str, ...]:
         values = [
             " ".join(
-                value for value in (self.graph.entity, f'"{self.graph.campaign}"' if self.graph.campaign else "") if value
+                value
+                for value in (self.graph.entity, f'"{self.graph.campaign}"' if self.graph.campaign else "")
+                if value
             )
         ]
         normalized = (

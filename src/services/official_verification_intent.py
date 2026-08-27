@@ -248,21 +248,12 @@ def _action_url_indices(
     boundaries = [match.start() for match in _ACTION_URL_BOUNDARY_RE.finditer(message)]
     clause_start = max((boundary for boundary in boundaries if boundary < action_start), default=-1) + 1
     clause_end = min((boundary for boundary in boundaries if boundary >= action_end), default=len(message))
-    candidates = [
-        position
-        for position in positions
-        if position[1] >= clause_start and position[2] <= clause_end
-    ]
+    candidates = [position for position in positions if position[1] >= clause_start and position[2] <= clause_end]
     if not candidates:
         return []
-    nearest_distance = min(
-        max(action_start - end, start - action_end, 0)
-        for _, start, end in candidates
-    )
+    nearest_distance = min(max(action_start - end, start - action_end, 0) for _, start, end in candidates)
     nearest = [
-        index
-        for index, start, end in candidates
-        if max(action_start - end, start - action_end, 0) == nearest_distance
+        index for index, start, end in candidates if max(action_start - end, start - action_end, 0) == nearest_distance
     ]
     # An equally-close pair is ambiguous; do not convert either URL into
     # action evidence.
@@ -528,9 +519,7 @@ class OfficialVerificationQueryBuilder:
                 dict.fromkeys(_sanitize_query_segment(item) for item in phrases if _sanitize_query_segment(item))
             )[:3],
             resource_hosts=tuple(dict.fromkeys(host for host in hosts if host))[:3],
-            resource_identifiers=tuple(
-                dict.fromkeys(value for value in identifiers if 3 <= len(value) <= 120)
-            )[:3],
+            resource_identifiers=tuple(dict.fromkeys(value for value in identifiers if 3 <= len(value) <= 120))[:3],
             action_terms=(action,) if action else (),
         )
 
@@ -569,7 +558,7 @@ class OfficialVerificationQueryBuilder:
         # URL/action clues are useful recovery paths only after natural
         # entity-plus-subject searches; they must not contaminate recall.
         if signals.campaign_phrases and signals.resource_hosts:
-            text = _sanitize_query_segment(f'{signals.campaign_phrases[0]} {signals.resource_hosts[0]}')
+            text = _sanitize_query_segment(f"{signals.campaign_phrases[0]} {signals.resource_hosts[0]}")
             deterministic.append(
                 VerificationQuery(
                     query_id=f"query:{hashlib.sha256(text.encode()).hexdigest()[:16]}",
@@ -589,7 +578,9 @@ class OfficialVerificationQueryBuilder:
         # Reserve room for recall expansion: otherwise legacy rule variants
         # could consume the complete query budget before GPT is consulted.
         for candidate in [*deterministic, *expanded, *self.build(intent)]:
-            text = candidate.text if isinstance(candidate, VerificationQuery) else _sanitize_query_segment(str(candidate))
+            text = (
+                candidate.text if isinstance(candidate, VerificationQuery) else _sanitize_query_segment(str(candidate))
+            )
             if not isinstance(candidate, VerificationQuery):
                 folded = text.casefold()
                 grounded_names = tuple(name.casefold() for name in signals.entity_names)

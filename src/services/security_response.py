@@ -162,7 +162,9 @@ def _emergency_terminal_prose(scope: SecurityScopeResponseV4) -> str:
         if "assistant_greeting" in scope.scope_reasons:
             return "TrustGuard có thể giúp kiểm tra tin nhắn, liên kết hoặc yêu cầu đáng ngờ."
         if "assistant_capabilities" in scope.scope_reasons:
-            return "TrustGuard hỗ trợ nhận diện phishing, lừa đảo, giả mạo và yêu cầu có thể làm mất tài khoản hoặc tiền."
+            return (
+                "TrustGuard hỗ trợ nhận diện phishing, lừa đảo, giả mạo và yêu cầu có thể làm mất tài khoản hoặc tiền."
+            )
         return "TrustGuard chỉ đánh giá rủi ro phishing, lừa đảo, giả mạo và các yêu cầu có thể gây mất tài khoản hoặc tiền."
     return {
         "action_taken": "Bạn đã bấm liên kết, nhập thông tin, gửi OTP hoặc chuyển tiền chưa?",
@@ -300,10 +302,10 @@ _GENERIC_VERIFY_BEFORE_CONTINUING = re.compile(
 )
 
 _RESOURCE_WORDS = re.compile(r"(?:liên kết|đường dẫn|tài nguyên|biểu mẫu|form|resource|link|url)", re.IGNORECASE)
-_ACTION_WORDS = re.compile(
-    r"(?:hành động|thao tác|điền(?:\s+biểu)?\s*mẫu|apply|resource|form|action)", re.IGNORECASE
+_ACTION_WORDS = re.compile(r"(?:hành động|thao tác|điền(?:\s+biểu)?\s*mẫu|apply|resource|form|action)", re.IGNORECASE)
+_NEGATION_WORDS = re.compile(
+    r"(?:chưa|không|không thể|không có|no|not|cannot|could not|unable to|insufficient)", re.IGNORECASE
 )
-_NEGATION_WORDS = re.compile(r"(?:chưa|không|không thể|không có|no|not|cannot|could not|unable to|insufficient)", re.IGNORECASE)
 _OFFICIAL_EVIDENCE_WORDS = re.compile(
     r"(?:nguồn|kênh|trang|website).{0,20}chính thức|official (?:source|evidence|verification)", re.IGNORECASE
 )
@@ -330,7 +332,9 @@ def _sentence_denies_official_fact(
         negation = _NEGATION_WORDS.search(sentence)
         official = _OFFICIAL_EVIDENCE_WORDS.search(sentence)
         subjects = list(subject.finditer(sentence))
-        denial = re.search(r"(?:xác minh|xác nhận|kiểm chứng|bằng chứng|verified|confirmed|verification)", sentence, re.IGNORECASE)
+        denial = re.search(
+            r"(?:xác minh|xác nhận|kiểm chứng|bằng chứng|verified|confirmed|verification)", sentence, re.IGNORECASE
+        )
         if negation is None or denial is None or not subjects:
             continue
         if not requires_explicit_official_source:
@@ -359,10 +363,7 @@ def _sentence_denies_official_fact(
             return True
         # Vietnamese often places the denial first, but the denied subject
         # should immediately follow the official-evidence phrase.
-        if any(
-            negation.start() < item.start() and 0 <= item.start() - official.end() <= 48
-            for item in subjects
-        ):
+        if any(negation.start() < item.start() and 0 <= item.start() - official.end() <= 48 for item in subjects):
             return True
     return False
 
@@ -383,6 +384,7 @@ def _has_verified_passive_target_allow_open(scope: SecurityScopeResponseV4) -> b
         and not context.personal_information_request
     ):
         return False
+
     def owns_target(item: SecurityEvidenceV4, url: str) -> bool:
         if not item.target:
             return False
@@ -483,9 +485,7 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
         None,
     )
     official_evidence_by_signal = {
-        item.signal.casefold(): item
-        for item in scope.evidence
-        if item.type.value == "official_verification"
+        item.signal.casefold(): item for item in scope.evidence if item.type.value == "official_verification"
     }
 
     # Contradictions come first: they most directly explain why an otherwise
@@ -513,7 +513,10 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
                 finding="Điểm đến cuối của liên kết vẫn chưa xác định được.",
                 implication="Không thể dùng tên miền ban đầu để kết luận điểm đến cuối an toàn hoặc thuộc tổ chức được nhắc tới.",
             )
-        elif any(marker in signal for marker in ("malicious", "confirmed_threat", "approved_blacklist_hit", "threat_intelligence_hit")):
+        elif any(
+            marker in signal
+            for marker in ("malicious", "confirmed_threat", "approved_blacklist_hit", "threat_intelligence_hit")
+        ):
             add(
                 category="credible_harmful_target_signal",
                 evidence=evidence,
@@ -545,12 +548,15 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
     verification = scope.official_verification
     domain_evidence = official_evidence_by_signal.get("official_domain_verified")
     if domain_evidence is not None or (
-        verification is not None
-        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
+        verification is not None and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
     ):
-        target = _display_target(domain_evidence.target) if domain_evidence is not None else next(
-            (_display_target(url) for url in (context.urls if context is not None else []) if _display_target(url)),
-            None,
+        target = (
+            _display_target(domain_evidence.target)
+            if domain_evidence is not None
+            else next(
+                (_display_target(url) for url in (context.urls if context is not None else []) if _display_target(url)),
+                None,
+            )
         )
         add(
             category="official_domain_verified",
@@ -559,8 +565,7 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
             implication="Điều này xác nhận nguồn của tên miền, không tự xác nhận người gửi hay nội dung yêu cầu.",
         )
     claim_unverified = bool(
-        verification is not None
-        and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
+        verification is not None and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
     )
     if claim_unverified:
         claim = verification.intent.claim_summary
@@ -617,14 +622,17 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
             # resource/action fact explaining the decision. It must not crowd
             # out the actual claim the user is being asked to act on.
             if (
-                (domain_evidence is not None or (
+                domain_evidence is not None
+                or (
                     verification is not None
                     and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
-                ))
-                and (action_evidence is not None or (
+                )
+            ) and (
+                action_evidence is not None
+                or (
                     verification is not None
                     and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
-                ))
+                )
             ):
                 continue
             add(
@@ -667,17 +675,16 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
             and verification.intent.claim_summary
             and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
         ):
-            explanation_parts.append(
-                f"Thông tin về {verification.intent.claim_summary} chưa được xác nhận riêng."
-            )
+            explanation_parts.append(f"Thông tin về {verification.intent.claim_summary} chưa được xác nhận riêng.")
         if _has_verified_exact_resource_endorsement(scope):
             explanation_parts.append("Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này.")
-        explanation_parts.append(" ".join(
-            f"{fact['finding']} {fact['security_meaning']}" for fact in decisive_facts
-        ))
+        explanation_parts.append(" ".join(f"{fact['finding']} {fact['security_meaning']}" for fact in decisive_facts))
         if scope.risk is not None:
             explanation_parts.append(_RISK_GUIDANCE[scope.risk])
-        if verification is not None and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED:
+        if (
+            verification is not None
+            and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
+        ):
             explanation_parts.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
         explanation = " ".join(explanation_parts)
         if scope.recommended_actions:
@@ -699,9 +706,17 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     if (ownership is not None and ownership.target) or (
         verification is not None and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
     ):
-        domain = _display_target(ownership.target) if ownership is not None else next(
-            (_display_target(url) for url in (scope.security_context.urls if scope.security_context else []) if _display_target(url)),
-            None,
+        domain = (
+            _display_target(ownership.target)
+            if ownership is not None
+            else next(
+                (
+                    _display_target(url)
+                    for url in (scope.security_context.urls if scope.security_context else [])
+                    if _display_target(url)
+                ),
+                None,
+            )
         )
         verification_sentences.append(f"{domain or 'Tên miền được gửi'} đã được xác minh là tên miền chính thức.")
     # A text-and-URL submission does not identify a sender. Keep this separate
@@ -711,9 +726,7 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
         and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
         and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
     ):
-        verification_sentences.append(
-            "Danh tính người gửi chưa được xác minh riêng."
-        )
+        verification_sentences.append("Danh tính người gửi chưa được xác minh riêng.")
     if action is not None:
         verification_sentences.append("Chưa có xác nhận chính thức cho đúng hành động mà tin nhắn yêu cầu.")
         verification_sentences.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
@@ -815,9 +828,8 @@ def check_grounded_ai_response(
     # verified too.
     if verification is not None:
         affirmative = r"(?:đã được|được|đã)\s*(?:xác minh|xác nhận|kiểm chứng)"
-        if (
-            verification.domain_ownership_verification.status is not VerificationStatusV4.VERIFIED
-            and re.search(rf"(?:tên miền|domain).{{0,60}}{affirmative}", combined)
+        if verification.domain_ownership_verification.status is not VerificationStatusV4.VERIFIED and re.search(
+            rf"(?:tên miền|domain).{{0,60}}{affirmative}", combined
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
@@ -826,9 +838,8 @@ def check_grounded_ai_response(
             and re.search(rf"(?:liên kết|đường link|tài nguyên).{{0,60}}{affirmative}", combined)
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-        if (
-            verification.sender_verification.status is not VerificationStatusV4.VERIFIED
-            and re.search(rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined)
+        if verification.sender_verification.status is not VerificationStatusV4.VERIFIED and re.search(
+            rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
@@ -839,9 +850,7 @@ def check_grounded_ai_response(
             and re.search(rf"(?:hành động|yêu cầu|đăng ký|điền(?:\s+biểu)?\s*mẫu).{{0,60}}{affirmative}", combined)
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-    if _has_verified_exact_resource_endorsement(scope) and _sentence_denies_official_fact(
-        combined, _RESOURCE_WORDS
-    ):
+    if _has_verified_exact_resource_endorsement(scope) and _sentence_denies_official_fact(combined, _RESOURCE_WORDS):
         return SynthesisGroundingCheck(
             None,
             SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT,
@@ -944,7 +953,9 @@ class GroundedSecurityResponseService:
         if not self._ai_enabled:
             return scope.model_copy(update={"assistant_response": emergency_assistant_response(scope, "ai_disabled")})
         if self._model is None:
-            return scope.model_copy(update={"assistant_response": emergency_assistant_response(scope, "provider_unavailable")})
+            return scope.model_copy(
+                update={"assistant_response": emergency_assistant_response(scope, "provider_unavailable")}
+            )
 
         result = await self._runtime.invoke(
             AssistantOperation.SYNTHESIZE,
@@ -976,7 +987,9 @@ class GroundedSecurityResponseService:
                     "final_response_source": "policy_grounded",
                 },
             )
-            return scope.model_copy(update={"assistant_response": emergency_assistant_response(scope, _degradation_reason(reason))})
+            return scope.model_copy(
+                update={"assistant_response": emergency_assistant_response(scope, _degradation_reason(reason))}
+            )
         logger.info(
             "security_ai_response_trace",
             extra={
@@ -995,7 +1008,11 @@ class GroundedSecurityResponseService:
         """
         if scope.risk is not None or (scope.boundary_message is not None and scope.follow_up_question is not None):
             return scope
-        field = "boundary_message" if scope.scope_decision.value == "OUT_OF_SCOPE_GENERAL_FACT_CHECK" else "follow_up_question"
+        field = (
+            "boundary_message"
+            if scope.scope_decision.value == "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+            else "follow_up_question"
+        )
         if not self._ai_enabled or self._model is None:
             return scope.model_copy(update={field: _emergency_terminal_prose(scope)})
         result = await self._runtime.invoke(
@@ -1018,7 +1035,9 @@ class GroundedSecurityResponseService:
             "contract": "security-terminal-message-context-v1",
             "response_kind": "boundary" if is_boundary else "clarification",
             "boundary_reason": list(scope.scope_reasons) if is_boundary else None,
-            "clarification_needed": scope.follow_up_slot.value if scope.follow_up_slot is not None else "general_security_context",
+            "clarification_needed": scope.follow_up_slot.value
+            if scope.follow_up_slot is not None
+            else "general_security_context",
             "allowed_actions": [],
             "decisive_facts": [],
             "missing_evidence": list(scope.limitations),
@@ -1063,11 +1082,7 @@ class GroundedSecurityResponseService:
                 "verified_passive_target": verified_passive_target,
                 # This fact is intentionally independent from risk, domain
                 # ownership, sender identity, and campaign-wide verification.
-                **(
-                    {"verified_exact_resource_endorsement": True}
-                    if verified_exact_resource_endorsement
-                    else {}
-                ),
+                **({"verified_exact_resource_endorsement": True} if verified_exact_resource_endorsement else {}),
                 "credible_malicious_evidence": malicious_evidence_observed,
                 "no_risky_requested_action": bool(
                     scope.security_context is not None

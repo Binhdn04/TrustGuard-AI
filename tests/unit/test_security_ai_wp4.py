@@ -134,7 +134,7 @@ def test_composer_receives_and_must_cover_semantic_identity_mismatch_reasoning()
         {
             "category": "claimed_entity_target_mismatch",
             "finding": (
-                    "Tên miền organization-b.example đã được đối chiếu thuộc một tổ chức khác, "
+                "Tên miền organization-b.example đã được đối chiếu thuộc một tổ chức khác, "
                 "trong khi nội dung gắn nó với Tổ chức A."
             ),
             "security_meaning": (
@@ -789,8 +789,6 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
     )
     generic_caution = check_grounded_ai_response(
         endorsed_allow_open,
-        AssistantSynthesis(
-            summary="Biểu mẫu đã được xác nhận, nhưng hãy xác minh thêm trước khi tiếp tục đăng ký."
-        ),
+        AssistantSynthesis(summary="Biểu mẫu đã được xác nhận, nhưng hãy xác minh thêm trước khi tiếp tục đăng ký."),
     )
     assert generic_caution.failure is SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT
