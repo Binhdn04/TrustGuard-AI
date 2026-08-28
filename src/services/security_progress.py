@@ -6,11 +6,25 @@ Phase 0 baseline that later reporter and UI work must share.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from types import MappingProxyType
+from uuid import UUID
 
-from src.models.security_v4 import SecurityProgressStateV4
+from src.models.security_v4 import (
+    AnalysisStatus,
+    SecurityAnalysisEventKindV4,
+    SecurityAnalysisEventV4,
+    SecurityProgressStateV4,
+)
+
+logger = logging.getLogger(__name__)
+
+AppendSecurityProgressEvent = Callable[[SecurityAnalysisEventV4], Awaitable[SecurityAnalysisEventV4]]
 
 
 class SecurityProgressStage(StrEnum):
@@ -163,6 +177,11 @@ class SecurityProgressUpdate:
     state: SecurityProgressStateV4
     message_code: SecurityProgressMessageCode
 
+    @classmethod
+    def for_message_code(cls, message_code: SecurityProgressMessageCode) -> SecurityProgressUpdate:
+        stage, state = _UPDATE_SPECIFICATIONS[message_code]
+        return cls(stage=stage, state=state, message_code=message_code)
+
     def __post_init__(self) -> None:
         if not isinstance(self.stage, SecurityProgressStage):
             raise TypeError("progress stage must be allowlisted")
@@ -174,11 +193,132 @@ class SecurityProgressUpdate:
             raise ValueError("progress message code does not match stage and state")
 
 
+_STOP = object()
+
+
+class SecurityProgressReporter:
+    """Fail-open, ordered delivery of coarse progress events for one job.
+
+    ``emit`` is intentionally an async compatibility point but only performs
+    a non-blocking queue write. Database persistence is isolated in a single
+    background task, so a telemetry failure cannot affect the check result.
+    """
+
+    def __init__(
+        self,
+        analysis_id: UUID,
+        append_event: AppendSecurityProgressEvent,
+        *,
+        queue_maxsize: int = PROGRESS_EVENT_QUEUE_MAXSIZE,
+        quiesce_timeout_seconds: float = PROGRESS_QUIESCE_TIMEOUT_SECONDS,
+    ) -> None:
+        if queue_maxsize < 1:
+            raise ValueError("progress queue must have positive capacity")
+        if quiesce_timeout_seconds <= 0:
+            raise ValueError("progress quiesce timeout must be positive")
+        self._analysis_id = analysis_id
+        self._append_event = append_event
+        self._queue: asyncio.Queue[SecurityProgressUpdate | object] = asyncio.Queue(maxsize=queue_maxsize)
+        self._quiesce_timeout_seconds = quiesce_timeout_seconds
+        self._writer: asyncio.Task[None] | None = None
+        self._accepting = False
+        self._quiesced = False
+
+    def start(self) -> None:
+        if self._writer is not None:
+            raise RuntimeError("progress reporter already started")
+        self._accepting = True
+        self._writer = asyncio.create_task(self._write(), name=f"security-progress-{self._analysis_id}")
+
+    async def emit(self, update: SecurityProgressUpdate) -> None:
+        if not self._accepting:
+            return
+        if not isinstance(update, SecurityProgressUpdate):
+            logger.warning("security_progress_invalid_update", extra={"failure_code": "invalid_update"})
+            return
+        try:
+            self._queue.put_nowait(update)
+        except asyncio.QueueFull:
+            logger.warning("security_progress_queue_full", extra={"failure_code": "queue_full"})
+
+    async def quiesce(self) -> None:
+        """Stop intake and boundedly drain; drop rather than delay final commit."""
+        if self._quiesced:
+            return
+        self._accepting = False
+        writer = self._writer
+        if writer is None:
+            self._quiesced = True
+            return
+        try:
+            await asyncio.wait_for(self._queue.join(), timeout=self._quiesce_timeout_seconds)
+        except TimeoutError:
+            logger.warning("security_progress_quiesce_timeout", extra={"failure_code": "quiesce_timeout"})
+            self._discard_pending()
+            writer.cancel()
+            await asyncio.gather(writer, return_exceptions=True)
+        except asyncio.CancelledError:
+            self._discard_pending()
+            writer.cancel()
+            await asyncio.gather(writer, return_exceptions=True)
+            raise
+        else:
+            self._queue.put_nowait(_STOP)
+            try:
+                await writer
+            except Exception as exc:
+                logger.warning(
+                    "security_progress_writer_failed",
+                    extra={"failure_code": type(exc).__name__},
+                )
+        finally:
+            self._quiesced = True
+
+    def _discard_pending(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            else:
+                self._queue.task_done()
+
+    async def _write(self) -> None:
+        while True:
+            item = await self._queue.get()
+            try:
+                if item is _STOP:
+                    return
+                assert isinstance(item, SecurityProgressUpdate)
+                event = SecurityAnalysisEventV4(
+                    analysis_id=self._analysis_id,
+                    sequence=1,
+                    status=AnalysisStatus.RUNNING,
+                    step=item.stage.value,
+                    kind=SecurityAnalysisEventKindV4.PROGRESS,
+                    progress_state=item.state,
+                    step_id=item.stage.value,
+                    message=item.message_code.value,
+                    occurred_at=datetime.now(UTC),
+                )
+                try:
+                    await self._append_event(event)
+                except Exception as exc:
+                    logger.warning(
+                        "security_progress_append_failed",
+                        extra={"failure_code": type(exc).__name__},
+                    )
+            finally:
+                self._queue.task_done()
+
+
 __all__ = [
     "PROGRESS_EVENT_QUEUE_MAXSIZE",
     "PROGRESS_QUIESCE_TIMEOUT_SECONDS",
     "PROGRESS_STAGE_ALLOWLIST",
+    "AppendSecurityProgressEvent",
     "SecurityProgressMessageCode",
+    "SecurityProgressReporter",
     "SecurityProgressStage",
     "SecurityProgressUpdate",
 ]

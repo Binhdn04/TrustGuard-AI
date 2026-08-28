@@ -21,8 +21,24 @@ from src.services.platform_wave2 import UsageLedgerEntry
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
 from src.services.security_pipeline import SecurityTriagePipeline
+from src.services.security_progress import (
+    SecurityProgressMessageCode,
+    SecurityProgressReporter,
+    SecurityProgressUpdate,
+)
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_PROGRESS_CODES = {
+    "running": SecurityProgressMessageCode.RUNNING_STARTED,
+    "understanding": SecurityProgressMessageCode.UNDERSTANDING_COMPLETED,
+    "incident_response": SecurityProgressMessageCode.INCIDENT_RESPONSE_COMPLETED,
+    "investigation": SecurityProgressMessageCode.INVESTIGATION_COMPLETED,
+    "official_link_verification": SecurityProgressMessageCode.OFFICIAL_LINK_VERIFICATION_COMPLETED,
+    "security_memory_lookup": SecurityProgressMessageCode.SECURITY_MEMORY_LOOKUP_COMPLETED,
+    "risk_assessment": SecurityProgressMessageCode.RISK_ASSESSMENT_COMPLETED,
+    "assistant_response": SecurityProgressMessageCode.ASSISTANT_RESPONSE_COMPLETED,
+}
 
 
 class SecurityV4JobHandler:
@@ -52,31 +68,30 @@ class SecurityV4JobHandler:
         owner_id, request, scoped = loaded
         principal = Principal(owner_id, UserRole.USER)
         runtime = self._runtime_factory()
+        reporter = SecurityProgressReporter(job.analysis_id, self._repository.append_security_analysis_event)
+        reporter.start()
 
         async def progress(step: str, message: str, evidence_refs: list[str], risk_hint) -> None:
-            await self._repository.append_security_analysis_event(
-                SecurityAnalysisEventV4(
-                    analysis_id=job.analysis_id,
-                    sequence=1,
-                    status=AnalysisStatus.RUNNING,
-                    step=step,
-                    kind=SecurityAnalysisEventKindV4.PROGRESS,
-                    step_id=step,
-                    message=message,
-                    evidence_refs=evidence_refs,
-                    risk_hint=risk_hint,
-                    occurred_at=datetime.now(UTC),
-                )
-            )
+            del message, evidence_refs, risk_hint
+            message_code = _LEGACY_PROGRESS_CODES.get(step)
+            if message_code is None:
+                logger.warning("security_progress_unknown_legacy_step", extra={"failure_code": "unknown_step"})
+                return
+            await reporter.emit(SecurityProgressUpdate.for_message_code(message_code))
 
         await progress("running", "Worker đã nhận immutable Security v4 turn.", [], None)
-        result = await self._pipeline_factory(runtime).process(
+        try:
+            result = await self._pipeline_factory(runtime).process(
             request,
             scoped.model_copy(update={"status": AnalysisStatus.RUNNING}),
             runtime=runtime,
             progress=progress,
             owner_id=owner_id,
-        )
+            )
+        except BaseException:
+            await reporter.quiesce()
+            raise
+        await reporter.quiesce()
         if result.status is not AnalysisStatus.COMPLETED:
             result = result.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
         if result.risk is not None:

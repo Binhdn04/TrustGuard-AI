@@ -274,15 +274,15 @@ File dự kiến:
 
 ### Phase 2 — Fail-open progress reporter
 
-- [ ] Tạo bounded queue và single writer.
-- [ ] `emit` chỉ validate/enqueue, không chờ PostgreSQL/network.
-- [ ] Queue full drop event và ghi metric code; không raise vào pipeline.
-- [ ] Append failure drop event và ghi metric code; không raise vào pipeline/job retry.
-- [ ] Writer giữ enqueue order và dùng repository append hiện hành.
-- [ ] Reporter có lifecycle start/stop/quiesce rõ ràng.
-- [ ] Quiesce timeout hủy/drop pending event và không append sau final.
-- [ ] Cancellation của worker/lease vẫn được truyền đúng; không nuốt task cancellation hệ thống.
-- [ ] Final transaction không đi qua fail-open reporter.
+- [x] Tạo bounded queue và single writer.
+- [x] `emit` chỉ validate/enqueue, không chờ PostgreSQL/network.
+- [x] Queue full drop event và ghi metric code; không raise vào pipeline.
+- [x] Append failure drop event và ghi metric code; không raise vào pipeline/job retry.
+- [x] Writer giữ enqueue order và dùng repository append hiện hành.
+- [x] Reporter có lifecycle start/stop/quiesce rõ ràng.
+- [x] Quiesce timeout hủy/drop pending event và không append sau final.
+- [x] Cancellation của worker/lease vẫn được truyền đúng; không nuốt task cancellation hệ thống.
+- [x] Final transaction không đi qua fail-open reporter.
 
 File dự kiến:
 

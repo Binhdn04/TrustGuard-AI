@@ -67,12 +67,14 @@ class FakeDurableRepository:
         self.payload = (owner_id, request, scoped)
         self.events = []
         self.completed = None
+        self.progress_after_final = False
 
     async def load_security_job_payload(self, job, worker_id):
         del job, worker_id
         return self.payload
 
     async def append_security_analysis_event(self, event):
+        self.progress_after_final = self.completed is not None
         event = event.model_copy(update={"sequence": len(self.events) + 1})
         self.events.append(event)
         return event
@@ -130,6 +132,12 @@ async def test_durable_handler_emits_progress_purges_payload_and_keeps_side_effe
     assert repository.completed is not None
     assert [event.kind.value for event in repository.events] == ["progress", "progress", "final"]
     assert [event.step for event in repository.events] == ["running", "investigation", "completed"]
+    assert [event.progress_state.value if event.progress_state else None for event in repository.events] == [
+        "started",
+        "completed",
+        None,
+    ]
+    assert repository.progress_after_final is False
     assert memory.effects == {scoped.analysis_id}
     assert proposed == {scoped.analysis_id}
     assert analyses.finalized == [(scoped.analysis_id, "owner-1")]
