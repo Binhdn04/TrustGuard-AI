@@ -4,8 +4,13 @@
 
 ```bash
 uv run ruff check .
-uv run pytest -q
+uv run pytest -q --cov --cov-report=term-missing --cov-report=xml:coverage.xml
 uv run alembic heads
+
+# PostgreSQL integration: point to a migrated disposable database.
+DATABASE_URL=postgresql://app:app@localhost:5432/p068_integration uv run alembic upgrade head
+TEST_DATABASE_URL=postgresql://app:app@localhost:5432/p068_integration \
+  uv run pytest tests/integration -o addopts= -m integration -q
 
 cd frontend
 npm test
@@ -16,9 +21,11 @@ npm run build
 npm run test:e2e
 ```
 
-Verification gần nhất của workspace ngày 2026-08-25: Ruff đạt; backend `629 passed`; Alembic có một head
-`0021_security_blacklist_v4`; frontend `115 passed`; lint, typecheck và cutover đều đạt. Đây là snapshot có ngày,
-không thay thế kết quả CI hoặc lần chạy lại trên commit chuẩn bị deploy.
+Verification gần nhất của workspace ngày 2026-08-28: Ruff đạt; backend mặc định `702 passed, 3 deselected`,
+line coverage `68.78%` vượt gate `68%`; Alembic có một head `0022_action_assurance_metadata`. Ba PostgreSQL
+integration case được tách sang job CI riêng, job này dựng PostgreSQL 16 disposable, chạy `alembic upgrade head`,
+rồi mới chạy marker `integration`. Máy local của snapshot này không có Docker daemon nên chưa tạo được bằng chứng
+PostgreSQL thật tại local; CI integration phải pass trước merge. Frontend không được chạy lại trong thay đổi backend này.
 
 Evaluation:
 

@@ -32,6 +32,13 @@ from src.observability.langfuse import close_langfuse_observability, get_langfus
 logger = logging.getLogger("trustguard.official_verification")
 
 
+def documentation_urls(app_env: str) -> dict[str, str | None]:
+    """Expose interactive API documentation only outside production."""
+    if app_env == "production":
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -73,6 +80,7 @@ app = FastAPI(
     description="Evidence-grounded risk analysis API",
     version="3.0.0",
     lifespan=lifespan,
+    **documentation_urls(get_settings().app_env),
 )
 
 settings = get_settings()

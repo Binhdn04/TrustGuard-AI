@@ -16,6 +16,23 @@ async def test_retired_v2_v3_routes_are_not_mounted(client, path: str) -> None:
     assert response.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_ip_rate_limit_runs_before_authentication(client, monkeypatch) -> None:
+    class DeniedLimiter:
+        async def allow(self, key, limit, window_seconds=60):
+            assert key.startswith("ip:")
+            assert limit > 0
+            return False
+
+    monkeypatch.setattr("src.api.dependencies.get_rate_limiter", lambda: DeniedLimiter())
+
+    response = await client.get("/api/v4/capabilities")
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "RATE_LIMITED"
+    assert response.headers["x-request-id"]
+
+
 def test_openapi_contains_only_v4_product_routes() -> None:
     from src.main import app
 
