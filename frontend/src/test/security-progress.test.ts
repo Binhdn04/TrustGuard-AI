@@ -25,6 +25,6 @@ describe("security progress registry", () => {
   it("never renders a backend message or sensitive detail", () => {
     expect(securityProgressLabel("investigation", "started")).toBe("Đang kiểm tra các tín hiệu liên quan");
     expect(securityProgressLabel("url_reputation", "completed")).toBe("Đang tiếp tục kiểm tra nội dung");
-    expect(securityProgressLabel("investigation", "unexpected-state")).toBe("Đang kiểm tra các tín hiệu liên quan");
+    expect(securityProgressLabel("investigation", "unexpected-state")).toBe("Đang tiếp tục kiểm tra nội dung");
   });
 });

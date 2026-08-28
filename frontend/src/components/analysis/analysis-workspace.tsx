@@ -31,6 +31,7 @@ export function AnalysisWorkspace({ api = getSecurityAnalysisApi() }: { api?: Se
       transport={securityCase.transport}
       error={securityCase.error}
       lifecycleEvents={securityCase.lifecycleEvents}
+      progress={securityCase.progress}
       latest={securityCase.latest}
       busy={securityCase.busy}
       api={api}

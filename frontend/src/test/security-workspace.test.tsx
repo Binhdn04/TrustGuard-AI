@@ -89,6 +89,11 @@ function apiWith(createAnalysis: SecurityAnalysisApi["createAnalysis"]): Securit
   };
 }
 
+function setComposerMessage(composer: HTMLElement, value: string) {
+  composer.textContent = value;
+  fireEvent.input(composer);
+}
+
 describe("Security Chat workspace", () => {
   it("keeps a rich-pasted link in the submitted and rendered conversation turn", async () => {
     const create = vi.fn().mockResolvedValue(response());
@@ -140,7 +145,7 @@ describe("Security Chat workspace", () => {
     });
     render(<AnalysisWorkspace api={api} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn yêu cầu OTP");
     expect(screen.queryByText("Cho phép kiểm tra URL bên ngoài")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Cho phép đối chiếu nguồn chính thức/i })).not.toBeInTheDocument();
     expect(screen.getByText(/kiểm tra liên kết bằng dịch vụ bảo mật/i)).toBeInTheDocument();
@@ -162,7 +167,7 @@ describe("Security Chat workspace", () => {
     expect(screen.getByRole("heading", { name: "Bạn muốn kiểm tra điều gì?" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Intake & follow-up" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn cần kiểm tra" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn cần kiểm tra");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("heading", { name: "Trò chuyện với trợ lý" })).toBeInTheDocument();
@@ -183,11 +188,11 @@ describe("Security Chat workspace", () => {
       .mockResolvedValueOnce(response({ conversation_version: 2, follow_up_question: "Bạn có URL không?" }));
     render(<AnalysisWorkspace api={apiWith(create)} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn này đáng ngờ" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn này đáng ngờ");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
     await screen.findByLabelText("Họ yêu cầu bạn làm gì?");
 
-    fireEvent.change(screen.getByLabelText("Họ yêu cầu bạn làm gì?"), { target: { value: "Họ yêu cầu gửi OTP" } });
+    setComposerMessage(screen.getByLabelText("Họ yêu cầu bạn làm gì?"), "Họ yêu cầu gửi OTP");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
@@ -217,11 +222,11 @@ describe("Security Chat workspace", () => {
     const api = apiWith(create);
     render(<AnalysisWorkspace api={api} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra nội dung này" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Kiểm tra nội dung này");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
     expect(await screen.findByRole("heading", { name: "Đáng ngờ" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Nếu tôi đã mở link thì sao?" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Nếu tôi đã mở link thì sao?");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
@@ -259,11 +264,11 @@ describe("Security Chat workspace", () => {
     api.chat = chat;
     render(<AnalysisWorkspace api={api} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra nội dung này" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Kiểm tra nội dung này");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
     expect(await screen.findByRole("heading", { name: "Đáng ngờ" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Cảm ơn bạn" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Cảm ơn bạn");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByText(/Nếu có tin nhắn đáng ngờ khác/i)).toBeInTheDocument();
@@ -284,7 +289,7 @@ describe("Security Chat workspace", () => {
       scope_reasons: ["general_fact_check_news"],
     })));
     render(<AnalysisWorkspace api={api} />);
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin tức này đúng không?" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin tức này đúng không?");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByText(/nằm ngoài phạm vi Security Triage/i)).toBeInTheDocument();
@@ -311,7 +316,7 @@ describe("Security Chat workspace", () => {
       explanation: "Yêu cầu OTP có bằng chứng đe dọa đã xác nhận.",
     })));
     render(<AnalysisWorkspace api={api} />);
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Ngân hàng yêu cầu OTP" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Ngân hàng yêu cầu OTP");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("heading", { name: "Độc hại" })).toBeInTheDocument();
@@ -372,7 +377,7 @@ describe("Security Chat workspace", () => {
       security_page_capture: true,
     });
     render(<AnalysisWorkspace api={api} />);
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra link" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Kiểm tra link");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     const assistant = await screen.findByRole("region", { name: "Phản hồi của trợ lý bảo mật" });
@@ -428,7 +433,7 @@ describe("Security Chat workspace", () => {
       resolution_note: null, reviewer_id: null, created_at: "2026-08-13T08:00:00Z", resolved_at: null,
     });
     render(<AnalysisWorkspace api={api} />);
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Tin nhắn yêu cầu OTP" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn yêu cầu OTP");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     fireEvent.click(await screen.findByText("Xem kết quả chi tiết"));
@@ -447,7 +452,7 @@ describe("Security Chat workspace", () => {
       .mockResolvedValueOnce(response());
     render(<AnalysisWorkspace api={apiWith(create)} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Kiểm tra yêu cầu chuyển tiền" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Kiểm tra yêu cầu chuyển tiền");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Mất kết nối tạm thời");
@@ -468,9 +473,7 @@ describe("Security Chat workspace", () => {
     ));
     render(<AnalysisWorkspace api={apiWith(create)} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), {
-      target: { value: "Kiểm tra yêu cầu chuyển tiền" },
-    });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Kiểm tra yêu cầu chuyển tiền");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -482,7 +485,7 @@ describe("Security Chat workspace", () => {
     const api = apiWith(vi.fn().mockResolvedValue(response({ status: "failed" })));
     render(<AnalysisWorkspace api={api} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Case provider lỗi" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Case provider lỗi");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Chưa thể hoàn tất kiểm tra");
@@ -496,7 +499,7 @@ describe("Security Chat workspace", () => {
     }));
     render(<AnalysisWorkspace api={apiWith(create)} />);
 
-    fireEvent.change(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), { target: { value: "Case phản hồi chậm" } });
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Case phản hồi chậm");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Bắt đầu trường hợp mới" }));
     resolveCreate(response());

@@ -6,6 +6,7 @@ import { ApiError } from "@/lib/api/api-error";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
 import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
+import { selectSecurityProgress } from "@/lib/security-progress";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
 
@@ -65,12 +66,22 @@ function messageForError(error: unknown): string {
     : "Không thể kết nối tới dịch vụ Security Triage.";
 }
 
+function mergeLifecycleEvents(
+  current: SecurityAnalysisEventV4[],
+  incoming: SecurityAnalysisEventV4[],
+): SecurityAnalysisEventV4[] {
+  const byEventId = new Map(current.map((event) => [event.event_id, event]));
+  incoming.forEach((event) => byEventId.set(event.event_id, event));
+  return [...byEventId.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
 export function useSecurityCase(api: SecurityAnalysisApi) {
   const [turns, setTurns] = useState<SecurityCaseTurn[]>([]);
   const [state, setState] = useState<SecurityCaseState>("IDLE");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
   const [error, setError] = useState<string | null>(null);
   const [lifecycleEvents, setLifecycleEvents] = useState<SecurityAnalysisEventV4[]>([]);
+  const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<{ id: string; version: number } | null>(null);
   const subscription = useRef<{ stop(): void } | null>(null);
   const generation = useRef(0);
@@ -96,6 +107,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     )));
     setConversation({ id: result.conversation_id, version: result.conversation_version });
     setState(stateFor(result));
+    setActiveAnalysisId(null);
   }, []);
 
   const monitor = useCallback((turnId: string, analysisId: string, activeGeneration: number) => {
@@ -103,7 +115,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     subscription.current = subscribeToSecurityEvents(api, analysisId, {
       onEvents: (events) => {
         if (!mounted.current || activeGeneration !== generation.current) return;
-        setLifecycleEvents((current) => [...current, ...events].sort((left, right) => left.sequence - right.sequence));
+        setLifecycleEvents((current) => mergeLifecycleEvents(current, events));
         if (events.some((event) => event.kind === "provisional")) {
           setState("PROVISIONAL_WARNING");
         }
@@ -143,6 +155,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     setState("RUNNING");
     setTransport("disconnected");
     setLifecycleEvents([]);
+    setActiveAnalysisId(null);
 
     try {
       let capabilities = null;
@@ -169,6 +182,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
         )));
         setConversation({ id: result.conversation_id, version: result.conversation_version });
         setState("RUNNING");
+        setActiveAnalysisId(result.analysis_id);
       }
       if (result.status === "running" || result.status === "queued") {
         monitor(turnId, result.analysis_id, activeGeneration);
@@ -255,10 +269,12 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     setState("IDLE");
     setTransport("disconnected");
     setLifecycleEvents([]);
+    setActiveAnalysisId(null);
   }, [stopRuntime]);
 
   const latest = turns.findLast((turn) => turn.result !== null)?.result ?? null;
   const busy = state === "CHATTING" || state === "RUNNING" || state === "PROVISIONAL_WARNING";
+  const progress = selectSecurityProgress(activeAnalysisId, lifecycleEvents);
 
   return {
     turns,
@@ -266,6 +282,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     transport,
     error,
     lifecycleEvents,
+    progress,
     conversation,
     latest,
     busy,

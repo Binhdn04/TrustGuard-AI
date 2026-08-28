@@ -6,9 +6,11 @@ import type {
 } from "@/lib/hooks/use-security-case";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
+import type { SecurityProgressViewModel } from "@/lib/security-progress";
 
 import { AssistantResponseCard } from "./assistant-response-card";
 import { AssistantMarkdownMessage } from "./assistant-markdown-message";
+import { ControlledProgressCard } from "./controlled-progress-card";
 import { LinkedMessage } from "./linked-message";
 import { SecurityChatComposer } from "./security-chat-composer";
 
@@ -29,6 +31,7 @@ export function ConversationPanel({
   error,
   busy,
   mode,
+  progress,
   followUp,
   onSubmit,
   onRetry,
@@ -39,6 +42,7 @@ export function ConversationPanel({
   error: string | null;
   busy: boolean;
   mode: SecurityPresentationMode;
+  progress: SecurityProgressViewModel;
   followUp?: string | null;
   onSubmit(message: string): void;
   onRetry(): void;
@@ -90,7 +94,15 @@ export function ConversationPanel({
           </article>
         ))}
 
-        {busy && (
+        {busy && state !== "CHATTING" && <ControlledProgressCard progress={progress} mode={mode} />}
+
+        {state === "PROVISIONAL_WARNING" && (
+          <p className="max-w-[94%] text-xs leading-5 text-amber-700 dark:text-amber-300">
+            Có tín hiệu rủi ro cao tạm thời từ API; đây chưa phải kết luận cuối.
+          </p>
+        )}
+
+        {busy && state === "CHATTING" && (
           <div role="status" className="max-w-[94%] rounded-2xl rounded-bl-sm border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center gap-3">
               <span className="relative flex size-2.5">
@@ -98,23 +110,14 @@ export function ConversationPanel({
                 <span className="relative inline-flex size-2.5 rounded-full bg-primary" />
               </span>
               <div>
-                <p className="text-sm font-semibold">
-                  {state === "CHATTING" ? "Trợ lý đang trả lời" : "Trợ lý đang kiểm tra nội dung"}
-                </p>
+                <p className="text-sm font-semibold">Trợ lý đang trả lời</p>
                 {mode === "analyst" && (
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {state === "CHATTING"
-                      ? "Nếu phát hiện yêu cầu kiểm tra an toàn, trợ lý sẽ mở lượt phân tích mới."
-                      : `Tự chọn công cụ cần thiết · ${transportLabel(transport)}`}
+                    Nếu phát hiện yêu cầu kiểm tra an toàn, trợ lý sẽ mở lượt phân tích mới.
                   </p>
                 )}
               </div>
             </div>
-            {state === "PROVISIONAL_WARNING" && (
-              <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                Có tín hiệu rủi ro cao tạm thời từ API; đây chưa phải kết luận cuối.
-              </p>
-            )}
           </div>
         )}
 

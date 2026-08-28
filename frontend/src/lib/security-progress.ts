@@ -1,3 +1,5 @@
+import type { SecurityAnalysisEventV4 } from "@/types/generated/api-v4";
+
 export const SECURITY_PROGRESS_STAGES = [
   "running",
   "understanding",
@@ -69,5 +71,84 @@ export function securityProgressLabel(stage: string, state?: string | null): str
   if (state === "started" || state === "completed" || state === "skipped" || state === "degraded") {
     return SECURITY_PROGRESS_LABELS[stage][state] ?? GENERIC_PROGRESS_LABEL;
   }
-  return SECURITY_PROGRESS_LABELS[stage].started ?? GENERIC_PROGRESS_LABEL;
+  return GENERIC_PROGRESS_LABEL;
+}
+
+export interface SecurityProgressDisplay {
+  eventId: string;
+  analysisId: string;
+  sequence: number;
+  stage: SecurityProgressStage | null;
+  state: SecurityProgressState | null;
+  label: string;
+}
+
+export interface SecurityProgressViewModel {
+  latest: SecurityProgressDisplay | null;
+  timeline: SecurityProgressDisplay[];
+}
+
+type EventLike = Partial<SecurityAnalysisEventV4> | Record<string, unknown>;
+
+function isRecord(value: unknown): value is EventLike {
+  return typeof value === "object" && value !== null;
+}
+
+function isProgressState(value: unknown): value is SecurityProgressState {
+  return value === "started" || value === "completed" || value === "skipped" || value === "degraded";
+}
+
+function displayFor(event: EventLike, activeAnalysisId: string): SecurityProgressDisplay | null {
+  const sequence = event.sequence;
+  if (
+    event.analysis_id !== activeAnalysisId
+    || event.kind !== "progress"
+    || typeof event.event_id !== "string"
+    || !event.event_id
+    || typeof sequence !== "number"
+    || !Number.isSafeInteger(sequence)
+    || sequence < 1
+  ) {
+    return null;
+  }
+  const stage = typeof event.step === "string" && isSecurityProgressStage(event.step) ? event.step : null;
+  const state = isProgressState(event.progress_state) ? event.progress_state : null;
+  return {
+    eventId: event.event_id,
+    analysisId: activeAnalysisId,
+    sequence,
+    stage,
+    state,
+    label: stage && state ? securityProgressLabel(stage, state) : GENERIC_PROGRESS_LABEL,
+  };
+}
+
+/**
+ * Produces display-only progress for the currently active analysis.
+ *
+ * Cursor polling and WebSocket replay can overlap. We dedupe by event ID and
+ * always choose the greatest sequence, so a replay or delayed event cannot
+ * move the busy state backwards. Event payload text, evidence and risk hints
+ * are intentionally outside this selector's input surface.
+ */
+export function selectSecurityProgress(
+  activeAnalysisId: string | null,
+  events: readonly unknown[],
+): SecurityProgressViewModel {
+  if (!activeAnalysisId) return { latest: null, timeline: [] };
+
+  const byEventId = new Map<string, SecurityProgressDisplay>();
+  for (const value of events) {
+    if (!isRecord(value)) continue;
+    const display = displayFor(value, activeAnalysisId);
+    if (!display) continue;
+    const existing = byEventId.get(display.eventId);
+    if (!existing || display.sequence > existing.sequence) byEventId.set(display.eventId, display);
+  }
+
+  const ordered = [...byEventId.values()].sort((left, right) => (
+    left.sequence - right.sequence || left.eventId.localeCompare(right.eventId)
+  ));
+  const timeline = ordered.filter((entry) => entry.stage !== null && entry.state !== null);
+  return { latest: ordered.at(-1) ?? null, timeline };
 }

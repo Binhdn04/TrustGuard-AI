@@ -325,18 +325,18 @@ File dự kiến:
 
 ### Phase 5 — Frontend selector và presentation
 
-- [ ] Tạo pure selector cho latest progress theo active analysis ID và sequence.
-- [ ] Dedupe replay và không lùi state khi event đến lệch thứ tự.
-- [ ] Map stage/state qua allow-list; unknown dùng generic fallback.
-- [ ] Không dùng `risk_hint` để tạo verdict text.
-- [ ] Không dùng `evidence_refs` để tạo reasoning text.
-- [ ] Truyền derived progress vào `ConversationPanel`.
-- [ ] Mở rộng busy card hoặc tạo `ControlledProgressCard`.
-- [ ] Simple mode chỉ hiển thị latest stage.
-- [ ] Analyst timeline chỉ hiển thị coarse stages, không giả lập tool execution.
-- [ ] Không thêm progress vào turns/history.
-- [ ] Final event/fetch semantics, retry, reset và follow-up chat giữ nguyên.
-- [ ] `aria-live="polite"`, tránh announce replay và tôn trọng reduced motion.
+- [x] Tạo pure selector cho latest progress theo active analysis ID và sequence.
+- [x] Dedupe replay và không lùi state khi event đến lệch thứ tự.
+- [x] Map stage/state qua allow-list; unknown dùng generic fallback.
+- [x] Không dùng `risk_hint` để tạo verdict text.
+- [x] Không dùng `evidence_refs` để tạo reasoning text.
+- [x] Truyền derived progress vào `ConversationPanel`.
+- [x] Mở rộng busy card hoặc tạo `ControlledProgressCard`.
+- [x] Simple mode chỉ hiển thị latest stage.
+- [x] Analyst timeline chỉ hiển thị coarse stages, không giả lập tool execution.
+- [x] Không thêm progress vào turns/history.
+- [x] Final event/fetch semantics, retry, reset và follow-up chat giữ nguyên.
+- [x] `aria-live="polite"`, tránh announce replay và tôn trọng reduced motion.
 
 File dự kiến:
 
