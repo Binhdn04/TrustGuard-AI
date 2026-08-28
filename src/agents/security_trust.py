@@ -158,11 +158,7 @@ def _target_owner(
         for entry in source_registry.matching_entries(url, observed_at):
             pattern = getattr(entry, "normalized_pattern", "")
             publisher = getattr(entry, "publisher", "")
-            if (
-                publisher
-                and pattern
-                and not getattr(entry, "explicit_deny", False)
-            ):
+            if publisher and pattern and not getattr(entry, "explicit_deny", False):
                 source_id = getattr(entry, "source_id", "reviewed")
                 policy = getattr(entry, "policy_version", "source-registry")
                 specificity = len(pattern.removeprefix("*."))

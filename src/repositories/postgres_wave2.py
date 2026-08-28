@@ -834,6 +834,4 @@ class PostgresWave2RepositoryMixin:
         )
 
 
-
 __all__ = ["PostgresWave2RepositoryMixin"]
-

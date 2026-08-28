@@ -88,7 +88,7 @@ def test_program_claim_and_form_action_are_grounded_independently_of_sensitive_d
 
 
 def test_form_semantic_action_refines_to_literal_application_for_resource_verification() -> None:
-    message = 'Please visit https://forms.example/register to apply.'
+    message = "Please visit https://forms.example/register to apply."
     context = extract_security_context(message).model_copy(
         update={"claimed_entity": "Example University", "requested_action": RequestedActionV4.SUBMIT_FORM}
     )
