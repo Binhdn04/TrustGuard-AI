@@ -373,18 +373,18 @@ Chạy PostgreSQL integration suite trên database disposable theo `TESTING.md`.
 
 ### Phase 7 — Frontend verification
 
-- [ ] Unit test selector với empty, unknown, malformed, duplicate và out-of-order events.
-- [ ] Test latest stage được render khi busy.
-- [ ] Test không có event vẫn dùng generic busy state.
-- [ ] Test provisional warning vẫn mang nhãn tạm thời.
-- [ ] Test WebSocket replay và polling fallback cho cùng UI sequence.
-- [ ] Test reconnect không làm UI quay về stage cũ.
-- [ ] Test final result thay progress bằng assistant response hiện hành.
-- [ ] Test progress không đi vào turns/history.
-- [ ] Test reset/new analysis loại progress cũ.
-- [ ] Test presentation error không chặn terminal fetch.
-- [ ] Test accessibility live region và reduced motion.
-- [ ] Xác nhận API mock calls của submit, polling và final fetch không đổi ngoài event contract mới.
+- [x] Unit test selector với empty, unknown, malformed, duplicate và out-of-order events.
+- [x] Test latest stage được render khi busy.
+- [x] Test không có event vẫn dùng generic busy state.
+- [x] Test provisional warning vẫn mang nhãn tạm thời.
+- [x] Test WebSocket replay và polling fallback cho cùng UI sequence.
+- [x] Test reconnect không làm UI quay về stage cũ.
+- [x] Test final result thay progress bằng assistant response hiện hành.
+- [x] Test progress không đi vào turns/history.
+- [x] Test reset/new analysis loại progress cũ.
+- [x] Test presentation error không chặn terminal fetch.
+- [x] Test accessibility live region và reduced motion.
+- [x] Xác nhận API mock calls của submit, polling và final fetch không đổi ngoài event contract mới.
 
 Lệnh gate:
 

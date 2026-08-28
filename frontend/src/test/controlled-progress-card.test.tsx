@@ -33,11 +33,15 @@ const progress: SecurityProgressViewModel = {
   ],
 };
 
-function panel(mode: "simple" | "analyst", currentProgress = progress) {
+function panel(
+  mode: "simple" | "analyst",
+  currentProgress = progress,
+  state: "RUNNING" | "PROVISIONAL_WARNING" = "RUNNING",
+) {
   return (
     <ConversationPanel
       turns={[]}
-      state="RUNNING"
+      state={state}
       transport="connected"
       error={null}
       busy
@@ -56,6 +60,7 @@ describe("controlled progress card", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Đã hoàn tất kiểm tra các tín hiệu liên quan");
     expect(screen.queryByRole("list", { name: "Tiến trình kiểm tra" })).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(document.querySelector("[class*='motion-reduce:animate-none']")).toBeInTheDocument();
   });
 
   it("shows an analyst-only coarse timeline without tool details", () => {
@@ -72,5 +77,12 @@ describe("controlled progress card", () => {
     render(panel("simple", { latest: null, timeline: [] }));
 
     expect(screen.getByRole("status")).toHaveTextContent("Trợ lý đang kiểm tra nội dung");
+  });
+
+  it("keeps the provisional warning explicitly temporary while progress is busy", () => {
+    render(panel("simple", progress, "PROVISIONAL_WARNING"));
+
+    expect(screen.getByText(/tạm thời từ API; đây chưa phải kết luận cuối/i)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Đã hoàn tất kiểm tra các tín hiệu liên quan");
   });
 });
