@@ -67,15 +67,6 @@ from src.repositories.postgres_trust import PostgresTrustRepositoryMixin
 from src.repositories.postgres_wave2 import PostgresWave2RepositoryMixin
 
 
-class SecurityAnalysisAlreadyFinalizedError(RuntimeError):
-    """Raised when an observer tries to append after a terminal v4 commit.
-
-    Progress is best-effort telemetry.  Callers such as the progress reporter
-    deliberately drop this error, while the repository keeps the terminal
-    event and its sequence authoritative.
-    """
-
-
 class PostgresPlatformRepository(
     PostgresFeedbackRepositoryMixin,
     PostgresJobsRepositoryMixin,
