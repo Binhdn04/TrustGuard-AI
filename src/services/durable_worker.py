@@ -29,18 +29,6 @@ from src.services.security_progress import (
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_PROGRESS_CODES = {
-    "running": SecurityProgressMessageCode.RUNNING_STARTED,
-    "understanding": SecurityProgressMessageCode.UNDERSTANDING_COMPLETED,
-    "incident_response": SecurityProgressMessageCode.INCIDENT_RESPONSE_COMPLETED,
-    "investigation": SecurityProgressMessageCode.INVESTIGATION_COMPLETED,
-    "official_link_verification": SecurityProgressMessageCode.OFFICIAL_LINK_VERIFICATION_COMPLETED,
-    "security_memory_lookup": SecurityProgressMessageCode.SECURITY_MEMORY_LOOKUP_COMPLETED,
-    "risk_assessment": SecurityProgressMessageCode.RISK_ASSESSMENT_COMPLETED,
-    "assistant_response": SecurityProgressMessageCode.ASSISTANT_RESPONSE_COMPLETED,
-}
-
-
 class SecurityV4JobHandler:
     """Execute an immutable encrypted Security v4 turn and commit it once."""
 
@@ -71,22 +59,16 @@ class SecurityV4JobHandler:
         reporter = SecurityProgressReporter(job.analysis_id, self._repository.append_security_analysis_event)
         reporter.start()
 
-        async def progress(step: str, message: str, evidence_refs: list[str], risk_hint) -> None:
-            del message, evidence_refs, risk_hint
-            message_code = _LEGACY_PROGRESS_CODES.get(step)
-            if message_code is None:
-                logger.warning("security_progress_unknown_legacy_step", extra={"failure_code": "unknown_step"})
-                return
-            await reporter.emit(SecurityProgressUpdate.for_message_code(message_code))
-
-        await progress("running", "Worker đã nhận immutable Security v4 turn.", [], None)
+        await reporter.emit(
+            SecurityProgressUpdate.for_message_code(SecurityProgressMessageCode.RUNNING_STARTED)
+        )
         try:
             result = await self._pipeline_factory(runtime).process(
-            request,
-            scoped.model_copy(update={"status": AnalysisStatus.RUNNING}),
-            runtime=runtime,
-            progress=progress,
-            owner_id=owner_id,
+                request,
+                scoped.model_copy(update={"status": AnalysisStatus.RUNNING}),
+                runtime=runtime,
+                progress=reporter.emit,
+                owner_id=owner_id,
             )
         except BaseException:
             await reporter.quiesce()

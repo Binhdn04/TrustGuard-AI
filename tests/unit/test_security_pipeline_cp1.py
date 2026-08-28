@@ -5,7 +5,7 @@ from time import perf_counter
 import pytest
 
 from src.agents.security_investigation import SecurityInvestigationService
-from src.models import AnalysisStatus, SecurityTriageCreateRequestV4
+from src.models import AnalysisStatus, SecurityInvestigationStatusV4, SecurityTriageCreateRequestV4
 from src.security_ai.runtime import (
     BudgetExceededError,
     SecurityAssistantRuntime,
@@ -13,6 +13,7 @@ from src.security_ai.runtime import (
     TurnExecutionContext,
 )
 from src.services.security_pipeline import SecurityTriagePipeline
+from src.services.security_progress import SecurityProgressUpdate
 from src.services.security_triage import SecurityTriageScopeService
 
 
@@ -35,7 +36,12 @@ class MustNotRun:
 class PassthroughInvestigation:
     async def investigate(self, request, scoped, *, runtime):
         del request, runtime
-        return scoped
+        return scoped.model_copy(
+            update={
+                "next_step": "RISK_ASSESSMENT",
+                "investigation_status": SecurityInvestigationStatusV4.COMPLETED,
+            }
+        )
 
 
 class PassthroughTrust:
@@ -59,9 +65,8 @@ async def test_inline_and_worker_pipeline_construction_have_result_and_event_par
     async def resolve_investigation():
         return investigation
 
-    async def record_progress(step, message, evidence_refs, risk):
-        del message, evidence_refs, risk
-        worker_events.append(step)
+    async def record_progress(update: SecurityProgressUpdate):
+        worker_events.append(f"{update.stage.value}.{update.state.value}")
 
     inline = SecurityTriagePipeline(
         understanding=PassthroughUnderstanding(),
@@ -85,7 +90,17 @@ async def test_inline_and_worker_pipeline_construction_have_result_and_event_par
     )
 
     assert inline_result.model_dump(exclude={"completed_at"}) == worker_result.model_dump(exclude={"completed_at"})
-    assert worker_events == ["understanding", "investigation", "risk_assessment", "assistant_response"]
+    assert worker_events == [
+        "understanding.started",
+        "understanding.completed",
+        "scope_gate.completed",
+        "investigation.started",
+        "investigation.completed",
+        "risk_assessment.started",
+        "risk_assessment.completed",
+        "assistant_response.started",
+        "assistant_response.completed",
+    ]
 
 
 @pytest.mark.asyncio

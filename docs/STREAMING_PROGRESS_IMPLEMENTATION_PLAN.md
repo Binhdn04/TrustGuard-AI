@@ -292,19 +292,19 @@ File dự kiến:
 
 ### Phase 3 — Pipeline coarse stage instrumentation
 
-- [ ] Thay callback string rời rạc bằng internal typed update hoặc adapter tương thích.
-- [ ] Phát `understanding.started` ngay trước stage và `completed|degraded` ngay sau stage.
-- [ ] Phát `scope_gate` mà không mở investigation/provider cho terminal scope.
-- [ ] Nhánh out-of-scope/need-more-info giữ zero investigation/external-provider calls.
-- [ ] Phát `incident_response` đúng nhánh exposure hiện hành.
-- [ ] Phát `investigation.started/completed|degraded|skipped` quanh stage hiện hành.
-- [ ] Chỉ phát official verification khi stage hiện hành thật sự applicable và consent/policy cho phép.
-- [ ] Chỉ phát memory lookup khi stage hiện hành thật sự chạy.
-- [ ] Phát risk assessment quanh deterministic risk hiện hành; không đưa risk class vào progress display.
-- [ ] Phát assistant response quanh composer/grounding hiện hành; không phát model draft.
-- [ ] Không thêm event cho từng tool.
-- [ ] Không branch, retry hoặc sửa `scoped` dựa trên observer result.
-- [ ] Result và provider/tool trace bật/tắt observer phải parity.
+- [x] Thay callback string rời rạc bằng internal typed update hoặc adapter tương thích.
+- [x] Phát `understanding.started` ngay trước stage và `completed|degraded` ngay sau stage.
+- [x] Phát `scope_gate` mà không mở investigation/provider cho terminal scope.
+- [x] Nhánh out-of-scope/need-more-info giữ zero investigation/external-provider calls.
+- [x] Phát `incident_response` đúng nhánh exposure hiện hành.
+- [x] Phát `investigation.started/completed|degraded|skipped` quanh stage hiện hành.
+- [x] Chỉ phát official verification khi stage hiện hành thật sự applicable và consent/policy cho phép.
+- [x] Chỉ phát memory lookup khi stage hiện hành thật sự chạy.
+- [x] Phát risk assessment quanh deterministic risk hiện hành; không đưa risk class vào progress display.
+- [x] Phát assistant response quanh composer/grounding hiện hành; không phát model draft.
+- [x] Không thêm event cho từng tool.
+- [x] Không branch, retry hoặc sửa `scoped` dựa trên observer result.
+- [x] Result và provider/tool trace bật/tắt observer phải parity.
 
 File dự kiến:
 

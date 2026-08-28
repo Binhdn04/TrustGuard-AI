@@ -12,6 +12,7 @@ from src.models import AnalysisStatus, SecurityTriageCreateRequestV4
 from src.repositories.postgres import DurableJob
 from src.security_ai.runtime import SecurityAssistantRuntime, TurnBudget
 from src.services.durable_worker import OutboxPublisher, RetentionWorker, SecurityV4JobHandler
+from src.services.security_progress import SecurityProgressMessageCode, SecurityProgressUpdate
 from src.services.security_triage import SecurityTriageScopeService
 
 
@@ -58,7 +59,7 @@ class FakePipeline:
 
     async def process(self, request, scoped, *, runtime, progress, owner_id=None):
         del request, scoped, runtime, owner_id
-        await progress("investigation", "progress", [], None)
+        await progress(SecurityProgressUpdate.for_message_code(SecurityProgressMessageCode.INVESTIGATION_COMPLETED))
         return self.result
 
 

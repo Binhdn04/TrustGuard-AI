@@ -60,6 +60,7 @@ from src.services.platform_wave2 import (
     default_source_policies,
 )
 from src.services.security_pipeline import SecurityTriagePipeline
+from src.services.security_progress import SecurityProgressUpdate
 from src.services.security_response import (
     GroundedSecurityResponseService,
     SynthesisGroundingFailure,
@@ -1589,9 +1590,8 @@ async def test_shared_pipeline_runs_verification_after_trust_and_before_risk_res
     progress_steps: list[str] = []
     coordinator = _RecordingCoordinator(_coordinator(), order)
 
-    async def progress(step, message, evidence_refs, risk):
-        del message, evidence_refs, risk
-        progress_steps.append(step)
+    async def progress(update: SecurityProgressUpdate):
+        progress_steps.append(f"{update.stage.value}.{update.state.value}")
 
     pipeline = SecurityTriagePipeline(
         understanding=_PassthroughUnderstanding(),
@@ -1611,11 +1611,17 @@ async def test_shared_pipeline_runs_verification_after_trust_and_before_risk_res
     assert result.risk is not None
     assert order == ["trust", "official_verification", "response"]
     assert progress_steps == [
-        "understanding",
-        "investigation",
-        "official_link_verification",
-        "risk_assessment",
-        "assistant_response",
+        "understanding.started",
+        "understanding.completed",
+        "scope_gate.completed",
+        "investigation.started",
+        "investigation.completed",
+        "official_link_verification.started",
+        "official_link_verification.completed",
+        "risk_assessment.started",
+        "risk_assessment.completed",
+        "assistant_response.started",
+        "assistant_response.completed",
     ]
 
 

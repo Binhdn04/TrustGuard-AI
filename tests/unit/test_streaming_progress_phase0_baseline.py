@@ -24,10 +24,12 @@ from src.models import (
     AssistantProcessingModeV4,
     ExposureStateV4,
     ScopeDecisionV4,
+    SecurityInvestigationStatusV4,
     SecurityTriageCreateRequestV4,
 )
 from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.security_pipeline import SecurityTriagePipeline
+from src.services.security_progress import SecurityProgressUpdate
 from src.services.security_triage import SecurityTriageScopeService
 
 
@@ -152,7 +154,12 @@ class RecordingInvestigation:
     async def investigate(self, request, scoped, *, runtime):
         del runtime
         self._trace.calls.append(("investigation", request.consent.external_url_lookup))
-        return scoped
+        return scoped.model_copy(
+            update={
+                "next_step": "RISK_ASSESSMENT",
+                "investigation_status": SecurityInvestigationStatusV4.COMPLETED,
+            }
+        )
 
 
 class RecordingTrust:
@@ -180,9 +187,8 @@ class MustNotRun:
         raise AssertionError("terminal or incident flow invoked investigation/trust")
 
 
-async def record_progress(trace: PipelineTrace, step, message, evidence_refs, risk) -> None:
-    del message, evidence_refs, risk
-    trace.progress_steps.append(step)
+async def record_progress(trace: PipelineTrace, update: SecurityProgressUpdate) -> None:
+    trace.progress_steps.append(f"{update.stage.value}.{update.state.value}")
 
 
 def build_pipeline(trace: PipelineTrace, *, terminal_or_incident: bool = False) -> SecurityTriagePipeline:
@@ -251,7 +257,17 @@ async def test_phase0_in_scope_result_and_call_trace_are_unchanged_by_the_progre
 
     assert inline_result.model_dump(exclude={"completed_at"}) == observed_result.model_dump(exclude={"completed_at"})
     assert inline_trace.calls == observed_trace.calls == [("investigation", True), ("trust", None)]
-    assert observed_trace.progress_steps == ["understanding", "investigation", "risk_assessment", "assistant_response"]
+    assert observed_trace.progress_steps == [
+        "understanding.started",
+        "understanding.completed",
+        "scope_gate.completed",
+        "investigation.started",
+        "investigation.completed",
+        "risk_assessment.started",
+        "risk_assessment.completed",
+        "assistant_response.started",
+        "assistant_response.completed",
+    ]
 
 
 @pytest.mark.asyncio
@@ -280,7 +296,7 @@ async def test_phase0_terminal_scope_has_no_investigation_calls_or_progress(mess
 
     assert result.status is AnalysisStatus.COMPLETED
     assert trace.calls == []
-    assert trace.progress_steps == ["understanding"]
+    assert trace.progress_steps == ["understanding.started", "understanding.completed", "scope_gate.completed"]
 
 
 @pytest.mark.asyncio
@@ -309,4 +325,14 @@ async def test_phase0_incident_exposure_skips_investigation_and_keeps_progress_c
     assert result.status is AnalysisStatus.COMPLETED
     assert result.risk is not None
     assert trace.calls == []
-    assert trace.progress_steps == ["understanding", "incident_response", "assistant_response"]
+    assert trace.progress_steps == [
+        "understanding.started",
+        "understanding.completed",
+        "scope_gate.completed",
+        "incident_response.started",
+        "risk_assessment.started",
+        "risk_assessment.completed",
+        "incident_response.completed",
+        "assistant_response.started",
+        "assistant_response.completed",
+    ]
