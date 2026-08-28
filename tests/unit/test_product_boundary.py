@@ -62,7 +62,9 @@ def test_structured_log_keeps_safe_ai_grounding_dimensions_without_raw_content()
 
 
 def test_structured_log_redacts_secrets_embedded_in_strings() -> None:
-    openai_key = "sk-proj-0123456789abcdef"
+    # Deliberately low-entropy fixture: it exercises the OpenAI-key redactor
+    # without resembling a credential to secret scanners.
+    openai_key = "sk-redact-redact-redact"
     bearer_token = "eyJhbGciOiJIUzI1NiJ9.payload.signature"
     record = logging.LogRecord(
         "trustguard.http",
