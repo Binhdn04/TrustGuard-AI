@@ -348,18 +348,18 @@ File dự kiến:
 
 ### Phase 6 — Backend verification
 
-- [ ] Contract test event mới và event cũ không có `progress_state`.
-- [ ] Test queue order, queue full, append error và quiesce timeout.
-- [ ] Test progress failure không làm job retry hoặc analysis fail.
-- [ ] Test không append progress sau final.
-- [ ] Test worker cancellation/lost lease dọn reporter task.
-- [ ] Test stage order cho in-scope, OOS, need-more-info và incident response.
-- [ ] Test OOS/need-more-info zero investigation/provider calls.
-- [ ] Test no-consent zero external lookup và progress không nói đang lookup.
-- [ ] Test provider no-hit/error/timeout không tạo message ngụ ý safe.
-- [ ] Test result deep-equality và provider/tool trace parity khi observer on/off.
-- [ ] Test event payload không chứa raw message, credential, OTP, token, tool args hoặc exception.
-- [ ] PostgreSQL integration test event/outbox/sequence/final transaction/lease.
+- [x] Contract test event mới và event cũ không có `progress_state`.
+- [x] Test queue order, queue full, append error và quiesce timeout.
+- [x] Test progress failure không làm job retry hoặc analysis fail.
+- [x] Test không append progress sau final.
+- [x] Test worker cancellation/lost lease dọn reporter task.
+- [x] Test stage order cho in-scope, OOS, need-more-info và incident response.
+- [x] Test OOS/need-more-info zero investigation/provider calls.
+- [x] Test no-consent zero external lookup và progress không nói đang lookup.
+- [x] Test provider no-hit/error/timeout không tạo message ngụ ý safe.
+- [x] Test result deep-equality và provider/tool trace parity khi observer on/off.
+- [x] Test event payload không chứa raw message, credential, OTP, token, tool args hoặc exception.
+- [x] PostgreSQL integration test event/outbox/sequence/final transaction/lease.
 
 Lệnh gate:
 
