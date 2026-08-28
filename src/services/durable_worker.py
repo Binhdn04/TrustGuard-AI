@@ -29,6 +29,7 @@ from src.services.security_progress import (
 
 logger = logging.getLogger(__name__)
 
+
 class SecurityV4JobHandler:
     """Execute an immutable encrypted Security v4 turn and commit it once."""
 
@@ -59,9 +60,7 @@ class SecurityV4JobHandler:
         reporter = SecurityProgressReporter(job.analysis_id, self._repository.append_security_analysis_event)
         reporter.start()
 
-        await reporter.emit(
-            SecurityProgressUpdate.for_message_code(SecurityProgressMessageCode.RUNNING_STARTED)
-        )
+        await reporter.emit(SecurityProgressUpdate.for_message_code(SecurityProgressMessageCode.RUNNING_STARTED))
         try:
             result = await self._pipeline_factory(runtime).process(
                 request,

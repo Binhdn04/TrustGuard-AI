@@ -19,13 +19,16 @@ def test_phase0_progress_stage_allowlist_is_coarse_and_closed() -> None:
         "assistant_response",
     }
     assert set(SecurityProgressStage) == set(PROGRESS_STAGE_ALLOWLIST)
-    assert not {
-        "dns",
-        "rdap",
-        "redirect_check",
-        "url_reputation",
-        "web_search",
-    } & PROGRESS_STAGE_ALLOWLIST
+    assert (
+        not {
+            "dns",
+            "rdap",
+            "redirect_check",
+            "url_reputation",
+            "web_search",
+        }
+        & PROGRESS_STAGE_ALLOWLIST
+    )
 
 
 def test_phase0_reporter_bounds_are_static_and_cover_all_coarse_events() -> None:

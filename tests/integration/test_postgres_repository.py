@@ -131,9 +131,11 @@ async def test_security_progress_and_final_commit_serialize_without_post_final_a
     """The analysis-row lock makes sequence allocation and terminality atomic."""
     now = datetime.now(UTC)
     worker_id = f"integration-worker-{uuid4()}"
-    scoped = SecurityTriageScopeService().assess(
-        SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async")
-    ).model_copy(update={"status": AnalysisStatus.RUNNING})
+    scoped = (
+        SecurityTriageScopeService()
+        .assess(SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async"))
+        .model_copy(update={"status": AnalysisStatus.RUNNING})
+    )
     completed = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": now})
     progress = SecurityAnalysisEventV4(
         analysis_id=scoped.analysis_id,
@@ -208,8 +210,7 @@ async def test_security_progress_and_final_commit_serialize_without_post_final_a
     )
 
     assert all(
-        not isinstance(item, BaseException) or isinstance(item, LostJobLeaseError)
-        for item in concurrent_results
+        not isinstance(item, BaseException) or isinstance(item, LostJobLeaseError) for item in concurrent_results
     )
     loaded = await repository.load_security_analysis(str(scoped.analysis_id))
     assert loaded is not None
@@ -238,9 +239,11 @@ async def test_security_retry_allows_repeated_progress_but_only_current_attempt_
     now = datetime.now(UTC)
     first_worker = f"retry-worker-one-{uuid4()}"
     second_worker = f"retry-worker-two-{uuid4()}"
-    scoped = SecurityTriageScopeService().assess(
-        SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async")
-    ).model_copy(update={"status": AnalysisStatus.RUNNING})
+    scoped = (
+        SecurityTriageScopeService()
+        .assess(SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async"))
+        .model_copy(update={"status": AnalysisStatus.RUNNING})
+    )
     completed = scoped.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": now})
     job_id = uuid4()
     pool = await repository._get_pool()

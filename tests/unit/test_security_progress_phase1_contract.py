@@ -40,9 +40,7 @@ def test_phase1_event_contract_reads_existing_events_without_progress_state() ->
 
 
 def test_phase1_event_contract_accepts_typed_progress_state_only_for_progress_events() -> None:
-    event = SecurityAnalysisEventV4.model_validate(
-        event_payload(progress_state=SecurityProgressStateV4.STARTED)
-    )
+    event = SecurityAnalysisEventV4.model_validate(event_payload(progress_state=SecurityProgressStateV4.STARTED))
 
     assert event.progress_state is SecurityProgressStateV4.STARTED
 
