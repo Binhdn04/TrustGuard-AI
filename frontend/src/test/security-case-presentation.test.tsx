@@ -126,6 +126,6 @@ describe("FE4 security case presentation", () => {
     render(<DomainIdentitySummary viewModel={mapSecurityCaseViewModel(result)} mode="simple" />);
     expect(screen.getByText(/Nền tảng đã duyệt: Google Forms/)).toBeInTheDocument();
     expect(screen.getByText("Nền tảng quen thuộc không bảo chứng nội dung.")).toBeInTheDocument();
-    expect(screen.getByText("Chưa xác minh tài nguyên cụ thể")).toBeInTheDocument();
+    expect(screen.getByText("Chưa có nội dung hoặc hành động cần xác minh")).toBeInTheDocument();
   });
 });

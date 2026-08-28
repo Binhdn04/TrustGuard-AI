@@ -21,6 +21,11 @@ from src.services.platform_wave2 import UsageLedgerEntry
 from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_memory import SecurityMemoryService
 from src.services.security_pipeline import SecurityTriagePipeline
+from src.services.security_progress import (
+    SecurityProgressMessageCode,
+    SecurityProgressReporter,
+    SecurityProgressUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,31 +57,22 @@ class SecurityV4JobHandler:
         owner_id, request, scoped = loaded
         principal = Principal(owner_id, UserRole.USER)
         runtime = self._runtime_factory()
+        reporter = SecurityProgressReporter(job.analysis_id, self._repository.append_security_analysis_event)
+        reporter.start()
 
-        async def progress(step: str, message: str, evidence_refs: list[str], risk_hint) -> None:
-            await self._repository.append_security_analysis_event(
-                SecurityAnalysisEventV4(
-                    analysis_id=job.analysis_id,
-                    sequence=1,
-                    status=AnalysisStatus.RUNNING,
-                    step=step,
-                    kind=SecurityAnalysisEventKindV4.PROGRESS,
-                    step_id=step,
-                    message=message,
-                    evidence_refs=evidence_refs,
-                    risk_hint=risk_hint,
-                    occurred_at=datetime.now(UTC),
-                )
+        await reporter.emit(SecurityProgressUpdate.for_message_code(SecurityProgressMessageCode.RUNNING_STARTED))
+        try:
+            result = await self._pipeline_factory(runtime).process(
+                request,
+                scoped.model_copy(update={"status": AnalysisStatus.RUNNING}),
+                runtime=runtime,
+                progress=reporter.emit,
+                owner_id=owner_id,
             )
-
-        await progress("running", "Worker đã nhận immutable Security v4 turn.", [], None)
-        result = await self._pipeline_factory(runtime).process(
-            request,
-            scoped.model_copy(update={"status": AnalysisStatus.RUNNING}),
-            runtime=runtime,
-            progress=progress,
-            owner_id=owner_id,
-        )
+        except BaseException:
+            await reporter.quiesce()
+            raise
+        await reporter.quiesce()
         if result.status is not AnalysisStatus.COMPLETED:
             result = result.model_copy(update={"status": AnalysisStatus.COMPLETED, "completed_at": datetime.now(UTC)})
         if result.risk is not None:
@@ -138,21 +134,22 @@ class SecurityV4DurableWorker:
                 await self._repository.retry_security_job(job, type(exc).__name__, self._worker_id)
 
     async def _execute(self, job: DurableJob) -> None:
-        processing = asyncio.create_task(self._handler(job, self._worker_id), name=f"security-v4-{job.id}")
-        heartbeat = asyncio.create_task(self._renew(job.id), name=f"security-v4-lease-{job.id}")
-        done, _ = await asyncio.wait({processing, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
-        if processing in done:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
-            await processing
-            return
-        processing.cancel()
-        await asyncio.gather(processing, return_exceptions=True)
-        try:
-            await heartbeat
-        except Exception as exc:
-            raise LostJobLeaseError("security v4 lease renewal failed") from exc
-        raise LostJobLeaseError("security v4 lease renewal stopped")
+        with self._repository.job_scope(job.id, self._worker_id):
+            processing = asyncio.create_task(self._handler(job, self._worker_id), name=f"security-v4-{job.id}")
+            heartbeat = asyncio.create_task(self._renew(job.id), name=f"security-v4-lease-{job.id}")
+            done, _ = await asyncio.wait({processing, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+            if processing in done:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+                await processing
+                return
+            processing.cancel()
+            await asyncio.gather(processing, return_exceptions=True)
+            try:
+                await heartbeat
+            except Exception as exc:
+                raise LostJobLeaseError("security v4 lease renewal failed") from exc
+            raise LostJobLeaseError("security v4 lease renewal stopped")
 
     async def _renew(self, job_id) -> None:
         interval = max(self._lease_seconds / 3, 1)

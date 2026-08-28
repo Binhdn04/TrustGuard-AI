@@ -33,32 +33,32 @@ test("mobile keyboard flow: analyze → report/appeal → history resume", async
   await installUserAnalysisFlow(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/login");
-  await page.getByRole("button", { name: /Quyền User/i }).focus();
+  await page.getByRole("button", { name: /Quyền người dùng/i }).focus();
   await page.keyboard.press("Enter");
   await page.waitForURL("**/");
   await expectThemeContrast(page);
   await expectNoSeriousAccessibilityViolations(page, "[aria-label='Tạo case mới']");
 
   await page.getByRole("textbox").first().fill(`Nhận quà và đăng nhập tại ${DANGEROUS_URL}`);
-  await expect(page.getByText(/tự đối chiếu URL\/domain với dịch vụ bảo mật/i)).toBeVisible();
+  await expect(page.getByText(/kiểm tra liên kết bằng dịch vụ bảo mật/i)).toBeVisible();
   await page.getByRole("button", { name: /Gửi để đánh giá/i }).focus();
   await page.keyboard.press("Enter");
 
   await expect(page.getByText(/tín hiệu rủi ro cao tạm thời/i)).toBeVisible();
   await page.getByRole("tab", { name: "Kết quả" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "Nguy hiểm" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: "Độc hại" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(/Không mở liên kết/i).first()).toBeVisible();
   await expect(page.getByText(/tín hiệu rủi ro cao tạm thời/i)).toHaveCount(0);
 
-  await expect(page.getByRole("heading", { name: "Thong tin mau thuan" })).toBeVisible();
-  await page.getByRole("button", { name: "analyst" }).click();
+  await expect(page.getByRole("heading", { name: "Ba lớp cần phân biệt" })).toBeVisible();
+  await page.getByRole("button", { name: "Kỹ thuật" }).click();
   const verification = page.locator("[aria-labelledby='official-verification-heading']");
-  await expect(verification.getByText("Resource / canonical chain (text only)")).toBeVisible();
-  await expect(verification.getByText(/web_search_unavailable/)).toBeVisible();
+  await expect(verification.getByText("Chuỗi tài nguyên / URL chuẩn hóa (chỉ văn bản)")).toBeVisible();
+  await expect(verification.getByText(/resource_conflicts_with_official_source/)).toBeVisible();
   await expect(verification.locator("a")).toHaveCount(0);
   await expect(verification.getByText(DANGEROUS_URL).first()).toBeVisible();
-  await page.getByRole("button", { name: "simple" }).click();
+  await page.getByRole("button", { name: "Cơ bản" }).click();
   await expectNoSeriousAccessibilityViolations(page, "[aria-labelledby='risk-heading']");
 
   await page.getByRole("tab", { name: "Trò chuyện" }).click();
@@ -67,7 +67,8 @@ test("mobile keyboard flow: analyze → report/appeal → history resume", async
   await expect(page.getByText(/Bạn có thể tiếp tục trò chuyện/i)).toBeVisible();
   await page.getByRole("tab", { name: "Kết quả" }).click();
 
-  await page.getByText("Báo cáo hoặc yêu cầu xem xét").click();
+  await page.getByText("Xem kết quả chi tiết", { exact: true }).click();
+  await page.getByText("Báo cáo hoặc yêu cầu xem xét", { exact: true }).click();
   await page.getByRole("button", { name: "Gửi báo cáo" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText(/Bạn đã gửi báo cáo/i)).toBeVisible();
@@ -79,14 +80,14 @@ test("mobile keyboard flow: analyze → report/appeal → history resume", async
   await expect(page.getByText(/Đã tiếp nhận khiếu nại/i)).toBeVisible();
 
   await page.goto("/history");
-  await expect(page.getByRole("heading", { name: /Lịch sử Security Triage/i })).toBeVisible();
-  await expect(page.getByText(/giả mạo chương trình trúng thưởng/i)).toBeVisible();
-  await page.getByRole("link", { name: /Mở case/i }).click();
-  await expect(page.getByRole("heading", { name: /Security investigation record/i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Structured context retained/i })).toBeVisible();
-  await page.getByLabel("Tiếp tục case với thông tin mới").fill("Người gửi tiếp tục yêu cầu đăng nhập tài khoản");
-  await page.getByRole("button", { name: "Gửi follow-up cho case" }).focus();
+  await expect(page.getByRole("heading", { name: "Lịch sử trò chuyện" })).toBeVisible();
+  await expect(page.getByText("Chuong trinh nhan qua")).toBeVisible();
+  await page.getByRole("link", { name: /Mở cuộc trò chuyện/i }).click();
+  await expect(page.getByRole("heading", { name: "Chi tiết cuộc trò chuyện" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ba lớp cần phân biệt" })).toBeVisible();
+  await page.getByLabel("Tiếp tục lượt kiểm tra với thông tin mới").fill("Người gửi tiếp tục yêu cầu đăng nhập tài khoản");
+  await page.getByRole("button", { name: "Gửi thông tin bổ sung cho lượt kiểm tra" }).focus();
   await page.keyboard.press("Enter");
   await page.waitForURL(`**/cases/${FOLLOW_UP_ANALYSIS_ID}`);
-  await expect(page.getByText(/Context v2/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tiếp tục cuộc trò chuyện" })).toBeVisible();
 });

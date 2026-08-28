@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,9 +11,10 @@ from src.agents.security_risk import assess_security_risk
 from src.api.dependencies import get_grounded_security_response_service, get_security_understanding_service
 from src.config import Settings
 from src.models import AnalysisStatus, SecurityTriageCreateRequestV4
-from src.repositories.postgres import DurableJob
+from src.repositories.postgres import DurableJob, LostJobLeaseError
 from src.security_ai.runtime import SecurityAssistantRuntime, TurnBudget
-from src.services.durable_worker import OutboxPublisher, RetentionWorker, SecurityV4JobHandler
+from src.services.durable_worker import OutboxPublisher, RetentionWorker, SecurityV4DurableWorker, SecurityV4JobHandler
+from src.services.security_progress import SecurityProgressMessageCode, SecurityProgressUpdate
 from src.services.security_triage import SecurityTriageScopeService
 
 
@@ -58,7 +61,7 @@ class FakePipeline:
 
     async def process(self, request, scoped, *, runtime, progress, owner_id=None):
         del request, scoped, runtime, owner_id
-        await progress("investigation", "progress", [], None)
+        await progress(SecurityProgressUpdate.for_message_code(SecurityProgressMessageCode.INVESTIGATION_COMPLETED))
         return self.result
 
 
@@ -67,12 +70,18 @@ class FakeDurableRepository:
         self.payload = (owner_id, request, scoped)
         self.events = []
         self.completed = None
+        self.progress_after_final = False
 
     async def load_security_job_payload(self, job, worker_id):
         del job, worker_id
         return self.payload
 
+    def job_scope(self, job_id, worker_id):
+        del job_id, worker_id
+        return nullcontext()
+
     async def append_security_analysis_event(self, event):
+        self.progress_after_final = self.completed is not None
         event = event.model_copy(update={"sequence": len(self.events) + 1})
         self.events.append(event)
         return event
@@ -82,6 +91,50 @@ class FakeDurableRepository:
         self.payload = None
         self.completed = response
         self.events.append(event.model_copy(update={"sequence": len(self.events) + 1}))
+
+
+class ProgressFailingDurableRepository(FakeDurableRepository):
+    async def append_security_analysis_event(self, event):
+        del event
+        raise ConnectionError("progress store unavailable")
+
+
+class FinalCommitFailsOnceDurableRepository(FakeDurableRepository):
+    def __init__(self, owner_id, request, scoped) -> None:
+        super().__init__(owner_id, request, scoped)
+        self.final_commit_attempts = 0
+
+    async def complete_security_analysis_job(self, job, worker_id, response, event):
+        self.final_commit_attempts += 1
+        if self.final_commit_attempts == 1:
+            raise ConnectionError("terminal store temporarily unavailable")
+        await super().complete_security_analysis_job(job, worker_id, response, event)
+
+
+class LeaseLossDurableRepository(FakeDurableRepository):
+    def __init__(self, owner_id, request, scoped) -> None:
+        super().__init__(owner_id, request, scoped)
+        self.append_started = asyncio.Event()
+        self.append_cancelled = asyncio.Event()
+
+    async def append_security_analysis_event(self, event):
+        del event
+        self.append_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.append_cancelled.set()
+            raise
+
+    async def renew_security_job(self, job_id, worker_id, lease_seconds):
+        del job_id, worker_id, lease_seconds
+        return False
+
+
+class BlockingPipeline:
+    async def process(self, request, scoped, *, runtime, progress, owner_id=None):
+        del request, scoped, runtime, progress, owner_id
+        await asyncio.Event().wait()
 
 
 class FakeAnalyses:
@@ -129,9 +182,102 @@ async def test_durable_handler_emits_progress_purges_payload_and_keeps_side_effe
     assert repository.payload is None
     assert repository.completed is not None
     assert [event.kind.value for event in repository.events] == ["progress", "progress", "final"]
+    assert [event.step for event in repository.events] == ["running", "investigation", "completed"]
+    assert [event.progress_state.value if event.progress_state else None for event in repository.events] == [
+        "started",
+        "completed",
+        None,
+    ]
+    assert repository.progress_after_final is False
     assert memory.effects == {scoped.analysis_id}
     assert proposed == {scoped.analysis_id}
     assert analyses.finalized == [(scoped.analysis_id, "owner-1")]
+
+
+@pytest.mark.asyncio
+async def test_durable_handler_commits_final_when_progress_store_fails() -> None:
+    request = SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async")
+    scoped = SecurityTriageScopeService().assess(request)
+    result = assess_security_risk(scoped).model_copy(update={"status": AnalysisStatus.COMPLETED})
+    repository = ProgressFailingDurableRepository("owner-1", request, scoped)
+    analyses = FakeAnalyses()
+    handler = SecurityV4JobHandler(
+        repository,
+        analyses,
+        pipeline_factory=lambda runtime: FakePipeline(result),
+        runtime_factory=SecurityAssistantRuntime,
+        memory=IdempotentMemory(),
+        propose_actions=lambda response: _no_op(response),
+    )
+    job = DurableJob(uuid4(), scoped.analysis_id, "security_v4", 1, 3, scoped.created_at)
+
+    await handler(job, "worker-1")
+
+    assert repository.completed is not None
+    assert [event.kind.value for event in repository.events] == ["final"]
+    assert analyses.finalized == [(scoped.analysis_id, "owner-1")]
+
+
+async def _no_op(response) -> None:
+    del response
+
+
+@pytest.mark.asyncio
+async def test_durable_retry_repeats_progress_but_keeps_final_side_effects_idempotent() -> None:
+    request = SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async")
+    scoped = SecurityTriageScopeService().assess(request)
+    result = assess_security_risk(scoped).model_copy(update={"status": AnalysisStatus.COMPLETED})
+    repository = FinalCommitFailsOnceDurableRepository("owner-1", request, scoped)
+    memory = IdempotentMemory()
+    proposed: set = set()
+
+    async def propose(response) -> None:
+        proposed.add(response.analysis_id)
+
+    handler = SecurityV4JobHandler(
+        repository,
+        FakeAnalyses(),
+        pipeline_factory=lambda runtime: FakePipeline(result),
+        runtime_factory=SecurityAssistantRuntime,
+        memory=memory,
+        propose_actions=propose,
+    )
+    first_job = DurableJob(uuid4(), scoped.analysis_id, "security_v4", 1, 3, scoped.created_at)
+    second_job = DurableJob(first_job.id, scoped.analysis_id, "security_v4", 2, 3, scoped.created_at)
+
+    with pytest.raises(ConnectionError, match="terminal store temporarily unavailable"):
+        await handler(first_job, "worker-1")
+    await handler(second_job, "worker-2")
+
+    assert repository.final_commit_attempts == 2
+    assert repository.completed is not None
+    assert memory.effects == {scoped.analysis_id}
+    assert proposed == {scoped.analysis_id}
+    assert [event.kind.value for event in repository.events].count("final") == 1
+
+
+@pytest.mark.asyncio
+async def test_lost_security_lease_cancels_handler_and_progress_writer() -> None:
+    request = SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay", execution_mode="async")
+    scoped = SecurityTriageScopeService().assess(request)
+    repository = LeaseLossDurableRepository("owner-1", request, scoped)
+    handler = SecurityV4JobHandler(
+        repository,
+        FakeAnalyses(),
+        pipeline_factory=lambda runtime: BlockingPipeline(),
+        runtime_factory=SecurityAssistantRuntime,
+        memory=IdempotentMemory(),
+        propose_actions=lambda response: _no_op(response),
+    )
+    worker = SecurityV4DurableWorker(repository, handler, lease_seconds=1)
+    job = DurableJob(uuid4(), scoped.analysis_id, "security_v4", 1, 3, scoped.created_at)
+
+    with pytest.raises(LostJobLeaseError):
+        await asyncio.wait_for(worker._execute(job), timeout=4)  # noqa: SLF001 - lifecycle invariant
+
+    assert repository.append_started.is_set()
+    assert repository.append_cancelled.is_set()
+    assert repository.completed is None
 
 
 class FailingRedis:

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { statusLabel } from "@/lib/presentation/security-labels";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
+import type { SecurityProgressViewModel } from "@/lib/security-progress";
 
 import { ActionRiskPanel, SimpleRiskTechnicalDetails } from "./action-risk-panel";
 import { AnalysisAppealForm } from "./analysis-appeal-form";
@@ -202,6 +203,7 @@ export function CaseWorkspace({
   transport,
   error,
   lifecycleEvents,
+  progress,
   latest,
   busy,
   api,
@@ -214,6 +216,7 @@ export function CaseWorkspace({
   transport: AnalysisTransportState;
   error: string | null;
   lifecycleEvents: SecurityAnalysisEventV4[];
+  progress: SecurityProgressViewModel;
   latest: SecurityScopeResponseV4 | null;
   busy: boolean;
   api: SecurityAnalysisApi;
@@ -294,6 +297,7 @@ export function CaseWorkspace({
             error={error}
             busy={busy}
             mode={mode}
+            progress={progress}
             followUp={state === "NEED_MORE_INFO" ? latest?.follow_up_question : null}
             onSubmit={onSubmit}
             onRetry={onRetry}

@@ -47,6 +47,7 @@ from src.models import (
     RiskLevel,
     SecurityAdminAuditEventV4,
     SecurityAdminCopilotResponseV4,
+    SecurityAnalysisEventKindV4,
     SecurityAnalysisEventV4,
     SecurityAuditResourceV4,
     SecurityConversationV4,
@@ -64,6 +65,15 @@ from src.repositories.postgres_jobs import (
 from src.repositories.postgres_jobs import OutboxMessage as OutboxMessage
 from src.repositories.postgres_trust import PostgresTrustRepositoryMixin
 from src.repositories.postgres_wave2 import PostgresWave2RepositoryMixin
+
+
+class SecurityAnalysisAlreadyFinalizedError(RuntimeError):
+    """Raised when an observer tries to append after a terminal v4 commit.
+
+    Progress is best-effort telemetry.  Callers such as the progress reporter
+    deliberately drop this error, while the repository keeps the terminal
+    event and its sequence authoritative.
+    """
 
 
 class PostgresPlatformRepository(
@@ -433,9 +443,30 @@ class PostgresPlatformRepository(
         )
 
     async def append_security_analysis_event(self, event: SecurityAnalysisEventV4) -> SecurityAnalysisEventV4:
+        if event.kind is not SecurityAnalysisEventKindV4.PROGRESS:
+            raise ValueError("security progress appender only accepts progress events")
+        active_job = self._active_job.get()
+        if active_job is None:
+            raise RuntimeError("security progress append requires an active durable job scope")
+        job_id, worker_id = active_job
         pool = await self._get_pool()
         async with pool.acquire() as connection, connection.transaction():
-            await connection.fetchrow("SELECT id FROM security_analyses WHERE id=$1 FOR UPDATE", event.analysis_id)
+            owned = await connection.fetchrow(
+                """SELECT analysis_id FROM security_analysis_jobs_v4
+                   WHERE id=$1 AND worker_id=$2 AND status='running'
+                     AND lease_expires_at > now() FOR UPDATE""",
+                job_id,
+                worker_id,
+            )
+            if owned is None or owned["analysis_id"] != event.analysis_id:
+                raise LostJobLeaseError("security v4 job lease was lost before progress append")
+            analysis = await connection.fetchrow(
+                "SELECT status FROM security_analyses WHERE id=$1 FOR UPDATE", event.analysis_id
+            )
+            if analysis is None:
+                raise LookupError("security analysis was not found")
+            if analysis["status"] in {"completed", "failed"}:
+                raise SecurityAnalysisAlreadyFinalizedError("security analysis already has a terminal result")
             sequence = await connection.fetchval(
                 "SELECT COALESCE(MAX(sequence),0)+1 FROM security_analysis_events WHERE analysis_id=$1",
                 event.analysis_id,

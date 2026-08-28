@@ -10,10 +10,11 @@ from src.agents.security_trust import SecurityTrustService
 from src.agents.tools.security_memory import SecurityMemoryLookupTool
 from src.models import (
     AnalysisStatus,
+    AssistantProcessingModeV4,
     ExposureStateV4,
     ScopeDecisionV4,
+    SecurityInvestigationStatusV4,
     SecurityInvestigationStepStatusV4,
-    SecurityRiskV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
 )
@@ -22,17 +23,20 @@ from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.official_verification_coordinator import OfficialLinkVerificationCoordinator
 from src.services.official_verification_rollout import OfficialVerificationRolloutStage
 from src.services.security_conversation_policy import is_incident_exposure
+from src.services.security_progress import SecurityProgressMessageCode, SecurityProgressUpdate
 from src.services.security_response import GroundedSecurityResponseService
 from src.services.security_understanding import SecuritySemanticUnderstandingService
 
-ProgressCallback = Callable[
-    [str, str, list[str], SecurityRiskV4 | None],
-    Awaitable[None],
-]
+ProgressCallback = Callable[[SecurityProgressUpdate], Awaitable[None]]
 
 logger = logging.getLogger("trustguard.official_verification")
 InvestigationResolver = Callable[[], Awaitable[SecurityInvestigationService]]
 MemoryLookupResolver = Callable[[], Awaitable[SecurityMemoryLookupTool]]
+
+
+async def _emit(progress: ProgressCallback | None, message_code: SecurityProgressMessageCode) -> None:
+    if progress is not None:
+        await progress(SecurityProgressUpdate.for_message_code(message_code))
 
 
 class SecurityTriagePipeline:
@@ -79,6 +83,7 @@ class SecurityTriagePipeline:
         owner_id: str | None = None,
     ) -> SecurityScopeResponseV4:
         observability = get_langfuse_observability()
+        await _emit(progress, SecurityProgressMessageCode.UNDERSTANDING_STARTED)
         with observability.observation(
             "understand-security-context",
             input={"initial_scope": scoped.scope_decision.value},
@@ -100,23 +105,35 @@ class SecurityTriagePipeline:
                         ),
                     }
                 )
-        if progress is not None:
-            await progress("understanding", "Đã hợp nhất ngữ cảnh rule và AI.", [], None)
+        await _emit(
+            progress,
+            SecurityProgressMessageCode.UNDERSTANDING_DEGRADED
+            if scoped.assistant_context is not None
+            and scoped.assistant_context.processing_mode is AssistantProcessingModeV4.FALLBACK
+            else SecurityProgressMessageCode.UNDERSTANDING_COMPLETED,
+        )
+        await _emit(progress, SecurityProgressMessageCode.SCOPE_GATE_COMPLETED)
         if scoped.scope_decision is not ScopeDecisionV4.IN_SCOPE:
             # Legacy test/dry-run response doubles may intentionally omit the
             # composer. Production always supplies GroundedSecurityResponseService.
             compose_terminal = getattr(self._responses, "enrich_terminal", None)
             if compose_terminal is not None:
+                await _emit(progress, SecurityProgressMessageCode.ASSISTANT_RESPONSE_STARTED)
                 scoped = await compose_terminal(scoped)
+                await _emit(progress, SecurityProgressMessageCode.ASSISTANT_RESPONSE_COMPLETED)
             return self._complete(scoped)
 
         exposure = (
             scoped.assistant_context.exposure_state if scoped.assistant_context is not None else ExposureStateV4.UNKNOWN
         )
         if is_incident_exposure(exposure):
+            await _emit(progress, SecurityProgressMessageCode.INCIDENT_RESPONSE_STARTED)
             memory_lookup = await self._resolve_memory_lookup()
             if memory_lookup is not None and owner_id is not None:
+                await _emit(progress, SecurityProgressMessageCode.SECURITY_MEMORY_LOOKUP_STARTED)
                 scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
+                await _emit(progress, SecurityProgressMessageCode.SECURITY_MEMORY_LOOKUP_COMPLETED)
+            await _emit(progress, SecurityProgressMessageCode.RISK_ASSESSMENT_STARTED)
             with observability.observation("assess-security-risk") as observation:
                 scoped = assess_security_risk(
                     scoped,
@@ -126,9 +143,10 @@ class SecurityTriagePipeline:
                 )
                 self._update_risk_observation(observation, scoped)
                 self._trace_official_verification_risk_boundary(scoped)
-            if progress is not None:
-                await progress("incident_response", "Đã ưu tiên hướng dẫn khôi phục tức thời.", [], scoped.risk)
+            await _emit(progress, SecurityProgressMessageCode.RISK_ASSESSMENT_COMPLETED)
+            await _emit(progress, SecurityProgressMessageCode.INCIDENT_RESPONSE_COMPLETED)
         else:
+            await _emit(progress, SecurityProgressMessageCode.INVESTIGATION_STARTED)
             with observability.observation("investigate-security-case") as observation:
                 investigation = await self._resolve_investigation()
                 scoped = await investigation.investigate(request, scoped, runtime=runtime)
@@ -142,13 +160,17 @@ class SecurityTriagePipeline:
                             "error_count": len(scoped.errors),
                         }
                     )
-            if progress is not None:
-                await progress(
-                    "investigation",
-                    "Đã hoàn tất kế hoạch điều tra được policy kiểm soát.",
-                    [item.evidence_ref for item in scoped.evidence],
-                    None,
-                )
+            await _emit(
+                progress,
+                SecurityProgressMessageCode.INVESTIGATION_COMPLETED
+                if scoped.investigation_status is SecurityInvestigationStatusV4.COMPLETED
+                else SecurityProgressMessageCode.INVESTIGATION_DEGRADED
+                if scoped.investigation_status is SecurityInvestigationStatusV4.PARTIAL
+                else SecurityProgressMessageCode.INVESTIGATION_SKIPPED,
+            )
+            official_verification_applicable = self._official_verification_may_run(scoped)
+            if official_verification_applicable:
+                await _emit(progress, SecurityProgressMessageCode.OFFICIAL_LINK_VERIFICATION_STARTED)
             with observability.observation("verify-official-identity") as observation:
                 if self._official_verification_rollout is not None:
                     assert runtime.execution_context is not None
@@ -179,28 +201,21 @@ class SecurityTriagePipeline:
                         },
                         level="ERROR" if verification_failed else "DEFAULT",
                     )
-            if progress is not None and scoped.official_verification is not None:
-                refs = [item.source_ref for item in scoped.official_verification.source_refs]
-                refs.extend(item.link_ref for item in scoped.official_verification.link_refs)
-                await progress(
-                    "official_link_verification",
-                    "Đã đối chiếu publisher, claim và resource với nguồn chính thức.",
-                    refs,
-                    None,
+            if official_verification_applicable:
+                await _emit(
+                    progress,
+                    SecurityProgressMessageCode.OFFICIAL_LINK_VERIFICATION_DEGRADED
+                    if "official_verification_error" in scoped.limitations
+                    else SecurityProgressMessageCode.OFFICIAL_LINK_VERIFICATION_COMPLETED
+                    if scoped.official_verification is not None
+                    else SecurityProgressMessageCode.OFFICIAL_LINK_VERIFICATION_SKIPPED,
                 )
             memory_lookup = await self._resolve_memory_lookup()
             if memory_lookup is not None and owner_id is not None:
+                await _emit(progress, SecurityProgressMessageCode.SECURITY_MEMORY_LOOKUP_STARTED)
                 scoped = await memory_lookup.enrich(scoped, owner_id=owner_id)
-                if progress is not None:
-                    refs = [
-                        item.evidence_ref for item in scoped.evidence if item.type.value == "reviewed_security_memory"
-                    ]
-                    await progress(
-                        "security_memory_lookup",
-                        "Đã đối chiếu Security Memory được reviewer phê duyệt.",
-                        refs,
-                        None,
-                    )
+                await _emit(progress, SecurityProgressMessageCode.SECURITY_MEMORY_LOOKUP_COMPLETED)
+            await _emit(progress, SecurityProgressMessageCode.RISK_ASSESSMENT_STARTED)
             with observability.observation("assess-security-risk") as observation:
                 scoped = assess_security_risk(
                     scoped,
@@ -210,13 +225,8 @@ class SecurityTriagePipeline:
                 )
                 self._update_risk_observation(observation, scoped)
                 self._trace_official_verification_risk_boundary(scoped)
-            if progress is not None:
-                await progress(
-                    "risk_assessment",
-                    "Đã tính risk bằng policy xác định.",
-                    list(scoped.explanation_evidence_refs),
-                    scoped.risk,
-                )
+            await _emit(progress, SecurityProgressMessageCode.RISK_ASSESSMENT_COMPLETED)
+        await _emit(progress, SecurityProgressMessageCode.ASSISTANT_RESPONSE_STARTED)
         with observability.observation("generate-security-response") as observation:
             scoped = await self._responses.enrich(scoped)
             if observation is not None:
@@ -228,13 +238,12 @@ class SecurityTriagePipeline:
                         "final_response_source": response.generation_mode.value if response else None,
                     }
                 )
-        if progress is not None:
-            await progress(
-                "assistant_response",
-                "Đã tạo phản hồi trợ lý có kiểm tra grounding.",
-                list(scoped.explanation_evidence_refs),
-                scoped.risk,
-            )
+        await _emit(
+            progress,
+            SecurityProgressMessageCode.ASSISTANT_RESPONSE_DEGRADED
+            if scoped.assistant_response is not None and scoped.assistant_response.degradation_reason is not None
+            else SecurityProgressMessageCode.ASSISTANT_RESPONSE_COMPLETED,
+        )
         return self._complete(scoped)
 
     @staticmethod
@@ -284,6 +293,13 @@ class SecurityTriagePipeline:
                 }
             },
         )
+
+    def _official_verification_may_run(self, scoped: SecurityScopeResponseV4) -> bool:
+        """Match the existing coordinator's local applicability without calling it."""
+        if self._official_verification_rollout is None and self._official_verification is None:
+            return False
+        context = scoped.security_context
+        return bool(context and (context.claimed_entity or context.urls or context.requested_action))
 
     @staticmethod
     def _record_tool_observations(observability, scoped: SecurityScopeResponseV4) -> None:

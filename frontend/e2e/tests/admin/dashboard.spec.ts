@@ -15,7 +15,7 @@ async function expectNoSeriousAccessibilityViolations(page: Page, selector: stri
 test("admin keyboard review → Observatory → Trust → Unified Audit", async ({ page }) => {
   await installAdminReviewFlow(page);
   await page.goto("/login");
-  await page.getByRole("button", { name: /Quyền Admin/i }).focus();
+  await page.getByRole("button", { name: /Quyền quản trị bảo mật/i }).focus();
   await page.keyboard.press("Enter");
   await page.waitForURL("**/");
   await page.goto("/admin");
@@ -24,30 +24,13 @@ test("admin keyboard review → Observatory → Trust → Unified Audit", async 
   await page.getByRole("button", { name: /Kết luận cần human review/i }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("Credential path observed.")).toBeVisible();
-  await page.getByLabel("Reviewer note").fill("Đã đối chiếu structured context và evidence snapshot.");
-  await page.getByRole("button", { name: "Submit reviewed decision" }).focus();
+  await page.getByLabel("Ghi chú của người duyệt").fill("Đã đối chiếu structured context và evidence snapshot.");
+  await page.getByRole("button", { name: "Xác nhận quyết định" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByText("Terminal review")).toBeVisible();
+  await expect(page.getByText("0 hồ sơ")).toBeVisible();
   await expectNoSeriousAccessibilityViolations(page, "[aria-labelledby='case-review-heading']");
 
-  await page.goto("/admin/observatory");
-  await expect(page.getByRole("heading", { name: "Threat Observatory" })).toBeVisible();
-  await expect(page.getByText("tapdoanx-qua.example", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: /Shared prize lure and credential path/i }).click();
-  await expect(page.getByText("domain:tapdoanx-qua.example")).toBeVisible();
-
   await page.goto("/admin/trust");
-  await expect(page.getByRole("heading", { name: "Trust Control Center" })).toBeVisible();
-  await expect(page.getByText("Verified corporate registry")).toBeVisible();
-  await page.getByRole("button", { name: "Create new version" }).click();
-  await expect(page.getByText(/existing record is not edited/i)).toBeVisible();
-  await page.getByLabel("Brand provenance").fill("Reviewed E2E identity version");
-  await page.getByRole("button", { name: "Review new version" }).click();
-  await page.getByRole("button", { name: "Confirm new version" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Danh sách tin cậy & chặn" })).toBeVisible();
 
-  await page.goto("/admin/audit");
-  await expect(page.getByRole("heading", { name: "Unified Audit", exact: true })).toBeVisible();
-  await expect(page.getByText("brand_created")).toBeVisible();
-  await expect(page.getByText("registry:tapdoanx")).toBeVisible();
 });

@@ -23,6 +23,10 @@ def test_openapi_exposes_v4_as_a_separate_security_contract() -> None:
     assert "claims" not in components["SecurityScopeResponseV4"]["properties"]
     assert components["SecurityTriageCreateRequestV4"]["properties"]["execution_mode"]["default"] == "inline"
     assert "kind" in components["SecurityAnalysisEventV4"]["properties"]
+    assert components["SecurityProgressStateV4"]["enum"] == ["started", "completed", "skipped", "degraded"]
+    progress_state = components["SecurityAnalysisEventV4"]["properties"]["progress_state"]
+    assert progress_state["anyOf"][0]["$ref"].endswith("/SecurityProgressStateV4")
+    assert "progress_state" not in components["SecurityAnalysisEventV4"].get("required", [])
     assert "reviewed_security_memory" in components["SecurityEvidenceTypeV4"]["enum"]
     assert "domain_familiarity" in components["SecurityEvidenceTypeV4"]["enum"]
     assert "DomainFamiliarityDetailsV4" in components

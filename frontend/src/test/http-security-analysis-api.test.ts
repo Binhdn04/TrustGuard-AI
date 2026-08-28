@@ -73,16 +73,17 @@ describe("HttpSecurityAnalysisApi", () => {
   });
 
   it("requests a non-persistent page capture with fresh URL consent", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(["jpeg"]), {
-      status: 200,
-      headers: { "Content-Type": "image/jpeg" },
-    }));
+    const imageResponse = new Blob(["jpeg"], { type: "image/jpeg" });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(imageResponse),
+    } as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
     const api = new HttpSecurityAnalysisApi("http://backend.test", () => "owner-token");
 
     const image = await api.capturePage("analysis/id", 2);
 
-    expect(image.type).toBe("image/jpeg");
+    expect(image).toBe(imageResponse);
     expect(fetchMock).toHaveBeenCalledWith(
       "http://backend.test/api/v4/analyses/analysis%2Fid/page-capture",
       expect.objectContaining({
