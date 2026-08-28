@@ -191,6 +191,13 @@ vẫn đọc được và Alembic chỉ còn một head.
 `0021_security_blacklist_v4` thay unique index cũ bằng unique index chỉ áp dụng cho proposal `pending_review` và
 thêm `blacklist` vào feedback-audit constraint. Migration không sửa trực tiếp blacklist entry; sau upgrade phải
 smoke add → approve → disable → approve → re-add và xác minh restart vẫn giữ lifecycle/audit.
+`0022_action_assurance_metadata` là additive: thêm JSONB `policy_metadata` vào `security_analyses` và JSONB
+`assurance_metadata` vào `security_feedback_audit_v4`, đều `NOT NULL DEFAULT '{}'`. Sau upgrade, xác minh hai cột,
+default và một Alembic head; chạy analysis security-risk-v7 rồi kiểm tra canonical response và companion
+`policy_metadata` nhất quán sau restart.
+`assurance_metadata` hiện là schema reservation và có thể vẫn `{}` cho tới khi audit writer được nối end-to-end.
+Hai cột chỉ dành cho metadata tối thiểu, không lưu message, raw model content, credential hoặc URL query. Downgrade
+sẽ drop hai cột và metadata đã ghi, vì vậy phải backup trước khi rollback qua `0022`.
 
 ## Deploy and verify
 

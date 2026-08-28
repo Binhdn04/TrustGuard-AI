@@ -162,6 +162,12 @@ malicious evidence hoặc hành động trực tiếp phụ thuộc vào việc 
 - Migration `0020_report_audit_details` lưu structured report resolution/remediation trong immutable feedback audit.
 - Migration `0021_security_blacklist_v4` cho phép proposal mới sau lifecycle terminal, giữ duy nhất một proposal
   pending theo action/target và thêm `blacklist` vào unified audit; SQLite migration v6 lưu proposal/review qua restart.
+- Migration `0022_action_assurance_metadata` thêm JSONB `policy_metadata` cho analysis security-risk-v7 và reserve
+  JSONB `assurance_metadata` cho feedback audit. Analysis repository ghi policy metadata cạnh canonical response;
+  audit assurance column hiện dùng default `{}` cho tới khi writer được nối end-to-end. Các cột companion này chỉ
+  chứa metadata tối thiểu, không chứa private message, raw model output, credential hoặc URL query.
+- PostgreSQL repository giữ một facade tương thích và tách implementation theo domain thành các mixin feedback,
+  jobs/outbox, trust và Wave 2 để giảm kích thước module và cho phép kiểm thử từng miền độc lập.
 
 ## Code map
 
@@ -171,6 +177,6 @@ malicious evidence hoặc hành động trực tiếp phụ thuộc vào việc 
 | API v4 | `src/api/security_v4.py` |
 | Scope/investigation/risk | `src/agents/security_*.py` |
 | Services | `src/services/security_*.py` |
-| Persistence | `src/repositories/`, `migrations/versions/` |
+| Persistence | `src/repositories/postgres.py`, `src/repositories/postgres_*.py`, `migrations/versions/` |
 | AI/evaluation | `src/security_ai/`, `src/evaluation/` |
 | Frontend/tests | `frontend/src/`, `tests/` |
