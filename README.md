@@ -74,7 +74,7 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 Backend local mặc định:
 
 - API: <http://localhost:8000>
-- OpenAPI/Swagger: <http://localhost:8000/docs>
+- OpenAPI/Swagger (local/development only): <http://localhost:8000/docs>. Production disables `/docs`, `/redoc`, and `/openapi.json`.
 - Health: <http://localhost:8000/health>
 - Readiness: <http://localhost:8000/health/ready>
 - User token: `dev-user-token`
@@ -172,6 +172,8 @@ Toàn bộ giá trị mẫu nằm trong [.env.example](.env.example) và [fronte
 | `OIDC_ADMIN_ROLE` | `security_admin` | Role được ánh xạ sang Security Admin. |
 | `USER_RATE_LIMIT_PER_MINUTE` | `120` | Limit riêng cho user. |
 | `ADMIN_RATE_LIMIT_PER_MINUTE` | `60` | Limit riêng cho admin. |
+| `IP_RATE_LIMIT_PER_MINUTE` | `240` | Pre-authentication limit for `/api/*`; its key is an HMAC of the IP, so raw IP is not written to Redis or logs. |
+| `TRUSTED_PROXY_IPS` | empty | Comma-separated deployment-controlled proxy IPs/CIDRs. `X-Forwarded-For` is accepted only when the connected peer is in this list; leave empty for direct backend access. |
 | `WEBSOCKET_TICKET_TTL_SECONDS` | `60` | TTL của one-time stream ticket. |
 
 Frontend hosted dùng Authorization Code + PKCE. Cần ít nhất:
@@ -282,9 +284,12 @@ Backend:
 
 ```bash
 uv run ruff check .
-uv run pytest -q
+uv run pytest -q --cov --cov-report=term-missing --cov-report=xml:coverage.xml
 uv run alembic heads
 ```
+
+Lệnh pytest mặc định loại marker `integration`. CI có job riêng dựng PostgreSQL 16 disposable, apply toàn bộ migration
+và chạy `tests/integration`; coverage backend hiện có gate tối thiểu `68%` trong `pyproject.toml`.
 
 Frontend:
 

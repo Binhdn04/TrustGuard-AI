@@ -1,6 +1,6 @@
 # Current Status
 
-**Updated:** 2026-08-25
+**Updated:** 2026-08-28
 
 `Implemented` nghĩa là có code và automated coverage trong repository, không đồng nghĩa đã verify trên
 hosted production với OIDC, PostgreSQL, Redis và provider thật.
@@ -23,15 +23,17 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Boundary | `/api/v4` only; v2/v3 không mount/OpenAPI |
 | Scope | structured context, focused follow-up, recovery-first incident path |
 | Investigation | rules, blacklist, DNS, IANA RDAP + optional BKNS WHOIS v2 routing, VirusTotal, optional Cloudflare Radar domain ranking, consent/budget/deadline/SSRF |
-| Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v6, false-positive policy |
+| Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v7 with action-intent assurance, false-positive policy |
 | User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
+| Persistence | PostgreSQL facade tách feedback, jobs/outbox, trust và Wave 2 thành domain mixins; integration suite chạy trên PostgreSQL 16 disposable trong CI |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; backend span candidates + model-selected IDs; per-candidate fail-soft grounding; suggestion-only Admin Copilot |
 | Official verification | publisher/claim/resource compatibility plus URL-routed domain ownership/sender identity/action endorsement, resource-first identity discovery, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, action-relevant SAFE policy, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | UI MVP tiếng Việt; một navigation/sidebar; user có Kiểm tra/Lịch sử, còn Hồ sơ/Cài đặt nằm trong menu avatar; admin có thêm Duyệt bảo mật và Tin cậy & chặn; whitelist/blacklist thao tác trực tiếp với trạng thái/audit; route Observatory/Audit cũ redirect về Trust workspace |
-| Schema | Alembic through `0021_security_blacklist_v4` (one head) |
+| Testing | `pytest-cov` gate `68%`, default offline suite và PostgreSQL integration job riêng; xem bằng chứng hiện hành trong `docs/TESTING.md` |
+| Schema | Alembic through `0022_action_assurance_metadata` (one head) |
 
 ## Partial and pending
 
@@ -50,6 +52,11 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - `0019_security_identity_discovery` additive vẫn cần staging migration/persistence parity smoke trên PostgreSQL.
 - `0020_report_audit_details` additive vẫn cần staging migration smoke trên PostgreSQL trước khi deploy luồng report remediation.
 - `0021_security_blacklist_v4` đổi unique constraint của proposal pending và mở rộng audit resource; vẫn cần staging PostgreSQL migration/restart smoke.
+- `0022_action_assurance_metadata` additive lưu `policy_metadata` riêng cho analysis và reserve
+  `assurance_metadata` trên feedback audit. Runtime đã ghi analysis metadata; audit column hiện giữ default `{}` và
+  vẫn cần staging migration cùng end-to-end write/read validation trước khi được dùng.
+- PostgreSQL integration suite đã có trong CI nhưng snapshot local này chưa có Docker daemon để tạo bằng chứng
+  PostgreSQL thật; job integration phải pass trước merge.
 - Luồng MVP report → admin resolution/remediation → phân tích lại → audit đã có automated integration coverage
   trên local SQLite, nhưng chưa có smoke production với hai phiên OAuth thật `user` và `security_admin`.
 

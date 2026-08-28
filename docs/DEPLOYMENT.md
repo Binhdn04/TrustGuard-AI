@@ -44,6 +44,10 @@ OIDC_AUDIENCE=<api-audience>
 OIDC_ROLES_CLAIM=<api-audience>/roles
 OIDC_ADMIN_ROLE=security_admin
 CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
+IP_RATE_LIMIT_PER_MINUTE=240
+# Leave empty unless this backend is reached through a deployment-controlled
+# proxy. When configured, use only its IP/CIDR; never trust a public header.
+TRUSTED_PROXY_IPS=
 SECURITY_RELEASE_PROFILE=pre_cutover
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 LIVE_PROVIDERS_REQUIRED=false
@@ -187,6 +191,13 @@ vẫn đọc được và Alembic chỉ còn một head.
 `0021_security_blacklist_v4` thay unique index cũ bằng unique index chỉ áp dụng cho proposal `pending_review` và
 thêm `blacklist` vào feedback-audit constraint. Migration không sửa trực tiếp blacklist entry; sau upgrade phải
 smoke add → approve → disable → approve → re-add và xác minh restart vẫn giữ lifecycle/audit.
+`0022_action_assurance_metadata` là additive: thêm JSONB `policy_metadata` vào `security_analyses` và JSONB
+`assurance_metadata` vào `security_feedback_audit_v4`, đều `NOT NULL DEFAULT '{}'`. Sau upgrade, xác minh hai cột,
+default và một Alembic head; chạy analysis security-risk-v7 rồi kiểm tra canonical response và companion
+`policy_metadata` nhất quán sau restart.
+`assurance_metadata` hiện là schema reservation và có thể vẫn `{}` cho tới khi audit writer được nối end-to-end.
+Hai cột chỉ dành cho metadata tối thiểu, không lưu message, raw model content, credential hoặc URL query. Downgrade
+sẽ drop hai cột và metadata đã ghi, vì vậy phải backup trước khi rollback qua `0022`.
 
 ## Deploy and verify
 
@@ -198,7 +209,7 @@ curl https://<backend-domain>/health/ready
 curl https://<backend-domain>/api/v4/capabilities
 ```
 
-Acceptance: readiness `200`; OpenAPI chỉ public v4; user/admin OIDC và RBAC pass; frontend không gọi
+Acceptance: readiness `200`; `/docs`, `/redoc` và `/openapi.json` trả `404` trong production; user/admin OIDC và RBAC pass; frontend không gọi
 localhost/CORS lỗi; worker không crash-loop/duplicate job; polling/WebSocket fallback hoạt động; database,
 Redis và worker không public; restart không mất dữ liệu.
 

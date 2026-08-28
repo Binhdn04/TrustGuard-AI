@@ -1,4 +1,5 @@
 from functools import lru_cache
+from ipaddress import ip_network
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -117,6 +118,11 @@ class Settings(BaseSettings):
     websocket_ticket_ttl_seconds: int = Field(default=60, ge=10, le=300)
 
     # Abuse controls. Admin traffic has a separate, lower-volume bucket.
+    # This applies before authentication. When the app is deployed behind a
+    # reverse proxy, configure only proxy addresses/CIDRs that are controlled
+    # by the deployment; untrusted forwarding headers are ignored.
+    ip_rate_limit_per_minute: int = Field(default=240, ge=1)
+    trusted_proxy_ips: str = ""
     user_rate_limit_per_minute: int = Field(default=120, ge=1)
     admin_rate_limit_per_minute: int = Field(default=60, ge=1)
     job_lease_seconds: int = Field(default=60, ge=5, le=3600)
@@ -179,6 +185,17 @@ class Settings(BaseSettings):
         if not value:
             raise ValueError("Security AI model names must not be blank")
         return value
+
+    @field_validator("trusted_proxy_ips")
+    @classmethod
+    def validate_trusted_proxy_ips(cls, value: str) -> str:
+        entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+        for entry in entries:
+            try:
+                ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise ValueError("TRUSTED_PROXY_IPS must contain comma-separated IP addresses or CIDRs") from exc
+        return ",".join(entries)
 
     @staticmethod
     def _placeholder_or_short_secret(value: str) -> bool:

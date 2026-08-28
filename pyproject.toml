@@ -27,8 +27,21 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.0.0",
     "ruff>=0.16.1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: requires real PostgreSQL infrastructure",
+]
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+fail_under = 68
+precision = 2
+show_missing = true

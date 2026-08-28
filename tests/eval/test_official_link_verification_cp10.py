@@ -19,7 +19,10 @@ IMMUTABLE_V1_SHA256 = "dc78b477a43d14beb5ec19e517fb1bdb8dd21cc6d95addc80fd897a17
 
 
 def test_security_v4_v2_is_additive_and_v1_remains_immutable() -> None:
-    assert hashlib.sha256(Path(DATASET_V1).read_bytes()).hexdigest() == IMMUTABLE_V1_SHA256
+    # Git may materialize CRLF on Windows even though the immutable blob uses
+    # LF. Verify canonical dataset content instead of the checkout convention.
+    canonical_v1 = Path(DATASET_V1).read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(canonical_v1).hexdigest() == IMMUTABLE_V1_SHA256
     cases = load_evaluation_set(DATASET_V2)
     assert {case.dataset_version for case in cases} == {SECURITY_V4_V2_DATASET_VERSION}
     assert REQUIRED_CATEGORIES <= {case.category for case in cases}

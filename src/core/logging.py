@@ -6,12 +6,34 @@ import re
 from datetime import UTC, datetime
 
 _SECRET_KEY = re.compile(r"(authorization|token|secret|password|otp|message|prompt|comment)", re.I)
+_BEARER_TOKEN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.I)
+_OPENAI_API_KEY = re.compile(r"\bsk(?:-proj)?-[A-Za-z0-9_-]+\b", re.I)
+_ASSIGNMENT_SECRET = re.compile(
+    r"\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*([=:])\s*[^\s,;]+",
+    re.I,
+)
+_SENSITIVE_QUERY_VALUE = re.compile(
+    r"([?&](?:access_token|api[_-]?key|authorization|password|secret|token)=)[^&#\s]+",
+    re.I,
+)
+
+
+def _redact_string(value: str) -> str:
+    value = _BEARER_TOKEN.sub("Bearer [REDACTED]", value)
+    value = _OPENAI_API_KEY.sub("[REDACTED]", value)
+    value = _ASSIGNMENT_SECRET.sub(r"\1\2[REDACTED]", value)
+    return _SENSITIVE_QUERY_VALUE.sub(r"\1[REDACTED]", value)
 
 
 def redact(value):
+    if isinstance(value, str):
+        return _redact_string(value)
     if isinstance(value, dict):
-        return {key: "[REDACTED]" if _SECRET_KEY.search(str(key)) else redact(item) for key, item in value.items()}
-    if isinstance(value, list):
+        return {
+            redact(str(key)): "[REDACTED]" if _SECRET_KEY.search(str(key)) else redact(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
         return [redact(item) for item in value]
     return value
 
@@ -22,7 +44,7 @@ class RedactingJsonFormatter(logging.Formatter):
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "event": record.getMessage(),
+            "event": redact(record.getMessage()),
         }
         for name in (
             "request_id",
@@ -50,8 +72,8 @@ class RedactingJsonFormatter(logging.Formatter):
             "attempts",
         ):
             if hasattr(record, name):
-                payload[name] = getattr(record, name)
-        return json.dumps(redact(payload), separators=(",", ":"), ensure_ascii=False)
+                payload[name] = redact(getattr(record, name))
+        return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
 
 def configure_structured_logging(level: str) -> None:

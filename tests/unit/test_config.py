@@ -88,3 +88,11 @@ def test_production_cutover_accepts_complete_security_profile() -> None:
     )
 
     assert settings.security_release_profile == "cutover"
+
+
+def test_trusted_proxy_ips_must_be_ip_addresses_or_cidrs() -> None:
+    settings = Settings(trusted_proxy_ips="10.0.0.1, 2001:db8::/32", _env_file=None)
+
+    assert settings.trusted_proxy_ips == "10.0.0.1,2001:db8::/32"
+    with pytest.raises(ValidationError, match="TRUSTED_PROXY_IPS"):
+        Settings(trusted_proxy_ips="proxy.example", _env_file=None)
