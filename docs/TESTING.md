@@ -21,13 +21,20 @@ npm run build
 npm run test:e2e
 ```
 
-Verification gần nhất của workspace ngày 2026-08-28: Ruff đạt; backend mặc định `702 passed, 3 deselected`,
-line coverage `69.36%` vượt gate `68%`; Alembic có một head `0022_action_assurance_metadata`. Coverage run còn
-phát 6 `ResourceWarning` về SQLite connection chưa đóng; warning không làm fail gate nhưng chưa được coi là sạch.
-Ba PostgreSQL integration case được tách sang job CI riêng, job này dựng PostgreSQL 16 disposable, chạy
-`alembic upgrade head`,
-rồi mới chạy marker `integration`. Máy local của snapshot này không có Docker daemon nên chưa tạo được bằng chứng
-PostgreSQL thật tại local; CI integration phải pass trước merge. Frontend không được chạy lại trong thay đổi backend này.
+Verification hiện hành của workspace ngày 2026-08-28:
+
+- `uv run ruff check .`: đạt.
+- `uv run pytest -q`: `720 passed, 5 deselected`.
+- `uv run alembic heads`: một head `0022_action_assurance_metadata`.
+- PostgreSQL 16 disposable local: `alembic upgrade head` chạy từ schema rỗng đến `0022`, sau đó
+  `pytest tests/integration -o addopts= -m integration -q` đạt `5 passed`. Run này có một
+  `DeprecationWarning` của Alembic về `path_separator`, không làm fail gate.
+- Frontend: `npm test` đạt `127 passed` trong 27 files; lint, typecheck, cutover và production build đều đạt;
+  production E2E đạt 2/2. E2E dùng URL loopback và demo credentials chỉ trong environment của tiến trình test,
+  không được đưa vào source hay hosted build.
+
+Các kết quả trên là evidence local/disposable; không thay thế hosted OIDC/PostgreSQL/Redis/provider/load/
+backup-restore evidence. Chỉ dùng test count của lần chạy trên, không suy diễn trạng thái deployment từ chúng.
 
 Evaluation:
 

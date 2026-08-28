@@ -12,6 +12,10 @@ public chỉ còn `/api/v4`. Official Link Verification đã được triển kh
 automated/offline evidence. Production release chưa hoàn tất vì CP10 chưa có reviewed hosted evidence,
 backup/restore rehearsal, load/failure testing và live-provider smoke.
 
+Streaming coarse progress đã có code và local verification cho event contract, reporter fail-open, pipeline,
+PostgreSQL ordering/retry và frontend replay/presentation. Async production vẫn tắt; chưa có hosted evidence cho
+backend/worker cùng artifact, Redis/WebSocket fallback, owner/ticket smoke hoặc operational metrics.
+
 Phạm vi UI của MVP đã hoàn tất trong workspace: một navigation/sidebar dùng chung, user có hai mục chính và
 `security_admin` có thêm **Duyệt bảo mật** cùng **Tin cậy & chặn**. Login local vẫn hỗ trợ demo khi được cấu hình;
 hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để chạy smoke OAuth bằng hai danh tính thật.
@@ -26,6 +30,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v7 with action-intent assurance, false-positive policy |
 | User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
+| Streaming progress | coarse allow-listed stages, ordered fail-open reporter, PostgreSQL event replay/cursor and frontend WebSocket/polling presentation |
 | Persistence | PostgreSQL facade tách feedback, jobs/outbox, trust và Wave 2 thành domain mixins; integration suite chạy trên PostgreSQL 16 disposable trong CI |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; backend span candidates + model-selected IDs; per-candidate fail-soft grounding; suggestion-only Admin Copilot |
@@ -55,8 +60,11 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - `0022_action_assurance_metadata` additive lưu `policy_metadata` riêng cho analysis và reserve
   `assurance_metadata` trên feedback audit. Runtime đã ghi analysis metadata; audit column hiện giữ default `{}` và
   vẫn cần staging migration cùng end-to-end write/read validation trước khi được dùng.
-- PostgreSQL integration suite đã có trong CI nhưng snapshot local này chưa có Docker daemon để tạo bằng chứng
-  PostgreSQL thật; job integration phải pass trước merge.
+- PostgreSQL 16 disposable local đã migrate sạch đến `0022` và integration suite đạt 5 tests ngày 2026-08-28;
+  điều này không thay thế staging/production persistence, worker hoặc Redis evidence.
+- Streaming progress/async chưa có hosted readiness, worker artifact/heartbeat, Redis outage/cursor fallback,
+  owner/ticket reconnect/final-fetch smoke hay latency/event-volume observation. Async production vẫn mặc định tắt
+  và chỉ được bật theo approval gate trong `DEPLOYMENT.md`.
 - Luồng MVP report → admin resolution/remediation → phân tích lại → audit đã có automated integration coverage
   trên local SQLite, nhưng chưa có smoke production với hai phiên OAuth thật `user` và `security_admin`.
 

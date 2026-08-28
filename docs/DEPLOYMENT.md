@@ -213,6 +213,30 @@ Acceptance: readiness `200`; `/docs`, `/redoc` và `/openapi.json` trả `404` t
 localhost/CORS lỗi; worker không crash-loop/duplicate job; polling/WebSocket fallback hoạt động; database,
 Redis và worker không public; restart không mất dữ liệu.
 
+### Async execution và streaming-progress rollout
+
+Deploy contract `progress_state` là optional, nên backend và frontend có thể deploy backward-compatible. Giữ
+`SECURITY_ASYNC_EXECUTION_ENABLED=false` trong release đầu tiên. Không tự bật async chỉ vì artifact đã merge.
+
+Chỉ một release approver được bật `SECURITY_ASYNC_EXECUTION_ENABLED=true`, sau khi toàn bộ điều kiện sau có evidence
+hosted đã làm sạch:
+
+1. Backend và worker chạy cùng immutable commit SHA; backend có `RUN_DURABLE_WORKER=false`, worker có
+   `RUN_DURABLE_WORKER=true`, cùng `DATABASE_URL`, `REDIS_URL` và production OIDC configuration.
+2. `GET /health/ready` trả `200` sau migration, `/api/v4/capabilities` công bố async capability, và worker có
+   heartbeat ổn định mà không duplicate claim/lease loss trong cửa sổ quan sát.
+3. Redis notifier và WebSocket ticket store hoạt động; khi Redis hoặc WebSocket không khả dụng, owner-scoped
+   `GET /api/v4/analyses/{analysis_id}/events?cursor=...` vẫn replay được event theo sequence từ PostgreSQL.
+4. Hosted smoke chứng minh owner isolation, ticket single-use, disconnect/reconnect, polling replay và final fetch.
+   Final response phải thay progress UI, không được tạo turn/history mới.
+5. Release evidence có event count/payload size, time từ `202` đến event đầu, time từ worker claim đến `running`,
+   duration/gap theo coarse stage, dropped/append-failure count, reconnect/fallback rate, lease/retry rate và
+   time-to-final. Chỉ ghi ID, sequence, stage/state và duration; không ghi token, private message, OTP,
+   credential, provider payload hoặc URL query nhạy cảm.
+
+Nếu bất kỳ check nào không đạt, giữ async tắt và rollback application image hoặc presentation observer; không
+rewrite event/history hay đổi final result. Local PostgreSQL/Redis fakes và unit tests không thay thế checklist này.
+
 ### MVP post-deploy smoke
 
 Giữ `/login` cho local/demo; hosted build dùng Authorization Code + PKCE và không có demo token. Sau deploy, cần

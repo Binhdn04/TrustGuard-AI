@@ -409,7 +409,7 @@ npm run test:e2e
 - [ ] Chỉ bật `SECURITY_ASYNC_EXECUTION_ENABLED=true` khi toàn bộ async prerequisites trong `DEPLOYMENT.md` ready.
 - [ ] Việc bật async production là rollout riêng có phê duyệt; không tự bật chỉ vì code đã merge.
 - [ ] Không ghi token, raw private message, OTP, credential hoặc URL query nhạy cảm vào log/screenshot evidence.
-- [ ] Cập nhật `DEPLOYMENT.md`, `TESTING.md`, `CURRENT_STATUS.md` từ evidence thực tế, không sao chép test count cũ.
+- [x] Cập nhật `DEPLOYMENT.md`, `TESTING.md`, `CURRENT_STATUS.md` từ evidence thực tế, không sao chép test count cũ.
 
 ## Acceptance criteria
 
