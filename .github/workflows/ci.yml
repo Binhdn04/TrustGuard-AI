@@ -1,8 +1,8 @@
 name: CI
 
 on:
-  # push:
-  #   branches: [main, develop]
+  push:
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
@@ -22,6 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Scan pull request commits for secrets
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -31,6 +32,18 @@ jobs:
           # the same PR, without failing on a previously remediated leak in
           # older repository history.
           git_range="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          docker run --rm --network none --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git --log-opts="${git_range}" --redact=100 /repo
+
+      - name: Scan pushed commits for secrets
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git_range="${{ github.event.before }}..${{ github.sha }}"
           docker run --rm --network none --user "$(id -u):$(id -g)" \
             --volume "${GITHUB_WORKSPACE}:/repo:ro" \
             ghcr.io/gitleaks/gitleaks:v8.30.1 \
@@ -66,6 +79,40 @@ jobs:
           name: backend-coverage
           path: coverage.xml
           if-no-files-found: error
+
+  frontend-checks:
+    name: Frontend checks
+    runs-on: [self-hosted, linux, x64, p068]
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # jsdom 30 requires Node 22.22.2 or newer.
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend unit tests
+        run: npm test
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Enforce frontend cutover boundary
+        run: npm run check:cutover
 
   postgres-integration:
     name: PostgreSQL integration
@@ -112,6 +159,7 @@ jobs:
     name: Clean workflow workspace
     needs:
       - lint-and-test
+      - frontend-checks
       - postgres-integration
     if: ${{ always() }}
     runs-on: [self-hosted, linux, x64, p068]
