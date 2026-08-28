@@ -874,10 +874,7 @@ class OfficialLinkVerificationCoordinator:
                     or not getattr(entry, "active", False)
                     or "read" not in operations
                     or getattr(entry, "effective_from", at) > at
-                    or (
-                        getattr(entry, "effective_to", None) is not None
-                        and at >= getattr(entry, "effective_to")
-                    )
+                    or (getattr(entry, "effective_to", None) is not None and at >= getattr(entry, "effective_to"))
                     or getattr(entry, "reviewed_at", None) is None
                     or getattr(entry, "reviewed_at") > at
                 ):
@@ -945,9 +942,7 @@ class OfficialLinkVerificationCoordinator:
         # lookup when no reviewed resource operator is known.
         resource_resolution = self._identities.resolve_resource_url(user_urls, brands, now)
         resolution = (
-            resource_resolution
-            if resource_resolution.status is BrandResolutionStatus.RESOLVED
-            else claimed_resolution
+            resource_resolution if resource_resolution.status is BrandResolutionStatus.RESOLVED else claimed_resolution
         )
         brand = resolution.brand if resolution.status is BrandResolutionStatus.RESOLVED else None
         source_resource_identity = self._resource_operator_identity(user_urls, now)
@@ -970,12 +965,13 @@ class OfficialLinkVerificationCoordinator:
             local_sources,
             now,
         )
-        if (
-            source_resource_identity is not None
-            and resource_resolution.status is not BrandResolutionStatus.RESOLVED
-        ):
+        if source_resource_identity is not None and resource_resolution.status is not BrandResolutionStatus.RESOLVED:
             source = next(
-                (item for item in local_sources if item.identity and item.identity.identity_id == source_resource_identity.identity_id),
+                (
+                    item
+                    for item in local_sources
+                    if item.identity and item.identity.identity_id == source_resource_identity.identity_id
+                ),
                 None,
             )
             if source is not None:
@@ -1501,38 +1497,35 @@ class OfficialLinkVerificationCoordinator:
             if item.canonical_url not in requested_targets:
                 return True
             families = {observation.family for observation in item.observations}
-            return (
-                (not action_requested or IdentityEvidenceFamilyV4.ACTION_ENDORSEMENT in families)
-                and (not claim_requested or IdentityEvidenceFamilyV4.CLAIM_ENDORSEMENT in families)
+            return (not action_requested or IdentityEvidenceFamilyV4.ACTION_ENDORSEMENT in families) and (
+                not claim_requested or IdentityEvidenceFamilyV4.CLAIM_ENDORSEMENT in families
             )
 
-        cached_resource_urls = {
-            item.canonical_url
-            for item in cached
-            if item.assurance in cache_complete_assurances
-        }
+        cached_resource_urls = {item.canonical_url for item in cached if item.assurance in cache_complete_assurances}
         completed_cached_urls = {
             item.canonical_url
             for item in cached
             if item.assurance in cache_complete_assurances and cache_covers_requested_dimensions(item)
         }
-        resource_cache_complete = (
-            (requested_targets and requested_targets <= cached_resource_urls)
-            or (not requested_targets and bool(cached_resource_urls))
+        resource_cache_complete = (requested_targets and requested_targets <= cached_resource_urls) or (
+            not requested_targets and bool(cached_resource_urls)
         )
-        action_cache_complete = (
-            (requested_targets and requested_targets <= completed_cached_urls)
-            or (not requested_targets and bool(completed_cached_urls))
+        action_cache_complete = (requested_targets and requested_targets <= completed_cached_urls) or (
+            not requested_targets and bool(completed_cached_urls)
         )
-        if cached and resource_cache_complete and (
-            action_cache_complete or not (official_consent and external_consent)
+        if (
+            cached
+            and resource_cache_complete
+            and (action_cache_complete or not (official_consent and external_consent))
         ):
             visible_cached = (
                 cached
                 if official_consent and external_consent
                 else [item for item in cached if item.relationship is not IdentityRelationshipV4.OFFICIAL_CONTROLLED]
             )
-            visible_urls = {item.canonical_url for item in visible_cached if item.assurance in cache_complete_assurances}
+            visible_urls = {
+                item.canonical_url for item in visible_cached if item.assurance in cache_complete_assurances
+            }
             if visible_cached and (
                 (requested_targets and requested_targets <= visible_urls) or (not requested_targets and visible_urls)
             ):
@@ -2732,10 +2725,10 @@ class OfficialLinkVerificationCoordinator:
         cache hits evidence-scoped while avoiding an artificial second
         retrieval chain for a campaign title already present on that source.
         """
-        if (
-            not current.applicable
-            or current.status in {VerificationStatusV4.VERIFIED, VerificationStatusV4.CONFLICTING}
-        ):
+        if not current.applicable or current.status in {
+            VerificationStatusV4.VERIFIED,
+            VerificationStatusV4.CONFLICTING,
+        }:
             return current
         targets = {_canonical_discovery_url(url) for url in user_urls}
         targets.discard(None)
@@ -2840,7 +2833,9 @@ class OfficialLinkVerificationCoordinator:
             if fetched.status is VerificationTransportStatus.SUCCESS and fetched.document is not None:
                 resource = identify_resource_chain(fetched.document.redirect_chain)
                 if submitted_url is not None:
-                    chain = [item for value in fetched.document.redirect_chain if (item := _canonical_discovery_url(value))]
+                    chain = [
+                        item for value in fetched.document.redirect_chain if (item := _canonical_discovery_url(value))
+                    ]
                     final = chain[-1] if chain else _canonical_discovery_url(fetched.document.final_url)
                     submitted_resolutions.append(
                         SubmittedResourceResolutionV4(

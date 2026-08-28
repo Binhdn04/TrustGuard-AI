@@ -658,6 +658,4 @@ class PostgresFeedbackRepositoryMixin:
         return sorted(events, key=lambda item: item.occurred_at, reverse=True)
 
 
-
 __all__ = ["PostgresFeedbackRepositoryMixin"]
-

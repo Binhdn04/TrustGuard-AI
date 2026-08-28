@@ -837,9 +837,8 @@ def check_grounded_ai_response(
             rf"(?:tên miền|domain).{{0,60}}{affirmative}", combined
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-        if (
-            not verification.sender_verification.applicable
-            and re.search(r"(?:danh tính )?(?:người gửi|sender).{0,60}(?:chưa|không)", combined)
+        if not verification.sender_verification.applicable and re.search(
+            r"(?:danh tính )?(?:người gửi|sender).{0,60}(?:chưa|không)", combined
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
@@ -851,9 +850,7 @@ def check_grounded_ai_response(
         if (
             verification.sender_verification.applicable
             and verification.sender_verification.status is not VerificationStatusV4.VERIFIED
-            and re.search(
-            rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined
-            )
+            and re.search(rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined)
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
