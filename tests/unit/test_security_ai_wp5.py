@@ -40,15 +40,16 @@ def test_async_capability_is_truthful_for_postgres_worker_only() -> None:
 def test_wp5_migration_uses_isolated_encrypted_durable_tables() -> None:
     migration = Path("migrations/versions/0016_security_v4_durable_jobs.py").read_text(encoding="utf-8")
     repository = Path("src/repositories/postgres.py").read_text(encoding="utf-8")
+    job_repository = Path("src/repositories/postgres_jobs.py").read_text(encoding="utf-8")
     assert "security_analysis_jobs_v4" in migration
     assert "security_analysis_payloads_v4" in migration
     assert "security_analysis_outbox_v4" in migration
     assert "security_analysis_idempotency_v4" in migration
     assert "payload_ciphertext bytea NOT NULL" in migration
     assert "pgp_sym_encrypt($2,$3)" in repository
-    assert "lease_expires_at > now()" in repository
-    assert "DELETE FROM security_analysis_payloads_v4" in repository
-    assert "FOR UPDATE SKIP LOCKED" in repository
+    assert "lease_expires_at > now()" in job_repository
+    assert "DELETE FROM security_analysis_payloads_v4" in job_repository
+    assert "FOR UPDATE SKIP LOCKED" in job_repository
 
 
 class FakePipeline:

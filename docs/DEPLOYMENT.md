@@ -44,6 +44,10 @@ OIDC_AUDIENCE=<api-audience>
 OIDC_ROLES_CLAIM=<api-audience>/roles
 OIDC_ADMIN_ROLE=security_admin
 CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
+IP_RATE_LIMIT_PER_MINUTE=240
+# Leave empty unless this backend is reached through a deployment-controlled
+# proxy. When configured, use only its IP/CIDR; never trust a public header.
+TRUSTED_PROXY_IPS=
 SECURITY_RELEASE_PROFILE=pre_cutover
 SECURITY_ASYNC_EXECUTION_ENABLED=false
 LIVE_PROVIDERS_REQUIRED=false
@@ -198,7 +202,7 @@ curl https://<backend-domain>/health/ready
 curl https://<backend-domain>/api/v4/capabilities
 ```
 
-Acceptance: readiness `200`; OpenAPI chỉ public v4; user/admin OIDC và RBAC pass; frontend không gọi
+Acceptance: readiness `200`; `/docs`, `/redoc` và `/openapi.json` trả `404` trong production; user/admin OIDC và RBAC pass; frontend không gọi
 localhost/CORS lỗi; worker không crash-loop/duplicate job; polling/WebSocket fallback hoạt động; database,
 Redis và worker không public; restart không mất dữ liệu.
 
