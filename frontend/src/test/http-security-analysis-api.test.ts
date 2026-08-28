@@ -77,7 +77,7 @@ describe("HttpSecurityAnalysisApi", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       blob: vi.fn().mockResolvedValue(imageResponse),
-    } as Response);
+    } as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
     const api = new HttpSecurityAnalysisApi("http://backend.test", () => "owner-token");
 
