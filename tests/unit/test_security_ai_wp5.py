@@ -129,6 +129,7 @@ async def test_durable_handler_emits_progress_purges_payload_and_keeps_side_effe
     assert repository.payload is None
     assert repository.completed is not None
     assert [event.kind.value for event in repository.events] == ["progress", "progress", "final"]
+    assert [event.step for event in repository.events] == ["running", "investigation", "completed"]
     assert memory.effects == {scoped.analysis_id}
     assert proposed == {scoped.analysis_id}
     assert analyses.finalized == [(scoped.analysis_id, "owner-1")]

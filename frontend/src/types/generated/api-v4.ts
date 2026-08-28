@@ -640,12 +640,15 @@ export interface SecurityAnalysisEventV4 {
   status: SecurityAnalysisStatusV4;
   step: string;
   kind: "status" | "provisional" | "progress" | "final";
+  progress_state?: SecurityProgressStateV4 | null;
   step_id: string | null;
   message: string | null;
   evidence_refs: string[];
   risk_hint: SecurityRiskV4 | null;
   occurred_at: string;
 }
+
+export type SecurityProgressStateV4 = "started" | "completed" | "skipped" | "degraded";
 
 export interface SecurityAnalysisEventPageV4 {
   contract_version: "v4";

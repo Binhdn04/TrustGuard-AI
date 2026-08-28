@@ -1284,6 +1284,13 @@ class SecurityAnalysisEventKindV4(StrEnum):
     FINAL = "final"
 
 
+class SecurityProgressStateV4(StrEnum):
+    STARTED = "started"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+    DEGRADED = "degraded"
+
+
 class SecurityAnalysisEventV4(SecurityContractModel):
     event_id: UUID = Field(default_factory=uuid4)
     analysis_id: UUID
@@ -1291,11 +1298,18 @@ class SecurityAnalysisEventV4(SecurityContractModel):
     status: AnalysisStatus
     step: str
     kind: SecurityAnalysisEventKindV4 = SecurityAnalysisEventKindV4.STATUS
+    progress_state: SecurityProgressStateV4 | None = None
     step_id: str | None = Field(default=None, max_length=200)
     message: str | None = Field(default=None, max_length=1000)
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
     risk_hint: SecurityRiskV4 | None = None
     occurred_at: datetime
+
+    @model_validator(mode="after")
+    def validate_progress_state(self) -> Self:
+        if self.progress_state is not None and self.kind is not SecurityAnalysisEventKindV4.PROGRESS:
+            raise ValueError("progress_state is only valid for progress events")
+        return self
 
 
 class SecurityAnalysisEventPageV4(SecurityContractModel):
@@ -1966,6 +1980,7 @@ __all__ = [
     "SecurityContextV4",
     "SecurityAnalysisAcceptedResponseV4",
     "SecurityAnalysisEventKindV4",
+    "SecurityProgressStateV4",
     "SecurityAnalysisEventPageV4",
     "SecurityAnalysisEventV4",
     "SecurityEvidenceTypeV4",

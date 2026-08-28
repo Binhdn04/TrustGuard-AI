@@ -249,21 +249,21 @@ Label không được chứa URL, entity, provider, risk class hoặc raw user c
 
 ### Phase 0 — Baseline và parity harness
 
-- [ ] Ghi lại result fixtures cho các nhánh in-scope, out-of-scope, need-more-info và incident exposure.
-- [ ] Ghi lại provider/tool call trace: thứ tự, arguments, consent và call counts.
-- [ ] Ghi lại event sequence hiện hành của async worker.
-- [ ] Xác nhận inline và worker result parity hiện hành.
-- [ ] Chốt coarse stage allow-list và label product/UI.
-- [ ] Chốt queue bound và quiesce timeout bằng constant trong code; không thêm environment flag nếu runtime không cần.
+- [x] Ghi lại result fixtures cho các nhánh in-scope, out-of-scope, need-more-info và incident exposure.
+- [x] Ghi lại provider/tool call trace: thứ tự, arguments, consent và call counts.
+- [x] Ghi lại event sequence hiện hành của async worker.
+- [x] Xác nhận inline và worker result parity hiện hành.
+- [x] Chốt coarse stage allow-list và label product/UI.
+- [x] Chốt queue bound và quiesce timeout bằng constant trong code; không thêm environment flag nếu runtime không cần.
 
 ### Phase 1 — Contract và internal update type
 
-- [ ] Thêm `SecurityProgressStateV4` và optional `progress_state` vào `SecurityAnalysisEventV4`.
-- [ ] Giữ khả năng validate/replay event cũ không có `progress_state`.
-- [ ] Regenerate/cập nhật TypeScript v4 type từ contract.
-- [ ] Tạo internal `SecurityProgressUpdate` chỉ nhận allowlisted stage/state và static message code.
-- [ ] Không cho internal update chứa prompt, raw provider content hoặc exception.
-- [ ] Xác nhận Alembic vẫn một head và không cần migration.
+- [x] Thêm `SecurityProgressStateV4` và optional `progress_state` vào `SecurityAnalysisEventV4`.
+- [x] Giữ khả năng validate/replay event cũ không có `progress_state`.
+- [x] Regenerate/cập nhật TypeScript v4 type từ contract.
+- [x] Tạo internal `SecurityProgressUpdate` chỉ nhận allowlisted stage/state và static message code.
+- [x] Không cho internal update chứa prompt, raw provider content hoặc exception.
+- [x] Xác nhận Alembic vẫn một head và không cần migration.
 
 File dự kiến:
 
@@ -460,4 +460,3 @@ Không log user message hoặc provider payload để tính metric.
 - [ ] Backend, PostgreSQL integration và frontend gates đều đạt bằng evidence hiện tại.
 - [ ] Không có tool-level event, chain-of-thought hoặc response token streaming.
 - [ ] Canonical docs phản ánh đúng runtime và rollout state thực tế.
-
