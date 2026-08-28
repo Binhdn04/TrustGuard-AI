@@ -234,6 +234,22 @@ hosted đã làm sạch:
    time-to-final. Chỉ ghi ID, sequence, stage/state và duration; không ghi token, private message, OTP,
    credential, provider payload hoặc URL query nhạy cảm.
 
+Run the operator smoke with two separate hosted OIDC user tokens after an approver has enabled async on staging.
+It writes only an ID, sequences, stage/state and timings; its positional message is sent to the API but is never
+printed or written to the summary. The script validates owner isolation, one-time ticket consumption, a fresh-ticket
+reconnect, cursor replay, progress ordering and the authoritative final fetch. A Redis/WebSocket outage still needs
+to be induced in the hosted environment while cursor polling is observed; the script must succeed on its polling
+path and the outage/recovery window must be recorded separately.
+
+```bash
+LIVE_SMOKE_TOKEN=<first-oidc-user-token> \\
+LIVE_SMOKE_OTHER_OWNER_TOKEN=<second-oidc-user-token> \\
+TRUSTGUARD_BASE_URL=https://<backend-domain> \\
+  uv run python scripts/smoke_streaming_progress.py \\
+  "<reviewed non-sensitive in-scope security message>" \\
+  --output <streaming-progress-summary.json>
+```
+
 Nếu bất kỳ check nào không đạt, giữ async tắt và rollback application image hoặc presentation observer; không
 rewrite event/history hay đổi final result. Local PostgreSQL/Redis fakes và unit tests không thay thế checklist này.
 

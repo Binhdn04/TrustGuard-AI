@@ -41,6 +41,22 @@ uv run python scripts/evaluate_official_link_verification.py
 
 Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-restore evidence.
 
+Streaming-progress hosted rollout smoke (requires separately approved async staging, two real OIDC user tokens and
+a reviewed non-sensitive message):
+
+```bash
+LIVE_SMOKE_TOKEN=<first-oidc-user-token> \\
+LIVE_SMOKE_OTHER_OWNER_TOKEN=<second-oidc-user-token> \\
+TRUSTGUARD_BASE_URL=https://<backend-domain> \\
+  uv run python scripts/smoke_streaming_progress.py \\
+  "<reviewed non-sensitive in-scope security message>" \\
+  --output <sanitized-streaming-progress-summary.json>
+```
+
+The resulting summary is deployment evidence, not approval by itself. Run and document a separate Redis/WebSocket
+outage while cursor polling remains available from PostgreSQL; never add tokens, message text, raw events or URL
+queries to the evidence.
+
 Official-link verification đã được triển khai hoàn chỉnh; các evaluator sau là regression/release
 gate cho implementation hiện hành.
 

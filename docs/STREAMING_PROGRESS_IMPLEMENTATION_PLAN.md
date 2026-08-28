@@ -2,11 +2,15 @@
 
 ## Trạng thái và phạm vi
 
-- Trạng thái hiện tại: **planned**.
+- Trạng thái hiện tại: **implementation complete; hosted rollout pending**.
 - Phạm vi: backend coarse-grained progress events, durable event delivery và frontend presentation cho `/api/v4`.
 - Không triển khai token streaming, chain-of-thought hoặc reasoning summary mới.
 - Không đánh dấu checklist hoàn tất nếu chưa có implementation và bằng chứng kiểm thử hiện tại.
 - `CURRENT_STATUS.md` chỉ được cập nhật sau khi các gate tương ứng thực sự đạt.
+
+Implementation và automated/local verification cho Phase 0–7 đã hoàn tất. Phase 8 có harness và runbook đã sẵn
+sàng, nhưng deployment, hosted smoke, Redis/WebSocket failure rehearsal, operational measurement và approval bật async
+vẫn là release work chưa thực hiện.
 
 ## Quyết định kiến trúc
 
@@ -400,6 +404,9 @@ npm run test:e2e
 
 ### Phase 8 — Deployment và rollout
 
+Hạng mục còn mở dưới đây yêu cầu evidence từ môi trường hosted; không được đánh dấu hoàn tất chỉ từ local test hoặc
+smoke harness.
+
 - [ ] Deploy backend backward-compatible trước hoặc cùng frontend hiểu field optional.
 - [ ] Xác minh backend readiness và Alembic head.
 - [ ] Xác minh worker cùng artifact/version, heartbeat ổn định và không duplicate claim.
@@ -409,6 +416,7 @@ npm run test:e2e
 - [ ] Chỉ bật `SECURITY_ASYNC_EXECUTION_ENABLED=true` khi toàn bộ async prerequisites trong `DEPLOYMENT.md` ready.
 - [ ] Việc bật async production là rollout riêng có phê duyệt; không tự bật chỉ vì code đã merge.
 - [ ] Không ghi token, raw private message, OTP, credential hoặc URL query nhạy cảm vào log/screenshot evidence.
+- [x] Thêm hosted-smoke harness đã redact và runbook; harness không thay thế hosted evidence hoặc approval.
 - [x] Cập nhật `DEPLOYMENT.md`, `TESTING.md`, `CURRENT_STATUS.md` từ evidence thực tế, không sao chép test count cũ.
 
 ## Acceptance criteria
@@ -453,10 +461,13 @@ Không log user message hoặc provider payload để tính metric.
 
 ## Definition of done
 
-- [ ] Coarse progress hoạt động qua WebSocket và polling fallback.
-- [ ] Reporter fail-open, bounded và không append sau final.
-- [ ] Result/provider/tool parity gates đạt.
-- [ ] Safety invariants và owner isolation được kiểm chứng.
-- [ ] Backend, PostgreSQL integration và frontend gates đều đạt bằng evidence hiện tại.
-- [ ] Không có tool-level event, chain-of-thought hoặc response token streaming.
-- [ ] Canonical docs phản ánh đúng runtime và rollout state thực tế.
+Các mục dưới đây phản ánh implementation và automated/local evidence hiện có. Phase 8 vẫn chưa hoàn tất vì hosted
+readiness, worker/Redis outage, owner/ticket smoke và operational metrics chưa có evidence; async production vẫn tắt.
+
+- [x] Coarse progress hoạt động qua WebSocket và polling fallback.
+- [x] Reporter fail-open, bounded và không append sau final.
+- [x] Result/provider/tool parity gates đạt.
+- [x] Safety invariants và owner isolation được kiểm chứng.
+- [x] Backend, PostgreSQL integration và frontend gates đều đạt bằng evidence hiện tại.
+- [x] Không có tool-level event, chain-of-thought hoặc response token streaming.
+- [x] Canonical docs phản ánh đúng runtime và rollout state thực tế.
