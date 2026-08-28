@@ -9,6 +9,7 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import ValidationError
 
+from src.models import SenderProvenanceV4
 from src.observability.langfuse import get_langfuse_observability
 from src.security_ai.contracts import AssistantOperation, ModelResponse, StrictModel
 
@@ -56,6 +57,9 @@ class BudgetExceededError(RuntimeError):
 class TurnExecutionContext:
     """Request-scoped deadline and provider budgets shared by every pipeline stage."""
 
+    # Only trusted inbound integrations may set this. It is intentionally
+    # request-scoped and never copied to the public triage request or report.
+    sender_provenance: SenderProvenanceV4 | None = None
     deadline_seconds: float = 30.0
     max_network_units: int = 16
     max_estimated_cost_usd: float = 0.05

@@ -87,6 +87,17 @@ _URL_RELEVANT_ACTIONS = {
     RequestedActionV4.APPLY_FOR_PASSPORT,
 }
 
+# The semantic layer can intentionally use a broad interaction label for a
+# form (``submit_form``), while the user's literal wording supplies the more
+# precise verification capability being requested (for example, “to apply”).
+# Reconcile only this narrow, safe direction: a form submission can be an
+# application, but a generic application is not automatically a form
+# submission.  The replacement still requires a literal source span and the
+# normal same-clause URL binding below.
+_VERIFICATION_ACTION_LITERAL_REFINEMENTS: dict[RequestedActionV4, tuple[RequestedActionV4, ...]] = {
+    RequestedActionV4.SUBMIT_FORM: (RequestedActionV4.REGISTER_OR_APPLY,),
+}
+
 _ACTION_URL_BOUNDARY_RE = re.compile(r"[.!?;](?=\s|$)|\n")
 
 
@@ -208,6 +219,25 @@ def _literal_span(message: str, value: str, field_name: str) -> AssistantSourceS
     if start < 0:
         return None
     return AssistantSourceSpanV4(field_name=field_name, start=start, end=start + len(value))
+
+
+def _literal_action_grounding(
+    message: str,
+    action: RequestedActionV4,
+) -> tuple[RequestedActionV4, tuple[int, int]] | None:
+    """Return the most specific literal action compatible with semantic context.
+
+    A verification action must always remain message-grounded.  This helper
+    therefore never promotes an action merely because a URL looks like a
+    form: it only refines an already accepted broad semantic action where the
+    user wrote a compatible, more specific action phrase.
+    """
+    if (span := requested_action_source_span(message, action)) is not None:
+        return action, span
+    for refined in _VERIFICATION_ACTION_LITERAL_REFINEMENTS.get(action, ()):
+        if (span := requested_action_source_span(message, refined)) is not None:
+            return refined, span
+    return None
 
 
 def _url_positions(message: str, urls: Sequence[str]) -> list[tuple[int, int, int]]:
@@ -419,11 +449,12 @@ def build_grounded_verification_intent(
 
     action: GroundedActionValue | None = None
     if context.requested_action is not None:
-        rule_span = requested_action_source_span(message, context.requested_action)
+        literal_grounding = _literal_action_grounding(message, context.requested_action)
         semantic_spans = _valid_assistant_spans(message, assistant, "requested_action")
-        if rule_span is not None:
+        if literal_grounding is not None:
+            literal_action, rule_span = literal_grounding
             action = GroundedActionValue(
-                context.requested_action,
+                literal_action,
                 1.0,
                 (
                     AssistantSourceSpanV4(

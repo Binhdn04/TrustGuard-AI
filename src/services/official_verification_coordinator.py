@@ -25,6 +25,7 @@ from src.models import (
     IdentityEvidenceObservationV4,
     IdentityRelationshipV4,
     LinkRoleV4,
+    OfficialIdentityMatchScopeV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
     OfficialLinkReferenceV4,
@@ -42,6 +43,7 @@ from src.models import (
     SecurityEvidenceV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
+    SubmittedResourceResolutionV4,
     VerificationStatusV4,
     VerificationTopicV4,
 )
@@ -648,6 +650,26 @@ def _claim_dimensions(
     return topic_match, action_match, qualifiers_match, contradiction
 
 
+def _claim_dimensions_in_text(
+    intent: GroundedVerificationIntent,
+    text: str,
+    qualifiers: Sequence[str] = (),
+) -> tuple[bool, bool, bool, bool]:
+    """Evaluate a discovery document without inventing a reviewed page object."""
+    folded = _fold(text)
+    contradiction = any(term in folded for term in _CONTRADICTION_TERMS)
+    topic = intent.contract.topic
+    if topic is None:
+        claim_tokens = {token for token in _fold(intent.contract.claim_summary or "").split() if len(token) >= 4}
+        topic_match = bool(claim_tokens) and len(claim_tokens & set(folded.split())) >= min(2, len(claim_tokens))
+    else:
+        topic_match = any(term in folded for term in _TOPIC_TERMS[topic])
+    action = intent.contract.requested_action
+    action_match = action is None or any(term in folded for term in _ACTION_TERMS[action.value])
+    qualifiers_match = all(qualifier in folded for qualifier in qualifiers)
+    return topic_match, action_match, qualifiers_match, contradiction
+
+
 def _claim_qualifiers(message: str) -> tuple[str, ...]:
     without_urls = _QUALIFIER_URL_RE.sub(" ", message)
     folded = _fold(without_urls)
@@ -831,6 +853,54 @@ class OfficialLinkVerificationCoordinator:
         self._html = html_extractor or OfficialHtmlLinkExtractor()
         self._clock = clock
 
+    def _resource_operator_identity(self, user_urls: Sequence[str], at: datetime) -> OfficialIdentityV4 | None:
+        """Project an active reviewed source policy into a resource-only identity.
+
+        This is intentionally not a claim about a named entity in the message.
+        It only admits the submitted URL as a first-party resource of the
+        reviewed public-service operator so its exact page can be checked for
+        the requested service capability.
+        """
+        if self._source_registry is None:
+            return None
+        matches: list[tuple[int, object]] = []
+        for url in user_urls:
+            for entry in self._source_registry.matching_entries(url, at):
+                pattern = str(getattr(entry, "normalized_pattern", "")).casefold().rstrip(".")
+                operations = set(getattr(entry, "allowed_operations", set()))
+                if (
+                    not pattern
+                    or getattr(entry, "explicit_deny", False)
+                    or not getattr(entry, "active", False)
+                    or "read" not in operations
+                    or getattr(entry, "effective_from", at) > at
+                    or (getattr(entry, "effective_to", None) is not None and at >= getattr(entry, "effective_to"))
+                    or getattr(entry, "reviewed_at", None) is None
+                    or getattr(entry, "reviewed_at") > at
+                ):
+                    continue
+                matches.append((len(pattern.removeprefix("*.")), entry))
+        if not matches:
+            return None
+        _, entry = max(matches, key=lambda item: item[0])
+        domain = str(getattr(entry, "normalized_pattern")).casefold().removeprefix("*.").rstrip(".")
+        publisher = str(getattr(entry, "publisher", "")).strip()
+        if not domain or not publisher:
+            return None
+        return OfficialIdentityV4(
+            identity_type=OfficialIdentityTypeV4.DOMAIN,
+            canonical_value=domain,
+            display_value=domain,
+            entity_name=publisher,
+            match_scope=OfficialIdentityMatchScopeV4.HOST_AND_SUBDOMAINS,
+            relationship="reviewed_resource_operator",
+            provenance=f"source:{getattr(entry, 'source_id', 'reviewed')}",
+            policy_version=str(getattr(entry, "policy_version", "source-registry")),
+            effective_from=getattr(entry, "effective_from", at),
+            effective_until=getattr(entry, "effective_to", None),
+            reviewed=True,
+        )
+
     async def verify(
         self,
         request: SecurityTriageCreateRequestV4,
@@ -860,13 +930,27 @@ class OfficialLinkVerificationCoordinator:
 
         now = self._clock()
         brands = await self._brands.list_active_brands(now)
-        resolution = self._identities.resolve(
+        claimed_resolution = self._identities.resolve(
             intent.contract.organization_name or request.message,
             brands,
             now,
         )
+        user_urls = self._action_urls(intent, scope)
+        # URL ownership and first-party service capability are routed by the
+        # submitted resource, not by a person or organization merely named in
+        # the message.  The claimed resolution remains the fallback for claim
+        # lookup when no reviewed resource operator is known.
+        resource_resolution = self._identities.resolve_resource_url(user_urls, brands, now)
+        resolution = (
+            resource_resolution if resource_resolution.status is BrandResolutionStatus.RESOLVED else claimed_resolution
+        )
         brand = resolution.brand if resolution.status is BrandResolutionStatus.RESOLVED else None
+        source_resource_identity = self._resource_operator_identity(user_urls, now)
         identities = tuple(identity for identity in resolution.identities if identity.reviewed)
+        if source_resource_identity is not None and all(
+            identity.canonical_value != source_resource_identity.canonical_value for identity in identities
+        ):
+            identities = (*identities, source_resource_identity)
         platform_identities = tuple(identity for identity in identities if identity.relationship == "platform_service")
         verifiable_identities = tuple(
             identity for identity in identities if identity.relationship != "platform_service"
@@ -881,7 +965,23 @@ class OfficialLinkVerificationCoordinator:
             local_sources,
             now,
         )
-        user_urls = self._action_urls(intent, scope)
+        if source_resource_identity is not None and resource_resolution.status is not BrandResolutionStatus.RESOLVED:
+            source = next(
+                (
+                    item
+                    for item in local_sources
+                    if item.identity and item.identity.identity_id == source_resource_identity.identity_id
+                ),
+                None,
+            )
+            if source is not None:
+                publisher = PublisherVerificationV4(
+                    applicable=True,
+                    status=VerificationStatusV4.VERIFIED,
+                    reason_code="reviewed_resource_operator",
+                    evidence_refs=[source.source_ref],
+                    identity=source.identity,
+                )
         pages: list[_PageEvidence] = []
         candidates: list[_Candidate] = []
         candidate_keys: set[str] = set()
@@ -1038,6 +1138,12 @@ class OfficialLinkVerificationCoordinator:
         # the candidate organization/domain by itself.
         for url in local_candidate_urls:
             add_candidate(url)
+        # Fetch the submitted first-party resource itself as capability
+        # evidence.  This is deliberately narrower than trusting its whole
+        # domain: the final page must still pass the reviewed identity check
+        # and contain a semantic match for the requested action.
+        for url in user_urls:
+            add_candidate(url)
         if verifiable_identities and online_verification_needed and request.consent.official_source_lookup:
             if self._search is not None:
                 while search_attempts < _MAX_SEARCH_ATTEMPTS:
@@ -1143,6 +1249,7 @@ class OfficialLinkVerificationCoordinator:
                 search_cap=max(0, _MAX_SEARCH_ATTEMPTS - search_attempts),
                 fetch_cap=max(0, _MAX_OFFICIAL_FETCHES - official_fetches),
                 candidate_seed_urls=discovery_seed_urls,
+                claim_qualifiers=claim_qualifiers,
                 execution_context=execution_context,
             )
             search_attempts += discovery_searches
@@ -1200,11 +1307,25 @@ class OfficialLinkVerificationCoordinator:
             link_evidence,
             request.consent.external_url_lookup,
             execution_context,
+            resolve_submitted=request.consent.official_source_lookup,
         )
         resource = self._resource_from_identity_associations(
             resource,
             user_urls,
             identity_associations,
+        )
+        resource = self._resource_from_first_party_capability(
+            resource,
+            intent,
+            user_urls,
+            pages,
+        )
+        claim = self._claim_from_exact_resource_associations(
+            claim,
+            intent,
+            user_urls,
+            identity_associations,
+            identity_evidence,
         )
         adapter_attempts += resource_calls
         limitations.extend(resource_limitations)
@@ -1244,6 +1365,7 @@ class OfficialLinkVerificationCoordinator:
             external_url_consent=request.consent.external_url_lookup,
             action_evidence_refs=action_evidence_refs,
             reviewed_ownership=reviewed_ownership,
+            sender_provenance_present=execution_context.sender_provenance is not None,
         )
         self._validate_reference_closure(report)
         reported_associations = report.identity_associations
@@ -1284,6 +1406,7 @@ class OfficialLinkVerificationCoordinator:
         search_cap: int,
         fetch_cap: int,
         candidate_seed_urls: Sequence[str] = (),
+        claim_qualifiers: Sequence[str] = (),
         execution_context: TurnExecutionContext,
     ) -> tuple[list[IdentityAssociationV4], list[IdentityEvidenceObservationV4], int, int, int, list[str]]:
         requested_url_map = {
@@ -1297,6 +1420,7 @@ class OfficialLinkVerificationCoordinator:
         if entity is None:
             return [], [], 0, 0, 0, []
         cached: list[IdentityCandidateV4] = []
+        cached_endorsement_source_urls: list[str] = []
         stale_found = False
         list_candidates = getattr(self._brands, "list_identity_candidates", None)
         if list_candidates is not None:
@@ -1335,6 +1459,22 @@ class OfficialLinkVerificationCoordinator:
                     )
                 )
             ]
+            # A current VERIFIED exact-resource edge is evidence-scoped to
+            # its recorded source URL.  If an action was not persisted by an
+            # older version, re-fetch that bounded source before broad search
+            # results.  This is not a host-wide endorsement and does not turn
+            # the third-party target into an official domain.
+            for item in cached:
+                if (
+                    item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                    and item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                    and item.canonical_url in requested_targets
+                ):
+                    for observation in item.observations:
+                        if observation.family is IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT:
+                            source_url = _canonical_discovery_url(observation.canonical_url)
+                            if source_url is not None and source_url not in cached_endorsement_source_urls:
+                                cached_endorsement_source_urls.append(source_url)
         cache_complete_assurances = {
             IdentityAssociationAssuranceV4.CONFIRMED_MISMATCH,
             IdentityAssociationAssuranceV4.REJECTED,
@@ -1342,10 +1482,41 @@ class OfficialLinkVerificationCoordinator:
             IdentityAssociationAssuranceV4.VERIFIED,
             IdentityAssociationAssuranceV4.CONFLICTING,
         }
-        completed_cached_urls = {item.canonical_url for item in cached if item.assurance in cache_complete_assurances}
-        if cached and (
-            (requested_targets and requested_targets <= completed_cached_urls)
-            or (not requested_targets and bool(completed_cached_urls))
+        # A verified exact-resource association proves the narrow
+        # organization-to-resource edge, but it does not automatically prove
+        # every requested action.  Legacy/cache records can predate action
+        # observations, so keep them visible while revalidating the
+        # authoritative source instead of treating that incomplete coverage
+        # as a terminal cache hit.
+        action_requested = intent.contract.requested_action is not None
+        claim_requested = intent.contract.claim_summary is not None or intent.contract.topic is not None
+
+        def cache_covers_requested_dimensions(item: IdentityCandidateV4) -> bool:
+            if item.relationship is not IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE:
+                return True
+            if item.canonical_url not in requested_targets:
+                return True
+            families = {observation.family for observation in item.observations}
+            return (not action_requested or IdentityEvidenceFamilyV4.ACTION_ENDORSEMENT in families) and (
+                not claim_requested or IdentityEvidenceFamilyV4.CLAIM_ENDORSEMENT in families
+            )
+
+        cached_resource_urls = {item.canonical_url for item in cached if item.assurance in cache_complete_assurances}
+        completed_cached_urls = {
+            item.canonical_url
+            for item in cached
+            if item.assurance in cache_complete_assurances and cache_covers_requested_dimensions(item)
+        }
+        resource_cache_complete = (requested_targets and requested_targets <= cached_resource_urls) or (
+            not requested_targets and bool(cached_resource_urls)
+        )
+        action_cache_complete = (requested_targets and requested_targets <= completed_cached_urls) or (
+            not requested_targets and bool(completed_cached_urls)
+        )
+        if (
+            cached
+            and resource_cache_complete
+            and (action_cache_complete or not (official_consent and external_consent))
         ):
             visible_cached = (
                 cached
@@ -1428,6 +1599,9 @@ class OfficialLinkVerificationCoordinator:
             return [], [], 0, 0, 0, [*stale, "official_web_search_unavailable"]
 
         candidate_urls: list[str] = list(sorted(requested_targets)) if external_consent else []
+        for source_url in cached_endorsement_source_urls:
+            if source_url not in candidate_urls:
+                candidate_urls.append(source_url)
         identity_candidate_urls: set[str] = set()
         authority_candidate_urls: set[str] = set()
         target_host = (urlsplit(first_target).hostname or "").casefold() if first_target is not None else ""
@@ -1554,6 +1728,8 @@ class OfficialLinkVerificationCoordinator:
             host = (urlsplit(url).hostname or "").casefold()
             if host in target_hosts:
                 return (0, url)
+            if _canonical_discovery_url(url) in cached_endorsement_source_urls:
+                return (1, url)
             if any(host.endswith(f".{target_host}") for target_host in target_hosts):
                 # A same-site page can provide the entity self-identification
                 # half of ownership proof even when the submitted path blocks
@@ -1857,7 +2033,97 @@ class OfficialLinkVerificationCoordinator:
                     for item in associations
                 ]
 
+        claim_observations: list[IdentityEvidenceObservationV4] = []
+        if intent.contract.claim_summary is not None or intent.contract.topic is not None:
+            for canonical, (text, content_hash, _source_host) in fetched_pages.items():
+                topic, action_match, qualifiers_match, contradiction = _claim_dimensions_in_text(
+                    intent,
+                    text,
+                    claim_qualifiers,
+                )
+                if topic and action_match and qualifiers_match and not contradiction:
+                    claim_observations.append(
+                        _identity_observation(IdentityEvidenceFamilyV4.CLAIM_ENDORSEMENT, canonical, content_hash, now)
+                    )
+            observations.extend(claim_observations)
+            if claim_observations:
+                observation_by_ref = {observation.evidence_ref: observation for observation in observations}
+                associations = [
+                    item.model_copy(
+                        update={
+                            "evidence_refs": _unique(
+                                [
+                                    *item.evidence_refs,
+                                    *[
+                                        observation.evidence_ref
+                                        for observation in claim_observations
+                                        if item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                                        and observation.canonical_url
+                                        in {
+                                            observation_by_ref[ref].canonical_url
+                                            for ref in item.evidence_refs
+                                            if ref in observation_by_ref
+                                            and observation_by_ref[ref].family
+                                            is IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT
+                                        }
+                                    ],
+                                ]
+                            )
+                        }
+                    )
+                    for item in associations
+                ]
+                # Action evidence belongs to an exact-resource association
+                # when it was observed on the same authoritative source that
+                # linked that exact resource.  Persisting this edge makes a
+                # later cache hit preserve action coverage without treating a
+                # third-party domain as organization-controlled.
+                association_by_ref = {observation.evidence_ref: observation for observation in observations}
+                associations = [
+                    item.model_copy(
+                        update={
+                            "evidence_refs": _unique(
+                                [
+                                    *item.evidence_refs,
+                                    *[
+                                        observation.evidence_ref
+                                        for observation in action_observations
+                                        if item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                                        and observation.canonical_url
+                                        in {
+                                            association_by_ref[ref].canonical_url
+                                            for ref in item.evidence_refs
+                                            if ref in association_by_ref
+                                            and association_by_ref[ref].family
+                                            is IdentityEvidenceFamilyV4.EXACT_RESOURCE_ENDORSEMENT
+                                        }
+                                    ],
+                                ]
+                            )
+                        }
+                    )
+                    for item in associations
+                ]
+
         save = getattr(self._brands, "save_identity_candidate", None)
+        # A bounded refresh that did not re-find an existing, unexpired exact
+        # endorsement must not erase that verified edge.  Fresh evidence may
+        # upgrade it, but unrelated search candidates cannot downgrade it.
+        fresh_exact_targets = {
+            item.canonical_url
+            for item in associations
+            if item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+            and item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+        }
+        for item in cached:
+            if (
+                item.assurance is IdentityAssociationAssuranceV4.VERIFIED
+                and item.relationship is IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                and item.canonical_url in requested_targets
+                and item.canonical_url not in fresh_exact_targets
+            ):
+                associations.append(item)
+                observations.extend(item.observations)
         if save is not None:
             stored_associations: list[IdentityAssociationV4] = []
             by_ref = {item.evidence_ref: item for item in observations}
@@ -2443,6 +2709,53 @@ class OfficialLinkVerificationCoordinator:
             False,
         )
 
+    @staticmethod
+    def _claim_from_exact_resource_associations(
+        current: ClaimVerificationV4,
+        intent: GroundedVerificationIntent,
+        user_urls: Sequence[str],
+        associations: Sequence[IdentityAssociationV4],
+        observations: Sequence[IdentityEvidenceObservationV4],
+    ) -> ClaimVerificationV4:
+        """Reuse a narrowly accepted endorsement source for the claim it actually states.
+
+        An exact-resource edge alone never promotes message content.  It may
+        do so only when the same persisted source also has a semantic
+        claim/action match, represented by ``CLAIM_ENDORSEMENT``.  This keeps
+        cache hits evidence-scoped while avoiding an artificial second
+        retrieval chain for a campaign title already present on that source.
+        """
+        if not current.applicable or current.status in {
+            VerificationStatusV4.VERIFIED,
+            VerificationStatusV4.CONFLICTING,
+        }:
+            return current
+        targets = {_canonical_discovery_url(url) for url in user_urls}
+        targets.discard(None)
+        observations_by_ref = {item.evidence_ref: item for item in observations}
+        for association in associations:
+            if (
+                association.assurance is not IdentityAssociationAssuranceV4.VERIFIED
+                or association.relationship is not IdentityRelationshipV4.ENDORSED_THIRD_PARTY_SERVICE
+                or association.canonical_url not in targets
+            ):
+                continue
+            claim_refs = [
+                ref
+                for ref in association.evidence_refs
+                if observations_by_ref.get(ref) is not None
+                and observations_by_ref[ref].family is IdentityEvidenceFamilyV4.CLAIM_ENDORSEMENT
+            ]
+            if claim_refs:
+                return ClaimVerificationV4(
+                    applicable=True,
+                    status=VerificationStatusV4.VERIFIED,
+                    reason_code="exact_resource_source_claim_match",
+                    evidence_refs=claim_refs,
+                    topic=intent.contract.topic,
+                )
+        return current
+
     async def _resource_component(
         self,
         intent: GroundedVerificationIntent,
@@ -2450,6 +2763,8 @@ class OfficialLinkVerificationCoordinator:
         links: Sequence[_LinkEvidence],
         external_consent: bool,
         execution_context: TurnExecutionContext,
+        *,
+        resolve_submitted: bool,
     ) -> tuple[ResourceVerificationV4, int, int, list[str]]:
         if not user_urls:
             return (
@@ -2479,26 +2794,31 @@ class OfficialLinkVerificationCoordinator:
                 0,
                 [],
             )
-        relevant = [item for item in links if _role_is_relevant(item.public.role, intent)][:_MAX_OUTBOUND_RESOLUTIONS]
-        if not relevant:
-            return (
-                ResourceVerificationV4(
-                    applicable=True,
-                    status=VerificationStatusV4.UNVERIFIED,
-                    reason_code="official_action_link_not_found",
-                ),
-                0,
-                0,
-                [],
-            )
-
         calls = 0
         outbound_resolutions = 0
         limitations: list[str] = []
+        submitted_resolutions: list[SubmittedResourceResolutionV4] = []
 
-        async def resolve(url: str, current: ResourceIdentityV4 | None, *, outbound: bool) -> ResourceIdentityV4 | None:
+        async def resolve(
+            url: str,
+            current: ResourceIdentityV4 | None,
+            *,
+            outbound: bool,
+            submitted_url: str | None = None,
+        ) -> ResourceIdentityV4 | None:
             nonlocal calls, outbound_resolutions
             if current is not None:
+                if submitted_url is not None:
+                    canonical = _canonical_discovery_url(url)
+                    submitted_resolutions.append(
+                        SubmittedResourceResolutionV4(
+                            submitted_url=_canonical_discovery_url(submitted_url) or submitted_url,
+                            redirect_chain=[canonical] if canonical else [],
+                            canonical_final_url=canonical,
+                            final_host=(urlsplit(canonical).hostname if canonical else None),
+                            platform_provider=current.provider,
+                        )
+                    )
                 return current
             if not external_consent:
                 limitations.append("external_url_consent_required")
@@ -2511,7 +2831,22 @@ class OfficialLinkVerificationCoordinator:
             fetched = await self._fetcher.fetch(url, execution_context=execution_context)
             calls += fetched.tool_calls_used
             if fetched.status is VerificationTransportStatus.SUCCESS and fetched.document is not None:
-                return identify_resource_chain(fetched.document.redirect_chain)
+                resource = identify_resource_chain(fetched.document.redirect_chain)
+                if submitted_url is not None:
+                    chain = [
+                        item for value in fetched.document.redirect_chain if (item := _canonical_discovery_url(value))
+                    ]
+                    final = chain[-1] if chain else _canonical_discovery_url(fetched.document.final_url)
+                    submitted_resolutions.append(
+                        SubmittedResourceResolutionV4(
+                            submitted_url=_canonical_discovery_url(submitted_url) or submitted_url,
+                            redirect_chain=chain,
+                            canonical_final_url=final,
+                            final_host=(urlsplit(final).hostname if final else None),
+                            platform_provider=resource.provider if resource is not None else None,
+                        )
+                    )
+                return resource
             if fetched.limitation is not None:
                 limitations.append(f"external_resolve_{fetched.limitation.value}")
             return None
@@ -2528,7 +2863,28 @@ class OfficialLinkVerificationCoordinator:
                     url,
                     direct_resource if direct_resource is not None and direct_resource.provider is not None else None,
                     outbound=False,
+                    submitted_url=url,
                 )
+                if resolve_submitted
+                else direct_resource
+            )
+        relevant = [item for item in links if _role_is_relevant(item.public.role, intent)][:_MAX_OUTBOUND_RESOLUTIONS]
+        if not relevant:
+            return (
+                ResourceVerificationV4(
+                    applicable=True,
+                    status=VerificationStatusV4.UNVERIFIED,
+                    reason_code="official_action_link_not_found",
+                    match=ResourceMatchV4(
+                        status=ResourceMatchStatusV4.UNRESOLVED,
+                        user_resource=next((item for item in user_resources if item is not None), None),
+                        reason_code="official_action_link_not_found",
+                    ),
+                    submitted_resources=submitted_resolutions,
+                ),
+                calls,
+                outbound_resolutions,
+                _unique(limitations),
             )
         exact: tuple[ResourceMatchV4, str, LinkEvidenceStrength] | None = None
         different: tuple[ResourceMatchV4, str, LinkEvidenceStrength] | None = None
@@ -2562,6 +2918,7 @@ class OfficialLinkVerificationCoordinator:
                     applicable=True,
                     status=VerificationStatusV4.UNVERIFIED,
                     reason_code="resource_chain_unresolved",
+                    submitted_resources=submitted_resolutions,
                 ),
                 calls,
                 outbound_resolutions,
@@ -2577,6 +2934,7 @@ class OfficialLinkVerificationCoordinator:
                     reason_code=("provider_fallback_exact_resource" if fallback else "official_exact_resource"),
                     evidence_refs=[link_ref],
                     match=match,
+                    submitted_resources=submitted_resolutions,
                 ),
                 calls,
                 outbound_resolutions,
@@ -2590,6 +2948,7 @@ class OfficialLinkVerificationCoordinator:
                     reason_code="official_link_points_to_different_resource",
                     evidence_refs=[link_ref],
                     match=match,
+                    submitted_resources=submitted_resolutions,
                 ),
                 calls,
                 outbound_resolutions,
@@ -2602,11 +2961,52 @@ class OfficialLinkVerificationCoordinator:
                 reason_code="resource_chain_unresolved",
                 evidence_refs=[link_ref],
                 match=match,
+                submitted_resources=submitted_resolutions,
             ),
             calls,
             outbound_resolutions,
             _unique(limitations),
         )
+
+    @staticmethod
+    def _resource_from_first_party_capability(
+        current: ResourceVerificationV4,
+        intent: GroundedVerificationIntent,
+        user_urls: Sequence[str],
+        pages: Sequence[_PageEvidence],
+    ) -> ResourceVerificationV4:
+        """Verify a requested service only on the submitted reviewed page.
+
+        This is not a domain-wide allow: both the exact submitted resource and
+        the action's semantic profile must be present in an accepted
+        first-party page.  It covers portal home/service pages where there is
+        no separate outbound form URL to compare.
+        """
+        if current.status in {VerificationStatusV4.VERIFIED, VerificationStatusV4.CONFLICTING}:
+            return current
+        submitted = {_canonical_discovery_url(url) for url in user_urls}
+        submitted.discard(None)
+        for page in pages:
+            source = _canonical_discovery_url(page.extraction.source_canonical_url)
+            if source not in submitted:
+                continue
+            _, action_match, _, contradiction = _claim_dimensions(intent, page)
+            if contradiction or not action_match:
+                continue
+            resource = identify_resource(page.extraction.source_canonical_url)
+            return ResourceVerificationV4(
+                applicable=True,
+                status=VerificationStatusV4.VERIFIED,
+                reason_code="official_first_party_resource_capability",
+                evidence_refs=[page.extraction.source_ref],
+                match=ResourceMatchV4(
+                    status=ResourceMatchStatusV4.EXACT_CANONICAL_URL,
+                    user_resource=resource,
+                    official_resource=resource,
+                    reason_code="first_party_resource_capability",
+                ),
+            )
+        return current
 
     @staticmethod
     def _resource_from_identity_associations(
@@ -2643,8 +3043,8 @@ class OfficialLinkVerificationCoordinator:
         )
         return ResourceVerificationV4(
             applicable=True,
-            status=VerificationStatusV4.PARTIALLY_VERIFIED,
-            reason_code="discovered_exact_resource_endorsement_chain",
+            status=VerificationStatusV4.VERIFIED,
+            reason_code="exact_resource_endorsement_chain",
             evidence_refs=association.evidence_refs,
             match=match,
         )
@@ -2666,6 +3066,7 @@ class OfficialLinkVerificationCoordinator:
         external_url_consent: bool = False,
         action_evidence_refs: Sequence[str] = (),
         reviewed_ownership: dict[str, list[str]] | None = None,
+        sender_provenance_present: bool = False,
     ) -> OfficialLinkVerificationReportV4:
         action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
         reviewed_owner = next(
@@ -2718,10 +3119,14 @@ class OfficialLinkVerificationCoordinator:
                         "evidence_refs": verified.evidence_refs,
                     }
                 )
+        # A pasted message can assert an organization or request an action,
+        # but neither is sender provenance. Only a trusted transport context
+        # (email header, authenticated account/channel, signed sender, or
+        # normalized message metadata) activates this independent dimension.
         sender = OfficialVerificationComponentV4(
-            applicable=intent.contract.requested_action is not None,
-            status=(VerificationStatusV4.UNVERIFIED if intent.contract.requested_action is not None else None),
-            reason_code=("message_sender_not_authenticated" if intent.contract.requested_action else "not_applicable"),
+            applicable=sender_provenance_present,
+            status=VerificationStatusV4.UNVERIFIED if sender_provenance_present else None,
+            reason_code=("sender_provenance_not_verified" if sender_provenance_present else "not_applicable"),
         )
         action = OfficialVerificationComponentV4(
             applicable=intent.contract.requested_action is not None,
@@ -2769,8 +3174,6 @@ class OfficialLinkVerificationCoordinator:
             for component in (publisher, claim, resource, action)
             if component.applicable and component.status is not None
         ]
-        if not intent.contract.action_url_indices and sender.applicable:
-            statuses.append(sender.status)
         if VerificationStatusV4.CONFLICTING in statuses:
             overall = VerificationStatusV4.CONFLICTING
             reason = "applicable_component_conflicting"

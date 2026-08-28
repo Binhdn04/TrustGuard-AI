@@ -268,9 +268,6 @@ def _complete_official_verification(scope: SecurityScopeResponseV4) -> bool:
     required = [report.resource_verification]
     if report.action_endorsement_verification.applicable:
         required.append(report.action_endorsement_verification)
-    context = scope.security_context
-    if not (context and context.urls) and report.sender_verification.applicable:
-        required.append(report.sender_verification)
     return bool(required) and all(
         component.applicable and component.status is VerificationStatusV4.VERIFIED for component in required
     )

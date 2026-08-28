@@ -26,7 +26,9 @@ def client_ip_for_request(request, settings: Settings) -> str | None:
     except ValueError:
         return None
 
-    trusted_networks = tuple(ip_network(value, strict=False) for value in settings.trusted_proxy_ips.split(",") if value)
+    trusted_networks = tuple(
+        ip_network(value, strict=False) for value in settings.trusted_proxy_ips.split(",") if value
+    )
     if not any(peer_ip in network for network in trusted_networks):
         return peer_ip.compressed
 

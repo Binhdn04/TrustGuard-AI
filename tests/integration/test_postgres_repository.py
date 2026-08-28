@@ -33,7 +33,9 @@ async def test_database_is_migrated_to_the_repository_head(repository: PostgresP
     assert await repository.healthcheck() is True
     pool = await repository._get_pool()
     async with pool.acquire() as connection:
-        database_heads = {row["version_num"] for row in await connection.fetch("SELECT version_num FROM alembic_version")}
+        database_heads = {
+            row["version_num"] for row in await connection.fetch("SELECT version_num FROM alembic_version")
+        }
     migration_heads = set(ScriptDirectory.from_config(Config("alembic.ini")).get_heads())
 
     assert database_heads == migration_heads
@@ -64,7 +66,9 @@ async def test_brand_disable_is_single_winner_and_immutably_audited(
     assert len(disabled) == 1
     assert disabled[0].lifecycle is TrustLifecycleV4.DISABLED
     assert disabled[0].supersedes == brand.brand_id
-    assert brand.brand_id not in {item.brand_id for item in await repository.list_active_brands(now + timedelta(minutes=1))}
+    assert brand.brand_id not in {
+        item.brand_id for item in await repository.list_active_brands(now + timedelta(minutes=1))
+    }
 
     pool = await repository._get_pool()
     async with pool.acquire() as connection:

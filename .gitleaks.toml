@@ -1,0 +1,9 @@
+# Keep secret scanning strict while excluding one historic, deterministic test
+# fixture. It is a sequential dummy value, not a credential; matching this
+# exact string cannot suppress a real key.
+[allowlist]
+description = "Historic deterministic OpenAI redaction test fixture"
+regexTarget = "match"
+regexes = [
+  '''sk-proj-0123456789abcdef''',
+]

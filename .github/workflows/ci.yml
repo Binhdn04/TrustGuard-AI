@@ -1,12 +1,54 @@
 name: CI
 
 on:
-  # push:
-  #   branches: [main, develop]
+  push:
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  secret-scan:
+    name: Secret scan
+    runs-on: [self-hosted, linux, x64, p068]
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Gitleaks scans only commits introduced by the pull request, but
+          # needs both endpoints available locally to calculate that range.
+          fetch-depth: 0
+
+      - name: Scan pull request commits for secrets
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # `github.sha` is the pull-request merge commit.  Scanning this
+          # range catches a secret even when it is added then deleted later in
+          # the same PR, without failing on a previously remediated leak in
+          # older repository history.
+          git_range="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          docker run --rm --network none --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git --config=/repo/.gitleaks.toml --log-opts="${git_range}" --redact=100 /repo
+
+      - name: Scan pushed commits for secrets
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git_range="${{ github.event.before }}..${{ github.sha }}"
+          docker run --rm --network none --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git --config=/repo/.gitleaks.toml --log-opts="${git_range}" --redact=100 /repo
+
   lint-and-test:
     runs-on: [self-hosted, linux, x64, p068]
 

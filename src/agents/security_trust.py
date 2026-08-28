@@ -153,22 +153,21 @@ def _target_owner(
         return next(iter(brand_owners.values()))
     if len(brand_owners) > 1:
         return None
-    source_owners: dict[str, tuple[str, str]] = {}
+    source_owners: dict[str, tuple[int, str, str]] = {}
     if source_registry is not None:
         for entry in source_registry.matching_entries(url, observed_at):
             pattern = getattr(entry, "normalized_pattern", "")
             publisher = getattr(entry, "publisher", "")
-            if (
-                publisher
-                and pattern
-                and not pattern.startswith("*.")
-                and not getattr(entry, "explicit_deny", False)
-                and pattern.casefold().rstrip(".") == host
-            ):
+            if publisher and pattern and not getattr(entry, "explicit_deny", False):
                 source_id = getattr(entry, "source_id", "reviewed")
                 policy = getattr(entry, "policy_version", "source-registry")
-                source_owners[_fold(publisher)] = (publisher, f"source:{source_id}:{policy}")
-    return next(iter(source_owners.values())) if len(source_owners) == 1 else None
+                specificity = len(pattern.removeprefix("*."))
+                source_owners[_fold(publisher)] = (specificity, publisher, f"source:{source_id}:{policy}")
+    if not source_owners:
+        return None
+    highest = max(item[0] for item in source_owners.values())
+    best = [item for item in source_owners.values() if item[0] == highest]
+    return (best[0][1], best[0][2]) if len(best) == 1 else None
 
 
 def _reviewed_familiarity_evidence(
@@ -260,6 +259,27 @@ class BrandMatcher:
             evidence = []
             for url in context.urls:
                 host = (urlsplit(url).hostname or "").casefold()
+                owner = _target_owner(url, brands, observed_at, self._source_registry)
+                if owner is not None:
+                    # The mentioned organization and the resource operator are
+                    # separate verification subjects.  A reviewed public
+                    # portal must not be presented as an unresolved mismatch
+                    # merely because a caller also mentioned another entity.
+                    evidence.append(
+                        _evidence(
+                            SecurityEvidenceTypeV4.BRAND_MATCH,
+                            "brand-registry",
+                            "resource_operator_verified",
+                            f"URL trên {host} thuộc reviewed resource operator {owner[0]}; "
+                            "quan hệ riêng với tổ chức được nhắc tới không phải điều kiện để kiểm tra tài nguyên hoặc hành động.",
+                            observed_at,
+                            target=host,
+                            confidence=1.0,
+                            provenance_ref=owner[1],
+                            related_entity=owner[0],
+                        )
+                    )
+                    continue
                 evidence.append(
                     _evidence(
                         SecurityEvidenceTypeV4.BRAND_MATCH,

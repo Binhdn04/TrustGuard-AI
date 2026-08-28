@@ -172,6 +172,21 @@ class VerificationStatusV4(StrEnum):
     CONFLICTING = "CONFLICTING"
 
 
+class SenderProvenanceKindV4(StrEnum):
+    """Trusted transport fact made available by an inbound integration.
+
+    This deliberately records no raw header, address, account handle, or
+    message metadata. The opaque reference is resolvable only by the
+    integration that supplied it for the current turn.
+    """
+
+    EMAIL_HEADER = "email_header"
+    AUTHENTICATED_ACCOUNT = "authenticated_account"
+    AUTHENTICATED_CHANNEL = "authenticated_channel"
+    SIGNED_SENDER = "signed_sender"
+    MESSAGE_METADATA = "message_metadata"
+
+
 class OfficialIdentityTypeV4(StrEnum):
     PRIMARY_WEBSITE = "primary_website"
     WEBSITE = "website"
@@ -212,6 +227,7 @@ class IdentityEvidenceFamilyV4(StrEnum):
     TARGET_RESOURCE_MATCH = "target_resource_match"
     EXPLICIT_OWNERSHIP_CONFLICT = "explicit_ownership_conflict"
     ACTION_ENDORSEMENT = "action_endorsement"
+    CLAIM_ENDORSEMENT = "claim_endorsement"
 
 
 class ResourceTypeV4(StrEnum):
@@ -592,6 +608,16 @@ class ResourceMatchV4(SecurityContractModel):
     reason_code: str = Field(pattern=r"^[a-z0-9_]+$")
 
 
+class SubmittedResourceResolutionV4(SecurityContractModel):
+    """Consent-gated, query-free redirect result for one submitted URL."""
+
+    submitted_url: str = Field(min_length=1, max_length=2048)
+    redirect_chain: list[str] = Field(default_factory=list, max_length=6)
+    canonical_final_url: str | None = Field(default=None, max_length=2048)
+    final_host: str | None = Field(default=None, max_length=253)
+    platform_provider: str | None = Field(default=None, max_length=100)
+
+
 class OfficialSourceReferenceV4(SecurityContractModel):
     source_ref: str = Field(pattern=r"^source:[a-f0-9]{16}$")
     identity: OfficialIdentityV4 | None = None
@@ -654,6 +680,13 @@ class OfficialVerificationComponentV4(SecurityContractModel):
         return self
 
 
+class SenderProvenanceV4(SecurityContractModel):
+    """Non-persistent, trusted sender provenance for an inbound integration."""
+
+    kind: SenderProvenanceKindV4
+    provenance_ref: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
 class PublisherVerificationV4(OfficialVerificationComponentV4):
     identity: OfficialIdentityV4 | None = None
 
@@ -664,6 +697,7 @@ class ClaimVerificationV4(OfficialVerificationComponentV4):
 
 class ResourceVerificationV4(OfficialVerificationComponentV4):
     match: ResourceMatchV4 | None = None
+    submitted_resources: list[SubmittedResourceResolutionV4] = Field(default_factory=list, max_length=3)
 
 
 class OfficialLinkVerificationReportV4(SecurityContractModel):
@@ -1155,9 +1189,9 @@ class SecurityScopeResponseV4(SecurityContractModel):
                     "evidence_refs": [],
                 },
                 "sender_verification": {
-                    "applicable": has_action,
-                    "status": "UNVERIFIED" if has_action else None,
-                    "reason_code": "legacy_coverage_unavailable",
+                    "applicable": False,
+                    "status": None,
+                    "reason_code": "sender_provenance_unavailable_in_legacy_report",
                     "evidence_refs": [],
                 },
                 "action_endorsement_verification": {
@@ -1956,8 +1990,11 @@ __all__ = [
     "ResourceIdentityV4",
     "ResourceMatchStatusV4",
     "ResourceMatchV4",
+    "SubmittedResourceResolutionV4",
     "ResourceTypeV4",
     "ResourceVerificationV4",
+    "SenderProvenanceKindV4",
+    "SenderProvenanceV4",
     "ScopeDecisionV4",
     "SecurityConsentV4",
     "SecurityConversationStatusV4",

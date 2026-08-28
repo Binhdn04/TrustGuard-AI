@@ -322,11 +322,9 @@ class PostgresJobsRepositoryMixin:
             )
 
 
-
 __all__ = [
     "DurableJob",
     "LostJobLeaseError",
     "OutboxMessage",
     "PostgresJobsRepositoryMixin",
 ]
-
