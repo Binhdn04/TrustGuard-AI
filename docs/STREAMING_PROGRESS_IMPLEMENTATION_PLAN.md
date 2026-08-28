@@ -314,14 +314,14 @@ File dự kiến:
 
 ### Phase 4 — Repository, ordering và retry correctness
 
-- [ ] Xác minh PostgreSQL sequence tăng đơn điệu khi writer và final commit cạnh tranh.
-- [ ] Xác minh không có progress append sau final event.
-- [ ] Xác minh outbox idempotency và replay không tạo duplicate UI.
-- [ ] Xác định semantics khi durable job retry: stage có thể chạy lại nhưng final side effect vẫn idempotent.
-- [ ] Không trình bày event của attempt cũ như final result.
-- [ ] Xác minh progress append không giữ analysis row lock đủ lâu để ảnh hưởng heartbeat/final commit.
-- [ ] Xác minh event store lỗi nhưng final store phục hồi vẫn cho phép terminal commit.
-- [ ] Xác minh mất lease vẫn hủy handler/reporter đúng cách.
+- [x] Xác minh PostgreSQL sequence tăng đơn điệu khi writer và final commit cạnh tranh.
+- [x] Xác minh không có progress append sau final event.
+- [x] Xác minh outbox idempotency và replay không tạo duplicate UI.
+- [x] Xác định semantics khi durable job retry: stage có thể chạy lại nhưng final side effect vẫn idempotent.
+- [x] Không trình bày event của attempt cũ như final result.
+- [x] Xác minh progress append không giữ analysis row lock đủ lâu để ảnh hưởng heartbeat/final commit.
+- [x] Xác minh event store lỗi nhưng final store phục hồi vẫn cho phép terminal commit.
+- [x] Xác minh mất lease vẫn hủy handler/reporter đúng cách.
 
 ### Phase 5 — Frontend selector và presentation
 

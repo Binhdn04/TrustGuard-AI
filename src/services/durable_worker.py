@@ -135,21 +135,22 @@ class SecurityV4DurableWorker:
                 await self._repository.retry_security_job(job, type(exc).__name__, self._worker_id)
 
     async def _execute(self, job: DurableJob) -> None:
-        processing = asyncio.create_task(self._handler(job, self._worker_id), name=f"security-v4-{job.id}")
-        heartbeat = asyncio.create_task(self._renew(job.id), name=f"security-v4-lease-{job.id}")
-        done, _ = await asyncio.wait({processing, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
-        if processing in done:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
-            await processing
-            return
-        processing.cancel()
-        await asyncio.gather(processing, return_exceptions=True)
-        try:
-            await heartbeat
-        except Exception as exc:
-            raise LostJobLeaseError("security v4 lease renewal failed") from exc
-        raise LostJobLeaseError("security v4 lease renewal stopped")
+        with self._repository.job_scope(job.id, self._worker_id):
+            processing = asyncio.create_task(self._handler(job, self._worker_id), name=f"security-v4-{job.id}")
+            heartbeat = asyncio.create_task(self._renew(job.id), name=f"security-v4-lease-{job.id}")
+            done, _ = await asyncio.wait({processing, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
+            if processing in done:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+                await processing
+                return
+            processing.cancel()
+            await asyncio.gather(processing, return_exceptions=True)
+            try:
+                await heartbeat
+            except Exception as exc:
+                raise LostJobLeaseError("security v4 lease renewal failed") from exc
+            raise LostJobLeaseError("security v4 lease renewal stopped")
 
     async def _renew(self, job_id) -> None:
         interval = max(self._lease_seconds / 3, 1)

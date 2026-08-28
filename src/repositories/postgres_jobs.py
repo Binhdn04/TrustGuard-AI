@@ -137,7 +137,7 @@ class PostgresJobsRepositoryMixin:
             if not exhausted:
                 await connection.execute(
                     """UPDATE security_analysis_jobs_v4 SET status='queued',failure_code=$2,
-                              available_at=$3+($4 * interval '1 second'),lease_expires_at=NULL,
+                              available_at=$3::timestamptz+($4 * interval '1 second'),lease_expires_at=NULL,
                               worker_id=NULL,updated_at=$3 WHERE id=$1""",
                     job.id,
                     failure_code[:64],
@@ -329,4 +329,3 @@ __all__ = [
     "OutboxMessage",
     "PostgresJobsRepositoryMixin",
 ]
-
