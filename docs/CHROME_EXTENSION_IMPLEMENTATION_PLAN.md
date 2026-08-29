@@ -2,7 +2,14 @@
 
 ## Trạng thái và phạm vi
 
-- Trạng thái: **proposed; chưa triển khai**.
+- Trạng thái hiện tại:
+  - **Phase 0 repository-local/MVP: DONE** — technical baseline và project-owner instruction của documentation task
+    ngày 2026-08-29 đã đóng repository-local review.
+  - **Phase 1 implementation: COMPLETE; automated verification: PASS; exit gate: PENDING MANUAL CHROME SMOKE**.
+  - **Phase 2 implementation: COMPLETE; automated verification: PASS; exit gate: PENDING MANUAL CHROME CAPTURE SMOKE**.
+  - **Phase 3+: NOT STARTED**.
+  - Stable deployment ID, Railway OIDC/origin integration và external hosted review được giữ tại Phase 9; Chrome Web
+    Store ID/submission/GA được giữ tại Phase 10. Không mục nào là blocker của local implementation.
 - Mục tiêu: cho phép người dùng chủ động gửi đoạn text hoặc liên kết đang chọn từ Chrome vào Security Triage
   `/api/v4`, theo dõi coarse progress và xem cảnh báo ngắn trong Side Panel.
 - Pipeline understanding → investigation/tools → deterministic risk → grounded synthesis giữ nguyên. Extension là một
@@ -72,14 +79,19 @@ Các capability có thể tái sử dụng trực tiếp:
 | Full case web | `/cases/{analysisId}` |
 | Pipeline | scope, understanding, investigation, trust, deterministic risk và grounded response hiện hành |
 
-Khoảng trống cần triển khai:
+Repository-local extension baseline đã có:
 
-- Chưa có workspace/build/package cho Manifest V3 extension.
+- Manifest V3 TypeScript workspace, pinned build, Side Panel và background service worker.
+- Local CSP `connect-src 'none'`, chỉ permission `sidePanel`, không host permission hoặc persistent content script.
+- Strict internal message/capture schemas, generated v4 types/drift test và extension CI checks.
+
+Khoảng trống còn cần triển khai:
+
 - Chưa có OIDC Authorization Code + PKCE flow dành cho extension redirect URI.
-- Chưa có capture bridge, internal message contract hoặc transient state model cho Side Panel.
+- Chưa có context-menu capture bridge hoặc transient pending-capture state cho Side Panel.
 - Backend production config hiện chỉ chấp nhận HTTPS CORS origins; chưa có allow-list rõ ràng cho
   `chrome-extension://<extension-id>` và WebSocket `Origin`.
-- Chưa có extension-specific contract tests, browser E2E, privacy disclosure hoặc Chrome Web Store package.
+- Chưa có browser E2E, Railway extension package/config hoặc Chrome Web Store package/listing.
 - Async hosted prerequisites trong `DEPLOYMENT.md` chưa có đủ evidence và production vẫn tắt.
 
 ## Quyết định kiến trúc
@@ -228,9 +240,36 @@ Quy tắc:
 | WebSocket / Polling | Replay ordered coarse events, reconnect và fallback | Không tạo verdict hoặc chặn final fetch khi transport lỗi |
 | Side Panel | Draft/consent, progress allow-list, final summary, fixed-host web handoff | Không render raw HTML/message, provider payload hoặc provisional hint như final |
 
-Thứ tự critical path: Phase 0 → Phase 1 → Phase 3/4 → Phase 5 → Phase 6 → Phase 7 → Phase 8 → Phase 9. Phase 2
-có thể triển khai song song với auth/backend hardening sau khi internal message contract của Phase 1 đã chốt. Async hosted
-readiness là dependency của trải nghiệm progress production, không phải dependency của inline submit/final MVP.
+Critical path theo trạng thái và gate thực tế:
+
+```text
+Phase 0 technical baseline                       DONE
+        ↓
+Phase 1 local scaffold allowed                   COMPLETE
+        ↓
+Phase 0 MVP/project-owner review closure         DONE
+        ↓
+Phase 1 + 2 manual Chrome unpacked/capture smoke PENDING
+        ↓
+Phase 3 → 7 local auth/API/progress/final
+        ↓
+Phase 8 local security/privacy hardening
+        ↓
+LOCAL END-TO-END GATE
+        ↓
+Phase 9 Railway internal deployment
+        ↓
+Phase 10 Chrome Web Store + production GA
+```
+
+Local Phase 1 được triển khai trước production governance vì không có network, OIDC/token, host permission, persistent
+content script, page-data read hoặc capture/submit behavior. Phase 1 smoke có thể gộp với Phase 2 capture smoke, nhưng phải
+đạt trước Phase 3 auth integration. Phase 2–8 được implement và verify trước với unpacked extension + local TrustGuard
+stack. Local origin/OIDC config nếu cần phải dùng
+đúng ID mà Chrome đang hiển thị và chỉ nằm trong local untracked config; không wildcard và không coi ID đó là deployment
+identity. Stable ID, exact Railway OIDC redirect/backend origin allow-list và hosted approval trở thành hard gate ở Phase
+9. Chrome Web Store identity/listing/review chỉ bắt buộc ở Phase 10. Async hosted readiness là dependency của trải nghiệm
+progress trên Railway/production, không phải dependency của local inline submit/final MVP.
 
 ## Side Panel state machine
 
@@ -354,11 +393,11 @@ Pipeline và response model không cần đổi. Backend work package chỉ gồ
 Config dự kiến nếu origin hardening cần tách khỏi web CORS:
 
 ```text
-TRUSTED_BROWSER_EXTENSION_IDS=<comma-separated exact production IDs>
+TRUSTED_BROWSER_EXTENSION_IDS=<comma-separated exact deployed IDs>
 ```
 
-Validator chỉ nhận Chrome extension ID đúng format; development unpacked ID được cấu hình riêng theo environment, không
-đưa wildcard vào production.
+Validator chỉ nhận Chrome extension ID đúng format. Local unpacked ID chỉ nằm trong untracked local environment;
+Railway/Store chỉ dùng stable ID đã ghi registry. Không đưa wildcard vào bất kỳ environment nào.
 
 ## Internal extension message boundary
 
@@ -383,45 +422,88 @@ private state ngược lại content script.
 
 ### Phase 0 — Product decisions, threat model và parity fixtures
 
-- [ ] Chốt Chrome 116+ vì programmatic Side Panel open cần user gesture và API tương ứng.
-- [ ] Chốt hai capture type MVP: `selection`, `link`.
-- [ ] Reserve stable dev/staging/production extension IDs trước khi đăng ký OIDC redirect và backend origin allow-list.
-- [ ] Chốt consent copy, privacy disclosure, retention và support policy.
-- [ ] Threat-model hostile page → content script/background messages, token theft, XSS trong Side Panel, ticket replay,
+- [x] Chốt technical baseline Chrome 116+ vì programmatic Side Panel open cần user gesture và API tương ứng.
+- [x] Chốt hai capture type MVP: `selection`, `link`.
+- [x] Chốt environment identity strategy: local unpacked ID không phải deployment identity; Railway internal và Chrome
+  Web Store production dùng stable ID riêng, exact allow-list và không wildcard.
+- [x] Chốt consent copy, privacy disclosure, retention và support policy cho MVP/repository-local qua project-owner
+  review. Đây không phải production, external security hay Chrome Web Store approval.
+- [x] Threat-model hostile page → content script/background messages, token theft, XSS trong Side Panel, ticket replay,
   malicious URL scheme, service-worker restart và deep-link injection.
-- [ ] Tạo fixtures cho in-scope, out-of-scope, need-more-info, no-consent, URL error/no-hit và inline/async parity.
-- [ ] Ghi baseline final response + provider/tool trace từ web client cho cùng fixtures.
-- [ ] Chốt không thu page URL/title/full DOM trong MVP.
+- [x] Tạo fixtures cho in-scope, out-of-scope, need-more-info, no-consent, URL error/no-hit và inline/async scope parity.
+- [x] Ghi baseline stable scope/threat/risk projection, tool plan và provider trace từ backend contract/pipeline
+  `/api/v4` mà web client hiện hành sử dụng cho cùng fixtures.
+- [x] Chốt không thu page URL/title/full DOM trong MVP.
 
-Exit gate: Security/Product duyệt data-flow và permission budget trước khi scaffold extension.
+Phase 0 technical evidence và review checklist nằm tại
+[CHROME_EXTENSION_PHASE0_REVIEW.md](CHROME_EXTENSION_PHASE0_REVIEW.md).
+
+**Phase 0 repository-local/MVP exit gate: DONE.** Technical baseline, scope, data-flow/minimization, permission budget,
+threat model, fixtures và baseline copy đã được chấp nhận cho MVP trong repository theo project-owner instruction của
+documentation task ngày 2026-08-29. Stable ID reservation và hosted/external approvals là
+`NOT APPLICABLE TO PHASE 0 EXIT`; Railway identity được defer sang Phase 9 và Store identity sang Phase 10.
+
+Deferred environment gates, không thuộc Phase 0 checklist:
+
+- [ ] Reserve một stable Railway/internal extension ID trước khi cấu hình hosted OIDC redirect/origin ở Phase 9.
+- [ ] Nếu tạo Railway staging riêng, reserve stable staging ID riêng trước staging smoke; không bắt buộc khi chưa có
+  staging environment.
+- [ ] Reserve production/Chrome Web Store ID trước Phase 10 submission; không cần để hoàn tất local hoặc Railway
+  internal rollout.
 
 ### Phase 1 — Extension scaffold và CI
 
-- [ ] Tạo `extension/` Manifest V3 TypeScript workspace, pinned lockfile và deterministic build.
-- [ ] Thêm Side Panel entry, background service worker và CSP không cho remote executable code; `connect-src` chỉ gồm
-  exact API/OIDC HTTPS host và API WebSocket host.
-- [ ] Thêm schema validation cho internal message và capture envelope.
-- [ ] Generate/subset type v4 từ backend OpenAPI; thêm drift test cho request, accepted/final, event page và ticket.
-- [ ] Thêm lint, typecheck, unit test, build và package checks vào CI.
-- [ ] Xác minh production bundle không có remote code, source-map chứa secret hoặc demo token.
+Status: **implementation COMPLETE · automated verification PASS · exit gate PENDING MANUAL CHROME SMOKE**.
 
-Exit gate: unpacked extension load được, mở Side Panel được và CI fail khi manifest/contract drift.
+- [x] Tạo `extension/` Manifest V3 TypeScript workspace, pinned lockfile và deterministic build.
+- [x] Thêm Side Panel entry, background service worker và CSP không cho remote executable code; local scaffold dùng
+  `connect-src 'none'`; local environment config thuộc Phase 4, Railway host allow-list/activation thuộc Phase 9.
+- [x] Thêm schema validation cho internal message và capture envelope.
+- [x] Generate/subset type v4 từ backend OpenAPI; thêm drift test cho capabilities, request, accepted/final, event page
+  và ticket.
+- [x] Thêm lint, typecheck, unit test, build và package checks vào CI.
+- [x] Xác minh bundle không có remote executable code, source map, bearer credential hoặc demo token.
+
+Manual exit evidence bắt buộc, không được thay bằng unit/build test:
+
+```text
+npm run build
+→ chrome://extensions
+→ Developer mode
+→ Load unpacked extension/dist
+→ extension load thành công
+→ Side Panel mở thành công trên Chrome 116+
+```
+
+Exit gate: **PENDING MANUAL CHROME SMOKE**. Local Phase 2–8 không bị chặn bởi stable deployment ID. Railway integration
+bị chặn đúng tại stable-ID/OIDC/origin và hosted approval gate của Phase 9; Store/GA bị chặn tại Phase 10.
 
 ### Phase 2 — Capture boundary
 
-- [ ] Đăng ký đúng hai context-menu items cho `selection` và `link`.
-- [ ] Validate/normalize `selectionText`/`linkUrl`; từ chối scheme, credential URL và oversize input không hợp lệ.
-- [ ] Lưu một pending capture có TTL trong `storage.session`; không dùng local/sync.
-- [ ] Mở Side Panel từ context-menu user gesture và chuyển draft qua trusted internal message.
-- [ ] Side Panel preview text-only, cho phép hủy và xóa pending capture.
-- [ ] Nếu bổ sung toolbar/keyboard, inject content script on-demand qua `activeTab`; không chuyển thành persistent script.
-- [ ] Test iframe selection, Unicode, whitespace, 5.000-char boundary, malicious scheme và rapid consecutive captures.
+- Status: **implementation COMPLETE · automated verification PASS · exit gate PENDING MANUAL CHROME CAPTURE SMOKE**.
+- [x] Đăng ký đúng hai context-menu items cho `selection` và `link`.
+- [x] Validate/normalize `selectionText`/`linkUrl`; từ chối scheme, credential URL và oversize input không hợp lệ.
+- [x] Lưu một pending capture TTL 10 phút trong trusted `storage.session`; không dùng local/sync.
+- [x] Gọi mở Side Panel trực tiếp từ context-menu user gesture và chuyển draft qua trusted internal message.
+- [x] Side Panel preview bằng `textContent`, cho phép hủy và xóa đúng pending capture hiện hành.
+- [x] Không bổ sung toolbar/keyboard capture ở Phase 2; không cần `activeTab`, injected content script hoặc persistent script.
+- [x] Test iframe selection contract, Unicode, whitespace, 5.000 Unicode-character boundary, malicious scheme,
+  TTL/malformed storage, stale cancel, trusted sender và rapid consecutive captures.
 
-Exit gate: không có network request trước submit và extension không có quyền đọc trang ngoài user gesture.
+Automated gate: **PASS** — bundle không có `fetch`/WebSocket/EventSource/XMLHttpRequest, CSP vẫn `connect-src 'none'`,
+manifest không có host permission/content script và chỉ thêm `contextMenus` + `storage` vào permission budget.
+
+Manual gate còn lại trên Chrome 116+: reload `extension/dist`, xác nhận đúng hai menu, selection trong top frame/iframe,
+link preview, cancel/clear và capture liên tiếp. Gate này phải đóng trước Phase 3 auth integration.
 
 ### Phase 3 — OIDC Authorization Code + PKCE
 
-- [ ] Tạo OIDC public client riêng và register exact Chromium redirect URL cho dev/staging/production IDs.
+- [ ] Implement local auth flow bằng OIDC public client riêng và exact redirect do `chrome.identity.getRedirectURL()`
+  trả về cho unpacked extension hiện tại; không dùng client secret trong extension.
+- [ ] Mở local CSP `connect-src` tối thiểu cho exact OIDC HTTPS token host cần thiết; không thêm Railway/production host
+  trước Phase 9 và không dùng wildcard.
+- [ ] Giữ unpacked extension ID/redirect chỉ trong untracked local config. Khi ID thay đổi, cập nhật local OIDC config;
+  không đưa ID tạm vào shared Railway/production allow-list.
 - [ ] Implement `launchWebAuthFlow`, state/nonce, PKCE S256, code exchange, expiry validation và logout/revocation flow.
 - [ ] Giữ auth transaction/access token trong trusted `storage.session`; clear khi logout, extension update/reload hoặc
   auth error terminal.
@@ -430,18 +512,22 @@ Exit gate: không có network request trước submit và extension không có q
 - [ ] Test state mismatch, redirect mismatch, expired token, canceled login, service-worker restart giữa flow và wrong
   audience.
 
-Exit gate: hosted smoke chứng minh extension/web cùng user đọc được cùng case; user khác bị từ chối.
+Local exit gate: automated auth tests đạt và manual local smoke chứng minh extension/web cùng user đọc được cùng case;
+user khác bị từ chối. Railway OIDC client, stable ID và hosted smoke được đóng riêng ở Phase 9.
 
 ### Phase 4 — Backend origin hardening và deployment config
 
-- [ ] Thêm exact extension ID/origin configuration với production validation; không dùng wildcard.
+- [ ] Thêm exact extension ID/origin configuration với fail-closed validation; local config có thể dùng ID unpacked hiện
+  tại nhưng không dùng wildcard.
 - [ ] Validate WebSocket `Origin` trước accept, song song với single-use ticket + owner check hiện hành.
-- [ ] Cấu hình frontend HTTPS origins và approved extension origins riêng cho dev/staging/production.
+- [ ] Tách local web/extension origins khỏi Railway/Store origins; local values ở untracked config, deployed values ở
+  managed environment configuration.
 - [ ] Test unapproved extension ID, arbitrary website origin, missing/expired/reused ticket và mismatched analysis ID.
 - [ ] Xác minh structured logs/error envelope không chứa bearer, ticket, raw capture hoặc URL query.
 - [ ] Cập nhật `.env.example` và `DEPLOYMENT.md` khi runtime thực sự consume config mới.
 
-Exit gate: chỉ web origin và extension ID đã duyệt đi qua transport boundary; auth/RBAC vẫn là authorization authority.
+Local exit gate: chỉ exact local web origin và exact unpacked extension ID hiện tại đi qua transport boundary;
+auth/RBAC vẫn là authorization authority. Railway exact-origin/config validation và hosted smoke được đóng ở Phase 9.
 
 ### Phase 5 — Submit và idempotency
 
@@ -480,33 +566,59 @@ Exit gate: transport loss không làm mất final result, duplicate UI hoặc st
 
 Exit gate: Side Panel đủ dùng cho cảnh báo nhanh, web tiếp quản đúng full case mà không copy raw content qua query string.
 
-### Phase 8 — Security, privacy và Chrome Web Store readiness
+### Phase 8 — Local security, privacy và end-to-end hardening
 
 - [ ] Chạy dependency/SAST/secret scan, CSP test và manual permission audit.
 - [ ] Xác minh không có remote executable code, `eval`, unsafe `innerHTML` hoặc externally-connectable wildcard.
 - [ ] Pentest hostile page/internal-message spoofing, XSS payload, OAuth redirect/state, token exfiltration và deep-link
   injection.
-- [ ] Hoàn thiện privacy policy, Limited Use disclosure, retention/deletion description và single-purpose store listing.
-- [ ] Chuẩn bị icon/screenshot không chứa user data hoặc production case/token.
-- [ ] Test install/update/uninstall, browser restart, incognito policy và managed enterprise restrictions.
-- [ ] Tạo signed release artifact, checksum, versioning và rollback package.
+- [ ] Xác minh local logs/storage/build artifact không chứa capture content, token, ticket, OTP, credential, URL query
+  nhạy cảm hoặc demo token.
+- [ ] Test unpacked install/reload/remove, browser restart, service-worker suspend/restart và incognito policy.
+- [ ] Chạy local end-to-end unpacked extension → local backend/frontend cho capture → consent → submit → progress/final
+  → web handoff, gồm inline fallback và failure cases.
+- [ ] Ghi local test evidence không nhạy cảm; không coi local evidence là Railway/production approval.
 
-Exit gate: Security/Privacy review và Chrome Web Store submission checklist đều được duyệt.
+Exit gate: local end-to-end và security/privacy regression suite đạt. Từ đây mới bắt đầu setup Railway. Chrome Web Store
+listing, Store ID, signed publication artifact và Store policy review chưa thuộc gate này.
 
-### Phase 9 — Hosted rollout
+### Phase 9 — Railway internal deployment
 
+- [ ] Reserve một stable Railway/internal extension ID bằng developer-managed manifest public key hoặc Chrome Developer
+  Dashboard draft item. Không cần publish Store; ghi public ID/owner mapping và giữ private key ngoài repository.
+- [ ] Tạo Railway OIDC public client cho exact Chromium redirect của stable internal ID; không dùng local unpacked ID.
+- [ ] Cấu hình extension Railway build với exact HTTPS API/OIDC host và WSS host trong CSP; không wildcard.
+- [ ] Cấu hình backend/WebSocket exact `chrome-extension://<railway-internal-id>` origin cùng web origin; giữ JWT/RBAC,
+  owner check và single-use ticket là authorization authority.
 - [ ] Hoàn tất toàn bộ hosted Phase 8 của streaming plan trước khi quảng bá progress realtime.
 - [ ] Deploy backend + worker cùng artifact; verify PostgreSQL/Alembic, Redis, lease/heartbeat và readiness.
 - [ ] Giữ inline fallback; chỉ bật `SECURITY_ASYNC_EXECUTION_ENABLED=true` sau approval hiện hành.
-- [ ] Canary extension theo internal → staging users → small production cohort → general availability.
-- [ ] Smoke hai OIDC users: submit, owner isolation, ticket single-use, reconnect, polling fallback, final fetch và web
-  handoff.
+- [ ] Phân phối unpacked/internal package cho nhóm thử nghiệm đã kiểm soát; không quảng bá là Chrome Web Store release.
+- [ ] Smoke hai Railway OIDC users: submit, owner isolation, ticket single-use, reconnect, polling fallback, final fetch
+  và web handoff.
 - [ ] Induce Redis/WebSocket failure và xác minh cursor polling từ PostgreSQL vẫn hoàn tất.
 - [ ] Theo dõi metric không nhạy cảm: auth success, submit accepted/final, time-to-first-progress, time-to-final,
   reconnect/fallback rate, dropped UI events và error code distribution.
 - [ ] Không log capture content, URL query, token, ticket, OTP, credential hoặc provider payload.
 
-Exit gate: observation window đạt SLO và không có security/privacy regression; Product + Security + Operations duyệt GA.
+Exit gate: Railway internal observation window đạt SLO, exact identity/origin/OIDC smoke và failure recovery đạt;
+Product + Security + Operations duyệt internal deployment. Gate này không phải Chrome Web Store hoặc public GA approval.
+
+### Phase 10 — Chrome Web Store và production GA
+
+- [ ] Chốt production publisher ownership và reserve production/Chrome Web Store item ID riêng; không tái sử dụng local
+  hoặc Railway internal identity.
+- [ ] Tạo production OIDC client và exact backend origin allow-list cho Store ID; chạy lại owner/RBAC/ticket smoke.
+- [ ] Hoàn thiện privacy policy, Limited Use disclosure, retention/deletion description và single-purpose store listing.
+- [ ] Chuẩn bị icon/screenshot không chứa user data, production case, token hoặc internal environment detail.
+- [ ] Test Store install/update/uninstall, browser restart, incognito policy và managed enterprise restrictions.
+- [ ] Tạo signed release artifact, checksum, versioning, rollback package và bảo vệ publisher/update ownership.
+- [ ] Hoàn tất Chrome Web Store submission/review rồi canary theo trusted testers → small production cohort → general
+  availability.
+- [ ] Quan sát production SLO/security/privacy và diễn tập revoke Store ID/OIDC client + rollback extension version.
+
+Exit gate: Chrome Web Store review cùng Product + Security + Privacy + Operations approval đạt, production observation
+window không có regression và rollback evidence đầy đủ trước public GA.
 
 ## Verification matrix
 
@@ -546,7 +658,9 @@ npm run test:e2e
 npm run package
 ```
 
-Hosted OIDC/PostgreSQL/Redis/worker/provider/failure smoke không được thay bằng local test.
+Local Phase 2–8 evidence là gate bắt buộc trước Railway nhưng không thay thế Railway
+OIDC/PostgreSQL/Redis/worker/provider/failure smoke. Railway internal evidence cũng không thay thế Chrome Web Store
+review hoặc production GA observation.
 
 ## Acceptance criteria
 
@@ -593,14 +707,26 @@ Không dùng browsing activity/capture cho quảng cáo, profiling hoặc mục 
 
 ## Definition of done
 
-- [ ] Phase 0–8 có code, automated coverage và security/privacy approval.
+### Local implementation done
+
+- [ ] Phase 0–8 có code, automated coverage và local security/privacy evidence.
+- [ ] Phase 1 manual Chrome smoke đạt trên unpacked build.
 - [ ] Manifest permission budget đạt; không có `<all_urls>` hay content script thường trực cho MVP.
-- [ ] OIDC PKCE, token/session boundary và exact origin checks đạt hosted smoke.
-- [ ] Capture → submit → pipeline → progress → final → web handoff hoạt động end-to-end.
-- [ ] Result và provider/tool trace parity với web client đạt.
-- [ ] Safety invariants, owner isolation, consent và SSRF/redirect gates không regression.
-- [ ] Streaming hosted prerequisites hoàn tất trước khi bật async production.
-- [ ] Rollout metrics/SLO và failure rehearsal có evidence đã làm sạch.
+- [ ] Capture → submit → local pipeline → progress/final → local web handoff hoạt động end-to-end.
+- [ ] Local OIDC/token/session và exact current unpacked-origin checks đạt; không wildcard và không commit local ID/token.
+- [ ] Result/provider trace parity, safety invariants, owner isolation, consent và SSRF/redirect gates không regression.
+
+### Railway internal deployment done
+
+- [ ] Phase 9 stable internal ID, Railway OIDC redirect, CSP và backend/WebSocket exact origin checks đạt hosted smoke.
+- [ ] PostgreSQL/Redis/worker/provider/failure recovery và inline fallback có evidence đã làm sạch.
+- [ ] Streaming hosted prerequisites hoàn tất trước khi bật async trên Railway.
+- [ ] Internal rollout metrics/SLO và rollback rehearsal đạt; không coi đây là public GA.
+
+### Chrome Web Store/production GA done
+
+- [ ] Phase 10 Store ID/publisher ownership, privacy/listing/submission review và signed release controls đạt.
+- [ ] Production canary, security/privacy observation và rollback/revoke evidence đạt trước general availability.
 - [ ] Canonical docs phản ánh đúng implementation/release state hiện tại.
 
 ## Tài liệu nền
@@ -611,15 +737,16 @@ Không dùng browsing activity/capture cho quảng cáo, profiling hoặc mục 
 - [Deployment](DEPLOYMENT.md)
 - [Testing](TESTING.md)
 
-Chrome platform assumptions cần được verify lại khi bắt đầu implementation: Manifest V3, Side Panel API,
-`contextMenus`, `chrome.identity`, `activeTab`, service-worker lifecycle, storage access level, CSP và Chrome Web Store
-User Data/Limited Use policy.
+Manifest V3, Chrome 116+, Side Panel và local CSP assumptions đã được verify cho Phase 1 scaffold. Trước mỗi phase liên
+quan vẫn phải verify lại tài liệu chính thức: `contextMenus`/storage ở Phase 2, `chrome.identity` ở Phase 3/9,
+service-worker lifecycle/origin/CSP ở Phase 4–9 và Chrome Web Store User Data/Limited Use policy ở Phase 10.
 
 Nguồn platform chính thức:
 
 - [Chrome Side Panel API](https://developer.chrome.com/docs/extensions/reference/api/sidePanel)
 - [Chrome contextMenus API](https://developer.chrome.com/docs/extensions/reference/api/contextMenus)
 - [Chrome Identity API](https://developer.chrome.com/docs/extensions/reference/api/identity)
+- [Chrome manifest key](https://developer.chrome.com/docs/extensions/reference/manifest/key)
 - [Extension service-worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)
 - [The activeTab permission](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab)
 - [Chrome Extension storage](https://developer.chrome.com/docs/extensions/reference/api/storage)

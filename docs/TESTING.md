@@ -19,15 +19,22 @@ npm run typecheck
 npm run check:cutover
 npm run build
 npm run test:e2e
+
+cd ../extension
+npm ci
+npm run check
+npm audit --audit-level=high
 ```
 
-Verification gần nhất của workspace ngày 2026-08-28: Ruff đạt; backend mặc định `702 passed, 3 deselected`,
-line coverage `69.36%` vượt gate `68%`; Alembic có một head `0022_action_assurance_metadata`. Coverage run còn
-phát 6 `ResourceWarning` về SQLite connection chưa đóng; warning không làm fail gate nhưng chưa được coi là sạch.
-Ba PostgreSQL integration case được tách sang job CI riêng, job này dựng PostgreSQL 16 disposable, chạy
+Verification gần nhất của workspace ngày 2026-08-29: Ruff đạt; backend mặc định `751 passed, 6 deselected`,
+line coverage `69.93%` vượt gate `68%`; Alembic có một head `0022_action_assurance_metadata`. Coverage run còn
+phát 5 `ResourceWarning` về SQLite connection chưa đóng và 1 pytest cache warning; warning không làm fail gate
+nhưng chưa được coi là sạch. Extension đạt lint, typecheck, OpenAPI/type drift check, 33 unit tests,
+deterministic build/manifest/bundle checks; `npm audit --audit-level=high` không phát hiện vulnerability.
+Năm PostgreSQL integration case được tách sang job CI riêng, job này dựng PostgreSQL 16 disposable, chạy
 `alembic upgrade head`,
 rồi mới chạy marker `integration`. Máy local của snapshot này không có Docker daemon nên chưa tạo được bằng chứng
-PostgreSQL thật tại local; CI integration phải pass trước merge. Frontend không được chạy lại trong thay đổi backend này.
+PostgreSQL thật tại local; CI integration phải pass trước merge. Frontend không được chạy lại trong thay đổi extension này.
 
 Evaluation:
 

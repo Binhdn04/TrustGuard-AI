@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "TrustGuard AI (Local)",
+  "description": "Capture selected text or explicit links for local TrustGuard AI preview.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "contextMenus", "storage"],
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open TrustGuard AI"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'none'; img-src 'self'; style-src 'self'"
+  }
+}

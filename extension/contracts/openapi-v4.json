@@ -1,0 +1,3425 @@
+{
+  "components": {
+    "schemas": {
+      "AnalysisStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "title": "AnalysisStatus",
+        "type": "string"
+      },
+      "AssistantContextV4": {
+        "additionalProperties": false,
+        "properties": {
+          "action_candidate_present": {
+            "default": false,
+            "title": "Action Candidate Present",
+            "type": "boolean"
+          },
+          "action_intent_available": {
+            "default": true,
+            "title": "Action Intent Available",
+            "type": "boolean"
+          },
+          "derived_query_provenance": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedQueryProvenanceV4"
+            },
+            "maxItems": 6,
+            "title": "Derived Query Provenance",
+            "type": "array"
+          },
+          "exposure_state": {
+            "$ref": "#/components/schemas/ExposureStateV4",
+            "default": "UNKNOWN"
+          },
+          "field_confidences": {
+            "additionalProperties": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "maxProperties": 50,
+            "title": "Field Confidences",
+            "type": "object"
+          },
+          "grounded_actions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 20,
+            "title": "Grounded Actions",
+            "type": "array"
+          },
+          "missing_information": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Missing Information",
+            "type": "array"
+          },
+          "model_version": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Model Version",
+            "type": "string"
+          },
+          "processing_mode": {
+            "$ref": "#/components/schemas/AssistantProcessingModeV4"
+          },
+          "sender_intent": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Intent"
+          },
+          "social_engineering_techniques": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Social Engineering Techniques",
+            "type": "array"
+          },
+          "source_spans": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantSourceSpanV4"
+            },
+            "maxItems": 50,
+            "title": "Source Spans",
+            "type": "array"
+          },
+          "understanding_version": {
+            "default": "security-understanding-v2",
+            "enum": [
+              "security-understanding-v1",
+              "security-understanding-v2"
+            ],
+            "title": "Understanding Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "processing_mode",
+          "model_version"
+        ],
+        "title": "AssistantContextV4",
+        "type": "object"
+      },
+      "AssistantGenerationModeV4": {
+        "enum": [
+          "ai",
+          "policy_grounded",
+          "template_fallback"
+        ],
+        "title": "AssistantGenerationModeV4",
+        "type": "string"
+      },
+      "AssistantImmediateStepV4": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SecurityRecommendedActionV4"
+          },
+          "policy_ref": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z0-9:_-]+$",
+            "title": "Policy Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "policy_ref"
+        ],
+        "title": "AssistantImmediateStepV4",
+        "type": "object"
+      },
+      "AssistantProcessingModeV4": {
+        "enum": [
+          "hybrid",
+          "rules_only",
+          "fallback"
+        ],
+        "title": "AssistantProcessingModeV4",
+        "type": "string"
+      },
+      "AssistantReasonV4": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence_refs"
+        ],
+        "title": "AssistantReasonV4",
+        "type": "object"
+      },
+      "AssistantResponseV4": {
+        "additionalProperties": false,
+        "properties": {
+          "degradation_reason": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "pattern": "^[a-z0-9_:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degradation Reason"
+          },
+          "follow_up_offer": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Follow Up Offer"
+          },
+          "generation_mode": {
+            "$ref": "#/components/schemas/AssistantGenerationModeV4"
+          },
+          "immediate_steps": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantImmediateStepV4"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Immediate Steps",
+            "type": "array"
+          },
+          "response_version": {
+            "const": "security-assistant-response-v1",
+            "default": "security-assistant-response-v1",
+            "title": "Response Version",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "top_reasons": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantReasonV4"
+            },
+            "maxItems": 5,
+            "title": "Top Reasons",
+            "type": "array"
+          },
+          "uncertainties": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Uncertainties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "summary",
+          "immediate_steps",
+          "generation_mode"
+        ],
+        "title": "AssistantResponseV4",
+        "type": "object"
+      },
+      "AssistantSourceSpanV4": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "exclusiveMinimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "field_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Field Name",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field_name",
+          "start",
+          "end"
+        ],
+        "title": "AssistantSourceSpanV4",
+        "type": "object"
+      },
+      "ClaimVerificationV4": {
+        "additionalProperties": false,
+        "properties": {
+          "applicable": {
+            "title": "Applicable",
+            "type": "boolean"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatusV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationTopicV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "applicable",
+          "reason_code"
+        ],
+        "title": "ClaimVerificationV4",
+        "type": "object"
+      },
+      "DerivedQueryProvenanceV4": {
+        "additionalProperties": false,
+        "properties": {
+          "derived_from_fields": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Derived From Fields",
+            "type": "array"
+          },
+          "query_id": {
+            "pattern": "^query:[a-f0-9]{16}$",
+            "title": "Query Id",
+            "type": "string"
+          },
+          "transformations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Transformations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query_id",
+          "derived_from_fields"
+        ],
+        "title": "DerivedQueryProvenanceV4",
+        "type": "object"
+      },
+      "DomainFamiliarityClassificationV4": {
+        "enum": [
+          "reviewed_first_party",
+          "reviewed_platform_service",
+          "ranked_domain"
+        ],
+        "title": "DomainFamiliarityClassificationV4",
+        "type": "string"
+      },
+      "DomainFamiliarityDetailsV4": {
+        "additionalProperties": false,
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/DomainFamiliarityClassificationV4"
+          },
+          "dataset_window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Window End"
+          },
+          "observed_host": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Observed Host",
+            "type": "string"
+          },
+          "platform_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Name"
+          },
+          "popularity_bucket": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Popularity Bucket"
+          },
+          "popularity_rank": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Popularity Rank"
+          },
+          "registrable_domain": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Registrable Domain",
+            "type": "string"
+          },
+          "shared_platform": {
+            "default": false,
+            "title": "Shared Platform",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "observed_host",
+          "registrable_domain",
+          "classification"
+        ],
+        "title": "DomainFamiliarityDetailsV4",
+        "type": "object"
+      },
+      "EntityUrlClaimV4": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.8,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "entity_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Entity Name",
+            "type": "string"
+          },
+          "relationship": {
+            "$ref": "#/components/schemas/EntityUrlRelationshipV4"
+          },
+          "url_index": {
+            "exclusiveMaximum": 10.0,
+            "minimum": 0.0,
+            "title": "Url Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_name",
+          "url_index",
+          "relationship",
+          "confidence"
+        ],
+        "title": "EntityUrlClaimV4",
+        "type": "object"
+      },
+      "EntityUrlRelationshipV4": {
+        "enum": [
+          "claimed_official_site",
+          "claimed_endorsed_service",
+          "reference_only"
+        ],
+        "title": "EntityUrlRelationshipV4",
+        "type": "string"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorCode": {
+        "enum": [
+          "VALIDATION_ERROR",
+          "FORBIDDEN",
+          "NOT_FOUND",
+          "RATE_LIMITED",
+          "PROVIDER_TIMEOUT",
+          "INTERNAL_ERROR",
+          "CONFLICT"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
+      "ErrorEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "ExposureStateV4": {
+        "enum": [
+          "PRE_ACTION",
+          "LINK_OPENED",
+          "CREDENTIAL_SHARED",
+          "OTP_SHARED",
+          "PAYMENT_SENT",
+          "UNKNOWN"
+        ],
+        "title": "ExposureStateV4",
+        "type": "string"
+      },
+      "GroundedEntityMentionV4": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "exclusiveMinimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "registry_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroundedEntityRoleV4"
+          },
+          "source": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "start",
+          "end",
+          "role",
+          "source"
+        ],
+        "title": "GroundedEntityMentionV4",
+        "type": "object"
+      },
+      "GroundedEntityRoleV4": {
+        "description": "The role a text-grounded entity plays in this message.\n\nThese are observations about the message, not trust assertions.  In\nparticular, ``claimed_organization`` is allowed to be an unknown name.",
+        "enum": [
+          "claimed_organization",
+          "sender",
+          "platform_provider",
+          "resource_intermediary",
+          "other"
+        ],
+        "title": "GroundedEntityRoleV4",
+        "type": "string"
+      },
+      "IdentityAssociationAssuranceV4": {
+        "enum": [
+          "discovered",
+          "verified",
+          "conflicting",
+          "promoted",
+          "rejected",
+          "confirmed_mismatch"
+        ],
+        "title": "IdentityAssociationAssuranceV4",
+        "type": "string"
+      },
+      "IdentityAssociationV4": {
+        "additionalProperties": false,
+        "properties": {
+          "association_id": {
+            "format": "uuid",
+            "title": "Association Id",
+            "type": "string"
+          },
+          "assurance": {
+            "$ref": "#/components/schemas/IdentityAssociationAssuranceV4"
+          },
+          "canonical_domain": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Canonical Domain",
+            "type": "string"
+          },
+          "canonical_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Canonical Url",
+            "type": "string"
+          },
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "discovered_at": {
+            "format": "date-time",
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "entity_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Entity Name",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "policy_version": {
+            "const": "identity-discovery-v2",
+            "default": "identity-discovery-v2",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "relationship": {
+            "$ref": "#/components/schemas/IdentityRelationshipV4"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "entity_name",
+          "canonical_url",
+          "canonical_domain",
+          "relationship",
+          "assurance",
+          "confidence",
+          "discovered_at"
+        ],
+        "title": "IdentityAssociationV4",
+        "type": "object"
+      },
+      "IdentityEvidenceFamilyV4": {
+        "enum": [
+          "entity_self_identification",
+          "authoritative_domain_attestation",
+          "independent_entity_link",
+          "parent_declaration",
+          "candidate_corroboration",
+          "exact_resource_endorsement",
+          "target_resource_match",
+          "explicit_ownership_conflict",
+          "action_endorsement",
+          "claim_endorsement"
+        ],
+        "title": "IdentityEvidenceFamilyV4",
+        "type": "string"
+      },
+      "IdentityEvidenceObservationV4": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Canonical Url",
+            "type": "string"
+          },
+          "content_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "evidence_ref": {
+            "pattern": "^identity-evidence:[a-f0-9]{16}$",
+            "title": "Evidence Ref",
+            "type": "string"
+          },
+          "family": {
+            "$ref": "#/components/schemas/IdentityEvidenceFamilyV4"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "source_host": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Source Host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_ref",
+          "family",
+          "source_host",
+          "canonical_url",
+          "content_hash",
+          "observed_at"
+        ],
+        "title": "IdentityEvidenceObservationV4",
+        "type": "object"
+      },
+      "IdentityRelationshipV4": {
+        "enum": [
+          "official_controlled",
+          "parent_organization",
+          "endorsed_third_party_service"
+        ],
+        "title": "IdentityRelationshipV4",
+        "type": "string"
+      },
+      "InvestigationStepV4": {
+        "additionalProperties": false,
+        "properties": {
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SecurityInvestigationStepStatusV4"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9_]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "step_id": {
+            "pattern": "^step-[a-f0-9]{12}$",
+            "title": "Step Id",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/SecurityInvestigationToolV4"
+          }
+        },
+        "required": [
+          "step_id",
+          "tool",
+          "target",
+          "reason_code",
+          "status"
+        ],
+        "title": "InvestigationStepV4",
+        "type": "object"
+      },
+      "LinkRoleV4": {
+        "enum": [
+          "official_website",
+          "official_announcement",
+          "social_profile",
+          "application",
+          "registration",
+          "form",
+          "download",
+          "login",
+          "payment",
+          "contact",
+          "other"
+        ],
+        "title": "LinkRoleV4",
+        "type": "string"
+      },
+      "MissingInformationSlotV4": {
+        "enum": [
+          "action_taken",
+          "requested_sensitive_action",
+          "url_or_contact",
+          "claimed_organization",
+          "amount_deadline_channel"
+        ],
+        "title": "MissingInformationSlotV4",
+        "type": "string"
+      },
+      "OfficialIdentityMatchScopeV4": {
+        "enum": [
+          "exact",
+          "host_and_subdomains",
+          "bounded_phrase"
+        ],
+        "title": "OfficialIdentityMatchScopeV4",
+        "type": "string"
+      },
+      "OfficialIdentityTypeV4": {
+        "enum": [
+          "primary_website",
+          "website",
+          "domain",
+          "careers_page",
+          "social_profile",
+          "sub_organization"
+        ],
+        "title": "OfficialIdentityTypeV4",
+        "type": "string"
+      },
+      "OfficialIdentityV4": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_value": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Canonical Value",
+            "type": "string"
+          },
+          "display_value": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Display Value",
+            "type": "string"
+          },
+          "effective_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective From"
+          },
+          "effective_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Until"
+          },
+          "entity_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Entity Name",
+            "type": "string"
+          },
+          "identity_id": {
+            "format": "uuid",
+            "title": "Identity Id",
+            "type": "string"
+          },
+          "identity_type": {
+            "$ref": "#/components/schemas/OfficialIdentityTypeV4"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/TrustLifecycleV4",
+            "default": "active"
+          },
+          "match_scope": {
+            "$ref": "#/components/schemas/OfficialIdentityMatchScopeV4",
+            "default": "exact"
+          },
+          "policy_version": {
+            "default": "official-identity-v1",
+            "pattern": "^[a-z0-9._-]+$",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "provenance": {
+            "default": "unversioned_contract",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Provenance",
+            "type": "string"
+          },
+          "relationship": {
+            "default": "primary",
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Relationship",
+            "type": "string"
+          },
+          "reviewed": {
+            "default": false,
+            "title": "Reviewed",
+            "type": "boolean"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "pattern": "^source:[a-f0-9]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes"
+          }
+        },
+        "required": [
+          "identity_type",
+          "canonical_value",
+          "display_value",
+          "entity_name"
+        ],
+        "title": "OfficialIdentityV4",
+        "type": "object"
+      },
+      "OfficialLinkReferenceV4": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Canonical Url",
+            "type": "string"
+          },
+          "display_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Display Url",
+            "type": "string"
+          },
+          "link_ref": {
+            "pattern": "^link:[a-f0-9]{16}$",
+            "title": "Link Ref",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceIdentityV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/LinkRoleV4"
+          },
+          "source_ref": {
+            "pattern": "^source:[a-f0-9]{16}$",
+            "title": "Source Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "link_ref",
+          "source_ref",
+          "role",
+          "display_url",
+          "canonical_url"
+        ],
+        "title": "OfficialLinkReferenceV4",
+        "type": "object"
+      },
+      "OfficialLinkVerificationReportV4": {
+        "additionalProperties": false,
+        "properties": {
+          "action_endorsement_verification": {
+            "$ref": "#/components/schemas/OfficialVerificationComponentV4"
+          },
+          "claim_verification": {
+            "$ref": "#/components/schemas/ClaimVerificationV4"
+          },
+          "domain_ownership_verification": {
+            "$ref": "#/components/schemas/OfficialVerificationComponentV4"
+          },
+          "identity_associations": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityAssociationV4"
+            },
+            "maxItems": 20,
+            "title": "Identity Associations",
+            "type": "array"
+          },
+          "identity_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityEvidenceObservationV4"
+            },
+            "maxItems": 50,
+            "title": "Identity Evidence",
+            "type": "array"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/VerificationIntentV4"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "link_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OfficialLinkReferenceV4"
+            },
+            "maxItems": 50,
+            "title": "Link Refs",
+            "type": "array"
+          },
+          "overall_status": {
+            "$ref": "#/components/schemas/VerificationStatusV4"
+          },
+          "policy_version": {
+            "default": "official-link-verification-v1",
+            "enum": [
+              "official-link-verification-v1",
+              "official-link-verification-v2",
+              "official-link-verification-v3",
+              "official-link-verification-v4"
+            ],
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "publisher_verification": {
+            "$ref": "#/components/schemas/PublisherVerificationV4"
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "resource_verification": {
+            "$ref": "#/components/schemas/ResourceVerificationV4"
+          },
+          "schema_version": {
+            "default": "official-link-verification-v1",
+            "enum": [
+              "official-link-verification-v1",
+              "official-link-verification-v2",
+              "official-link-verification-v3",
+              "official-link-verification-v4"
+            ],
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "sender_verification": {
+            "$ref": "#/components/schemas/OfficialVerificationComponentV4"
+          },
+          "source_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OfficialSourceReferenceV4"
+            },
+            "maxItems": 20,
+            "title": "Source Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "intent",
+          "publisher_verification",
+          "claim_verification",
+          "resource_verification",
+          "overall_status",
+          "reason_code"
+        ],
+        "title": "OfficialLinkVerificationReportV4",
+        "type": "object"
+      },
+      "OfficialSourceReferenceV4": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Canonical Url",
+            "type": "string"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "display_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Display Url",
+            "type": "string"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OfficialIdentityV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_ref": {
+            "pattern": "^source:[a-f0-9]{16}$",
+            "title": "Source Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_ref",
+          "display_url",
+          "canonical_url"
+        ],
+        "title": "OfficialSourceReferenceV4",
+        "type": "object"
+      },
+      "OfficialVerificationComponentV4": {
+        "additionalProperties": false,
+        "properties": {
+          "applicable": {
+            "title": "Applicable",
+            "type": "boolean"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatusV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "applicable",
+          "reason_code"
+        ],
+        "title": "OfficialVerificationComponentV4",
+        "type": "object"
+      },
+      "PotentialThreatV4": {
+        "enum": [
+          "PHISHING",
+          "BRAND_IMPERSONATION",
+          "FINANCIAL_SCAM",
+          "RECRUITMENT_SCAM",
+          "PROMOTION_PRIZE_SCAM",
+          "CREDENTIAL_THEFT",
+          "IMPERSONATION_FINANCIAL_SCAM",
+          "CREDENTIAL_AND_OTP_PHISHING",
+          "RECRUITMENT_IMPERSONATION",
+          "CHARITY_IMPERSONATION_SCAM",
+          "INVESTMENT_IMPERSONATION_SCAM",
+          "ADVANCE_FEE_TASK_SCAM",
+          "PAYMENT_AND_OTP_PHISHING",
+          "ADVANCE_FEE_SCAM",
+          "UNDETERMINED_SECURITY_THREAT"
+        ],
+        "title": "PotentialThreatV4",
+        "type": "string"
+      },
+      "PublisherVerificationV4": {
+        "additionalProperties": false,
+        "properties": {
+          "applicable": {
+            "title": "Applicable",
+            "type": "boolean"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OfficialIdentityV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatusV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "applicable",
+          "reason_code"
+        ],
+        "title": "PublisherVerificationV4",
+        "type": "object"
+      },
+      "RequestedActionV4": {
+        "enum": [
+          "login",
+          "share_otp",
+          "share_credentials",
+          "transfer_money",
+          "pay_fee",
+          "provide_personal_information",
+          "open_link",
+          "install_app",
+          "share_screen",
+          "scan_qr",
+          "submit_form",
+          "register_or_apply",
+          "download_file",
+          "apply_for_passport"
+        ],
+        "title": "RequestedActionV4",
+        "type": "string"
+      },
+      "ResourceIdentityV4": {
+        "additionalProperties": false,
+        "properties": {
+          "canonical_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Url"
+          },
+          "match_key": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Match Key",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceTypeV4"
+          },
+          "schema_version": {
+            "const": "resource-identity-v1",
+            "default": "resource-identity-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_type",
+          "match_key"
+        ],
+        "title": "ResourceIdentityV4",
+        "type": "object"
+      },
+      "ResourceMatchStatusV4": {
+        "enum": [
+          "EXACT_RESOURCE",
+          "EXACT_CANONICAL_URL",
+          "DIFFERENT_RESOURCE",
+          "UNRESOLVED"
+        ],
+        "title": "ResourceMatchStatusV4",
+        "type": "string"
+      },
+      "ResourceMatchV4": {
+        "additionalProperties": false,
+        "properties": {
+          "official_resource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceIdentityV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ResourceMatchStatusV4"
+          },
+          "user_resource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceIdentityV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "reason_code"
+        ],
+        "title": "ResourceMatchV4",
+        "type": "object"
+      },
+      "ResourceTypeV4": {
+        "enum": [
+          "url",
+          "google_form",
+          "microsoft_form",
+          "file",
+          "other"
+        ],
+        "title": "ResourceTypeV4",
+        "type": "string"
+      },
+      "ResourceVerificationV4": {
+        "additionalProperties": false,
+        "properties": {
+          "applicable": {
+            "title": "Applicable",
+            "type": "boolean"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceMatchV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatusV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "submitted_resources": {
+            "items": {
+              "$ref": "#/components/schemas/SubmittedResourceResolutionV4"
+            },
+            "maxItems": 3,
+            "title": "Submitted Resources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "applicable",
+          "reason_code"
+        ],
+        "title": "ResourceVerificationV4",
+        "type": "object"
+      },
+      "ScopeDecisionV4": {
+        "enum": [
+          "IN_SCOPE",
+          "NEED_MORE_INFO",
+          "OUT_OF_SCOPE_GENERAL_FACT_CHECK"
+        ],
+        "title": "ScopeDecisionV4",
+        "type": "string"
+      },
+      "SecurityAnalysisAcceptedResponseV4": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "v4",
+            "default": "v4",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "conversation_version": {
+            "minimum": 1.0,
+            "title": "Conversation Version",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "analysis_id",
+          "conversation_id",
+          "conversation_version",
+          "created_at"
+        ],
+        "title": "SecurityAnalysisAcceptedResponseV4",
+        "type": "object"
+      },
+      "SecurityAnalysisEventKindV4": {
+        "enum": [
+          "status",
+          "provisional",
+          "progress",
+          "final"
+        ],
+        "title": "SecurityAnalysisEventKindV4",
+        "type": "string"
+      },
+      "SecurityAnalysisEventPageV4": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "v4",
+            "default": "v4",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/SecurityAnalysisEventV4"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "SecurityAnalysisEventPageV4",
+        "type": "object"
+      },
+      "SecurityAnalysisEventV4": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SecurityAnalysisEventKindV4",
+            "default": "status"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "progress_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityProgressStateV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk_hint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityRiskV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AnalysisStatus"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          }
+        },
+        "required": [
+          "analysis_id",
+          "sequence",
+          "status",
+          "step",
+          "occurred_at"
+        ],
+        "title": "SecurityAnalysisEventV4",
+        "type": "object"
+      },
+      "SecurityCapabilitiesResponseV4": {
+        "additionalProperties": false,
+        "properties": {
+          "admin_action_contract": {
+            "const": "v4",
+            "default": "v4",
+            "title": "Admin Action Contract",
+            "type": "string"
+          },
+          "admin_feedback_review": {
+            "const": true,
+            "default": true,
+            "title": "Admin Feedback Review",
+            "type": "boolean"
+          },
+          "contract_version": {
+            "const": "v4",
+            "default": "v4",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "conversation_resume": {
+            "const": true,
+            "default": true,
+            "title": "Conversation Resume",
+            "type": "boolean"
+          },
+          "deferred_admin_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deferred Admin Actions",
+            "type": "array"
+          },
+          "domain_familiarity": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Familiarity"
+          },
+          "domain_popularity_lookup_ready": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Popularity Lookup Ready"
+          },
+          "executable_admin_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Executable Admin Actions",
+            "type": "array"
+          },
+          "intelligence_explorer": {
+            "const": true,
+            "default": true,
+            "title": "Intelligence Explorer",
+            "type": "boolean"
+          },
+          "official_link_verification": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Link Verification"
+          },
+          "official_web_search_ready": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Web Search Ready"
+          },
+          "product_profile": {
+            "const": "security_triage_vnext",
+            "default": "security_triage_vnext",
+            "title": "Product Profile",
+            "type": "string"
+          },
+          "release_profile": {
+            "default": "pre_cutover",
+            "enum": [
+              "pre_cutover",
+              "cutover"
+            ],
+            "title": "Release Profile",
+            "type": "string"
+          },
+          "security_admin_copilot": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Admin Copilot"
+          },
+          "security_ai_explanation": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Ai Explanation"
+          },
+          "security_ai_planning": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Ai Planning"
+          },
+          "security_ai_understanding": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Ai Understanding"
+          },
+          "security_async_execution": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Async Execution"
+          },
+          "security_memory_retrieval": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Memory Retrieval"
+          },
+          "security_page_capture": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Page Capture"
+          },
+          "unified_v4_audit": {
+            "const": true,
+            "default": true,
+            "title": "Unified V4 Audit",
+            "type": "boolean"
+          }
+        },
+        "title": "SecurityCapabilitiesResponseV4",
+        "type": "object"
+      },
+      "SecurityConsentV4": {
+        "additionalProperties": false,
+        "properties": {
+          "external_url_lookup": {
+            "default": false,
+            "title": "External Url Lookup",
+            "type": "boolean"
+          },
+          "official_source_lookup": {
+            "default": false,
+            "title": "Official Source Lookup",
+            "type": "boolean"
+          }
+        },
+        "title": "SecurityConsentV4",
+        "type": "object"
+      },
+      "SecurityContextV4": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "claimed_entity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed Entity"
+          },
+          "credential_request": {
+            "title": "Credential Request",
+            "type": "boolean"
+          },
+          "entity_mentions": {
+            "items": {
+              "$ref": "#/components/schemas/GroundedEntityMentionV4"
+            },
+            "maxItems": 20,
+            "title": "Entity Mentions",
+            "type": "array"
+          },
+          "entity_url_claims": {
+            "items": {
+              "$ref": "#/components/schemas/EntityUrlClaimV4"
+            },
+            "maxItems": 10,
+            "title": "Entity Url Claims",
+            "type": "array"
+          },
+          "impersonation_signals": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Impersonation Signals",
+            "type": "array"
+          },
+          "otp_request": {
+            "title": "Otp Request",
+            "type": "boolean"
+          },
+          "payment_request": {
+            "title": "Payment Request",
+            "type": "boolean"
+          },
+          "personal_information_request": {
+            "title": "Personal Information Request",
+            "type": "boolean"
+          },
+          "potential_threat": {
+            "$ref": "#/components/schemas/PotentialThreatV4"
+          },
+          "requested_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequestedActionV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "$ref": "#/components/schemas/SecurityScenarioV4"
+          },
+          "schema_version": {
+            "default": "security-context-v2",
+            "enum": [
+              "security-context-v1",
+              "security-context-v2"
+            ],
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "urgency": {
+            "title": "Urgency",
+            "type": "boolean"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scenario",
+          "urgency",
+          "credential_request",
+          "otp_request",
+          "payment_request",
+          "personal_information_request",
+          "potential_threat"
+        ],
+        "title": "SecurityContextV4",
+        "type": "object"
+      },
+      "SecurityEvidenceTypeV4": {
+        "enum": [
+          "security_context",
+          "local_url_rule",
+          "blacklist",
+          "dns",
+          "redirect",
+          "rdap",
+          "url_reputation",
+          "brand_match",
+          "whitelist",
+          "reviewed_security_memory",
+          "domain_familiarity",
+          "official_verification"
+        ],
+        "title": "SecurityEvidenceTypeV4",
+        "type": "string"
+      },
+      "SecurityEvidenceV4": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "domain_familiarity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DomainFamiliarityDetailsV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_ref": {
+            "pattern": "^evidence:[a-f0-9]{16}$",
+            "title": "Evidence Ref",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "provenance_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance Ref"
+          },
+          "related_entity": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Entity"
+          },
+          "signal": {
+            "title": "Signal",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "type": {
+            "$ref": "#/components/schemas/SecurityEvidenceTypeV4"
+          }
+        },
+        "required": [
+          "evidence_ref",
+          "type",
+          "source",
+          "signal",
+          "description",
+          "observed_at"
+        ],
+        "title": "SecurityEvidenceV4",
+        "type": "object"
+      },
+      "SecurityExecutionModeV4": {
+        "enum": [
+          "inline",
+          "async"
+        ],
+        "title": "SecurityExecutionModeV4",
+        "type": "string"
+      },
+      "SecurityInvestigationStatusV4": {
+        "enum": [
+          "not_started",
+          "completed",
+          "partial"
+        ],
+        "title": "SecurityInvestigationStatusV4",
+        "type": "string"
+      },
+      "SecurityInvestigationStepStatusV4": {
+        "enum": [
+          "pending",
+          "completed",
+          "skipped",
+          "failed"
+        ],
+        "title": "SecurityInvestigationStepStatusV4",
+        "type": "string"
+      },
+      "SecurityInvestigationToolV4": {
+        "enum": [
+          "security_context_analysis",
+          "local_url_rules",
+          "blacklist_lookup",
+          "dns",
+          "redirect_resolver",
+          "rdap",
+          "url_reputation",
+          "domain_familiarity",
+          "brand_match",
+          "whitelist_lookup",
+          "security_memory_lookup"
+        ],
+        "title": "SecurityInvestigationToolV4",
+        "type": "string"
+      },
+      "SecurityPolicyMetadataV4": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_features": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Activated Features",
+            "type": "array"
+          },
+          "decision_assurance": {
+            "enum": [
+              "passive_target_verified",
+              "action_resource_verified",
+              "action_intent_unavailable",
+              "verification_incomplete",
+              "adverse_evidence"
+            ],
+            "title": "Decision Assurance",
+            "type": "string"
+          },
+          "release_version": {
+            "const": "security-risk-v7",
+            "default": "security-risk-v7",
+            "title": "Release Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_assurance"
+        ],
+        "title": "SecurityPolicyMetadataV4",
+        "type": "object"
+      },
+      "SecurityProgressStateV4": {
+        "enum": [
+          "started",
+          "completed",
+          "skipped",
+          "degraded"
+        ],
+        "title": "SecurityProgressStateV4",
+        "type": "string"
+      },
+      "SecurityRecommendedActionV4": {
+        "enum": [
+          "DO_NOT_OPEN_LINK",
+          "DO_NOT_SHARE_CREDENTIALS",
+          "DO_NOT_SHARE_OTP",
+          "DO_NOT_TRANSFER_MONEY",
+          "VERIFY_VIA_OFFICIAL_CHANNEL",
+          "CHANGE_PASSWORD_IF_ALREADY_SHARED",
+          "CONTACT_BANK_IF_ALREADY_PAID",
+          "REPORT_AND_BLOCK_SENDER",
+          "PROCEED_WITH_CAUTION",
+          "ALLOW_OPEN",
+          "CLOSE_PAGE_AND_DO_NOT_RETURN",
+          "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE",
+          "REVOKE_ACTIVE_SESSIONS",
+          "CONTACT_BANK_OR_PAYMENT_PROVIDER",
+          "PRESERVE_MESSAGE_FOR_REPORTING"
+        ],
+        "title": "SecurityRecommendedActionV4",
+        "type": "string"
+      },
+      "SecurityRiskV4": {
+        "enum": [
+          "SAFE",
+          "LOW_RISK",
+          "SUSPICIOUS",
+          "HIGH_RISK",
+          "MALICIOUS",
+          "INSUFFICIENT_EVIDENCE"
+        ],
+        "title": "SecurityRiskV4",
+        "type": "string"
+      },
+      "SecurityScenarioV4": {
+        "enum": [
+          "recruitment",
+          "promotion_prize",
+          "charity",
+          "investment",
+          "online_task",
+          "account_verification",
+          "payment",
+          "refund",
+          "unknown"
+        ],
+        "title": "SecurityScenarioV4",
+        "type": "string"
+      },
+      "SecurityScopeResponseV4": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "assistant_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistantContextV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assistant_response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistantResponseV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "boundary_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary Message"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "contract_version": {
+            "const": "v4",
+            "default": "v4",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "conversation_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Conversation Version",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/SecurityToolErrorV4"
+            },
+            "maxItems": 100,
+            "title": "Errors",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/SecurityEvidenceV4"
+            },
+            "maxItems": 100,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "explanation_evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Explanation Evidence Refs",
+            "type": "array"
+          },
+          "follow_up_question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Follow Up Question"
+          },
+          "follow_up_slot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MissingInformationSlotV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "investigation_plan": {
+            "items": {
+              "$ref": "#/components/schemas/InvestigationStepV4"
+            },
+            "maxItems": 100,
+            "title": "Investigation Plan",
+            "type": "array"
+          },
+          "investigation_status": {
+            "$ref": "#/components/schemas/SecurityInvestigationStatusV4",
+            "default": "not_started"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "next_step": {
+            "enum": [
+              "END",
+              "INVESTIGATION",
+              "RISK_ASSESSMENT"
+            ],
+            "title": "Next Step",
+            "type": "string"
+          },
+          "official_verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OfficialLinkVerificationReportV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityPolicyMetadataV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "enum": [
+                  "security-risk-v1",
+                  "security-risk-v2",
+                  "security-risk-v3",
+                  "security-risk-v4",
+                  "security-risk-v5",
+                  "security-risk-v6",
+                  "security-risk-v7"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Version"
+          },
+          "recommended_actions": {
+            "items": {
+              "$ref": "#/components/schemas/SecurityRecommendedActionV4"
+            },
+            "maxItems": 20,
+            "title": "Recommended Actions",
+            "type": "array"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityRiskV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope_decision": {
+            "$ref": "#/components/schemas/ScopeDecisionV4"
+          },
+          "scope_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Scope Reasons",
+            "type": "array"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "security_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityContextV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AnalysisStatus",
+            "default": "running"
+          },
+          "terminal": {
+            "title": "Terminal",
+            "type": "boolean"
+          },
+          "threat_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PotentialThreatV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool_calls_used": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Tool Calls Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope_decision",
+          "terminal",
+          "next_step",
+          "scope_reasons"
+        ],
+        "title": "SecurityScopeResponseV4",
+        "type": "object"
+      },
+      "SecurityToolErrorV4": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[A-Z0-9_]+$",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/SecurityInvestigationToolV4"
+          }
+        },
+        "required": [
+          "tool",
+          "target",
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "SecurityToolErrorV4",
+        "type": "object"
+      },
+      "SecurityTriageCreateRequestV4": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "$ref": "#/components/schemas/SecurityConsentV4"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "conversation_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Version"
+          },
+          "execution_mode": {
+            "$ref": "#/components/schemas/SecurityExecutionModeV4",
+            "default": "inline"
+          },
+          "message": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "SecurityTriageCreateRequestV4",
+        "type": "object"
+      },
+      "SecurityWebSocketTicketRequestV4": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "analysis_id"
+        ],
+        "title": "SecurityWebSocketTicketRequestV4",
+        "type": "object"
+      },
+      "SecurityWebSocketTicketResponseV4": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "v4",
+            "default": "v4",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "single_use": {
+            "const": true,
+            "default": true,
+            "title": "Single Use",
+            "type": "boolean"
+          },
+          "stream_path": {
+            "title": "Stream Path",
+            "type": "string"
+          },
+          "ticket": {
+            "title": "Ticket",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket",
+          "analysis_id",
+          "expires_at",
+          "stream_path"
+        ],
+        "title": "SecurityWebSocketTicketResponseV4",
+        "type": "object"
+      },
+      "SubmittedResourceResolutionV4": {
+        "additionalProperties": false,
+        "description": "Consent-gated, query-free redirect result for one submitted URL.",
+        "properties": {
+          "canonical_final_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Final Url"
+          },
+          "final_host": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Host"
+          },
+          "platform_provider": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Provider"
+          },
+          "redirect_chain": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Redirect Chain",
+            "type": "array"
+          },
+          "submitted_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Submitted Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "submitted_url"
+        ],
+        "title": "SubmittedResourceResolutionV4",
+        "type": "object"
+      },
+      "TrustLifecycleV4": {
+        "enum": [
+          "active",
+          "disabled"
+        ],
+        "title": "TrustLifecycleV4",
+        "type": "string"
+      },
+      "VerificationIntentV4": {
+        "additionalProperties": false,
+        "properties": {
+          "action_url_indices": {
+            "items": {
+              "exclusiveMaximum": 10.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "maxItems": 10,
+            "title": "Action Url Indices",
+            "type": "array"
+          },
+          "claim_summary": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Summary"
+          },
+          "derived_organization_names": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Derived Organization Names",
+            "type": "array"
+          },
+          "organization_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization Name"
+          },
+          "requested_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequestedActionV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": "verification-intent-v1",
+            "default": "verification-intent-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationTopicV4"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "VerificationIntentV4",
+        "type": "object"
+      },
+      "VerificationStatusV4": {
+        "enum": [
+          "VERIFIED",
+          "PARTIALLY_VERIFIED",
+          "UNVERIFIED",
+          "CONFLICTING"
+        ],
+        "title": "VerificationStatusV4",
+        "type": "string"
+      },
+      "VerificationTopicV4": {
+        "enum": [
+          "recruitment",
+          "promotion",
+          "event",
+          "course",
+          "survey",
+          "account",
+          "payment",
+          "charity",
+          "investment",
+          "general_notice",
+          "unknown"
+        ],
+        "title": "VerificationTopicV4",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "title": "TrustGuard Chrome Extension API",
+    "version": "3.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v4/analyses": {
+      "post": {
+        "operationId": "create_security_analysis_v4_api_v4_analyses_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityTriageCreateRequestV4"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityScopeResponseV4"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityAnalysisAcceptedResponseV4"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Create Security Analysis V4",
+        "tags": [
+          "security-triage-v4"
+        ]
+      }
+    },
+    "/api/v4/analyses/{analysis_id}": {
+      "get": {
+        "operationId": "get_security_analysis_v4_api_v4_analyses__analysis_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityScopeResponseV4"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Get Security Analysis V4",
+        "tags": [
+          "security-triage-v4"
+        ]
+      }
+    },
+    "/api/v4/analyses/{analysis_id}/events": {
+      "get": {
+        "operationId": "security_analysis_events_v4_api_v4_analyses__analysis_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityAnalysisEventPageV4"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Security Analysis Events V4",
+        "tags": [
+          "security-triage-v4"
+        ]
+      }
+    },
+    "/api/v4/capabilities": {
+      "get": {
+        "operationId": "security_capabilities_v4_api_v4_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityCapabilitiesResponseV4"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Security Capabilities V4",
+        "tags": [
+          "security-triage-v4"
+        ]
+      }
+    },
+    "/api/v4/ws-tickets": {
+      "post": {
+        "operationId": "create_security_websocket_ticket_v4_api_v4_ws_tickets_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityWebSocketTicketRequestV4"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityWebSocketTicketResponseV4"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Create Security Websocket Ticket V4",
+        "tags": [
+          "security-triage-v4"
+        ]
+      }
+    }
+  }
+}

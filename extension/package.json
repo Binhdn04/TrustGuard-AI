@@ -1,0 +1,35 @@
+{
+  "name": "trustguard-chrome-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "scripts": {
+    "build": "vite build && node scripts/check-manifest.mjs && node scripts/check-bundle.mjs",
+    "contracts:generate": "node scripts/export-contracts.mjs && openapi-typescript contracts/openapi-v4.json -o src/contracts/v4.generated.ts",
+    "contracts:check": "node scripts/check-generated-contract.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:manifest": "node scripts/check-manifest.mjs",
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "check": "npm run lint && npm run typecheck && npm run contracts:check && npm test && npm run build"
+  },
+  "dependencies": {
+    "zod": "4.5.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/chrome": "0.2.7",
+    "@types/node": "22.18.6",
+    "eslint": "10.9.1",
+    "globals": "17.11.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.68.0",
+    "vite": "7.3.6",
+    "vitest": "3.2.7"
+  }
+}

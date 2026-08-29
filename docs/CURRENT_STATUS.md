@@ -1,6 +1,6 @@
 # Current Status
 
-**Updated:** 2026-08-28
+**Updated:** 2026-08-29
 
 `Implemented` nghĩa là có code và automated coverage trong repository, không đồng nghĩa đã verify trên
 hosted production với OIDC, PostgreSQL, Redis và provider thật.
@@ -15,6 +15,14 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 Streaming coarse progress đã có code và local verification cho event contract, reporter fail-open, pipeline,
 PostgreSQL ordering/retry và frontend replay/presentation. Async production vẫn tắt; chưa có hosted evidence cho
 backend/worker cùng artifact, Redis/WebSocket fallback, owner/ticket smoke hoặc operational metrics.
+
+Chrome Extension Phase 0 repository-local/MVP đã `DONE` theo project-owner instruction của documentation task ngày
+2026-08-29; đây không phải production/Store approval. Phase 1 và Phase 2 implementation đã `COMPLETE`, automated
+verification `PASS`: Manifest V3 scaffold, đúng hai context menu, selection/link normalization, pending capture TTL trong
+trusted `storage.session`, trusted runtime messaging và text-only Side Panel preview/cancel đã có. Extension không có host
+permission, content script, network, OIDC hoặc API submission. Phase 1/2 exit gate còn
+`PENDING MANUAL CHROME CAPTURE SMOKE`; Phase 3+ chưa bắt đầu. Delivery order đã chốt là hoàn tất unpacked extension với local
+backend/frontend trước, sau đó mới setup Railway internal, rồi mới chuẩn bị Chrome Web Store/production GA.
 
 Phạm vi UI của MVP đã hoàn tất trong workspace: một navigation/sidebar dùng chung, user có hai mục chính và
 `security_admin` có thêm **Duyệt bảo mật** cùng **Tin cậy & chặn**. Login local vẫn hỗ trợ demo khi được cấu hình;
@@ -37,6 +45,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Official verification | publisher/claim/resource compatibility plus URL-routed domain ownership/sender identity/action endorsement, resource-first identity discovery, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, action-relevant SAFE policy, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | UI MVP tiếng Việt; một navigation/sidebar; user có Kiểm tra/Lịch sử, còn Hồ sơ/Cài đặt nằm trong menu avatar; admin có thêm Duyệt bảo mật và Tin cậy & chặn; whitelist/blacklist thao tác trực tiếp với trạng thái/audit; route Observatory/Audit cũ redirect về Trust workspace |
+| Chrome Extension | Phase 0 `DONE`; Phase 1/2 implementation `COMPLETE`, automated verification `PASS`, manual Chrome capture smoke `PENDING`; Phase 3+ `NOT STARTED` |
 | Testing | `pytest-cov` gate `68%`, default offline suite và PostgreSQL integration job riêng; xem bằng chứng hiện hành trong `docs/TESTING.md` |
 | Schema | Alembic through `0022_action_assurance_metadata` (one head) |
 
@@ -65,6 +74,11 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - Streaming progress/async chưa có hosted readiness, worker artifact/heartbeat, Redis outage/cursor fallback,
   owner/ticket reconnect/final-fetch smoke hay latency/event-volume observation. Async production vẫn mặc định tắt
   và chỉ được bật theo approval gate trong `DEPLOYMENT.md`.
+- Chrome Extension chỉ sẵn sàng cho local unpacked capture smoke. Capture boundary đã implement; OIDC, backend origin
+  allow-list, submit, progress và web handoff chưa implement. Phase 3–8 sẽ được implement/verify với unpacked extension + local TrustGuard
+  stack; local ID chỉ nằm trong untracked exact-origin config nếu cần. Stable Railway/internal ID cùng hosted OIDC/origin
+  là Phase 9 gate; production Store ID, listing/review và GA approval là Phase 10 gate. Không mục nào là Phase 0/local
+  implementation blocker.
 - Luồng MVP report → admin resolution/remediation → phân tích lại → audit đã có automated integration coverage
   trên local SQLite, nhưng chưa có smoke production với hai phiên OAuth thật `user` và `security_admin`.
 

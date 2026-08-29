@@ -14,3 +14,9 @@ New coverage must include phishing, OTP/payment, recruitment, fake promotion, sa
 no-consent, `NEED_MORE_INFO`, and general fact-check out-of-scope cases. Domain
 cases continue to cover subdomain/eTLD+1, public suffix, IDNA, IP literals, redirect loops and private
 hops.
+
+`chrome_extension/phase0_cases.json` is the versioned capture/client characterization set for the Chrome Extension
+Phase 0 review. It contains only synthetic selected text or an explicit link target, request-scoped consent and stable
+scope/threat/risk and tool-plan projections. It intentionally excludes page URL/title, DOM/HTML, cookies, form fields
+and browsing history. The fixture drives both extension-specific parity tests and the existing real investigation
+call-order test.

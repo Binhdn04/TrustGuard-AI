@@ -114,6 +114,33 @@ jobs:
       - name: Enforce frontend cutover boundary
         run: npm run check:cutover
 
+  extension-checks:
+    name: Chrome Extension checks
+    runs-on: [self-hosted, linux, x64, p068]
+
+    defaults:
+      run:
+        working-directory: extension
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci
+
+      - name: Audit extension dependencies
+        run: npm audit --audit-level=high
+
+      - name: Run extension checks
+        run: npm run check
+
   postgres-integration:
     name: PostgreSQL integration
     runs-on: [self-hosted, linux, x64, p068]
@@ -160,6 +187,7 @@ jobs:
     needs:
       - lint-and-test
       - frontend-checks
+      - extension-checks
       - postgres-integration
     if: ${{ always() }}
     runs-on: [self-hosted, linux, x64, p068]

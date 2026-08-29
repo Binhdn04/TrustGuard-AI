@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrustGuard AI</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <span class="brand__mark" aria-hidden="true">TG</span>
+        <div>
+          <p class="eyebrow">TrustGuard AI</p>
+          <h1>Security Triage</h1>
+        </div>
+      </header>
+
+      <section class="status" aria-labelledby="local-status-title">
+        <span class="status__dot" aria-hidden="true"></span>
+        <div>
+          <h2 id="local-status-title">Capture boundary đang hoạt động</h2>
+          <p>Chỉ dữ liệu bạn chủ động chọn từ menu chuột phải mới được lấy.</p>
+        </div>
+      </section>
+
+      <section class="notice" aria-labelledby="phase-title">
+        <p class="eyebrow">Phase 2 · Local preview</p>
+        <h2 id="phase-title">Chưa gửi dữ liệu ra ngoài</h2>
+        <p>
+          Extension không đọc toàn bộ trang, lịch sử, biểu mẫu hoặc cookie. Nội dung preview chỉ nằm tạm trong phiên.
+        </p>
+      </section>
+
+      <section id="empty-state" class="empty-state" aria-live="polite">
+        <h2>Chưa có nội dung cần kiểm tra</h2>
+        <p>Bôi đen văn bản hoặc chuột phải vào liên kết, sau đó chọn TrustGuard.</p>
+      </section>
+
+      <section id="capture-preview" class="preview" aria-labelledby="capture-kind" hidden>
+        <div class="preview__header">
+          <div>
+            <p class="eyebrow">Nội dung chờ xác nhận</p>
+            <h2 id="capture-kind"></h2>
+          </div>
+          <span id="capture-length" class="preview__length"></span>
+        </div>
+        <pre id="capture-value" class="preview__value"></pre>
+        <div class="warning">
+          Nội dung có thể chứa thông tin riêng tư, OTP hoặc thông tin đăng nhập. Hãy kiểm tra trước khi gửi.
+        </div>
+        <button id="cancel-capture" type="button">Hủy và xóa nội dung</button>
+        <p class="phase-note">Gửi phân tích sẽ được bật ở Phase 5.</p>
+      </section>
+
+      <footer>
+        <p id="runtime-status" role="status">Đang kiểm tra kết nối nội bộ…</p>
+      </footer>
+    </main>
+    <script type="module" src="/src/sidepanel/index.ts"></script>
+  </body>
+</html>

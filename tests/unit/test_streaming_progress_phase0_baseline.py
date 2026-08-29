@@ -31,6 +31,7 @@ from src.security_ai.runtime import SecurityAssistantRuntime
 from src.services.security_pipeline import SecurityTriagePipeline
 from src.services.security_progress import SecurityProgressUpdate
 from src.services.security_triage import SecurityTriageScopeService
+from tests.fixture_loader import load_chrome_extension_phase0_fixtures
 
 
 def failed_provider_result(tool: ToolName) -> NormalizedToolResult[object]:
@@ -75,7 +76,7 @@ class RecordingBlacklist:
         self._calls = calls
 
     async def get(self, target: str):
-        self._calls.append(("blacklist", target, None))
+        self._calls.append(("blacklist_lookup", target, None))
         return None
 
 
@@ -107,7 +108,7 @@ class RecordingRedirect:
         self._calls = calls
 
     async def resolve(self, target: str) -> NormalizedToolResult[object]:
-        self._calls.append(("redirect", target, None))
+        self._calls.append(("redirect_resolver", target, None))
         return failed_provider_result(ToolName.REDIRECT_RESOLVER)
 
 
@@ -129,7 +130,7 @@ class RecordingReputation:
         self._calls = calls
 
     async def assess(self, target: str, *, high_risk: bool = False) -> NormalizedToolResult[object]:
-        self._calls.append(("reputation", target, high_risk))
+        self._calls.append(("url_reputation", target, high_risk))
         return failed_provider_result(ToolName.URL_REPUTATION)
 
 
@@ -203,9 +204,12 @@ def build_pipeline(trace: PipelineTrace, *, terminal_or_incident: bool = False) 
 
 @pytest.mark.asyncio
 async def test_phase0_external_provider_trace_records_order_arguments_consent_and_call_counts() -> None:
+    fixture = next(
+        case for case in load_chrome_extension_phase0_fixtures().cases if case.id == "link_provider_error"
+    )
     request = SecurityTriageCreateRequestV4(
-        message="Check https://example.test/login",
-        consent={"external_url_lookup": True},
+        message=fixture.capture.value,
+        consent=fixture.consent,
     )
     scoped = SecurityTriageScopeService().assess(request)
     calls: list[tuple[str, str, bool | None]] = []
@@ -221,13 +225,7 @@ async def test_phase0_external_provider_trace_records_order_arguments_consent_an
 
     result = await investigation.investigate(request, scoped)
 
-    assert calls == [
-        ("blacklist", "example.test", None),
-        ("dns", "https://example.test/login", None),
-        ("redirect", "https://example.test/login", None),
-        ("reputation", "https://example.test/login", True),
-        ("rdap", "example.test", None),
-    ]
+    assert calls == [(item.tool, item.target, item.high_risk) for item in fixture.expected.provider_trace]
     assert result.tool_calls_used == 4
 
 

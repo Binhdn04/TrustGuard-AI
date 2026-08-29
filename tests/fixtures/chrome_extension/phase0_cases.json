@@ -1,0 +1,199 @@
+{
+  "schema_version": "chrome-extension-phase0-v1",
+  "cases": [
+    {
+      "id": "selection_otp_in_scope",
+      "category": "in_scope",
+      "capture": {
+        "kind": "selection",
+        "value": "Ngan hang yeu cau gui ma xac thuc ngay lap tuc"
+      },
+      "consent": {
+        "external_url_lookup": false,
+        "official_source_lookup": false
+      },
+      "expected": {
+        "scope_decision": "IN_SCOPE",
+        "threat_type": "CREDENTIAL_THEFT",
+        "risk": "HIGH_RISK",
+        "planned_tools": ["security_context_analysis"],
+        "planned_provider_calls": 0,
+        "plan": [
+          {
+            "tool": "security_context_analysis",
+            "status": "completed",
+            "target": "message"
+          }
+        ]
+      }
+    },
+    {
+      "id": "selection_general_fact_check",
+      "category": "out_of_scope",
+      "capture": {
+        "kind": "selection",
+        "value": "Ai la tong thong va ket qua bau cu moi nhat?"
+      },
+      "consent": {
+        "external_url_lookup": true,
+        "official_source_lookup": true
+      },
+      "expected": {
+        "scope_decision": "OUT_OF_SCOPE_GENERAL_FACT_CHECK",
+        "planned_tools": [],
+        "planned_provider_calls": 0,
+        "plan": []
+      }
+    },
+    {
+      "id": "selection_need_more_info",
+      "category": "need_more_info",
+      "capture": {
+        "kind": "selection",
+        "value": "Tin nhan la nay co lua dao khong?"
+      },
+      "consent": {
+        "external_url_lookup": false,
+        "official_source_lookup": false
+      },
+      "expected": {
+        "scope_decision": "NEED_MORE_INFO",
+        "planned_tools": [],
+        "planned_provider_calls": 0,
+        "plan": []
+      }
+    },
+    {
+      "id": "link_without_external_consent",
+      "category": "no_consent",
+      "capture": {
+        "kind": "link",
+        "value": "https://no-consent.example/login"
+      },
+      "consent": {
+        "external_url_lookup": false,
+        "official_source_lookup": false
+      },
+      "fixture_evidence": [
+        {
+          "type": "local_url_rule",
+          "signal": "credential_path",
+          "description": "Local rules identify a credential path without a network lookup.",
+          "confidence": 0.9
+        }
+      ],
+      "expected": {
+        "scope_decision": "IN_SCOPE",
+        "threat_type": "UNDETERMINED_SECURITY_THREAT",
+        "risk": "INSUFFICIENT_EVIDENCE",
+        "planned_tools": [
+          "security_context_analysis",
+          "local_url_rules",
+          "blacklist_lookup",
+          "dns",
+          "redirect_resolver",
+          "url_reputation",
+          "rdap"
+        ],
+        "planned_provider_calls": 0,
+        "plan": [
+          {"tool": "security_context_analysis", "status": "completed", "target": "message"},
+          {"tool": "local_url_rules", "status": "pending", "target": "https://no-consent.example/login"},
+          {"tool": "blacklist_lookup", "status": "pending", "target": "no-consent.example"},
+          {"tool": "dns", "status": "skipped", "target": "https://no-consent.example/login"},
+          {"tool": "redirect_resolver", "status": "skipped", "target": "https://no-consent.example/login"},
+          {"tool": "url_reputation", "status": "skipped", "target": "https://no-consent.example/login"},
+          {"tool": "rdap", "status": "skipped", "target": "no-consent.example"}
+        ]
+      }
+    },
+    {
+      "id": "link_provider_error",
+      "category": "provider_error",
+      "capture": {
+        "kind": "link",
+        "value": "https://timeout.example/status"
+      },
+      "consent": {
+        "external_url_lookup": true,
+        "official_source_lookup": false
+      },
+      "fixture_error": "PROVIDER_TIMEOUT",
+      "expected": {
+        "scope_decision": "IN_SCOPE",
+        "threat_type": "UNDETERMINED_SECURITY_THREAT",
+        "risk": "INSUFFICIENT_EVIDENCE",
+        "planned_tools": [
+          "security_context_analysis",
+          "local_url_rules",
+          "blacklist_lookup",
+          "dns",
+          "redirect_resolver",
+          "url_reputation",
+          "rdap"
+        ],
+        "planned_provider_calls": 4,
+        "plan": [
+          {"tool": "security_context_analysis", "status": "completed", "target": "message"},
+          {"tool": "local_url_rules", "status": "pending", "target": "https://timeout.example/status"},
+          {"tool": "blacklist_lookup", "status": "pending", "target": "timeout.example"},
+          {"tool": "dns", "status": "pending", "target": "https://timeout.example/status"},
+          {"tool": "redirect_resolver", "status": "pending", "target": "https://timeout.example/status"},
+          {"tool": "url_reputation", "status": "pending", "target": "https://timeout.example/status"},
+          {"tool": "rdap", "status": "pending", "target": "timeout.example"}
+        ],
+        "provider_trace": [
+          {"tool": "blacklist_lookup", "target": "timeout.example", "high_risk": null},
+          {"tool": "dns", "target": "https://timeout.example/status", "high_risk": null},
+          {"tool": "redirect_resolver", "target": "https://timeout.example/status", "high_risk": null},
+          {"tool": "url_reputation", "target": "https://timeout.example/status", "high_risk": false},
+          {"tool": "rdap", "target": "timeout.example", "high_risk": null}
+        ]
+      }
+    },
+    {
+      "id": "link_provider_no_hit",
+      "category": "provider_no_hit",
+      "capture": {
+        "kind": "link",
+        "value": "https://unknown.example/path"
+      },
+      "consent": {
+        "external_url_lookup": true,
+        "official_source_lookup": false
+      },
+      "fixture_evidence": [
+        {
+          "type": "url_reputation",
+          "signal": "provider_no_hit",
+          "description": "The provider returned no matching threat-intelligence hit.",
+          "confidence": 0.4
+        }
+      ],
+      "expected": {
+        "scope_decision": "IN_SCOPE",
+        "threat_type": "UNDETERMINED_SECURITY_THREAT",
+        "risk": "INSUFFICIENT_EVIDENCE",
+        "planned_tools": [
+          "security_context_analysis",
+          "local_url_rules",
+          "blacklist_lookup",
+          "dns",
+          "redirect_resolver",
+          "url_reputation",
+          "rdap"
+        ],
+        "planned_provider_calls": 4,
+        "plan": [
+          {"tool": "security_context_analysis", "status": "completed", "target": "message"},
+          {"tool": "local_url_rules", "status": "pending", "target": "https://unknown.example/path"},
+          {"tool": "blacklist_lookup", "status": "pending", "target": "unknown.example"},
+          {"tool": "dns", "status": "pending", "target": "https://unknown.example/path"},
+          {"tool": "redirect_resolver", "status": "pending", "target": "https://unknown.example/path"},
+          {"tool": "url_reputation", "status": "pending", "target": "https://unknown.example/path"},
+          {"tool": "rdap", "status": "pending", "target": "unknown.example"}
+        ]
+      }
+    }
+  ]
+}
