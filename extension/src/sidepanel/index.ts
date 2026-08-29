@@ -146,7 +146,9 @@ function renderAuthState(state: AuthPublicState): void {
     authStateText.textContent = "Đang mở trang đăng nhập an toàn…";
     authButton.textContent = "Đang đăng nhập…";
   } else if (state.status === "error") {
-    authStateText.textContent = state.code === "canceled"
+    authStateText.textContent = state.code === "provider_error"
+      ? "Auth0 rejected the sign-in request. Check Allowed Callback URLs for this extension ID, then build and reload."
+      : state.code === "canceled"
       ? "Đăng nhập đã bị hủy."
       : "Không thể xác thực. Hãy kiểm tra cấu hình hoặc thử lại.";
     authButton.textContent = "Thử đăng nhập lại";

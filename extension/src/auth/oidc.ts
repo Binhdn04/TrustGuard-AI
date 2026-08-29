@@ -214,7 +214,11 @@ export class OidcAuthManager {
       ) {
         throw new AuthFlowError("redirect_mismatch");
       }
-      if (callback.searchParams.has("error")) throw new AuthFlowError("canceled");
+      // A callback carrying an OAuth error means the provider rejected the
+      // request (for example because its registered callback is stale). It is
+      // distinct from a user closing the identity window. Do not propagate the
+      // provider's error description: it can contain account or tenant detail.
+      if (callback.searchParams.has("error")) throw new AuthFlowError("provider_error");
       const codes = callback.searchParams.getAll("code");
       const states = callback.searchParams.getAll("state");
       if (codes.length !== 1 || states.length !== 1) throw new AuthFlowError("state_mismatch");

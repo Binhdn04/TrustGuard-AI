@@ -162,6 +162,18 @@ describe("extension OIDC Authorization Code + PKCE", () => {
     expect(storage.values).not.toHaveProperty(AUTH_TRANSACTION_STORAGE_KEY);
   });
 
+  it("reports a provider rejection without retaining the auth transaction", async () => {
+    const storage = new MemoryStorage();
+    const { auth, identity } = manager(storage);
+    identity.launchWebAuthFlow.mockResolvedValue(
+      `${REDIRECT_URI}?error=unauthorized_client&state=${"r".repeat(43)}`,
+    );
+
+    await expect(auth.login()).rejects.toEqual(new AuthFlowError("provider_error"));
+    expect(storage.values).not.toHaveProperty(AUTH_TRANSACTION_STORAGE_KEY);
+    expect(storage.values).not.toHaveProperty(AUTH_SESSION_STORAGE_KEY);
+  });
+
   it("survives a service-worker restart between authorization and callback", async () => {
     const storage = new MemoryStorage();
     const initial = await preparedFlow(storage);

@@ -3,6 +3,7 @@ import { z } from "zod";
 export const authErrorCodeSchema = z.enum([
   "not_configured",
   "canceled",
+  "provider_error",
   "redirect_mismatch",
   "state_mismatch",
   "expired",
