@@ -148,6 +148,12 @@ class _Coordinator:
         return self.outcome
 
 
+class _FailingCoordinator:
+    async def coordinate(self, request, scope, *, execution_context):
+        del request, scope, execution_context
+        raise RuntimeError("https://private.example/?token=secret")
+
+
 class _Telemetry:
     def __init__(self) -> None:
         self.events: list[OfficialVerificationTelemetryEvent] = []
@@ -340,6 +346,22 @@ async def test_shadow_does_not_attach_or_persist_report_data_and_emits_redacted_
         "error_code",
     }
     assert "jobs.vingroup.net" not in repr(event)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_failure_logs_only_safe_diagnostics(caplog: pytest.LogCaptureFixture) -> None:
+    request, scoped = _scope()
+    stage = OfficialVerificationRolloutStage(_FailingCoordinator(), mode="visible")  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.ERROR, logger="trustguard.official_verification"):
+        result = await stage.run(request, scoped, execution_context=TurnExecutionContext())
+
+    assert "official_verification_error" in result.limitations
+    record = next(record for record in caplog.records if record.message == "official_verification_coordinator_failed")
+    assert record.failure_code == "COORDINATOR_ERROR"
+    assert record.failure_type == "RuntimeError"
+    assert record.failure_location
+    assert "private.example" not in record.getMessage()
 
 
 @pytest.mark.asyncio

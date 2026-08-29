@@ -139,10 +139,12 @@ class Settings(BaseSettings):
 
     def enabled_security_capabilities(self) -> dict[str, bool]:
         provider_ready = self.security_ai_provider_configuration_valid()
-        durable_ready = (
-            self.security_async_execution_enabled
-            and self.run_durable_worker
-            and self.database_url.startswith(("postgresql://", "postgresql+asyncpg://"))
+        # The API process can enqueue durable work while the consumer runs in a
+        # separate service.  ``run_durable_worker`` controls only whether this
+        # process starts a consumer; requiring it here would hide async from a
+        # correctly configured API + worker deployment.
+        durable_ready = self.security_async_execution_enabled and self.database_url.startswith(
+            ("postgresql://", "postgresql+asyncpg://")
         )
         return {
             "security_ai_understanding": self.security_ai_understanding_enabled and provider_ready,
@@ -249,8 +251,6 @@ class Settings(BaseSettings):
                 "Valid OPENAI_API_KEY and Security AI model configuration are required "
                 "when a production Security AI flag is enabled"
             )
-        if self.app_env == "production" and self.security_async_execution_enabled and not self.run_durable_worker:
-            raise ValueError("RUN_DURABLE_WORKER must be true when async Security v4 is enabled")
         if self.post_processing_reserve_seconds >= self.analysis_deadline_seconds:
             raise ValueError("POST_PROCESSING_RESERVE_SECONDS must be smaller than ANALYSIS_DEADLINE_SECONDS")
         return self

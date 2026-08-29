@@ -39,7 +39,8 @@ permissions:
 
 concurrency:
   group: railway-production
-  cancel-in-progress: false
+  # A newer main commit supersedes a queued or running production deployment.
+  cancel-in-progress: true
 
 jobs:
   changes:

@@ -275,16 +275,6 @@ class PostgresPlatformRepository(
                     )
                 return SecurityScopeResponseV4.model_validate_stored(_json_value(existing["response"]))
 
-            await connection.execute(
-                """INSERT INTO security_analyses(
-                       id,owner_id,status,response,policy_version,created_at,updated_at,completed_at,conversation_id
-                   ) VALUES($1,$2,'queued',$3::jsonb,NULL,$4,$4,NULL,$5)""",
-                response.analysis_id,
-                owner_id,
-                response.model_dump_json(),
-                now,
-                response.conversation_id,
-            )
             if expected_version is None:
                 reserved = await connection.execute(
                     """INSERT INTO security_conversations(
@@ -326,6 +316,19 @@ class PostgresPlatformRepository(
                     message="Security conversation was updated by another turn.",
                     retryable=True,
                 )
+            # security_analyses.conversation_id has a foreign key to the
+            # conversation. Reserve the parent conversation before creating
+            # the queued analysis so a first async turn cannot violate it.
+            await connection.execute(
+                """INSERT INTO security_analyses(
+                       id,owner_id,status,response,policy_version,created_at,updated_at,completed_at,conversation_id
+                   ) VALUES($1,$2,'queued',$3::jsonb,NULL,$4,$4,NULL,$5)""",
+                response.analysis_id,
+                owner_id,
+                response.model_dump_json(),
+                now,
+                response.conversation_id,
+            )
             await connection.execute(
                 """INSERT INTO security_conversation_turns(
                        conversation_id,context_version,analysis_id,created_at

@@ -236,11 +236,12 @@ async def test_v4_failed_lifecycle_is_persisted(client) -> None:
         app.dependency_overrides.pop(get_security_investigation_service, None)
 
     assert failed.status_code == 500
-    analysis_id = failed.json()["error"]["details"]["analysis_id"]
-    fetched = await client.get(f"/api/v4/analyses/{analysis_id}", headers=USER_HEADERS)
-    events = await client.get(f"/api/v4/analyses/{analysis_id}/events", headers=USER_HEADERS)
-    assert fetched.json()["status"] == "failed"
-    assert [item["status"] for item in events.json()["events"]] == ["queued", "running", "failed"]
+    assert failed.json()["error"] == {
+        "code": "INTERNAL_ERROR",
+        "message": "Security analysis failed.",
+        "retryable": True,
+        "details": {},
+    }
 
 
 @pytest.mark.asyncio

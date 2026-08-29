@@ -75,6 +75,11 @@ describe("OIDC Authorization Code + PKCE", () => {
     expect(window.sessionStorage.getItem("ai_protect_oidc_transaction")).toBeNull();
   });
 
+  it("does not expose an identity-provider error description", async () => {
+    await expect(completeOidcAuthorization("?error=access_denied&error_description=tenant-secret"))
+      .rejects.toThrow("Đăng nhập bị từ chối hoặc đã hết hạn. Vui lòng thử lại.");
+  });
+
   it("exchanges the code, validates identity claims and stores an admin session per tab", async () => {
     const requestUrl = new URL(await createOidcAuthorizationRequest("/admin/review"));
     const transaction = JSON.parse(
