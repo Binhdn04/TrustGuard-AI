@@ -24,8 +24,8 @@
       </section>
 
       <section class="notice" aria-labelledby="phase-title">
-        <p class="eyebrow">Phase 3 · Local OIDC</p>
-        <h2 id="phase-title">Chưa gửi dữ liệu ra ngoài</h2>
+        <p class="eyebrow">Phase 6 · Local progress</p>
+        <h2 id="phase-title">Chỉ gửi sau khi bạn xác nhận</h2>
         <p>
           Extension không đọc toàn bộ trang, lịch sử, biểu mẫu hoặc cookie. Nội dung preview chỉ nằm tạm trong phiên.
         </p>
@@ -57,8 +57,40 @@
         <div class="warning">
           Nội dung có thể chứa thông tin riêng tư, OTP hoặc thông tin đăng nhập. Hãy kiểm tra trước khi gửi.
         </div>
-        <button id="cancel-capture" type="button">Hủy và xóa nội dung</button>
-        <p class="phase-note">Gửi phân tích sẽ được bật ở Phase 5.</p>
+        <fieldset class="consent">
+          <legend>Quyền tra cứu cho lần gửi này</legend>
+          <label>
+            <input id="consent-external" type="checkbox" />
+            Cho phép TrustGuard kiểm tra URL bằng dịch vụ bên ngoài.
+          </label>
+          <label>
+            <input id="consent-official" type="checkbox" />
+            Cho phép tìm nguồn chính thức để đối chiếu tổ chức/liên kết.
+          </label>
+        </fieldset>
+        <p class="disclosure">
+          Khi bấm gửi, chỉ nội dung preview ở trên và hai lựa chọn này được gửi đến TrustGuard. Không gửi tiêu đề trang,
+          referrer, DOM, cookie hoặc lịch sử duyệt web.
+        </p>
+        <div class="preview__actions">
+          <button id="submit-analysis" class="primary" type="button">Gửi để phân tích</button>
+          <button id="cancel-capture" type="button">Hủy và xóa nội dung</button>
+        </div>
+        <p id="submission-status" class="phase-note" role="status"></p>
+      </section>
+
+      <section id="analysis-state" class="analysis-state" aria-labelledby="analysis-state-title" hidden>
+        <p class="eyebrow">Lượt phân tích hiện tại</p>
+        <h2 id="analysis-state-title">TrustGuard đã nhận nội dung</h2>
+        <p id="analysis-state-copy"></p>
+        <div class="progress-card" aria-live="polite">
+          <span class="progress-card__indicator" aria-hidden="true"></span>
+          <div>
+            <p id="analysis-progress">Đang chuẩn bị theo dõi tiến trình…</p>
+            <p id="analysis-transport" class="phase-note"></p>
+          </div>
+        </div>
+        <code id="analysis-id"></code>
       </section>
 
       <footer>

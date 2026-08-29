@@ -1,9 +1,12 @@
 # TrustGuard Chrome Extension
 
-Phase 3 provides a local-only Manifest V3 capture and OIDC boundary. It captures only user-selected text/links and uses
+Phase 3 provides a local-only Manifest V3 capture and OIDC boundary, Phase 4 hardens the backend browser-origin boundary,
+Phase 5 adds consent-gated `/api/v4` submission, and Phase 6 adds ticketed WebSocket progress with cursor-polling fallback.
+The extension captures only user-selected text/links and uses
 Authorization Code + PKCE through `chrome.identity`; auth transactions and tokens stay in trusted `storage.session`.
-The Side Panel receives only a minimal auth status. The extension does not call TrustGuard APIs yet, inject a content
-script or request arbitrary host access.
+The Side Panel receives only minimal auth/analysis state. Bearer-authenticated API requests stay in the background; the
+extension has no content script or arbitrary host access. WebSocket tickets are short-lived/single-use; event text,
+evidence and risk hints never become presentation state, and the final analysis endpoint remains authoritative.
 
 ## Run locally
 
@@ -44,6 +47,42 @@ Use **Đăng nhập** and **Đăng xuất** in the Side Panel to smoke `launchWe
 the unpacked extension intentionally clears auth; a normal service-worker restart preserves an in-flight transaction in
 `storage.session`.
 
+## Configure the local backend origin
+
+Copy the current unpacked extension ID from `chrome://extensions`, then set its exact origin only in the repository's
+ignored backend `.env`:
+
+```dotenv
+CHROME_EXTENSION_ORIGINS=chrome-extension://<current-unpacked-extension-id>
+```
+
+Restart the backend after changing it. Do not use a wildcard, commit the unpacked ID, or reuse it as the Railway/Store
+identity. Phase 4 rejects a missing or different WebSocket `Origin` before consuming the single-use ticket; API auth,
+owner scope and ticket validation still apply.
+
+In the extension's ignored `.env.local`, configure the exact local backend origin alongside the OIDC public-client
+settings:
+
+```dotenv
+VITE_TRUSTGUARD_API_URL=http://localhost:8000
+```
+
+Only localhost may use HTTP. The value cannot contain a wildcard, credentials, path, query or fragment. Build and reload
+the extension after changing it; the generated manifest should contain only `http://localhost:8000/*` plus any exact
+OIDC origin you configured. Its `connect-src` also contains the derived exact `ws://localhost:8000` stream origin.
+
+Smoke Phase 5–6 after the backend and local OIDC client are running:
+
+1. Sign in, capture text/link and inspect the exact preview.
+2. Choose request-scoped external/official lookup consent and submit.
+3. Confirm a 200 inline result or 202 async acknowledgement appears with only an analysis ID/status.
+4. Confirm the pending raw capture disappears after acceptance and the same owner can see the case on TrustGuard web.
+5. Test 401/offline/rate-limit behavior; an ambiguous inline timeout must not be automatically resubmitted.
+6. For async mode, confirm the panel shows allow-listed progress, reconnects with a new ticket, and falls back to polling
+   when WebSocket is unavailable.
+7. Close/reopen the panel and restart the service worker; confirm replay resumes from the saved cursor without regressing.
+8. Confirm terminal progress triggers an authoritative final fetch. Progress text must never be treated as a verdict.
+
 After changing source files, rerun `npm run build` and click **Reload** on the extension card. Do not load the source
 directory: Chrome must load `extension/dist`.
 
@@ -54,9 +93,10 @@ npm run check
 ```
 
 The build declares only `sidePanel`, `contextMenus`, `storage` and `identity`. Without `.env.local` it uses
-`connect-src 'none'` and has no host permissions. With valid OIDC config it permits only the exact issuer/token origin.
+`connect-src 'none'` and has no host permissions. With valid configuration it permits only the exact API/OIDC origins.
 It has no content scripts and emits no source maps. Bundle checks reject embedded client-secret markers, remote code,
-WebSocket, EventSource and XMLHttpRequest. The package checks fail if those boundaries drift.
+EventSource and XMLHttpRequest, require WebSocket construction only in the Side Panel, and reject it in the background
+worker. The package checks fail if those boundaries drift.
 
 The committed v4 subset lives in `contracts/openapi-v4.json`. When backend contracts intentionally change, regenerate
 the snapshot and TypeScript types from the repository root environment:

@@ -4,6 +4,63 @@ import { authPublicStateSchema } from "../auth/public-state";
 
 export const MAX_CAPTURE_CHARACTERS = 5_000;
 
+export const submissionErrorCodeSchema = z.enum([
+  "not_configured",
+  "reauth_required",
+  "forbidden",
+  "validation",
+  "rate_limited",
+  "conflict",
+  "timeout",
+  "offline",
+  "server_error",
+  "invalid_response",
+  "stale_capture",
+  "stale_analysis",
+  "storage_error",
+]);
+
+export const activeAnalysisPublicSchema = z.object({
+  analysisId: z.uuid(),
+  executionMode: z.enum(["inline", "async"]),
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  cursor: z.string().max(128).nullable(),
+  lastSequence: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime({ offset: true }),
+  observedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const analysisEventPublicSchema = z.object({
+  eventId: z.uuid(),
+  analysisId: z.uuid(),
+  sequence: z.number().int().positive(),
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  step: z.string().min(1).max(200),
+  kind: z.enum(["status", "provisional", "progress", "final"]),
+  progressState: z.enum(["started", "completed", "skipped", "degraded"]).nullable(),
+  occurredAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+const webSocketUrlSchema = z.string().max(2_048).refine((value) => {
+  try {
+    const url = new URL(value);
+    const queryKeys = [...url.searchParams.keys()];
+    return (
+      (url.protocol === "ws:" || url.protocol === "wss:") &&
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      /^\/api\/v4\/analyses\/[0-9a-f-]{36}\/stream$/u.test(url.pathname) &&
+      url.searchParams.getAll("ticket").length === 1 &&
+      (url.searchParams.get("ticket")?.length ?? 0) > 0 &&
+      queryKeys.every((key) => key === "ticket" || key === "cursor") &&
+      url.searchParams.getAll("cursor").length <= 1
+    );
+  } catch {
+    return false;
+  }
+}, "WebSocket URL must be an absolute ticketed WS(S) URL.");
+
 const captureValue = z
   .string()
   .refine((value) => value.trim().length > 0, "Capture value cannot be blank.")
@@ -75,7 +132,75 @@ export const internalMessageSchema = z.discriminatedUnion("type", [
       official_source_lookup: z.boolean(),
     }).strict(),
   }).strict(),
+  z.object({ type: z.literal("analysis.active.get") }).strict(),
+  z.object({
+    type: z.literal("analysis.active"),
+    analysis: activeAnalysisPublicSchema.nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.submitted"),
+    analysis: activeAnalysisPublicSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.wsTicket.get"),
+    analysisId: z.uuid(),
+    cursor: z.string().max(128).nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.wsTicket.issued"),
+    analysisId: z.uuid(),
+    url: webSocketUrlSchema,
+    expiresAt: z.iso.datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.events.get"),
+    analysisId: z.uuid(),
+    cursor: z.string().max(128).nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.events"),
+    analysisId: z.uuid(),
+    events: z.array(analysisEventPublicSchema).max(100),
+    nextCursor: z.string().max(128).nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.snapshot.get"),
+    analysisId: z.uuid(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.snapshot"),
+    analysis: z.object({
+      analysisId: z.uuid(),
+      status: z.enum(["queued", "running", "completed", "failed"]),
+      terminal: z.boolean(),
+      createdAt: z.iso.datetime({ offset: true }),
+    }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.observation.commit"),
+    analysisId: z.uuid(),
+    cursor: z.string().max(128).nullable(),
+    lastSequence: z.number().int().nonnegative(),
+    status: z.enum(["queued", "running", "completed", "failed"]),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.observation"),
+    analysis: activeAnalysisPublicSchema.nullable(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.transport.error"),
+    analysisId: z.uuid(),
+    code: submissionErrorCodeSchema,
+    retryable: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal("analysis.error"),
+    code: submissionErrorCodeSchema,
+    retryable: z.boolean(),
+  }).strict(),
 ]);
 
 export type CaptureEnvelope = z.infer<typeof captureEnvelopeSchema>;
+export type ActiveAnalysisPublic = z.infer<typeof activeAnalysisPublicSchema>;
+export type AnalysisEventPublic = z.infer<typeof analysisEventPublicSchema>;
 export type InternalMessage = z.infer<typeof internalMessageSchema>;

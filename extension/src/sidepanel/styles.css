@@ -78,7 +78,8 @@ p {
 .notice,
 .empty-state,
 .preview,
-.auth-card {
+.auth-card,
+.analysis-state {
   border: 1px solid #243834;
   border-radius: 16px;
   background: rgb(15 27 24 / 88%);
@@ -103,7 +104,8 @@ p {
 .notice,
 .empty-state,
 .preview,
-.auth-card {
+.auth-card,
+.analysis-state {
   display: grid;
   gap: 8px;
   padding: 18px;
@@ -153,6 +155,86 @@ p {
   color: #d9c994;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.consent {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid #315047;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.consent legend {
+  padding: 0 6px;
+  color: #dce9e5;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.consent label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  color: #b9c9c4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.consent input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: #42d69f;
+}
+
+.disclosure {
+  color: #8fa39d;
+  font-size: 11px;
+}
+
+.preview__actions {
+  display: grid;
+  gap: 8px;
+}
+
+button.primary {
+  border-color: #2aa97f;
+  background: #176448;
+  color: #effff9;
+}
+
+.analysis-state code {
+  overflow-wrap: anywhere;
+  color: #72e5bd;
+  font-size: 11px;
+}
+
+.progress-card {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin: 0.9rem 0;
+  padding: 0.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.progress-card p {
+  margin: 0;
+}
+
+.progress-card__indicator {
+  flex: 0 0 auto;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.25rem;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 0 0.2rem #dbeafe;
 }
 
 button {

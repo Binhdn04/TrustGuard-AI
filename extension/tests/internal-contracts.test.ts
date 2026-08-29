@@ -86,6 +86,76 @@ describe("internal messages", () => {
     ).toThrow();
   });
 
+  it("accepts only minimal analysis state and never raw content or tokens", () => {
+    const state = {
+      analysisId: baseCapture.captureId,
+      executionMode: "async",
+      status: "queued",
+      cursor: null,
+      lastSequence: 0,
+      createdAt: baseCapture.createdAt,
+      observedAt: baseCapture.createdAt,
+    };
+    expect(internalMessageSchema.parse({
+      type: "analysis.submitted",
+      analysis: state,
+    })).toEqual({ type: "analysis.submitted", analysis: state });
+    expect(() => internalMessageSchema.parse({
+      type: "analysis.submitted",
+      analysis: { ...state, message: "private capture" },
+    })).toThrow();
+    expect(() => internalMessageSchema.parse({
+      type: "analysis.error",
+      code: "offline",
+      retryable: true,
+      accessToken: "private token",
+    })).toThrow();
+  });
+
+  it("allows only minimized Phase 6 progress messages", () => {
+    const event = {
+      eventId: baseCapture.captureId,
+      analysisId: baseCapture.captureId,
+      sequence: 1,
+      status: "running",
+      step: "understanding",
+      kind: "progress",
+      progressState: "started",
+      occurredAt: baseCapture.createdAt,
+    };
+    expect(internalMessageSchema.parse({
+      type: "analysis.events",
+      analysisId: baseCapture.captureId,
+      events: [event],
+      nextCursor: "MQ",
+    })).toEqual(expect.objectContaining({ events: [event] }));
+    expect(() => internalMessageSchema.parse({
+      type: "analysis.events",
+      analysisId: baseCapture.captureId,
+      events: [{ ...event, message: "private backend detail" }],
+      nextCursor: "MQ",
+    })).toThrow();
+    expect(() => internalMessageSchema.parse({
+      type: "analysis.wsTicket.issued",
+      analysisId: baseCapture.captureId,
+      url: `wss://api.example/api/v4/analyses/${baseCapture.captureId}/stream?ticket=one&access_token=secret`,
+      expiresAt: baseCapture.createdAt,
+    })).toThrow();
+  });
+
+  it("accepts only allow-listed public submission failures", () => {
+    expect(internalMessageSchema.parse({
+      type: "analysis.error",
+      code: "rate_limited",
+      retryable: true,
+    })).toEqual({ type: "analysis.error", code: "rate_limited", retryable: true });
+    expect(() => internalMessageSchema.parse({
+      type: "analysis.error",
+      code: "provider said private content",
+      retryable: false,
+    })).toThrow();
+  });
+
   it("rejects unknown privileged messages", () => {
     expect(() => internalMessageSchema.parse({ type: "token.read" })).toThrow();
   });

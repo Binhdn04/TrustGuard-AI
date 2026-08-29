@@ -8,7 +8,6 @@ const forbidden = [
   { label: "remote dynamic import", pattern: /\bimport\s*\(\s*["'`]https?:\/\//i },
   { label: "remote imported script", pattern: /\bimportScripts\s*\(\s*["'`]https?:\/\//i },
   { label: "remote executable HTML", pattern: /<(?:script|link)[^>]+(?:src|href)=["']https?:\/\//i },
-  { label: "WebSocket construction", pattern: /new\s+WebSocket\s*\(/i },
   { label: "EventSource construction", pattern: /new\s+EventSource\s*\(/i },
   { label: "XMLHttpRequest construction", pattern: /new\s+XMLHttpRequest\s*\(/i },
   { label: "dynamic eval", pattern: /\beval\s*\(/ },
@@ -27,6 +26,15 @@ async function filesUnder(directory) {
     else files.push(path);
   }
   return files;
+}
+
+const background = await readFile(join(dist, "assets", "background.js"), "utf8");
+if (/new\s+WebSocket\s*\(/i.test(background)) {
+  throw new Error("Bundle check failed: WebSocket must remain in the Side Panel, not the background worker.");
+}
+const sidePanel = await readFile(join(dist, "assets", "sidepanel.js"), "utf8");
+if (!/new\s+WebSocket\s*\(/i.test(sidePanel)) {
+  throw new Error("Bundle check failed: Phase 6 Side Panel WebSocket transport is missing.");
 }
 
 const files = await filesUnder(dist);

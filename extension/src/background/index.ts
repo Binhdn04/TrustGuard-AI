@@ -2,6 +2,10 @@ import { getBundledOidcConfig } from "../auth/config";
 import { AuthFlowError, OidcAuthManager } from "../auth/oidc";
 import type { AuthPublicState } from "../auth/public-state";
 import { AuthSessionStore } from "../auth/session-store";
+import { HttpTrustGuardAnalysisApi, TrustGuardApiError } from "../api/client";
+import { buildWebSocketStreamUrl, getBundledApiConfig } from "../api/config";
+import { ActiveAnalysisStore, SubmissionAttemptStore } from "../analysis/session-store";
+import { AnalysisSubmissionService } from "../analysis/submission";
 import {
   CAPTURE_CONTEXT_MENU_ITEMS,
   createCaptureFromContextMenu,
@@ -20,6 +24,17 @@ const auth = new OidcAuthManager({
   config: getBundledOidcConfig(),
   store: authStore,
   identity: chrome.identity,
+});
+const apiConfig = getBundledApiConfig();
+const analysisApi = apiConfig === null ? null : new HttpTrustGuardAnalysisApi(apiConfig);
+const activeAnalyses = new ActiveAnalysisStore(chrome.storage.session);
+const submissionAttempts = new SubmissionAttemptStore(chrome.storage.session);
+const submissions = new AnalysisSubmissionService({
+  api: analysisApi,
+  auth,
+  pendingCaptures,
+  activeAnalyses,
+  attempts: submissionAttempts,
 });
 const captureQueue = new SerialTaskQueue();
 const sidePanelUrl = chrome.runtime.getURL("sidepanel.html");
@@ -75,6 +90,54 @@ async function notifyPanel(message: InternalMessage): Promise<void> {
   } catch {
     // The panel may still be opening. It reads the same state from storage.session on startup.
   }
+}
+
+function publicAnalysisState(state: Awaited<ReturnType<ActiveAnalysisStore["read"]>>) {
+  if (state === null) return null;
+  return {
+    analysisId: state.analysisId,
+    executionMode: state.executionMode,
+    status: state.status,
+    cursor: state.cursor,
+    lastSequence: state.lastSequence,
+    createdAt: state.createdAt,
+    observedAt: state.observedAt,
+  };
+}
+
+function progressFailure(error: unknown): TrustGuardApiError {
+  if (error instanceof TrustGuardApiError) return error;
+  if (error instanceof AuthFlowError) {
+    return new TrustGuardApiError(
+      error.code === "not_configured" ? "not_configured" : "reauth_required",
+      false,
+      0,
+    );
+  }
+  return new TrustGuardApiError("storage_error", true, 0);
+}
+
+async function requireCurrentAnalysis(analysisId: string) {
+  const state = await activeAnalyses.read();
+  if (state === null || state.analysisId !== analysisId) {
+    throw new TrustGuardApiError("stale_analysis", false, 0);
+  }
+  return state;
+}
+
+async function sendTransportFailure(
+  analysisId: string,
+  error: unknown,
+  sendResponse: (response?: unknown) => void,
+): Promise<void> {
+  const failure = progressFailure(error);
+  if (failure.code === "reauth_required") await authStore.clearAll();
+  sendResponse({
+    type: "analysis.transport.error",
+    analysisId,
+    code: failure.code,
+    retryable: failure.retryable,
+  } satisfies InternalMessage);
 }
 
 async function commitContextMenuCapture(
@@ -160,9 +223,125 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse)
   }
   if (result.data.type === "capture.pending.clear") {
     const captureId = result.data.captureId;
-    void pendingCaptures.clearIfMatching(captureId).then((cleared) => {
+    void pendingCaptures.clearIfMatching(captureId).then(async (cleared) => {
+      if (cleared) await submissionAttempts.clearIfMatching(captureId);
       sendResponse({ type: "capture.pending.cleared", captureId, cleared } satisfies InternalMessage);
     });
+    return true;
+  }
+  if (result.data.type === "analysis.active.get") {
+    void activeAnalyses.read().then((state) => {
+      sendResponse({
+        type: "analysis.active",
+        analysis: publicAnalysisState(state),
+      } satisfies InternalMessage);
+    });
+    return true;
+  }
+  if (result.data.type === "analysis.create") {
+    const { captureId, consent } = result.data;
+    void submissions.submit(captureId, consent).then(
+      (state) => {
+        sendResponse({
+          type: "analysis.submitted",
+          analysis: publicAnalysisState(state)!,
+        } satisfies InternalMessage);
+      },
+      async (error: unknown) => {
+        const failure = error instanceof TrustGuardApiError
+          ? error
+          : new TrustGuardApiError("storage_error", true, 0);
+        if (failure.code === "reauth_required") await authStore.clearAll();
+        sendResponse({
+          type: "analysis.error",
+          code: failure.code,
+          retryable: failure.retryable,
+        } satisfies InternalMessage);
+      },
+    );
+    return true;
+  }
+  if (result.data.type === "analysis.wsTicket.get") {
+    const { analysisId, cursor } = result.data;
+    void (async () => {
+      try {
+        await requireCurrentAnalysis(analysisId);
+        if (analysisApi === null || apiConfig === null) {
+          throw new TrustGuardApiError("not_configured", false, 0);
+        }
+        const accessToken = await auth.getValidAccessToken();
+        const ticket = await analysisApi.createWebSocketTicket(analysisId, accessToken);
+        sendResponse({
+          type: "analysis.wsTicket.issued",
+          analysisId,
+          url: buildWebSocketStreamUrl(
+            apiConfig,
+            analysisId,
+            ticket.streamPath,
+            ticket.ticket,
+            cursor,
+          ),
+          expiresAt: ticket.expiresAt,
+        } satisfies InternalMessage);
+      } catch (error: unknown) {
+        await sendTransportFailure(analysisId, error, sendResponse);
+      }
+    })();
+    return true;
+  }
+  if (result.data.type === "analysis.events.get") {
+    const { analysisId, cursor } = result.data;
+    void (async () => {
+      try {
+        await requireCurrentAnalysis(analysisId);
+        if (analysisApi === null) throw new TrustGuardApiError("not_configured", false, 0);
+        const accessToken = await auth.getValidAccessToken();
+        const page = await analysisApi.getAnalysisEvents(analysisId, cursor, accessToken);
+        sendResponse({
+          type: "analysis.events",
+          analysisId,
+          events: page.events,
+          nextCursor: page.nextCursor,
+        } satisfies InternalMessage);
+      } catch (error: unknown) {
+        await sendTransportFailure(analysisId, error, sendResponse);
+      }
+    })();
+    return true;
+  }
+  if (result.data.type === "analysis.snapshot.get") {
+    const { analysisId } = result.data;
+    void (async () => {
+      try {
+        const current = await requireCurrentAnalysis(analysisId);
+        if (analysisApi === null) throw new TrustGuardApiError("not_configured", false, 0);
+        const accessToken = await auth.getValidAccessToken();
+        const snapshot = await analysisApi.getAnalysis(analysisId, accessToken);
+        await activeAnalyses.observe(analysisId, {
+          cursor: current.cursor,
+          lastSequence: current.lastSequence,
+          status: snapshot.status,
+        });
+        sendResponse({ type: "analysis.snapshot", analysis: snapshot } satisfies InternalMessage);
+      } catch (error: unknown) {
+        await sendTransportFailure(analysisId, error, sendResponse);
+      }
+    })();
+    return true;
+  }
+  if (result.data.type === "analysis.observation.commit") {
+    const { analysisId, cursor, lastSequence, status: observedStatus } = result.data;
+    void activeAnalyses.observe(analysisId, {
+      cursor,
+      lastSequence,
+      status: observedStatus,
+    }).then(
+      (state) => sendResponse({
+        type: "analysis.observation",
+        analysis: publicAnalysisState(state),
+      } satisfies InternalMessage),
+      (error: unknown) => sendTransportFailure(analysisId, error, sendResponse),
+    );
     return true;
   }
   return false;
