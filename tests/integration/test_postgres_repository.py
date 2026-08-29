@@ -70,13 +70,23 @@ async def test_first_async_security_turn_creates_conversation_before_analysis_fo
         Principal(f"async-fk-owner-{uuid4()}", UserRole.USER),
         f"async-fk-turn-{uuid4()}",
     )
+    try:
+        conversation = await repository.load_security_conversation(str(accepted.conversation_id))
+        analysis = await repository.load_security_analysis(str(accepted.analysis_id))
 
-    conversation = await repository.load_security_conversation(str(accepted.conversation_id))
-    analysis = await repository.load_security_analysis(str(accepted.analysis_id))
-
-    assert conversation is not None
-    assert analysis is not None
-    assert analysis[1].conversation_id == accepted.conversation_id
+        assert conversation is not None
+        assert analysis is not None
+        assert analysis[1].conversation_id == accepted.conversation_id
+    finally:
+        # The regression test deliberately enqueues a turn. Make its job
+        # terminal so it cannot be claimed by a later worker integration test.
+        pool = await repository._get_pool()
+        async with pool.acquire() as connection:
+            await connection.execute(
+                "UPDATE security_analysis_jobs_v4 SET status='completed',updated_at=$2 WHERE analysis_id=$1",
+                accepted.analysis_id,
+                datetime.now(UTC),
+            )
 
 
 @pytest.mark.asyncio
