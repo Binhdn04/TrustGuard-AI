@@ -61,6 +61,7 @@ import type {
 
 import { ApiError } from "./api-error";
 import { networkError, resolveSecurityApiUrl } from "./security-api-url";
+import { userFacingErrorMessage } from "./user-facing-error";
 import type {
   AnalysisEventQuery,
   IdentityCandidatePageQuery,
@@ -85,12 +86,14 @@ async function readJson<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as T | ErrorEnvelope;
   if (!response.ok) {
     const error = (payload as ErrorEnvelope).error;
+    const code = error?.code ?? "HTTP_ERROR";
+    const retryable = error?.retryable ?? response.status >= 500;
     throw new ApiError(
-      error?.message ?? "Không thể kết nối tới dịch vụ bảo mật.",
-      error?.code ?? "HTTP_ERROR",
-      error?.retryable ?? response.status >= 500,
+      userFacingErrorMessage(code, retryable),
+      code,
+      retryable,
       response.status,
-      error?.details ?? {},
+      code === "VALIDATION_ERROR" ? error?.details ?? {} : {},
     );
   }
   return payload as T;

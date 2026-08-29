@@ -10,6 +10,7 @@ import pytest_asyncio
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from src.core.auth import Principal, UserRole
 from src.models import (
     AnalysisStatus,
     BrandRecordV4,
@@ -21,6 +22,7 @@ from src.models import (
     WhitelistScopeV4,
 )
 from src.repositories.postgres import DurableJob, LostJobLeaseError, PostgresPlatformRepository
+from src.services.security_analysis import SecurityAnalysisService
 from src.services.security_triage import SecurityTriageScopeService
 
 pytestmark = pytest.mark.integration
@@ -49,6 +51,42 @@ async def test_database_is_migrated_to_the_repository_head(repository: PostgresP
     migration_heads = set(ScriptDirectory.from_config(Config("alembic.ini")).get_heads())
 
     assert database_heads == migration_heads
+
+
+@pytest.mark.asyncio
+async def test_first_async_security_turn_creates_conversation_before_analysis_foreign_key(
+    repository: PostgresPlatformRepository,
+) -> None:
+    request = SecurityTriageCreateRequestV4(
+        message="Ngân hàng yêu cầu gửi OTP ngay",
+        execution_mode="async",
+    )
+    response = SecurityTriageScopeService().assess(request)
+    service = SecurityAnalysisService(repository)
+
+    accepted = await service.enqueue_turn(
+        request,
+        response,
+        Principal(f"async-fk-owner-{uuid4()}", UserRole.USER),
+        f"async-fk-turn-{uuid4()}",
+    )
+    try:
+        conversation = await repository.load_security_conversation(str(accepted.conversation_id))
+        analysis = await repository.load_security_analysis(str(accepted.analysis_id))
+
+        assert conversation is not None
+        assert analysis is not None
+        assert analysis[1].conversation_id == accepted.conversation_id
+    finally:
+        # The regression test deliberately enqueues a turn. Make its job
+        # terminal so it cannot be claimed by a later worker integration test.
+        pool = await repository._get_pool()
+        async with pool.acquire() as connection:
+            await connection.execute(
+                "UPDATE security_analysis_jobs_v4 SET status='completed',updated_at=$2 WHERE analysis_id=$1",
+                accepted.analysis_id,
+                datetime.now(UTC),
+            )
 
 
 @pytest.mark.asyncio

@@ -200,7 +200,7 @@ describe("HttpSecurityAnalysisApi", () => {
     expect(fetchMock.mock.calls[2][1]).not.toHaveProperty("body");
   });
 
-  it("preserves the v4 error envelope", async () => {
+  it("preserves only safe v4 error metadata", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: {
         code: "FORBIDDEN",
@@ -217,10 +217,10 @@ describe("HttpSecurityAnalysisApi", () => {
     await expect(api.listAdminReports()).rejects.toMatchObject({
       name: "ApiError",
       code: "FORBIDDEN",
-      message: "Admin only",
+      message: "Bạn không có quyền thực hiện thao tác này.",
       retryable: false,
       status: 403,
-      details: { reason: "role" },
+      details: {},
     });
   });
 
@@ -268,17 +268,17 @@ describe("HttpSecurityAnalysisApi", () => {
     }));
   });
 
-  it("fails clearly when the frontend build has no API URL", async () => {
+  it("uses a safe message when the frontend build has no API URL", async () => {
     const api = new HttpSecurityAnalysisApi("", () => "owner-token");
 
     await expect(api.getCapabilities()).rejects.toMatchObject({
       name: "ApiError",
       code: "API_CONFIGURATION_ERROR",
-      message: expect.stringContaining("NEXT_PUBLIC_API_URL"),
+      message: "Dịch vụ kiểm tra hiện chưa sẵn sàng. Vui lòng thử lại sau.",
     });
   });
 
-  it("explains a network or CORS failure instead of surfacing the browser error", async () => {
+  it("uses a safe message for a network failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Request failed")));
     const api = new HttpSecurityAnalysisApi("https://backend.example.test", () => "owner-token");
 
@@ -287,7 +287,24 @@ describe("HttpSecurityAnalysisApi", () => {
       code: "NETWORK_ERROR",
       retryable: true,
       status: 0,
-      message: expect.stringContaining("CORS_ORIGINS"),
+      message: "Không thể kết nối dịch vụ kiểm tra. Vui lòng kiểm tra kết nối và thử lại.",
+    });
+  });
+
+  it("never exposes a server error message or details", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "postgresql://user:password@internal/private",
+        retryable: true,
+        details: { token: "secret-token" },
+      },
+    }), { status: 500, headers: { "Content-Type": "application/json" } })));
+    const api = new HttpSecurityAnalysisApi("https://backend.example.test");
+
+    await expect(api.getCapabilities()).rejects.toMatchObject({
+      message: "Dịch vụ kiểm tra gặp sự cố tạm thời. Vui lòng thử lại.",
+      details: {},
     });
   });
 });

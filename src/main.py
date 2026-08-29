@@ -32,6 +32,16 @@ from src.observability.langfuse import close_langfuse_observability, get_langfus
 logger = logging.getLogger("trustguard.official_verification")
 
 
+def _public_validation_details(errors: list[dict]) -> dict[str, list[dict[str, object]]]:
+    """Expose field locations only; Pydantic's raw errors can echo submitted content."""
+    return {
+        "errors": [
+            {"loc": error.get("loc", []), "type": error.get("type", "invalid")}
+            for error in errors
+        ]
+    }
+
+
 def documentation_urls(app_env: str) -> dict[str, str | None]:
     """Expose interactive API documentation only outside production."""
     if app_env == "production":
@@ -105,7 +115,9 @@ async def platform_error_handler(request, exc: PlatformError):
                 "code": exc.code.value,
                 "message": exc.message,
                 "retryable": exc.retryable,
-                "details": exc.details,
+                # Platform error details are for logs/audit unless explicitly modelled as
+                # safe validation field metadata below.
+                "details": {},
             }
         },
     )
@@ -120,7 +132,7 @@ async def validation_error_handler(request, exc: RequestValidationError):
                 "code": ErrorCode.VALIDATION_ERROR.value,
                 "message": "Request validation failed.",
                 "retryable": False,
-                "details": {"errors": jsonable_encoder(exc.errors())},
+                "details": _public_validation_details(jsonable_encoder(exc.errors())),
             }
         },
     )

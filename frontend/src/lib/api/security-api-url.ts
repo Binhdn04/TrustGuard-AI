@@ -1,4 +1,5 @@
 import { ApiError } from "./api-error";
+import { userFacingErrorMessage } from "./user-facing-error";
 
 function configuredApiUrl(explicitUrl?: string): string | undefined {
   const value = explicitUrl ?? process.env.NEXT_PUBLIC_API_URL;
@@ -9,7 +10,7 @@ export function resolveSecurityApiUrl(explicitUrl?: string): string {
   const configuredUrl = configuredApiUrl(explicitUrl);
   if (!configuredUrl) {
     throw new ApiError(
-      "Thiếu NEXT_PUBLIC_API_URL. Hãy cấu hình URL public của service backend rồi build lại frontend.",
+      userFacingErrorMessage("API_CONFIGURATION_ERROR"),
       "API_CONFIGURATION_ERROR",
       false,
       0,
@@ -21,7 +22,7 @@ export function resolveSecurityApiUrl(explicitUrl?: string): string {
     parsed = new URL(configuredUrl);
   } catch {
     throw new ApiError(
-      "NEXT_PUBLIC_API_URL phải là một URL HTTP(S) hợp lệ.",
+      userFacingErrorMessage("API_CONFIGURATION_ERROR"),
       "API_CONFIGURATION_ERROR",
       false,
       0,
@@ -29,7 +30,7 @@ export function resolveSecurityApiUrl(explicitUrl?: string): string {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new ApiError(
-      "NEXT_PUBLIC_API_URL phải dùng giao thức HTTP hoặc HTTPS.",
+      userFacingErrorMessage("API_CONFIGURATION_ERROR"),
       "API_CONFIGURATION_ERROR",
       false,
       0,
@@ -39,8 +40,9 @@ export function resolveSecurityApiUrl(explicitUrl?: string): string {
 }
 
 export function networkError(apiUrl: string): ApiError {
+  void apiUrl;
   return new ApiError(
-    `Không thể kết nối tới API tại ${apiUrl}. Kiểm tra NEXT_PUBLIC_API_URL, CORS_ORIGINS và trạng thái backend trên Railway.`,
+    userFacingErrorMessage("NETWORK_ERROR", true),
     "NETWORK_ERROR",
     true,
     0,
