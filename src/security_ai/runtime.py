@@ -42,7 +42,10 @@ class TurnBudget:
     def reserve(self, operation: AssistantOperation) -> None:
         if self.calls >= self.max_calls:
             raise BudgetExceededError("turn_call_budget_exhausted")
-        if operation is AssistantOperation.SYNTHESIZE and self.synthesis_calls >= 1:
+        # One repair composition is permitted only after a grounded response
+        # is rejected for missing decisive-fact coverage.  The response layer
+        # decides whether to spend it; the budget still caps it at two.
+        if operation is AssistantOperation.SYNTHESIZE and self.synthesis_calls >= 2:
             raise BudgetExceededError("turn_synthesis_budget_exhausted")
         self.calls += 1
         if operation is AssistantOperation.SYNTHESIZE:
@@ -108,6 +111,7 @@ class RuntimeResult(Generic[OutputT]):
     error: str | None = None
     provider: str | None = None
     model: str | None = None
+    raw_model_output: str | None = None
 
 
 @dataclass(slots=True)
@@ -151,8 +155,8 @@ class SecurityAssistantRuntime:
                 self._log_fallback(operation, "turn_deadline_exceeded", attempt + 1)
                 return RuntimeResult(None, "fallback", "turn_deadline_exceeded")
             try:
-                # Retries are provider calls too and consume the same per-turn
-                # budget. A synthesis is intentionally never called twice.
+                # Retries and a possible coverage-repair composition are
+                # provider calls too and consume the same per-turn budget.
                 self.budget.reserve(operation)
             except BudgetExceededError as exc:
                 self._metric(operation, 0, "budget_exceeded", error=str(exc))
@@ -185,6 +189,7 @@ class SecurityAssistantRuntime:
                         "ok",
                         provider=parsed.provider,
                         model=parsed.model,
+                        raw_model_output=parsed.raw_model_output,
                     )
                 except TimeoutError:
                     error = "turn_deadline_exceeded" if deadline_limited else "timeout"

@@ -84,10 +84,8 @@ not answer the case, add advice, URLs, contact details, or claims about verifica
 put all prose in `summary` and leave top_reasons, uncertainties, and follow_up_offer empty.
 
 Be calm, direct, and conversational. For a straightforward safe case, be short and confident without listing
-every check. For mixed verification, make the important distinction clear: a verified official resource does
-not verify the sender or a requested action. For a dangerous case, clearly recommend the supplied safe action
-without turning the answer into a report. Mention an important user-relevant uncertainty when it materially
-affects what the user should do.
+every check. For a dangerous case, clearly recommend the supplied safe action without turning the answer into a
+report. Mention an important user-relevant uncertainty only when it materially affects what the user should do.
 
 When the supplied verdict is SAFE and the only allowed action is ALLOW_OPEN for a verified passive target, state
 the positive conclusion plainly. Do not downgrade it to “low risk”, add cautionary wording, or tell the user to
@@ -100,8 +98,13 @@ finding by itself. If the official workflow or exact submitted resource is verif
 review workflow, identity-association terminology, resource-match terminology, providers, policies, grounding, or
 other implementation details.
 
-Never invent evidence, URLs, ownership, sender verification, action endorsement, reputation findings, scores,
-policies, or actions. Never reproduce suspicious URLs. Do not expose evidence IDs, provider details, validator
+`required_decisive_facts` is a structured coverage contract, not an outline. Communicate the meaning and status
+of every fact in that list, but freely combine facts, choose their order, and use natural paraphrase. `optional_context`
+may be omitted. If `recomposition_feedback.missing_required_decisive_facts` is supplied, revise the reply so those
+specific facts are also communicated; do not mention the feedback or turn it into headings or a checklist.
+
+Never invent evidence, URLs, ownership, action endorsement, reputation findings, scores, policies, or actions.
+Never reproduce suspicious URLs. Do not expose evidence IDs, provider details, validator
 results, internal errors, policy branches, scores, confidence, percentages, or raw codes. `summary` is the
 complete reply. `top_reasons` is optional audit metadata only: omit it unless a compact citation genuinely helps;
 if provided, every factual item must cite supplied evidence_ref values. Do not use it to impose visible sections.
@@ -223,6 +226,9 @@ class OpenAISecurityAssistant(SecurityAssistantModel):
         else:
             parsed = schema.model_validate(parsed_value)
         raw = result.get("raw")
+        raw_content = getattr(raw, "content", None)
+        if raw_content is not None and not isinstance(raw_content, str):
+            raw_content = json.dumps(raw_content, ensure_ascii=False, separators=(",", ":"))
         metadata = getattr(raw, "usage_metadata", None) or {}
         response_metadata = getattr(raw, "response_metadata", None) or {}
         actual_model = response_metadata.get("model_name") or response_metadata.get("model") or model
@@ -233,7 +239,13 @@ class OpenAISecurityAssistant(SecurityAssistantModel):
             output_tokens=output_tokens,
             cost_usd=pricing.estimate(input_tokens, output_tokens),
         )
-        return ModelResponse(output=parsed, provider="openai", model=actual_model, usage=usage)
+        return ModelResponse(
+            output=parsed,
+            provider="openai",
+            model=actual_model,
+            usage=usage,
+            raw_model_output=raw_content,
+        )
 
     async def understand(self, message: str, conversation_summary: str | None):
         return await self._call(

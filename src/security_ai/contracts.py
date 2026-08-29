@@ -305,6 +305,9 @@ class ModelResponse(StrictModel, Generic[OutputT]):
     provider: str
     model: str
     usage: ModelUsage = Field(default_factory=ModelUsage)
+    # Kept only for request-scoped composition diagnostics.  Callers must not
+    # persist or expose it; the response service emits a redacted trace.
+    raw_model_output: str | None = Field(default=None, max_length=20_000)
 
 
 @runtime_checkable

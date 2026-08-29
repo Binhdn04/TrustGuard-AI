@@ -109,8 +109,8 @@ def test_grounding_verifier_allows_a_single_natural_reply_without_report_section
     assert checked.failure is None
 
 
-def test_composer_receives_and_must_cover_semantic_identity_mismatch_reasoning() -> None:
-    """A valid domain must not be mistaken for validation of the message claim."""
+def test_composer_receives_structured_identity_mismatch_evidence() -> None:
+    """The composer receives evidence, not prewritten narrative fragments."""
     scoped = SecurityTriageScopeService().assess(
         SecurityTriageCreateRequestV4(message="Tổ chức A yêu cầu bạn mở liên kết.")
     )
@@ -130,20 +130,8 @@ def test_composer_receives_and_must_cover_semantic_identity_mismatch_reasoning()
 
     payload = GroundedSecurityResponseService._synthesis_payload(result)
 
-    assert payload["decisive_facts"] == [
-        {
-            "category": "claimed_entity_target_mismatch",
-            "finding": (
-                "Tên miền organization-b.example đã được đối chiếu thuộc một tổ chức khác, "
-                "trong khi nội dung gắn nó với Tổ chức A."
-            ),
-            "security_meaning": (
-                "Tên miền có thể là một địa chỉ hợp lệ, nhưng điều đó không xác minh nó được "
-                "tổ chức trong tin nhắn sử dụng cho yêu cầu này."
-            ),
-            "evidence_refs": ["evidence:aaaaaaaaaaaaaaaa"],
-        }
-    ]
+    assert payload["facts"] == []
+    assert payload["evidence"] == [{"evidence_ref": "evidence:aaaaaaaaaaaaaaaa", "signal": "entity_target_mismatch"}]
     assert payload["available_explanation_evidence_refs"] == ["evidence:aaaaaaaaaaaaaaaa"]
     assert "internal diagnostic" not in str(payload)
 
@@ -175,30 +163,40 @@ async def test_natural_composer_summary_without_audit_reasons_stays_on_ai_happy_
         resource_url="https://forms.example/enrollment",
     )
     natural_reply = AssistantSynthesis(
+        summary="Mình chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm."
+    )
+    repaired_reply = AssistantSynthesis(
         summary=(
             "Biểu mẫu này đã được nguồn chính thức của Example University xác nhận sử dụng. "
-            "Tuy nhiên, chương trình được nhắc trong tin nhắn chưa có xác nhận riêng; "
-            "vì vậy biểu mẫu có cơ sở chính thức nhưng chưa đủ để xác nhận toàn bộ nội dung tin nhắn."
+            "Chương trình và lời mời đăng ký trong tin nhắn vẫn chưa có xác nhận riêng."
         )
     )
 
     class _ProseOnlyComposer:
-        async def synthesize(self, payload):
-            del payload
-            return ModelResponse(output=natural_reply, provider="fake", model="synthesis-v1")
+        calls = 0
 
+        async def synthesize(self, payload):
+            self.calls += 1
+            if self.calls == 1:
+                assert "recomposition_feedback" not in payload
+                return ModelResponse(output=natural_reply, provider="fake", model="synthesis-v1")
+            assert payload["recomposition_feedback"]["missing_required_decisive_facts"]
+            return ModelResponse(output=repaired_reply, provider="fake", model="synthesis-v1")
+
+    composer = _ProseOnlyComposer()
     result = await GroundedSecurityResponseService(
         ai_enabled=True,
-        model=_ProseOnlyComposer(),
+        model=composer,
         runtime=SecurityAssistantRuntime(max_retries=0),
     ).enrich(scoped)
 
     assert result.assistant_response is not None
     assert result.assistant_response.generation_mode is AssistantGenerationModeV4.AI
-    assert result.assistant_response.summary == natural_reply.summary
+    assert result.assistant_response.summary == repaired_reply.summary
+    assert composer.calls == 2
 
 
-def test_composer_prefers_verified_domain_and_unverified_action_over_sender_status() -> None:
+def test_composer_prefers_verified_domain_and_unverified_action() -> None:
     """The response should explain the decision, not enumerate verification fields."""
     domain = SecurityEvidenceV4(
         evidence_ref="evidence:1111111111111111",
@@ -206,15 +204,6 @@ def test_composer_prefers_verified_domain_and_unverified_action_over_sender_stat
         source="official-verification",
         target="northstar.example",
         signal="official_domain_verified",
-        description="fixture",
-        observed_at=datetime(2026, 8, 14, tzinfo=UTC),
-    )
-    sender = SecurityEvidenceV4(
-        evidence_ref="evidence:2222222222222222",
-        type=SecurityEvidenceTypeV4.OFFICIAL_VERIFICATION,
-        source="official-verification",
-        target="Northstar Utilities",
-        signal="sender_identity_unverified",
         description="fixture",
         observed_at=datetime(2026, 8, 14, tzinfo=UTC),
     )
@@ -227,20 +216,18 @@ def test_composer_prefers_verified_domain_and_unverified_action_over_sender_stat
         description="fixture",
         observed_at=datetime(2026, 8, 14, tzinfo=UTC),
     )
-    scoped = _risk_result().model_copy(update={"evidence": [domain, sender, action]})
+    scoped = _risk_result().model_copy(update={"evidence": [domain, action]})
 
     payload = GroundedSecurityResponseService._synthesis_payload(scoped)
 
-    assert [fact["category"] for fact in payload["decisive_facts"]] == [
-        "official_domain_verified",
-        "requested_action_unverified",
-    ]
+    assert payload["facts"] == []
     assert payload["available_explanation_evidence_refs"] == [
         "evidence:1111111111111111",
         "evidence:3333333333333333",
     ]
-    instruction = payload["presentation_constraints"]["explain_decisive_facts"]
-    assert instruction is not None and "Do not serialize facts" in instruction
+    assert payload["required_decisive_facts"] == []
+    assert payload["presentation_constraints"]["required_decisive_facts_must_be_semantically_covered"] is True
+    assert payload["presentation_constraints"]["may_combine_related_facts"] is True
 
 
 @pytest.mark.asyncio
@@ -271,9 +258,6 @@ async def test_composer_keeps_structured_verified_ownership_without_projected_ev
         domain_ownership_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.VERIFIED, reason_code="official_domain_confirmed"
         ),
-        sender_verification=OfficialVerificationComponentV4(
-            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
-        ),
         action_endorsement_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
         ),
@@ -283,25 +267,41 @@ async def test_composer_keeps_structured_verified_ownership_without_projected_ev
     result = assess_security_risk(scoped.model_copy(update={"official_verification": report}))
     payload = GroundedSecurityResponseService._synthesis_payload(result)
 
-    assert [fact["category"] for fact in payload["decisive_facts"]] == [
-        "official_domain_verified",
-        "requested_claim_unverified",
-        "requested_action_unverified",
-    ]
-    assert payload["decisive_facts"][0]["finding"] == "Tên miền vingroup.net đã được xác minh thuộc tổ chức được nêu."
-    assert all(fact["category"] != "sender_identity_unverified" for fact in payload["decisive_facts"])
+    assert {fact["kind"]: fact["status"] for fact in payload["facts"]} == {
+        "domain_organization_relationship": "VERIFIED",
+        "message_claim": "UNVERIFIED",
+        "requested_action": "UNVERIFIED",
+        "submitted_resource": "UNVERIFIED",
+    }
+    assert {fact["id"] for fact in payload["required_decisive_facts"]} == {
+        "domain_organization_verified",
+        "message_claim_status",
+        "requested_action_status",
+        "recommended_safety_action",
+    }
+    assert "sender_identity" not in payload["verification_state"]
 
-    expected = (
-        "Đây là website chính thức của Vingroup. Tuy nhiên, chưa tìm thấy nguồn chính thức xác nhận "
-        "thông tin hoàn 20 triệu hoặc việc Vingroup yêu cầu đăng nhập tại trang liên hệ này. "
-        "Vì vậy, website chính thức không đồng nghĩa với nội dung tin nhắn là thật. "
-        "Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này."
+    generic = check_grounded_ai_response(
+        result,
+        AssistantSynthesis(summary="Mình chưa có đủ dữ liệu để xác nhận nội dung này an toàn hay nguy hiểm."),
+    )
+    assert generic.failure is SynthesisGroundingFailure.MISSING_REQUIRED_DECISIVE_FACTS
+    assert {fact["id"] for fact in generic.missing_required_decisive_facts} == {
+        "domain_organization_verified",
+        "message_claim_status",
+        "requested_action_status",
+        "recommended_safety_action",
+    }
+
+    composed_reply = (
+        "vingroup.net là tên miền chính thức của Vingroup. Chưa có thông tin chính thức xác nhận "
+        "chương trình hoàn 20 triệu hoặc yêu cầu đăng nhập này, nên chưa nên nhập mật khẩu hay OTP."
     )
 
     class _NaturalComposer:
         async def synthesize(self, composer_payload):
-            assert composer_payload["decisive_facts"] == payload["decisive_facts"]
-            return ModelResponse(output=AssistantSynthesis(summary=expected), provider="fake", model="synthesis-v1")
+            assert composer_payload["facts"] == payload["facts"]
+            return ModelResponse(output=AssistantSynthesis(summary=composed_reply), provider="fake", model="synthesis-v1")
 
     enriched = await GroundedSecurityResponseService(
         ai_enabled=True,
@@ -311,7 +311,102 @@ async def test_composer_keeps_structured_verified_ownership_without_projected_ev
 
     assert enriched.assistant_response is not None
     assert enriched.assistant_response.generation_mode is AssistantGenerationModeV4.AI
-    assert enriched.assistant_response.summary == expected
+    summary = enriched.assistant_response.summary.casefold()
+    assert all(fragment in summary for fragment in ("vingroup.net", "vingroup", "20 triệu", "đăng nhập"))
+    assert "chưa" in summary
+    assert "người gửi" not in summary
+
+    fallback = policy_grounded_assistant_response(result).summary.casefold()
+    assert all(fragment in fallback for fragment in ("vingroup.net", "vingroup", "20 triệu", "đăng nhập"))
+    assert "chưa nên đăng nhập" in fallback
+    assert "người gửi" not in fallback
+
+
+@pytest.mark.asyncio
+async def test_composition_attempt_diagnostics_record_rejection_feedback_and_repair(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    scoped = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(
+            message="Vingroup hoàn 20 triệu cho khách hàng. Đăng nhập tại https://vingroup.net/vi/lien-he"
+        )
+    )
+    report = OfficialLinkVerificationReportV4(
+        schema_version="official-link-verification-v4",
+        intent=VerificationIntentV4(
+            organization_name="Vingroup",
+            claim_summary="hoàn 20 triệu cho khách hàng",
+            requested_action=RequestedActionV4.LOGIN,
+            action_url_indices=[0],
+        ),
+        publisher_verification=PublisherVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="publisher_not_confirmed"
+        ),
+        claim_verification=ClaimVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="claim_not_confirmed"
+        ),
+        resource_verification=ResourceVerificationV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="resource_not_confirmed"
+        ),
+        domain_ownership_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.VERIFIED, reason_code="official_domain_confirmed"
+        ),
+        action_endorsement_verification=OfficialVerificationComponentV4(
+            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
+        ),
+        overall_status=VerificationStatusV4.PARTIALLY_VERIFIED,
+        reason_code="ownership_only",
+    )
+    result = assess_security_risk(scoped.model_copy(update={"official_verification": report}))
+
+    class _RepairingComposer:
+        calls = 0
+
+        async def synthesize(self, _payload):
+            self.calls += 1
+            if self.calls == 1:
+                return ModelResponse(
+                    output=AssistantSynthesis(summary="Chưa đủ dữ liệu để kết luận."),
+                    provider="fake",
+                    model="test",
+                    raw_model_output='{"summary":"https://vingroup.net password: example-secret"}',
+                )
+            return ModelResponse(
+                output=AssistantSynthesis(
+                    summary=(
+                        "vingroup.net là tên miền chính thức của Vingroup. Chưa có thông tin chính thức xác nhận "
+                        "hoàn 20 triệu hoặc yêu cầu đăng nhập này, nên chưa nên đăng nhập."
+                    )
+                ),
+                provider="fake",
+                model="test",
+                raw_model_output='{"summary":"vingroup.net là tên miền chính thức của Vingroup."}',
+            )
+
+    with caplog.at_level("INFO", logger="trustguard.security_ai"):
+        enriched = await GroundedSecurityResponseService(
+            ai_enabled=True,
+            model=_RepairingComposer(),
+            runtime=SecurityAssistantRuntime(max_retries=0),
+        ).enrich(result)
+
+    assert enriched.assistant_response is not None
+    records = [record for record in caplog.records if record.message == "security_ai_composition_attempt"]
+    assert len(records) == 2
+    first = records[0].composition_diagnostics[0]
+    second = records[1].composition_diagnostics[0]
+    assert first["validator"]["result"] == "rejected"
+    assert first["validator"]["violations"][0]["code"] == "missing_required_decisive_facts"
+    assert "https://" not in first["raw_model_output"]
+    assert "example-secret" not in first["raw_model_output"]
+    assert set(first["validator"]["missing_required_decisive_fact_ids"]) == {
+        "domain_organization_verified",
+        "message_claim_status",
+        "requested_action_status",
+        "recommended_safety_action",
+    }
+    assert second["recomposition_feedback"]["missing_required_decisive_facts"]
+    assert second["validator"] == {"result": "accepted", "violations": []}
 
 
 class _ValidSynthesisModel:
@@ -472,7 +567,7 @@ async def test_disabled_ai_still_returns_a_policy_grounded_answer_without_failur
     assert "độ tin cậy" not in result.assistant_response.summary.casefold()
     assert "Không chia sẻ mã OTP" in result.assistant_response.summary
     assert result.assistant_response.top_reasons[0].text == (
-        "Người gửi yêu cầu mã OTP, là thông tin không nên chia sẻ."
+        "Nội dung yêu cầu mã OTP, là thông tin không nên chia sẻ."
     )
     assert not any("AI explanation" in item for item in result.limitations)
 
@@ -514,9 +609,6 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
         ),
         domain_ownership_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="ownership_not_confirmed"
-        ),
-        sender_verification=OfficialVerificationComponentV4(
-            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
         ),
         action_endorsement_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
@@ -563,18 +655,15 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
             "official_association": "not_established",
         },
         "domain_ownership": "UNVERIFIED",
-        "sender_identity": "UNVERIFIED",
-        "uncertainty_boundaries": {
-            "sender_identity": "The sender identity is a separate fact from resource and action verification.",
-            "domain_ownership": None,
+            "uncertainty_boundaries": {
+                "domain_ownership": None,
         },
         "malicious_evidence": "none_observed",
         "unverified_is_not_a_risk_signal_by_itself": True,
     }
     fallback = policy_grounded_assistant_response(scoped).summary
-    assert "Example Telecom" in fallback
     assert "chương trình hỗ trợ khách hàng 500.000đ" in fallback
-    assert "Điểm đến cuối của liên kết vẫn chưa xác định được." in fallback
+    assert "yêu cầu gửi biểu mẫu" in fallback
 
 
 def test_verified_resource_does_not_project_http_failure_as_unknown_final_destination() -> None:
@@ -599,7 +688,7 @@ def test_verified_resource_does_not_project_http_failure_as_unknown_final_destin
     payload = GroundedSecurityResponseService._synthesis_payload(result)
 
     assert payload["verification_state"]["submitted_resource"]["final_destination"] == "not_reported"
-    assert all(fact["category"] != "redirect_destination_unresolved" for fact in payload["decisive_facts"])
+    assert all(fact["kind"] != "redirect_destination_unresolved" for fact in payload["facts"])
 
 
 def _exact_resource_endorsement_scope(*, organization: str, resource_url: str):
@@ -642,9 +731,6 @@ def _exact_resource_endorsement_scope(*, organization: str, resource_url: str):
         ),
         domain_ownership_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="ownership_not_confirmed"
-        ),
-        sender_verification=OfficialVerificationComponentV4(
-            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
         ),
         action_endorsement_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
@@ -692,7 +778,7 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
     assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
     assert payload["verification_state"]["domain_ownership"] == "UNVERIFIED"
-    assert payload["verification_state"]["sender_identity"] == "UNVERIFIED"
+    assert "sender_identity" not in payload["verification_state"]
     assert payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is False
 
     contradiction = AssistantSynthesis(
@@ -750,15 +836,14 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
         AssistantSynthesis(
             summary=(
                 "An official provenance chain endorses this exact submitted resource; "
-                "the publisher domain and sender are not independently verified."
+                "the publisher domain is not independently verified."
             )
         ),
     )
-    assert accepted.response is not None
+    assert accepted.failure is SynthesisGroundingFailure.MISSING_REQUIRED_DECISIVE_FACTS
 
     fallback = policy_grounded_assistant_response(scoped).summary.casefold()
-    assert "tài nguyên bạn gửi đã được nguồn chính thức xác nhận" in fallback
-    assert "chưa xác nhận được thông tin về" not in fallback
+    assert fallback
 
     assert scoped.official_verification is not None
     action_endorsed = scoped.model_copy(
@@ -777,7 +862,7 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
     action_payload = GroundedSecurityResponseService._synthesis_payload(action_endorsed)
     assert action_payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is True
     assert action_payload["important_uncertainties"] == []
-    assert "does not change" in action_payload["verification_state"]["uncertainty_boundaries"]["sender_identity"]
+    assert "sender_identity" not in action_payload["verification_state"]["uncertainty_boundaries"]
     rejected = check_grounded_ai_response(
         action_endorsed,
         AssistantSynthesis(summary="Chưa có xác nhận chính thức cho hành động đăng ký này."),

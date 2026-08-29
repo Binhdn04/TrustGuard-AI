@@ -176,7 +176,7 @@ def test_old_official_report_defaults_new_verification_layers_to_not_applicable(
     restored = OfficialLinkVerificationReportV4.model_validate(payload)
 
     assert restored.domain_ownership_verification.reason_code == "not_applicable"
-    assert restored.sender_verification.applicable is False
+    assert restored.sender_verification is None
     assert restored.action_endorsement_verification.status is None
 
 
@@ -191,10 +191,7 @@ def test_stored_legacy_report_does_not_fabricate_sender_unverified_from_action()
     restored = SecurityScopeResponseV4.model_validate_stored(payload)
 
     assert restored.official_verification is not None
-    sender = restored.official_verification.sender_verification
-    assert sender.applicable is False
-    assert sender.status is None
-    assert sender.reason_code == "sender_provenance_unavailable_in_legacy_report"
+    assert restored.official_verification.sender_verification is None
 
 
 def test_understanding_reads_v1_and_new_contracts_emit_v2() -> None:

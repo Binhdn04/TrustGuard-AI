@@ -716,11 +716,10 @@ class OfficialLinkVerificationReportV4(SecurityContractModel):
             applicable=False, status=None, reason_code="not_applicable"
         )
     )
-    sender_verification: OfficialVerificationComponentV4 = Field(
-        default_factory=lambda: OfficialVerificationComponentV4(
-            applicable=False, status=None, reason_code="not_applicable"
-        )
-    )
+    # Sender assurance is only meaningful when a trusted inbound integration
+    # supplied transport provenance.  Pasted/plain-text triage must not create
+    # an artificial sender dimension.
+    sender_verification: OfficialVerificationComponentV4 | None = Field(default=None, exclude=True)
     action_endorsement_verification: OfficialVerificationComponentV4 = Field(
         default_factory=lambda: OfficialVerificationComponentV4(
             applicable=False, status=None, reason_code="not_applicable"
@@ -1168,8 +1167,8 @@ class SecurityScopeResponseV4(SecurityContractModel):
     def remove_retired_stored_investigation_steps(cls, value: Any, info: ValidationInfo) -> Any:
         if not info.context or not info.context.get("stored_security_scope") or not isinstance(value, dict):
             return value
-        # Historical reports never had explicit coverage for ownership,
-        # sender, or action endorsement. Preserve their original report
+        # Historical reports never had explicit coverage for ownership or
+        # action endorsement. Preserve their original report
         # version/payload while making the missing assurance visible; never
         # silently reinterpret it as NOT_APPLICABLE on read.
         report = value.get("official_verification")
@@ -1186,12 +1185,6 @@ class SecurityScopeResponseV4(SecurityContractModel):
                     "applicable": has_url,
                     "status": "UNVERIFIED" if has_url else None,
                     "reason_code": "legacy_coverage_unavailable",
-                    "evidence_refs": [],
-                },
-                "sender_verification": {
-                    "applicable": False,
-                    "status": None,
-                    "reason_code": "sender_provenance_unavailable_in_legacy_report",
                     "evidence_refs": [],
                 },
                 "action_endorsement_verification": {

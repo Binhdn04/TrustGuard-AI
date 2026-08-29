@@ -312,7 +312,7 @@ async def test_verified_passive_domain_stays_safe_when_semantic_or_provider_enri
     assert result.risk is SecurityRiskV4.SAFE
     assert result.recommended_actions == [SecurityRecommendedActionV4.ALLOW_OPEN]
     summary = policy_grounded_assistant_response(result).summary.casefold()
-    assert "tên miền chính thức" in summary
+    assert "kênh chính thức" in summary
     assert "cẩn thận" not in summary
     assert "xác minh bằng" not in summary
     cautious_composer_output = AssistantSynthesis(

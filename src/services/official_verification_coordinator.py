@@ -381,7 +381,6 @@ def apply_official_verification_outcome(
 
     verification_evidence: list[SecurityEvidenceV4] = []
     ownership = report.domain_ownership_verification
-    sender = report.sender_verification
     action = report.action_endorsement_verification
     verified_domain = next(
         (
@@ -405,13 +404,6 @@ def apply_official_verification_outcome(
                 else "Quan hệ sở hữu tên miền chính thức đã được xác minh."
             ),
             VerificationStatusV4.VERIFIED,
-        ),
-        (
-            sender,
-            "sender_identity_unverified",
-            report.intent.organization_name,
-            "Tin nhắn không cung cấp bằng chứng xác thực đủ để xác nhận danh tính người gửi.",
-            VerificationStatusV4.UNVERIFIED,
         ),
         (
             action,
@@ -3123,10 +3115,14 @@ class OfficialLinkVerificationCoordinator:
         # but neither is sender provenance. Only a trusted transport context
         # (email header, authenticated account/channel, signed sender, or
         # normalized message metadata) activates this independent dimension.
-        sender = OfficialVerificationComponentV4(
-            applicable=sender_provenance_present,
-            status=VerificationStatusV4.UNVERIFIED if sender_provenance_present else None,
-            reason_code=("sender_provenance_not_verified" if sender_provenance_present else "not_applicable"),
+        sender = (
+            OfficialVerificationComponentV4(
+                applicable=True,
+                status=VerificationStatusV4.UNVERIFIED,
+                reason_code="sender_provenance_not_verified",
+            )
+            if sender_provenance_present
+            else None
         )
         action = OfficialVerificationComponentV4(
             applicable=intent.contract.requested_action is not None,
@@ -3216,7 +3212,8 @@ class OfficialLinkVerificationCoordinator:
         cited.update(report.claim_verification.evidence_refs)
         cited.update(report.resource_verification.evidence_refs)
         cited.update(report.domain_ownership_verification.evidence_refs)
-        cited.update(report.sender_verification.evidence_refs)
+        if report.sender_verification is not None:
+            cited.update(report.sender_verification.evidence_refs)
         cited.update(report.action_endorsement_verification.evidence_refs)
         if cited - available:
             raise ValueError("official verification evidence-reference closure failed")

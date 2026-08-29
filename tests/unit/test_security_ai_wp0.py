@@ -118,7 +118,7 @@ async def test_runtime_enforces_four_calls_and_single_synthesis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_enforces_exactly_one_synthesis_call() -> None:
+async def test_runtime_allows_one_bounded_coverage_recomposition() -> None:
     response = ModelResponse(output=AssistantSynthesis(summary="Done"), provider="fake", model="v1")
 
     async def valid():
@@ -127,11 +127,13 @@ async def test_runtime_enforces_exactly_one_synthesis_call() -> None:
     runtime = SecurityAssistantRuntime(max_retries=0)
     first = await runtime.invoke(AssistantOperation.SYNTHESIZE, valid, AssistantSynthesis)
     second = await runtime.invoke(AssistantOperation.SYNTHESIZE, valid, AssistantSynthesis)
+    third = await runtime.invoke(AssistantOperation.SYNTHESIZE, valid, AssistantSynthesis)
 
     assert first.status == "ok"
-    assert second.status == "fallback"
-    assert second.error == "turn_synthesis_budget_exhausted"
-    assert runtime.budget.synthesis_calls == 1
+    assert second.status == "ok"
+    assert third.status == "fallback"
+    assert third.error == "turn_synthesis_budget_exhausted"
+    assert runtime.budget.synthesis_calls == 2
 
 
 @pytest.mark.asyncio

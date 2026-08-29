@@ -303,7 +303,6 @@ export interface OfficialLinkVerificationReportV4 {
   claim_verification: ClaimVerificationV4;
   resource_verification: ResourceVerificationV4;
   domain_ownership_verification?: OfficialVerificationComponentV4;
-  sender_verification?: OfficialVerificationComponentV4;
   action_endorsement_verification?: OfficialVerificationComponentV4;
   overall_status: VerificationStatusV4;
   reason_code: string;

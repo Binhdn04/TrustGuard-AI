@@ -71,6 +71,7 @@ class RedactingJsonFormatter(logging.Formatter):
             "operation",
             "field_name",
             "attempts",
+            "composition_diagnostics",
         ):
             if hasattr(record, name):
                 payload[name] = redact(getattr(record, name))
