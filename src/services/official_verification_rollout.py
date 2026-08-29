@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import traceback
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from pathlib import Path
 from time import perf_counter
 from typing import Protocol
 
@@ -15,6 +17,8 @@ from src.services.official_verification_coordinator import (
     OfficialVerificationCoordinatorOutcome,
     apply_official_verification_outcome,
 )
+
+logger = logging.getLogger("trustguard.official_verification")
 
 
 class OfficialVerificationMode(StrEnum):
@@ -87,6 +91,15 @@ def _limitation_error_code(limitations: Sequence[str]) -> str | None:
     return None
 
 
+def _failure_location(exc: Exception) -> str | None:
+    """Return the final code location without retaining exception text or inputs."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return None
+    frame = frames[-1]
+    return f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
+
+
 class OfficialVerificationRolloutStage:
     """Apply one rollout mode without allowing shadow data into responses."""
 
@@ -125,7 +138,19 @@ class OfficialVerificationRolloutStage:
                 scope,
                 execution_context=execution_context,
             )
-        except Exception:
+        except Exception as exc:
+            # Do not use logger.exception here: exception messages and tracebacks
+            # can contain submitted URLs or provider payloads. The type and final
+            # source location are sufficient to diagnose a coordinator failure.
+            logger.error(
+                "official_verification_coordinator_failed",
+                extra={
+                    "operation": "coordinate",
+                    "failure_code": "COORDINATOR_ERROR",
+                    "failure_type": type(exc).__name__,
+                    "failure_location": _failure_location(exc),
+                },
+            )
             self._record(
                 scope,
                 OfficialVerificationCoordinatorOutcome(),

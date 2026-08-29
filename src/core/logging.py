@@ -55,6 +55,7 @@ class RedactingJsonFormatter(logging.Formatter):
             "job_id",
             "failure_code",
             "failure_type",
+            "failure_location",
             "api_contract",
             "product_profile",
             "official_verification",
