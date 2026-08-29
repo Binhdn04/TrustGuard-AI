@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { authPublicStateSchema } from "../auth/public-state";
+
 export const MAX_CAPTURE_CHARACTERS = 5_000;
 
 const captureValue = z
@@ -49,6 +51,10 @@ export const captureEnvelopeSchema = z.discriminatedUnion("kind", [
 export const internalMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("panel.ready") }).strict(),
   z.object({ type: z.literal("panel.status"), status: z.literal("ready") }).strict(),
+  z.object({ type: z.literal("auth.state.get") }).strict(),
+  z.object({ type: z.literal("auth.login") }).strict(),
+  z.object({ type: z.literal("auth.logout") }).strict(),
+  z.object({ type: z.literal("auth.state"), state: authPublicStateSchema }).strict(),
   z.object({ type: z.literal("capture.pending.get") }).strict(),
   z.object({
     type: z.literal("capture.pending"),

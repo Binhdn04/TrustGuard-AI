@@ -1,13 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { loadEnv } from "vite";
+
+import { resolveOidcBuildPolicy } from "./oidc-build-config.mjs";
 
 const manifestPath = resolve("dist/manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const expectedPermissions = ["sidePanel", "contextMenus", "storage"];
+const expectedPermissions = ["sidePanel", "contextMenus", "storage", "identity"];
+const environment = { ...loadEnv("production", process.cwd(), "VITE_"), ...process.env };
+const oidcPolicy = resolveOidcBuildPolicy(environment);
 const forbiddenLocalKeys = [
   "content_scripts",
   "externally_connectable",
-  "host_permissions",
   "key",
   "oauth2",
   "optional_host_permissions",
@@ -27,9 +31,12 @@ if (JSON.stringify(manifest.permissions) !== JSON.stringify(expectedPermissions)
 for (const key of forbiddenLocalKeys) {
   if (key in manifest) fail(`local scaffold cannot declare ${key}.`);
 }
+if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(oidcPolicy.hostPermissions)) {
+  fail(`host_permissions must be exactly ${JSON.stringify(oidcPolicy.hostPermissions)}.`);
+}
 if (manifest.background?.service_worker !== "assets/background.js") fail("background worker path drifted.");
 if (manifest.side_panel?.default_path !== "sidepanel.html") fail("Side Panel entry is missing.");
 
 const csp = manifest.content_security_policy?.extension_pages;
-const expectedCsp = "script-src 'self'; object-src 'self'; connect-src 'none'; img-src 'self'; style-src 'self'";
+const expectedCsp = `script-src 'self'; object-src 'self'; connect-src ${oidcPolicy.connectSource}; img-src 'self'; style-src 'self'`;
 if (csp !== expectedCsp) fail("extension CSP must keep the local-only network and executable-code boundary.");

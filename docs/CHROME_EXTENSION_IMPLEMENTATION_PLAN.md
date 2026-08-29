@@ -7,7 +7,8 @@
     ngày 2026-08-29 đã đóng repository-local review.
   - **Phase 1 implementation: COMPLETE; automated verification: PASS; exit gate: PENDING MANUAL CHROME SMOKE**.
   - **Phase 2 implementation: COMPLETE; automated verification: PASS; exit gate: PENDING MANUAL CHROME CAPTURE SMOKE**.
-  - **Phase 3+: NOT STARTED**.
+  - **Phase 3 implementation: COMPLETE; automated verification: PASS; exit gate: PENDING LOCAL OIDC CLIENT + CHROME SMOKE**.
+  - **Phase 4+: NOT STARTED**.
   - Stable deployment ID, Railway OIDC/origin integration và external hosted review được giữ tại Phase 9; Chrome Web
     Store ID/submission/GA được giữ tại Phase 10. Không mục nào là blocker của local implementation.
 - Mục tiêu: cho phép người dùng chủ động gửi đoạn text hoặc liên kết đang chọn từ Chrome vào Security Triage
@@ -81,14 +82,16 @@ Các capability có thể tái sử dụng trực tiếp:
 
 Repository-local extension baseline đã có:
 
-- Manifest V3 TypeScript workspace, pinned build, Side Panel và background service worker.
-- Local CSP `connect-src 'none'`, chỉ permission `sidePanel`, không host permission hoặc persistent content script.
-- Strict internal message/capture schemas, generated v4 types/drift test và extension CI checks.
+- Manifest V3 TypeScript workspace, pinned build, Side Panel, background service worker và hai context-menu captures.
+- Phase 3 OIDC public-client/PKCE boundary; unconfigured build giữ `connect-src 'none'`, configured local build chỉ thêm
+  exact issuer/token origin vào CSP và host permission.
+- Strict internal message/capture/auth-state schemas, session-only capture/token state, generated v4 types/drift test và
+  extension CI checks.
 
 Khoảng trống còn cần triển khai:
 
-- Chưa có OIDC Authorization Code + PKCE flow dành cho extension redirect URI.
-- Chưa có context-menu capture bridge hoặc transient pending-capture state cho Side Panel.
+- Chưa cấu hình OIDC public client/redirect thật cho unpacked local ID; cấu hình này phải ở untracked `.env.local` và
+  provider dashboard, không commit vào repository.
 - Backend production config hiện chỉ chấp nhận HTTPS CORS origins; chưa có allow-list rõ ràng cho
   `chrome-extension://<extension-id>` và WebSocket `Origin`.
 - Chưa có browser E2E, Railway extension package/config hoặc Chrome Web Store package/listing.
@@ -249,9 +252,9 @@ Phase 1 local scaffold allowed                   COMPLETE
         ↓
 Phase 0 MVP/project-owner review closure         DONE
         ↓
-Phase 1 + 2 manual Chrome unpacked/capture smoke PENDING
+Phase 1 → 3 manual Chrome capture/OIDC smoke       PENDING
         ↓
-Phase 3 → 7 local auth/API/progress/final
+Phase 4 → 7 local origin/API/progress/final
         ↓
 Phase 8 local security/privacy hardening
         ↓
@@ -263,8 +266,8 @@ Phase 10 Chrome Web Store + production GA
 ```
 
 Local Phase 1 được triển khai trước production governance vì không có network, OIDC/token, host permission, persistent
-content script, page-data read hoặc capture/submit behavior. Phase 1 smoke có thể gộp với Phase 2 capture smoke, nhưng phải
-đạt trước Phase 3 auth integration. Phase 2–8 được implement và verify trước với unpacked extension + local TrustGuard
+content script, page-data read hoặc capture/submit behavior. Phase 1/2 smoke có thể gộp với Phase 3 local OIDC smoke;
+implementation tự động không thay thế manual Chrome/provider acceptance. Phase 2–8 được implement và verify trước với unpacked extension + local TrustGuard
 stack. Local origin/OIDC config nếu cần phải dùng
 đúng ID mà Chrome đang hiển thị và chỉ nằm trong local untracked config; không wildcard và không coi ID đó là deployment
 identity. Stable ID, exact Railway OIDC redirect/backend origin allow-list và hosted approval trở thành hard gate ở Phase
@@ -483,7 +486,7 @@ bị chặn đúng tại stable-ID/OIDC/origin và hosted approval gate của Ph
 - Status: **implementation COMPLETE · automated verification PASS · exit gate PENDING MANUAL CHROME CAPTURE SMOKE**.
 - [x] Đăng ký đúng hai context-menu items cho `selection` và `link`.
 - [x] Validate/normalize `selectionText`/`linkUrl`; từ chối scheme, credential URL và oversize input không hợp lệ.
-- [x] Lưu một pending capture TTL 10 phút trong trusted `storage.session`; không dùng local/sync.
+- [x] Lưu một pending capture TTL 5 phút trong trusted `storage.session`; không dùng local/sync.
 - [x] Gọi mở Side Panel trực tiếp từ context-menu user gesture và chuyển draft qua trusted internal message.
 - [x] Side Panel preview bằng `textContent`, cho phép hủy và xóa đúng pending capture hiện hành.
 - [x] Không bổ sung toolbar/keyboard capture ở Phase 2; không cần `activeTab`, injected content script hoặc persistent script.
@@ -494,26 +497,33 @@ Automated gate: **PASS** — bundle không có `fetch`/WebSocket/EventSource/XML
 manifest không có host permission/content script và chỉ thêm `contextMenus` + `storage` vào permission budget.
 
 Manual gate còn lại trên Chrome 116+: reload `extension/dist`, xác nhận đúng hai menu, selection trong top frame/iframe,
-link preview, cancel/clear và capture liên tiếp. Gate này phải đóng trước Phase 3 auth integration.
+link preview, cancel/clear và capture liên tiếp. Có thể gộp bằng chứng này vào manual Phase 3 Chrome acceptance.
 
 ### Phase 3 — OIDC Authorization Code + PKCE
 
-- [ ] Implement local auth flow bằng OIDC public client riêng và exact redirect do `chrome.identity.getRedirectURL()`
+- Status: **implementation COMPLETE · automated verification PASS · exit gate PENDING LOCAL OIDC CLIENT + CHROME SMOKE**.
+- [x] Implement local auth flow cho OIDC public client riêng và exact redirect do `chrome.identity.getRedirectURL("oidc")`
   trả về cho unpacked extension hiện tại; không dùng client secret trong extension.
-- [ ] Mở local CSP `connect-src` tối thiểu cho exact OIDC HTTPS token host cần thiết; không thêm Railway/production host
-  trước Phase 9 và không dùng wildcard.
-- [ ] Giữ unpacked extension ID/redirect chỉ trong untracked local config. Khi ID thay đổi, cập nhật local OIDC config;
-  không đưa ID tạm vào shared Railway/production allow-list.
-- [ ] Implement `launchWebAuthFlow`, state/nonce, PKCE S256, code exchange, expiry validation và logout/revocation flow.
-- [ ] Giữ auth transaction/access token trong trusted `storage.session`; clear khi logout, extension update/reload hoặc
-  auth error terminal.
-- [ ] Background tự refresh/reauth trước API call; Side Panel chỉ nhận auth state tối thiểu, không nhận raw token.
-- [ ] Backend tiếp tục validate issuer, audience, signature, exp, subject và roles như web.
-- [ ] Test state mismatch, redirect mismatch, expired token, canceled login, service-worker restart giữa flow và wrong
-  audience.
+- [x] Build fail-closed: khi chưa cấu hình giữ `connect-src 'none'`; khi cấu hình chỉ mở CSP + host permission cho exact
+  OIDC issuer/token origin, không thêm Railway/production host và không dùng wildcard.
+- [x] Giữ unpacked extension ID/redirect chỉ trong untracked `.env.local` và provider dashboard. Khi ID thay đổi, cập nhật
+  local OIDC callback; không đưa ID tạm vào shared Railway/production allow-list.
+- [x] Implement `launchWebAuthFlow`, state/nonce, PKCE S256, exact callback validation, code exchange, access/ID token
+  expiry/issuer/audience/subject validation và logout/revocation flow.
+- [x] Giữ auth transaction/access/refresh/ID token trong trusted `storage.session`; clear khi logout, extension
+  update/reload hoặc auth error terminal.
+- [x] Background cung cấp `getValidAccessToken()` để tự refresh trước API call; khi không refresh được thì clear session
+  và yêu cầu interactive reauth. Side Panel chỉ nhận `AuthPublicState`, không nhận raw token/claim/user object.
+- [x] Backend tiếp tục validate access-token signature, issuer, audience, expiry, subject và roles như web; runtime backend
+  không bị sửa và targeted auth/config suite đạt.
+- [x] Test state/nonce mismatch, redirect mismatch, expired token, canceled login, service-worker restart giữa flow,
+  wrong client/API audience, refresh/revoke, exact manifest policy và token non-disclosure.
+- [ ] Tạo/cấu hình local OIDC public client thật với exact callback của unpacked ID, điền untracked `.env.local` và chạy
+  Chrome login/logout smoke; cần owner/provider credentials nên không thể commit hoặc đóng bằng automated test.
 
-Local exit gate: automated auth tests đạt và manual local smoke chứng minh extension/web cùng user đọc được cùng case;
-user khác bị từ chối. Railway OIDC client, stable ID và hosted smoke được đóng riêng ở Phase 9.
+Automated gate: **PASS**. Manual Phase 3 gate: Chrome login/logout/refresh với local provider client phải pass. Việc chứng
+minh extension và web cùng user đọc cùng owner-scoped case được đóng ở Phase 5/7 integrated smoke, khi API submit/read đã
+được implement. Railway OIDC client, stable ID và hosted smoke vẫn thuộc Phase 9.
 
 ### Phase 4 — Backend origin hardening và deployment config
 

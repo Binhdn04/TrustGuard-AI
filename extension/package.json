@@ -7,7 +7,7 @@
     "node": ">=22.22.2"
   },
   "scripts": {
-    "build": "vite build && node scripts/check-manifest.mjs && node scripts/check-bundle.mjs",
+    "build": "vite build && node scripts/configure-manifest.mjs && node scripts/check-manifest.mjs && node scripts/check-bundle.mjs",
     "contracts:generate": "node scripts/export-contracts.mjs && openapi-typescript contracts/openapi-v4.json -o src/contracts/v4.generated.ts",
     "contracts:check": "node scripts/check-generated-contract.mjs",
     "lint": "eslint .",

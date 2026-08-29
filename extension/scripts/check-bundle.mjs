@@ -4,7 +4,7 @@ import { extname, join, resolve } from "node:path";
 const dist = resolve("dist");
 const inspectedExtensions = new Set([".css", ".html", ".js", ".json"]);
 const forbidden = [
-  { label: "network fetch", pattern: /\bfetch\s*\(/i },
+  { label: "embedded client secret", pattern: /client[_-]?secret/i },
   { label: "remote dynamic import", pattern: /\bimport\s*\(\s*["'`]https?:\/\//i },
   { label: "remote imported script", pattern: /\bimportScripts\s*\(\s*["'`]https?:\/\//i },
   { label: "remote executable HTML", pattern: /<(?:script|link)[^>]+(?:src|href)=["']https?:\/\//i },

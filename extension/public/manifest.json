@@ -4,7 +4,7 @@
   "description": "Capture selected text or explicit links for local TrustGuard AI preview.",
   "version": "0.1.0",
   "minimum_chrome_version": "116",
-  "permissions": ["sidePanel", "contextMenus", "storage"],
+  "permissions": ["sidePanel", "contextMenus", "storage", "identity"],
   "background": {
     "service_worker": "assets/background.js",
     "type": "module"

@@ -1,3 +1,7 @@
+import { getBundledOidcConfig } from "../auth/config";
+import { AuthFlowError, OidcAuthManager } from "../auth/oidc";
+import type { AuthPublicState } from "../auth/public-state";
+import { AuthSessionStore } from "../auth/session-store";
 import {
   CAPTURE_CONTEXT_MENU_ITEMS,
   createCaptureFromContextMenu,
@@ -11,6 +15,12 @@ import {
 import { isTrustedSidePanelSender } from "../runtime/sender";
 
 const pendingCaptures = new PendingCaptureStore(chrome.storage.session);
+const authStore = new AuthSessionStore(chrome.storage.session);
+const auth = new OidcAuthManager({
+  config: getBundledOidcConfig(),
+  store: authStore,
+  identity: chrome.identity,
+});
 const captureQueue = new SerialTaskQueue();
 const sidePanelUrl = chrome.runtime.getURL("sidepanel.html");
 
@@ -87,6 +97,7 @@ void enableActionToOpenSidePanel();
 void restrictSessionStorage();
 
 chrome.runtime.onInstalled.addListener(() => {
+  void authStore.clearAll();
   void enableActionToOpenSidePanel();
   void restrictSessionStorage();
   void registerContextMenus();
@@ -115,6 +126,31 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse)
   if (result.data.type === "panel.ready") {
     sendResponse({ type: "panel.status", status: "ready" } satisfies InternalMessage);
     return false;
+  }
+  if (result.data.type === "auth.state.get") {
+    void auth.publicState().then((state) => {
+      sendResponse({ type: "auth.state", state } satisfies InternalMessage);
+    });
+    return true;
+  }
+  if (result.data.type === "auth.login") {
+    void auth.login().then(
+      (state) => sendResponse({ type: "auth.state", state } satisfies InternalMessage),
+      (error: unknown) => {
+        const state: AuthPublicState = {
+          status: "error",
+          code: error instanceof AuthFlowError ? error.code : "network",
+        };
+        sendResponse({ type: "auth.state", state } satisfies InternalMessage);
+      },
+    );
+    return true;
+  }
+  if (result.data.type === "auth.logout") {
+    void auth.logout().then((state) => {
+      sendResponse({ type: "auth.state", state } satisfies InternalMessage);
+    });
+    return true;
   }
   if (result.data.type === "capture.pending.get") {
     void pendingCaptures.read().then((capture) => {

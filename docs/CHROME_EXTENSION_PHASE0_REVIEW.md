@@ -11,9 +11,9 @@
 - Không phải approval cho production, hosted rollout, external security audit hoặc Chrome Web Store submission.
 - Stable Railway internal/Chrome Web Store IDs: chưa reserve và được defer đúng sang Phase 9/10; không phải Phase 0
   hoặc local implementation blocker.
-- Phase 1/2 local scaffold và capture boundary đã implement, automated verification đã pass; manual Chrome capture
-  smoke vẫn pending.
-- Runtime backend/frontend và AI pipeline: không thay đổi bởi Phase 0/1/2 local extension work.
+- Phase 1–3 local scaffold, capture boundary và background OIDC/PKCE đã implement, automated verification đã pass;
+  local OIDC client config và manual Chrome capture/auth smoke vẫn pending.
+- Runtime backend/frontend và AI pipeline: không thay đổi bởi Phase 0–3 local extension work.
 - Automated evidence: `tests/unit/test_chrome_extension_phase0_baseline.py` và
   `tests/unit/test_streaming_progress_phase0_baseline.py`.
 - Fixture version: `chrome-extension-phase0-v1` tại
@@ -252,8 +252,9 @@ production approval.
 - [x] Chốt không commit private signing key, OIDC secret, token hoặc local unpacked ID configuration; tiếp tục enforce
   bằng secret/bundle checks ở các phase sau.
 
-**Phase 0 repository-local/MVP exit: DONE.** Phase 1/2 local scaffold và user-gesture capture được phép tồn tại trước
-hosted governance vì manifest hiện dùng `connect-src 'none'`, không host permission/content script/OIDC/token/network,
-không đọc page metadata/DOM và chưa có submit behavior. Phase 1/2 vẫn cần manual Chrome capture smoke. Phase 3–8 được
+**Phase 0 repository-local/MVP exit: DONE.** Phase 1–3 local scaffold, user-gesture capture và OIDC client code được phép
+tồn tại trước hosted governance. Unconfigured build giữ `connect-src 'none'`; configured local build chỉ mở exact
+OIDC issuer/token origin, không có persistent content script, không đọc page metadata/DOM và chưa có API submit behavior.
+Phase 1–3 vẫn cần local OIDC client + manual Chrome capture/auth smoke. Phase 4–8 được
 phép implement/verify local nhưng không được suy ra là hosted-approved. Phase 9 không bắt đầu hosted identity/origin integration khi Railway mapping còn
 `TBD`; Phase 10 vẫn cần Store/production approvals tương ứng.

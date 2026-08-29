@@ -77,7 +77,8 @@ p {
 .status,
 .notice,
 .empty-state,
-.preview {
+.preview,
+.auth-card {
   border: 1px solid #243834;
   border-radius: 16px;
   background: rgb(15 27 24 / 88%);
@@ -101,7 +102,8 @@ p {
 
 .notice,
 .empty-state,
-.preview {
+.preview,
+.auth-card {
   display: grid;
   gap: 8px;
   padding: 18px;
@@ -170,6 +172,11 @@ button:hover,
 button:focus-visible {
   border-color: #72e5bd;
   outline: none;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .phase-note {

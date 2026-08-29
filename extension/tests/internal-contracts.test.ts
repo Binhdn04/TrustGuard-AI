@@ -69,6 +69,13 @@ describe("capture envelope", () => {
 });
 
 describe("internal messages", () => {
+  it("never accepts raw tokens in the Side Panel auth state", () => {
+    expect(() => internalMessageSchema.parse({
+      type: "auth.state",
+      state: { status: "signed_in", accessToken: "must-stay-in-background" },
+    })).toThrow();
+  });
+
   it("requires both request-scoped consent fields", () => {
     expect(() =>
       internalMessageSchema.parse({

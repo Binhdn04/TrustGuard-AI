@@ -3,7 +3,7 @@ import { z } from "zod";
 import { captureEnvelopeSchema, type CaptureEnvelope } from "../contracts/internal";
 
 export const PENDING_CAPTURE_STORAGE_KEY = "trustguard.pendingCapture.v1";
-export const PENDING_CAPTURE_TTL_MS = 10 * 60 * 1_000;
+export const PENDING_CAPTURE_TTL_MS = 5 * 60 * 1_000;
 
 const pendingCaptureRecordSchema = z.object({
   version: z.literal(1),

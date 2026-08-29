@@ -40,7 +40,11 @@ intelligence vẫn là capability backend/nâng cao, không phải bề mặt đ
 ```mermaid
 flowchart TD
     UI[Next.js workspace] --> API[FastAPI /api/v4]
+    Page[Chrome page user gesture] --> Extension[MV3 capture + Side Panel]
+    Extension --> ExtAuth[OIDC public client + PKCE]
+    Extension -. Phase 5 API adapter .-> API
     API --> Auth[Demo auth local hoặc OIDC/JWKS]
+    ExtAuth -. bearer validated from Phase 5 .-> Auth
     Auth --> Scope[Scope + structured context]
     Scope -->|Out of scope| Boundary[Terminal boundary]
     Scope -->|Need info| FollowUp[Focused follow-up]
@@ -59,6 +63,11 @@ flowchart TD
     Store --> Memory[Reviewed memory + campaigns]
     Store --> Admin[HITL + immutable audit]
 ```
+
+Chrome Extension đang ở Phase 3 local: capture chỉ nhận selection/link do user chủ động chọn; auth code exchange,
+refresh và revoke nằm trong background service worker, còn transaction/token chỉ ở trusted `storage.session`. Side Panel
+chỉ nhận auth status tối thiểu. Unconfigured build không có network origin; local OIDC build chỉ cho exact issuer/token
+origin. Extension chưa gọi `/api/v4` cho đến Phase 5 và không thay đổi backend pipeline/risk authority.
 
 Inline là mặc định. Async chỉ được quảng bá khi PostgreSQL, durable worker và configuration đều ready.
 PostgreSQL là source of truth; Redis phục vụ rate limit, ticket ngắn hạn và wake-up notification.
