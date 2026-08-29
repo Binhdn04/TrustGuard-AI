@@ -31,6 +31,16 @@ def test_production_allows_demo_auth_to_be_disabled() -> None:
     assert settings.demo_auth_enabled is False
 
 
+def test_production_async_api_allows_a_separate_durable_worker() -> None:
+    settings = production_settings(
+        security_async_execution_enabled=True,
+        run_durable_worker=False,
+        openai_api_key="configured-test-provider-key",
+    )
+
+    assert settings.enabled_security_capabilities()["security_async_execution"] is True
+
+
 def test_wave1_reputation_policy_is_bounded() -> None:
     settings = Settings(
         virustotal_api_key="virus-total",
