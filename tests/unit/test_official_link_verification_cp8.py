@@ -360,7 +360,7 @@ async def test_coordinator_failure_logs_only_safe_diagnostics(caplog: pytest.Log
     record = next(record for record in caplog.records if record.message == "official_verification_coordinator_failed")
     assert record.failure_code == "COORDINATOR_ERROR"
     assert record.failure_type == "RuntimeError"
-    assert record.failure_location
+    assert ":coordinate:" in record.failure_location
     assert "private.example" not in record.getMessage()
 
 

@@ -96,9 +96,7 @@ def _failure_location(exc: Exception) -> str | None:
     frames = traceback.extract_tb(exc.__traceback__)
     if not frames:
         return None
-    # Prefer the deepest application frame over an asyncpg/C-extension frame;
-    # the latter identifies the driver rather than the failing repository call.
-    frame = next((item for item in reversed(frames) if "/src/" in item.filename), frames[-1])
+    frame = frames[-1]
     return f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
 
 
