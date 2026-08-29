@@ -83,6 +83,33 @@ def test_structured_log_redacts_secrets_embedded_in_strings() -> None:
     assert "[REDACTED]" in rendered
 
 
+def test_structured_log_never_emits_websocket_ticket_or_url_query() -> None:
+    ticket = "single-use-private-ticket"
+    raw_query = "case=private-capture&next=https://phishing.example"
+    record = logging.LogRecord(
+        "trustguard.websocket",
+        logging.WARNING,
+        __file__,
+        1,
+        f"rejected wss://api.example/api/v4/stream?ticket={ticket}&{raw_query}#private",
+        (),
+        None,
+    )
+    record.official_verification = {
+        "raw_capture": "private-capture-content",
+        "result_url": f"https://api.example/result?ticket={ticket}#private",
+    }
+
+    rendered = RedactingJsonFormatter().format(record)
+
+    assert ticket not in rendered
+    assert raw_query not in rendered
+    assert "private-capture-content" not in rendered
+    assert "?" not in json.loads(rendered)["event"]
+    assert json.loads(rendered)["official_verification"]["raw_capture"] == "[REDACTED]"
+    assert json.loads(rendered)["official_verification"]["result_url"] == "https://api.example/result"
+
+
 def test_production_disables_interactive_api_documentation() -> None:
     assert documentation_urls("production") == {"docs_url": None, "redoc_url": None, "openapi_url": None}
     assert documentation_urls("test") == {

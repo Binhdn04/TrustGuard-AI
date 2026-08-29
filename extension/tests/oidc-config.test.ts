@@ -29,6 +29,9 @@ describe("extension OIDC configuration", () => {
     { ...validEnvironment, VITE_OIDC_TOKEN_ENDPOINT: "https://evil.example/token" },
     { ...validEnvironment, VITE_OIDC_ISSUER: "http://identity.example" },
     { ...validEnvironment, VITE_OIDC_TOKEN_ENDPOINT: "https://user:pass@identity.example/token" },
+    { ...validEnvironment, VITE_OIDC_ISSUER: "https://*.example" },
+    { ...validEnvironment, VITE_OIDC_ISSUER: "https://identity.example?tenant=unsafe" },
+    { ...validEnvironment, VITE_OIDC_TOKEN_ENDPOINT: "https://identity.example/token?secret=unsafe" },
     { ...validEnvironment, VITE_OIDC_SCOPE: "profile email" },
   ])("rejects unsafe or incomplete config %#", (environment) => {
     expect(() => resolveOidcConfig(environment)).toThrow();

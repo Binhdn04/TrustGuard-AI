@@ -53,10 +53,23 @@ describe("OIDC manifest build policy", () => {
     expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_TOKEN_ENDPOINT: "https://*.example/token" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_TOKEN_ENDPOINT: "https://evil.example/token" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_TOKEN_ENDPOINT: "http://identity.example/token" })).toThrow();
+    expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_ISSUER: "https://*.example" })).toThrow();
+    expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_TOKEN_ENDPOINT: "https://identity.example/token?secret=x" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_CLIENT_SECRET: "never-bundle-this" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ ...base, VITE_OIDC_SCOPE: "profile email" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ VITE_TRUSTGUARD_API_URL: "https://*.example" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ VITE_TRUSTGUARD_API_URL: "https://api.example/api/v4" })).toThrow();
     expect(() => resolveOidcBuildPolicy({ VITE_TRUSTGUARD_API_URL: "http://api.example" })).toThrow();
+    expect(() => resolveOidcBuildPolicy({ VITE_TRUSTGUARD_WEB_URL: "https://web.example/cases" })).toThrow();
+  });
+
+  it("validates the web handoff origin without granting it API network permission", () => {
+    expect(resolveOidcBuildPolicy({
+      VITE_TRUSTGUARD_WEB_URL: "http://localhost:3000",
+    })).toEqual({
+      configured: false,
+      connectSource: "'none'",
+      hostPermissions: undefined,
+    });
   });
 });

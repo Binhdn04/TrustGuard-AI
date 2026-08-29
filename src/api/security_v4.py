@@ -1434,6 +1434,9 @@ async def security_analysis_stream_v4(
     ticket: str = Query(max_length=256),
     cursor: str | None = Query(default=None, max_length=128),
 ) -> None:
+    if not get_settings().browser_origin_allowed(websocket.headers.get("origin")):
+        await websocket.close(code=4403, reason="WebSocket origin is not allowed.")
+        return
     ticket_factory = websocket.app.dependency_overrides.get(get_ticket_manager, get_ticket_manager)
     tickets = ticket_factory()
     if hasattr(tickets, "__await__"):

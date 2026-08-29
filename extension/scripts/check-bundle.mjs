@@ -12,6 +12,8 @@ const forbidden = [
   { label: "XMLHttpRequest construction", pattern: /new\s+XMLHttpRequest\s*\(/i },
   { label: "dynamic eval", pattern: /\beval\s*\(/ },
   { label: "dynamic Function constructor", pattern: /new\s+Function\s*\(/ },
+  { label: "unsafe innerHTML assignment", pattern: /\.innerHTML\s*=/i },
+  { label: "unsafe adjacent HTML insertion", pattern: /\.insertAdjacentHTML\s*\(/i },
   { label: "source map reference", pattern: /sourceMappingURL/i },
   { label: "demo token", pattern: /demo[-_ ]?token/i },
   { label: "bearer credential", pattern: /bearer\s+[a-z0-9._~-]{8,}/i },

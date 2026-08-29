@@ -25,6 +25,7 @@ function fail(message) {
 
 if (manifest.manifest_version !== 3) fail("Manifest V3 is required.");
 if (manifest.minimum_chrome_version !== "116") fail("Chrome 116+ baseline is required.");
+if (manifest.incognito !== "not_allowed") fail("local MVP must be disabled in Incognito mode.");
 if (JSON.stringify(manifest.permissions) !== JSON.stringify(expectedPermissions)) {
   fail(`permissions must be exactly ${JSON.stringify(expectedPermissions)}.`);
 }

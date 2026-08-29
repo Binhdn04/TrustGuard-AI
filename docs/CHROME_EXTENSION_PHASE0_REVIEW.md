@@ -11,9 +11,12 @@
 - Không phải approval cho production, hosted rollout, external security audit hoặc Chrome Web Store submission.
 - Stable Railway internal/Chrome Web Store IDs: chưa reserve và được defer đúng sang Phase 9/10; không phải Phase 0
   hoặc local implementation blocker.
-- Phase 1–3 local scaffold, capture boundary và background OIDC/PKCE đã implement, automated verification đã pass;
-  local OIDC client config và manual Chrome capture/auth smoke vẫn pending.
-- Runtime backend/frontend và AI pipeline: không thay đổi bởi Phase 0–3 local extension work.
+- Phase 1–7 local scaffold/runtime và Phase 8 automated security/privacy hardening đã implement; capture boundary,
+  background OIDC/PKCE, backend exact-origin hardening, consent-gated submit, progress transport/resume, final presentation,
+  fixed web handoff, incognito/storage/log/DOM/executable-code gates đã pass; local
+  OIDC client và manual Chrome capture/auth/HTTP/WS/final smoke vẫn pending.
+- Runtime frontend và AI pipeline không thay đổi bởi Phase 0–8; Phase 4 chỉ harden backend transport/logging, Phase 5 tái
+  sử dụng nguyên `/api/v4` contract và không thay đổi risk authority.
 - Automated evidence: `tests/unit/test_chrome_extension_phase0_baseline.py` và
   `tests/unit/test_streaming_progress_phase0_baseline.py`.
 - Fixture version: `chrome-extension-phase0-v1` tại

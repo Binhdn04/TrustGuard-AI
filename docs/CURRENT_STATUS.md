@@ -17,12 +17,15 @@ PostgreSQL ordering/retry và frontend replay/presentation. Async production v�
 backend/worker cùng artifact, Redis/WebSocket fallback, owner/ticket smoke hoặc operational metrics.
 
 Chrome Extension Phase 0 repository-local/MVP đã `DONE` theo project-owner instruction của documentation task ngày
-2026-08-29; đây không phải production/Store approval. Phase 1–3 implementation đã `COMPLETE`, automated verification
-`PASS`: Manifest V3 scaffold, capture boundary và background-only OIDC Authorization Code + PKCE/refresh/revoke đã có.
-Unconfigured build fail-closed với `connect-src 'none'`; configured build chỉ mở exact local issuer/token origin. Extension
-không có persistent content script, arbitrary host permission hoặc API submission. Phase 1–3 exit gate còn
-`PENDING LOCAL OIDC CLIENT + CHROME SMOKE`; Phase 4+ chưa bắt đầu. Delivery order đã chốt là hoàn tất unpacked extension với local
-backend/frontend trước, sau đó mới setup Railway internal, rồi mới chuẩn bị Chrome Web Store/production GA.
+2026-08-29; đây không phải production/Store approval. Phase 1–7 implementation và Phase 8 automated hardening đã `COMPLETE`, automated verification
+`PASS`: Manifest V3 scaffold, capture boundary, background-only OIDC Authorization Code + PKCE/refresh/revoke, backend
+exact-origin hardening, consent-gated `/api/v4` submission, WebSocket/cursor-polling resume, authoritative final rendering
+và fixed-origin web handoff đã có. Phase 8 khóa incognito, persistent client storage/runtime logging và các executable/DOM
+sink nguy hiểm bằng manifest/source/bundle/security gates. Build chỉ mở exact local API/OIDC/WS origins. Backend
+tách exact web/extension origins và từ chối WebSocket origin trước khi consume ticket. Extension không có persistent
+content script hoặc arbitrary host permission; bearer/API fetch chỉ ở background, raw capture bị xóa sau 200/202. Exit gate còn
+`PENDING LOCAL OIDC CLIENT + CHROME LIFECYCLE/CAPTURE/AUTH/HTTP/WS/FINAL/HANDOFF SMOKE`; Phase 9–10 chưa bắt đầu. Delivery order đã chốt là hoàn tất unpacked
+extension với local backend/frontend trước, sau đó mới setup Railway internal, rồi mới chuẩn bị Chrome Web Store/production GA.
 
 Phạm vi UI của MVP đã hoàn tất trong workspace: một navigation/sidebar dùng chung, user có hai mục chính và
 `security_admin` có thêm **Duyệt bảo mật** cùng **Tin cậy & chặn**. Login local vẫn hỗ trợ demo khi được cấu hình;
@@ -45,7 +48,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Official verification | publisher/claim/resource compatibility plus URL-routed domain ownership/sender identity/action endorsement, resource-first identity discovery, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, action-relevant SAFE policy, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | UI MVP tiếng Việt; một navigation/sidebar; user có Kiểm tra/Lịch sử, còn Hồ sơ/Cài đặt nằm trong menu avatar; admin có thêm Duyệt bảo mật và Tin cậy & chặn; whitelist/blacklist thao tác trực tiếp với trạng thái/audit; route Observatory/Audit cũ redirect về Trust workspace |
-| Chrome Extension | Phase 0 `DONE`; Phase 1–3 implementation `COMPLETE`, automated verification `PASS`, local OIDC client + Chrome smoke `PENDING`; Phase 4+ `NOT STARTED` |
+| Chrome Extension | Phase 0 `DONE`; Phase 1–7 implementation + Phase 8 automated hardening `COMPLETE`, automated verification `PASS`; local OIDC + Chrome lifecycle/E2E smoke `PENDING`; Phase 9–10 `NOT STARTED` |
 | Testing | `pytest-cov` gate `68%`, default offline suite và PostgreSQL integration job riêng; xem bằng chứng hiện hành trong `docs/TESTING.md` |
 | Schema | Alembic through `0022_action_assurance_metadata` (one head) |
 
@@ -74,10 +77,12 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - Streaming progress/async chưa có hosted readiness, worker artifact/heartbeat, Redis outage/cursor fallback,
   owner/ticket reconnect/final-fetch smoke hay latency/event-volume observation. Async production vẫn mặc định tắt
   và chỉ được bật theo approval gate trong `DEPLOYMENT.md`.
-- Chrome Extension chỉ sẵn sàng cho local unpacked capture/OIDC smoke. Capture boundary và OIDC client code đã implement;
-  local provider client/redirect chưa được cấu hình, còn backend origin allow-list, submit, progress và web handoff chưa
-  implement. Phase 4–8 sẽ được implement/verify với unpacked extension + local TrustGuard
-  stack; local ID chỉ nằm trong untracked exact-origin config nếu cần. Stable Railway/internal ID cùng hosted OIDC/origin
+- Chrome Extension sẵn sàng cho local unpacked capture/OIDC/origin/submit/progress smoke. Capture boundary, OIDC client,
+  backend exact-origin/WebSocket hardening, background submit, ticketed WebSocket, cursor polling/resume và authoritative
+  terminal fetch đã implement; exact unpacked origin đã có trong ignored backend `.env`, còn local provider client/redirect
+  và Chrome lifecycle/HTTP/WS/polling/final/handoff smoke chưa hoàn tất. Phase 8 automated hardening đã khóa incognito,
+  persistent storage, runtime logging, unsafe DOM/executable sinks và hostile OAuth/message/deep-link payload; manual
+  runtime privacy inspection cùng local E2E vẫn pending. Local ID chỉ nằm trong untracked exact-origin config nếu cần. Stable Railway/internal ID cùng hosted OIDC/origin
   là Phase 9 gate; production Store ID, listing/review và GA approval là Phase 10 gate. Không mục nào là Phase 0/local
   implementation blocker.
 - Luồng MVP report → admin resolution/remediation → phân tích lại → audit đã có automated integration coverage

@@ -4,8 +4,12 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
+from urllib.parse import urlsplit, urlunsplit
 
-_SECRET_KEY = re.compile(r"(authorization|token|secret|password|otp|message|prompt|comment)", re.I)
+_SECRET_KEY = re.compile(
+    r"(authorization|token|secret|password|otp|message|prompt|comment|raw[_-]?capture)",
+    re.I,
+)
 _BEARER_TOKEN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.I)
 _OPENAI_API_KEY = re.compile(r"\bsk(?:-proj)?-[A-Za-z0-9_-]+\b", re.I)
 _ASSIGNMENT_SECRET = re.compile(
@@ -13,16 +17,29 @@ _ASSIGNMENT_SECRET = re.compile(
     re.I,
 )
 _SENSITIVE_QUERY_VALUE = re.compile(
-    r"([?&](?:access_token|api[_-]?key|authorization|password|secret|token)=)[^&#\s]+",
+    r"([?&](?:access_token|api[_-]?key|authorization|password|secret|ticket|token)=)[^&#\s]+",
     re.I,
 )
+_NETWORK_URL = re.compile(r"(?:https?|wss?)://[^\s\"'<>]+", re.I)
+
+
+def _strip_url_query_and_fragment(match: re.Match[str]) -> str:
+    value = match.group(0)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if not parsed.query and not parsed.fragment:
+        return value
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
 def _redact_string(value: str) -> str:
     value = _BEARER_TOKEN.sub("Bearer [REDACTED]", value)
     value = _OPENAI_API_KEY.sub("[REDACTED]", value)
     value = _ASSIGNMENT_SECRET.sub(r"\1\2[REDACTED]", value)
-    return _SENSITIVE_QUERY_VALUE.sub(r"\1[REDACTED]", value)
+    value = _SENSITIVE_QUERY_VALUE.sub(r"\1[REDACTED]", value)
+    return _NETWORK_URL.sub(_strip_url_query_and_fragment, value)
 
 
 def redact(value):

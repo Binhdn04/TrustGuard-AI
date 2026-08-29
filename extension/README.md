@@ -1,7 +1,9 @@
 # TrustGuard Chrome Extension
 
 Phase 3 provides a local-only Manifest V3 capture and OIDC boundary, Phase 4 hardens the backend browser-origin boundary,
-Phase 5 adds consent-gated `/api/v4` submission, and Phase 6 adds ticketed WebSocket progress with cursor-polling fallback.
+Phase 5 adds consent-gated `/api/v4` submission, Phase 6 adds ticketed WebSocket progress with cursor-polling fallback,
+Phase 7 renders the authoritative final result with a fixed-origin web handoff, and Phase 8 adds local security/privacy
+gates plus an explicit no-incognito MVP policy.
 The extension captures only user-selected text/links and uses
 Authorization Code + PKCE through `chrome.identity`; auth transactions and tokens stay in trusted `storage.session`.
 The Side Panel receives only minimal auth/analysis state. Bearer-authenticated API requests stay in the background; the
@@ -65,13 +67,14 @@ settings:
 
 ```dotenv
 VITE_TRUSTGUARD_API_URL=http://localhost:8000
+VITE_TRUSTGUARD_WEB_URL=http://localhost:3000
 ```
 
-Only localhost may use HTTP. The value cannot contain a wildcard, credentials, path, query or fragment. Build and reload
+Only localhost may use HTTP. Both values must be exact origins without wildcard, credentials, path, query or fragment. Build and reload
 the extension after changing it; the generated manifest should contain only `http://localhost:8000/*` plus any exact
 OIDC origin you configured. Its `connect-src` also contains the derived exact `ws://localhost:8000` stream origin.
 
-Smoke Phase 5–6 after the backend and local OIDC client are running:
+Smoke Phase 5–7 after the backend, frontend and local OIDC client are running:
 
 1. Sign in, capture text/link and inspect the exact preview.
 2. Choose request-scoped external/official lookup consent and submit.
@@ -82,6 +85,9 @@ Smoke Phase 5–6 after the backend and local OIDC client are running:
    when WebSocket is unavailable.
 7. Close/reopen the panel and restart the service worker; confirm replay resumes from the saved cursor without regressing.
 8. Confirm terminal progress triggers an authoritative final fetch. Progress text must never be treated as a verdict.
+9. Confirm scope/risk/summary/actions come only from that final response and hostile markup is displayed only as text.
+10. Open the full-case CTA signed in and signed out; after web login it must return to the same owner-scoped
+    `/cases/{analysisId}` route without capture content in the URL.
 
 After changing source files, rerun `npm run build` and click **Reload** on the extension card. Do not load the source
 directory: Chrome must load `extension/dist`.
@@ -90,13 +96,24 @@ directory: Chrome must load `extension/dist`.
 
 ```powershell
 npm run check
+npm run audit:security
 ```
 
 The build declares only `sidePanel`, `contextMenus`, `storage` and `identity`. Without `.env.local` it uses
 `connect-src 'none'` and has no host permissions. With valid configuration it permits only the exact API/OIDC origins.
 It has no content scripts and emits no source maps. Bundle checks reject embedded client-secret markers, remote code,
 EventSource and XMLHttpRequest, require WebSocket construction only in the Side Panel, and reject it in the background
-worker. The package checks fail if those boundaries drift.
+worker. They also reject raw-HTML insertion. The security check rejects runtime logging, persistent local/sync/Web
+Storage, external-message listeners and credential/token artifacts, and verifies that `.env.local` stays ignored and
+`storage.session` stays restricted to trusted contexts. `npm run audit:security` additionally needs registry access for
+the dependency advisory audit; `npm audit --offline --audit-level=high` can use the local advisory cache when offline.
+The package checks fail if those boundaries drift.
+
+Before declaring Phase 8 complete, manually verify the unpacked `dist` build in Chrome: install/reload/remove, browser
+restart, service-worker suspend/restart, and that Incognito access cannot be enabled. Then run capture → consent → submit
+→ progress/final → web handoff against the local backend/frontend/OIDC client, including inline fallback and safe failure
+states. Inspect extension DevTools without copying sensitive values into evidence: accepted/logout state must not retain
+raw capture, token, ticket, OTP, credential or sensitive URL query.
 
 The committed v4 subset lives in `contracts/openapi-v4.json`. When backend contracts intentionally change, regenerate
 the snapshot and TypeScript types from the repository root environment:

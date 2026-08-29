@@ -210,7 +210,8 @@ chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse)
     return true;
   }
   if (result.data.type === "auth.logout") {
-    void auth.logout().then((state) => {
+    void auth.logout().then(async (state) => {
+      await activeAnalyses.clear();
       sendResponse({ type: "auth.state", state } satisfies InternalMessage);
     });
     return true;

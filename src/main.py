@@ -97,7 +97,7 @@ settings = get_settings()
 app.add_middleware(StructuredRequestLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=settings.browser_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

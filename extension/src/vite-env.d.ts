@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_TRUSTGUARD_API_URL?: string;
+  readonly VITE_TRUSTGUARD_WEB_URL?: string;
   readonly VITE_OIDC_ISSUER?: string;
   readonly VITE_OIDC_CLIENT_ID?: string;
   readonly VITE_OIDC_AUDIENCE?: string;

@@ -41,6 +41,35 @@ export const analysisEventPublicSchema = z.object({
   occurredAt: z.iso.datetime({ offset: true }),
 }).strict();
 
+const finalResultPublicSchema = z.object({
+  scopeDecision: z.enum(["IN_SCOPE", "NEED_MORE_INFO", "OUT_OF_SCOPE_GENERAL_FACT_CHECK"]),
+  risk: z.enum(["SAFE", "LOW_RISK", "SUSPICIOUS", "HIGH_RISK", "MALICIOUS", "INSUFFICIENT_EVIDENCE"]).nullable(),
+  score: z.number().int().min(0).max(100).nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+  summary: z.string().max(2_000).nullable(),
+  followUpQuestion: z.string().max(1_000).nullable(),
+  boundaryMessage: z.string().max(1_000).nullable(),
+  limitations: z.array(z.string().max(1_000)).max(3),
+  recommendedActions: z.array(z.enum([
+    "DO_NOT_OPEN_LINK",
+    "DO_NOT_SHARE_CREDENTIALS",
+    "DO_NOT_SHARE_OTP",
+    "DO_NOT_TRANSFER_MONEY",
+    "VERIFY_VIA_OFFICIAL_CHANNEL",
+    "CHANGE_PASSWORD_IF_ALREADY_SHARED",
+    "CONTACT_BANK_IF_ALREADY_PAID",
+    "REPORT_AND_BLOCK_SENDER",
+    "PROCEED_WITH_CAUTION",
+    "ALLOW_OPEN",
+    "CLOSE_PAGE_AND_DO_NOT_RETURN",
+    "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE",
+    "REVOKE_ACTIVE_SESSIONS",
+    "CONTACT_BANK_OR_PAYMENT_PROVIDER",
+    "PRESERVE_MESSAGE_FOR_REPORTING",
+  ])).max(5),
+  degraded: z.boolean(),
+}).strict();
+
 const webSocketUrlSchema = z.string().max(2_048).refine((value) => {
   try {
     const url = new URL(value);
@@ -174,6 +203,7 @@ export const internalMessageSchema = z.discriminatedUnion("type", [
       status: z.enum(["queued", "running", "completed", "failed"]),
       terminal: z.boolean(),
       createdAt: z.iso.datetime({ offset: true }),
+      result: finalResultPublicSchema.nullable(),
     }).strict(),
   }).strict(),
   z.object({

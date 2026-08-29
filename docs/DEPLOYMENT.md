@@ -44,6 +44,8 @@ OIDC_AUDIENCE=<api-audience>
 OIDC_ROLES_CLAIM=<api-audience>/roles
 OIDC_ADMIN_ROLE=security_admin
 CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
+# Keep empty until Phase 9 reserves a stable internal extension ID.
+CHROME_EXTENSION_ORIGINS=
 IP_RATE_LIMIT_PER_MINUTE=240
 # Leave empty unless this backend is reached through a deployment-controlled
 # proxy. When configured, use only its IP/CIDR; never trust a public header.
@@ -128,6 +130,41 @@ Không đặt `NEXT_PUBLIC_DEMO_USER_TOKEN` hoặc `NEXT_PUBLIC_DEMO_ADMIN_TOKEN
 được đóng vào Next.js bundle trong Docker build, nên thay đổi biến phải redeploy frontend. Authorization/token
 endpoint overrides để trống khi dùng endpoint chuẩn suy ra từ issuer. `CORS_ORIGINS` của backend phải là
 `https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`.
+
+### Browser origin allow-list
+
+Backend dùng hai biến tách biệt nhưng ghép chúng thành một exact allow-list cho HTTP CORS và WebSocket handshake:
+
+- `CORS_ORIGINS`: comma-separated `http://`/`https://` web origins; production chỉ cho HTTPS.
+- `CHROME_EXTENSION_ORIGINS`: comma-separated exact `chrome-extension://<32-character-id>` origins; để trống khi chưa
+  bật extension cho environment đó.
+
+Không biến nào chấp nhận wildcard, credential, path, query hoặc fragment. WebSocket thiếu `Origin` hoặc gửi origin không
+được phép sẽ bị từ chối trước khi single-use ticket được consume; ticket, owner check và JWT/RBAC vẫn là authorization
+boundary sau transport check.
+
+Local unpacked smoke dùng ID Chrome đang cấp cho đúng build và chỉ ghi vào ignored `.env`:
+
+```dotenv
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+CHROME_EXTENSION_ORIGINS=chrome-extension://<current-unpacked-extension-id>
+```
+
+Restart backend sau khi đổi giá trị. Không commit local ID, không dùng nó cho Railway và không dùng
+`chrome-extension://*`. Phase 9 phải reserve stable Railway/internal ID rồi cấu hình exact origin tương ứng trong managed
+environment; Phase 10 quản lý Store production ID riêng.
+
+Extension build dùng hai exact origins riêng trong ignored `extension/.env.local`:
+
+```dotenv
+VITE_TRUSTGUARD_API_URL=http://localhost:8000
+VITE_TRUSTGUARD_WEB_URL=http://localhost:3000
+```
+
+API origin được đưa vào exact host permission và HTTP(S)/WS(S) `connect-src`. Web origin chỉ tạo navigation cố định
+`/cases/{validatedAnalysisId}`, không được cấp host permission và không chứa query/raw capture. Railway Phase 9 phải dùng
+HTTPS public origins tương ứng trong managed build configuration; wildcard, credential, path, query và fragment đều bị
+build validator từ chối.
 
 Page capture mặc định tắt. Chỉ bật `SECURITY_PAGE_CAPTURE_ENABLED=true` khi backend Chromium đã được giới hạn
 egress khỏi private/metadata/service network; Docker image cài Chromium cho API target. Frontend tự yêu cầu ảnh

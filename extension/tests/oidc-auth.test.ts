@@ -137,6 +137,22 @@ describe("extension OIDC Authorization Code + PKCE", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it.each([
+    `${REDIRECT_URI}?code=first&code=second&state=${"r".repeat(43)}`,
+    `${REDIRECT_URI}?code=first&state=${"r".repeat(43)}&state=second`,
+    `https://user:pass@abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/oidc?code=first&state=${"r".repeat(43)}`,
+  ])("rejects ambiguous or credential-bearing callbacks before token exchange", async (callback) => {
+    const storage = new MemoryStorage();
+    const fetcher = vi.fn();
+    const { auth, identity } = manager(storage, fetcher);
+    identity.launchWebAuthFlow.mockResolvedValue(callback);
+
+    await expect(auth.login()).rejects.toBeInstanceOf(AuthFlowError);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(storage.values).not.toHaveProperty(AUTH_TRANSACTION_STORAGE_KEY);
+    expect(storage.values).not.toHaveProperty(AUTH_SESSION_STORAGE_KEY);
+  });
+
   it("clears the transaction when the user cancels the identity window", async () => {
     const storage = new MemoryStorage();
     const { auth, identity } = manager(storage);

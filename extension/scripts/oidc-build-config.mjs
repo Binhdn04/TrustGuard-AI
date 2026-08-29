@@ -14,8 +14,15 @@ function exactEndpoint(value, label, issuerOrigin = null) {
   if (url.protocol !== "https:" && !(localhost && url.protocol === "http:")) {
     throw new Error(`${label} must use HTTPS except on localhost.`);
   }
-  if ((issuerOrigin !== null && url.origin !== issuerOrigin) || url.username || url.password || url.hash) {
-    throw new Error(`${label} must use the exact issuer origin without credentials or fragment.`);
+  if (
+    url.hostname.includes("*") ||
+    (issuerOrigin !== null && url.origin !== issuerOrigin) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(`${label} must use the exact issuer origin without wildcard, credentials, query or fragment.`);
   }
   return url;
 }
@@ -76,6 +83,8 @@ export function resolveOidcBuildPolicy(environment) {
     streamOrigin.protocol = streamOrigin.protocol === "https:" ? "wss:" : "ws:";
     connectSources.add(streamOrigin.origin);
   }
+  const webValue = clean(environment.VITE_TRUSTGUARD_WEB_URL);
+  if (webValue) exactApiOrigin(webValue);
   const exactOrigins = [...origins].sort();
   const exactConnectSources = [...connectSources].sort();
   if (exactConnectSources.length === 0) {

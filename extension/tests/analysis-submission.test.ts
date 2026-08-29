@@ -123,6 +123,8 @@ describe("Phase 5 analysis submission", () => {
       lastSequence: 2,
       status: "completed",
     });
+    await context.activeAnalyses.clear();
+    await expect(context.activeAnalyses.read()).resolves.toBeNull();
   });
 
   it("falls back to inline when capability discovery fails", async () => {

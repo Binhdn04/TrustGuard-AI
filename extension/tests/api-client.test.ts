@@ -137,7 +137,20 @@ describe("TrustGuard v4 HTTP client", () => {
         status: "completed",
         terminal: true,
         created_at: createdAt,
-        explanation: "Phase 7 only",
+        scope_decision: "IN_SCOPE",
+        risk: "HIGH_RISK",
+        score: 88,
+        confidence: 0.91,
+        explanation: "Fallback explanation",
+        limitations: ["Một nguồn tra cứu bị giới hạn.", "x".repeat(1_001)],
+        recommended_actions: ["DO_NOT_SHARE_OTP"],
+        errors: [{ code: "PROVIDER_TIMEOUT", message: "must be stripped" }],
+        assistant_response: {
+          summary: "Có dấu hiệu yêu cầu OTP đáng ngờ.",
+          immediate_steps: [{ action: "DO_NOT_SHARE_OTP", policy_ref: "security-risk-v7" }],
+          degradation_reason: "provider_timeout",
+          raw_html: "<img src=x onerror=alert(1)>",
+        },
       }));
     const api = new HttpTrustGuardAnalysisApi(
       { baseUrl: "https://api.example" },
@@ -166,6 +179,18 @@ describe("TrustGuard v4 HTTP client", () => {
       status: "completed",
       terminal: true,
       createdAt,
+      result: {
+        scopeDecision: "IN_SCOPE",
+        risk: "HIGH_RISK",
+        score: 88,
+        confidence: 0.91,
+        summary: "Có dấu hiệu yêu cầu OTP đáng ngờ.",
+        followUpQuestion: null,
+        boundaryMessage: null,
+        limitations: ["Một nguồn tra cứu bị giới hạn.", "x".repeat(1_000)],
+        recommendedActions: ["DO_NOT_SHARE_OTP"],
+        degraded: true,
+      },
     });
 
     expect(fetcher.mock.calls.map((call) => (call as [string, RequestInit])[0])).toEqual([

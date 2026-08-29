@@ -232,4 +232,14 @@ describe("FE5 case detail and resume", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("không có quyền mở lượt kiểm tra");
     expect(screen.getByRole("link", { name: "Bắt đầu lượt kiểm tra mới" })).toHaveAttribute("href", "/");
   });
+
+  it("uses the same safe handoff path for a deleted or expired case", async () => {
+    const analysisId = completedSecurityCase().analysis_id;
+    render(<CaseDetail analysisId={analysisId} api={api({
+      getAnalysis: vi.fn().mockRejectedValue(new ApiError("Not found", "NOT_FOUND", false, 404)),
+    })} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("không tồn tại hoặc không còn khả dụng");
+    expect(screen.getByRole("link", { name: "Bắt đầu lượt kiểm tra mới" })).toHaveAttribute("href", "/");
+  });
 });

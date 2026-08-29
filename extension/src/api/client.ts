@@ -6,6 +6,44 @@ import type { TrustGuardApiConfig } from "./config";
 export type SecurityConsent = components["schemas"]["SecurityConsentV4"];
 export type SecurityTriageCreateRequest = components["schemas"]["SecurityTriageCreateRequestV4"];
 export type AnalysisStatus = components["schemas"]["AnalysisStatus"];
+export type SecurityRisk = components["schemas"]["SecurityRiskV4"];
+export type ScopeDecision = components["schemas"]["ScopeDecisionV4"];
+export type RecommendedAction = components["schemas"]["SecurityRecommendedActionV4"];
+
+const riskSchema = z.enum([
+  "SAFE",
+  "LOW_RISK",
+  "SUSPICIOUS",
+  "HIGH_RISK",
+  "MALICIOUS",
+  "INSUFFICIENT_EVIDENCE",
+]);
+
+const scopeDecisionSchema = z.enum([
+  "IN_SCOPE",
+  "NEED_MORE_INFO",
+  "OUT_OF_SCOPE_GENERAL_FACT_CHECK",
+]);
+
+const recommendedActionSchema = z.enum([
+  "DO_NOT_OPEN_LINK",
+  "DO_NOT_SHARE_CREDENTIALS",
+  "DO_NOT_SHARE_OTP",
+  "DO_NOT_TRANSFER_MONEY",
+  "VERIFY_VIA_OFFICIAL_CHANNEL",
+  "CHANGE_PASSWORD_IF_ALREADY_SHARED",
+  "CONTACT_BANK_IF_ALREADY_PAID",
+  "REPORT_AND_BLOCK_SENDER",
+  "PROCEED_WITH_CAUTION",
+  "ALLOW_OPEN",
+  "CLOSE_PAGE_AND_DO_NOT_RETURN",
+  "CHANGE_PASSWORD_FROM_TRUSTED_DEVICE",
+  "REVOKE_ACTIVE_SESSIONS",
+  "CONTACT_BANK_OR_PAYMENT_PROVIDER",
+  "PRESERVE_MESSAGE_FOR_REPORTING",
+]);
+
+const boundedText = (maximum: number) => z.string().transform((value) => value.slice(0, maximum));
 
 const capabilitiesSchema = z.object({
   security_async_execution: z.literal(true).nullable().optional(),
@@ -70,6 +108,25 @@ const analysisSnapshotSchema = z.object({
   status: z.enum(["queued", "running", "completed", "failed"]),
   terminal: z.boolean(),
   created_at: z.iso.datetime({ offset: true }),
+  scope_decision: scopeDecisionSchema,
+  risk: riskSchema.nullable().optional(),
+  score: z.number().int().min(0).max(100).nullable().optional(),
+  confidence: z.number().min(0).max(1).nullable().optional(),
+  explanation: boundedText(2_000).nullable().optional(),
+  follow_up_question: boundedText(1_000).nullable().optional(),
+  boundary_message: boundedText(1_000).nullable().optional(),
+  limitations: z.array(boundedText(1_000)).max(100).optional(),
+  recommended_actions: z.array(recommendedActionSchema).max(20).optional(),
+  errors: z.array(z.object({
+    code: z.string().regex(/^[A-Z0-9_]+$/u),
+  }).passthrough()).max(100).optional(),
+  assistant_response: z.object({
+    summary: z.string().min(1).max(2_000),
+    immediate_steps: z.array(z.object({
+      action: recommendedActionSchema,
+    }).passthrough()).min(1).max(20),
+    degradation_reason: z.string().max(100).nullable().optional(),
+  }).passthrough().nullable().optional(),
 }).passthrough();
 
 export type SubmissionErrorCode =
@@ -133,6 +190,20 @@ export interface AnalysisSnapshot {
   status: AnalysisStatus;
   terminal: boolean;
   createdAt: string;
+  result: AnalysisFinalResult | null;
+}
+
+export interface AnalysisFinalResult {
+  scopeDecision: ScopeDecision;
+  risk: SecurityRisk | null;
+  score: number | null;
+  confidence: number | null;
+  summary: string | null;
+  followUpQuestion: string | null;
+  boundaryMessage: string | null;
+  limitations: string[];
+  recommendedActions: RecommendedAction[];
+  degraded: boolean;
 }
 
 export interface TrustGuardAnalysisApi {
@@ -327,6 +398,24 @@ export class HttpTrustGuardAnalysisApi implements TrustGuardAnalysisApi, TrustGu
       status: parsed.data.status,
       terminal: parsed.data.terminal,
       createdAt: parsed.data.created_at,
+      result: parsed.data.terminal ? {
+        scopeDecision: parsed.data.scope_decision,
+        risk: parsed.data.risk ?? null,
+        score: parsed.data.score ?? null,
+        confidence: parsed.data.confidence ?? null,
+        summary: parsed.data.assistant_response?.summary ?? parsed.data.explanation ?? null,
+        followUpQuestion: parsed.data.follow_up_question ?? null,
+        boundaryMessage: parsed.data.boundary_message ?? null,
+        limitations: (parsed.data.limitations ?? []).slice(0, 3),
+        recommendedActions: (
+          parsed.data.assistant_response?.immediate_steps.map((step) => step.action) ??
+          parsed.data.recommended_actions ??
+          []
+        ).slice(0, 5),
+        degraded:
+          (parsed.data.errors?.length ?? 0) > 0 ||
+          Boolean(parsed.data.assistant_response?.degradation_reason),
+      } : null,
     };
   }
 }

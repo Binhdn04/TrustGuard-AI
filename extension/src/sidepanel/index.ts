@@ -1,5 +1,6 @@
 import type { AuthPublicState } from "../auth/public-state";
 import type { AnalysisSnapshot } from "../api/client";
+import { finalResultView } from "../analysis/final-result";
 import {
   subscribeToAnalysisProgress,
   type AnalysisTransportState,
@@ -12,6 +13,7 @@ import {
   type CaptureEnvelope,
 } from "../contracts/internal";
 import { isTrustedExtensionSender } from "../runtime/sender";
+import { buildCaseUrl, getBundledWebConfig } from "../web/config";
 import "./styles.css";
 
 const status = document.querySelector<HTMLElement>("#runtime-status");
@@ -32,6 +34,21 @@ const analysisStateCopy = document.querySelector<HTMLElement>("#analysis-state-c
 const analysisId = document.querySelector<HTMLElement>("#analysis-id");
 const analysisProgress = document.querySelector<HTMLElement>("#analysis-progress");
 const analysisTransport = document.querySelector<HTMLElement>("#analysis-transport");
+const finalResult = document.querySelector<HTMLElement>("#final-result");
+const finalScope = document.querySelector<HTMLElement>("#final-scope");
+const finalTitle = document.querySelector<HTMLElement>("#final-result-title");
+const finalRisk = document.querySelector<HTMLElement>("#final-risk");
+const finalRiskLabel = document.querySelector<HTMLElement>("#final-risk-label");
+const finalScore = document.querySelector<HTMLElement>("#final-score");
+const finalConfidence = document.querySelector<HTMLElement>("#final-confidence");
+const finalSummary = document.querySelector<HTMLElement>("#final-summary");
+const finalActionsBlock = document.querySelector<HTMLElement>("#final-actions-block");
+const finalActions = document.querySelector<HTMLUListElement>("#final-actions");
+const finalLimitationsBlock = document.querySelector<HTMLElement>("#final-limitations-block");
+const finalLimitations = document.querySelector<HTMLUListElement>("#final-limitations");
+const finalDegraded = document.querySelector<HTMLElement>("#final-degraded");
+const openFullCase = document.querySelector<HTMLAnchorElement>("#open-full-case");
+const webConfig = getBundledWebConfig();
 
 let currentCapture: CaptureEnvelope | null = null;
 let currentAuthState: AuthPublicState = { status: "signed_out" };
@@ -114,6 +131,7 @@ function renderAuthState(state: AuthPublicState): void {
   if (state.status !== "signed_in" && state.status !== "authenticating") {
     activeSubscription?.stop();
     activeSubscription = null;
+    clearFinalResult();
   }
   if (authStateText === null || authButton === null) return;
   authButton.disabled = state.status === "authenticating" || state.status === "not_configured";
@@ -188,7 +206,30 @@ function renderProgress(progress: ProgressDisplay): void {
   if (analysisProgress !== null) analysisProgress.textContent = progress.label;
 }
 
+function renderTextList(element: HTMLUListElement | null, values: readonly string[]): void {
+  if (element === null) return;
+  element.replaceChildren(...values.map((value) => {
+    const item = document.createElement("li");
+    item.textContent = value;
+    return item;
+  }));
+}
+
+function clearFinalResult(): void {
+  if (finalResult !== null) {
+    finalResult.hidden = true;
+    delete finalResult.dataset.tone;
+  }
+  if (openFullCase !== null) {
+    openFullCase.hidden = true;
+    openFullCase.removeAttribute("href");
+  }
+  renderTextList(finalActions, []);
+  renderTextList(finalLimitations, []);
+}
+
 function renderTerminal(snapshot: AnalysisSnapshot): void {
+  const view = finalResultView(snapshot);
   if (analysisProgress !== null) {
     analysisProgress.textContent = snapshot.status === "completed"
       ? "Phân tích đã hoàn tất; kết quả cuối đã được xác nhận."
@@ -196,9 +237,38 @@ function renderTerminal(snapshot: AnalysisSnapshot): void {
   }
   if (analysisStateCopy !== null) {
     analysisStateCopy.textContent = snapshot.status === "completed"
-      ? "Kết quả authoritative đã sẵn sàng. Phần trình bày cảnh báo chi tiết được triển khai ở Phase 7."
+      ? "Kết quả authoritative đã sẵn sàng và được hiển thị bên dưới."
       : "Backend xác nhận lượt phân tích đã thất bại. Tiến trình không được dùng làm kết luận rủi ro.";
   }
+  if (
+    view === null ||
+    finalResult === null ||
+    finalScope === null ||
+    finalTitle === null ||
+    finalSummary === null
+  ) return;
+
+  finalResult.hidden = false;
+  finalResult.dataset.tone = view.tone;
+  finalScope.textContent = view.scopeLabel;
+  finalTitle.textContent = view.title;
+  finalSummary.textContent = view.summary;
+  if (finalRisk !== null) finalRisk.hidden = view.riskLabel === null;
+  if (finalRiskLabel !== null) finalRiskLabel.textContent = view.riskLabel ?? "";
+  if (finalScore !== null) finalScore.textContent = view.score === null ? "—" : `${view.score}/100`;
+  if (finalConfidence !== null) {
+    finalConfidence.textContent = view.confidencePercent === null ? "—" : `${view.confidencePercent}%`;
+  }
+  renderTextList(finalActions, view.actions);
+  renderTextList(finalLimitations, view.limitations);
+  if (finalActionsBlock !== null) finalActionsBlock.hidden = view.actions.length === 0;
+  if (finalLimitationsBlock !== null) finalLimitationsBlock.hidden = view.limitations.length === 0;
+  if (finalDegraded !== null) finalDegraded.hidden = !view.degraded;
+  if (openFullCase !== null && webConfig !== null) {
+    openFullCase.href = buildCaseUrl(webConfig, view.analysisId);
+    openFullCase.hidden = false;
+  }
+  finalTitle.focus({ preventScroll: true });
 }
 
 function startProgressTracking(analysis: ActiveAnalysisPublic): void {
@@ -227,6 +297,7 @@ function startProgressTracking(analysis: ActiveAnalysisPublic): void {
 
 function renderAnalysisState(analysis: ActiveAnalysisPublic | null): void {
   if (analysisState === null || analysisStateCopy === null || analysisId === null) return;
+  if (currentAuthState.status !== "signed_in") analysis = null;
   analysisState.hidden = analysis === null;
   if (analysis === null) {
     activeSubscription?.stop();
@@ -235,8 +306,10 @@ function renderAnalysisState(analysis: ActiveAnalysisPublic | null): void {
     if (analysisProgress !== null) analysisProgress.textContent = "";
     if (analysisTransport !== null) analysisTransport.textContent = "";
     analysisId.textContent = "";
+    clearFinalResult();
     return;
   }
+  if (activeSubscription?.analysisId !== analysis.analysisId) clearFinalResult();
   const mode = analysis.executionMode === "async" ? "xử lý nền" : "xử lý trực tiếp";
   const state = analysis.status === "completed" ? "đã hoàn tất" : "đã được tiếp nhận";
   analysisStateCopy.textContent = `Yêu cầu ${mode} ${state}. Progress không được dùng để suy ra verdict.`;

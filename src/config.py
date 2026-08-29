@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from ipaddress import ip_network
 from typing import Literal
@@ -5,6 +6,8 @@ from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_CHROME_EXTENSION_ORIGIN = re.compile(r"chrome-extension://[a-p]{32}")
 
 
 class Settings(BaseSettings):
@@ -21,6 +24,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
+    chrome_extension_origins: str = ""
 
     # LLM
     openai_api_key: str = ""
@@ -199,6 +203,48 @@ class Settings(BaseSettings):
                 raise ValueError("TRUSTED_PROXY_IPS must contain comma-separated IP addresses or CIDRs") from exc
         return ",".join(entries)
 
+    @field_validator("cors_origins")
+    @classmethod
+    def validate_cors_origins(cls, value: str) -> str:
+        origins = [entry.strip().rstrip("/") for entry in value.split(",") if entry.strip()]
+        if not origins:
+            raise ValueError("CORS_ORIGINS must contain at least one exact web origin")
+        for origin in origins:
+            parsed = urlparse(origin)
+            if (
+                origin == "*"
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.params
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("CORS_ORIGINS must contain comma-separated exact HTTP(S) origins")
+        return ",".join(dict.fromkeys(origins))
+
+    @field_validator("chrome_extension_origins")
+    @classmethod
+    def validate_chrome_extension_origins(cls, value: str) -> str:
+        origins = [entry.strip().rstrip("/") for entry in value.split(",") if entry.strip()]
+        for origin in origins:
+            if _CHROME_EXTENSION_ORIGIN.fullmatch(origin) is None:
+                raise ValueError(
+                    "CHROME_EXTENSION_ORIGINS must contain exact chrome-extension://<32-character-id> origins"
+                )
+        return ",".join(dict.fromkeys(origins))
+
+    def browser_origins(self) -> list[str]:
+        return [
+            *self.cors_origins.split(","),
+            *(origin for origin in self.chrome_extension_origins.split(",") if origin),
+        ]
+
+    def browser_origin_allowed(self, origin: str | None) -> bool:
+        return origin is not None and origin in self.browser_origins()
+
     @staticmethod
     def _placeholder_or_short_secret(value: str) -> bool:
         lowered = value.strip().lower()
@@ -220,7 +266,7 @@ class Settings(BaseSettings):
                 raise ValueError("OIDC_ISSUER must use HTTPS in production")
             if self._placeholder_or_short_secret(self.database_encryption_key):
                 raise ValueError("DATABASE_ENCRYPTION_KEY must be a non-placeholder secret of at least 32 characters")
-            origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+            origins = self.cors_origins.split(",")
             if not origins or any(origin == "*" or urlparse(origin).scheme != "https" for origin in origins):
                 raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins in production")
             if self.security_release_profile == "cutover":

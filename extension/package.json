@@ -15,7 +15,9 @@
     "test": "vitest run",
     "check:manifest": "node scripts/check-manifest.mjs",
     "check:bundle": "node scripts/check-bundle.mjs",
-    "check": "npm run lint && npm run typecheck && npm run contracts:check && npm test && npm run build"
+    "check:security": "node scripts/check-security.mjs",
+    "check": "npm run lint && npm run typecheck && npm run contracts:check && npm test && npm run build && npm run check:security",
+    "audit:security": "npm run check && npm audit --audit-level=high"
   },
   "dependencies": {
     "zod": "4.5.2"

@@ -16,6 +16,8 @@ describe("trusted internal sender boundary", () => {
       ),
     ).toBe(false);
     expect(isTrustedSidePanelSender({ id: "attacker", url: sidePanelUrl }, runtimeId, sidePanelUrl)).toBe(false);
+    expect(isTrustedSidePanelSender({ id: runtimeId, url: `${sidePanelUrl}?spoof=1` }, runtimeId, sidePanelUrl)).toBe(false);
+    expect(isTrustedSidePanelSender({ id: runtimeId }, runtimeId, sidePanelUrl)).toBe(false);
   });
 
   it("rejects messages that do not originate from this extension", () => {

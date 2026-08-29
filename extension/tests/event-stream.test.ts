@@ -74,7 +74,7 @@ describe("Phase 6 event transport", () => {
     const commitObservation = vi.fn().mockResolvedValue(undefined);
     const api: ProgressTransportApi = {
       getEvents: vi.fn().mockResolvedValue({ events: [progressEvent(1)], nextCursor: "MQ" }),
-      getSnapshot: vi.fn().mockResolvedValue({ analysisId, status: "running", terminal: false, createdAt }),
+      getSnapshot: vi.fn().mockResolvedValue({ analysisId, status: "running", terminal: false, createdAt, result: null }),
       issueTicket,
       commitObservation,
     };
@@ -109,7 +109,7 @@ describe("Phase 6 event transport", () => {
     const api: ProgressTransportApi = {
       issueTicket,
       getEvents,
-      getSnapshot: vi.fn().mockResolvedValue({ analysisId, status: "running", terminal: false, createdAt }),
+      getSnapshot: vi.fn().mockResolvedValue({ analysisId, status: "running", terminal: false, createdAt, result: null }),
       commitObservation: vi.fn(),
     };
     const onTransportChange = vi.fn();
@@ -132,9 +132,26 @@ describe("Phase 6 event transport", () => {
 
   it("ignores malformed notifications and fetches the authoritative final snapshot", async () => {
     const socket = new FakeWebSocket();
-    const terminal = { analysisId, status: "completed" as const, terminal: true, createdAt };
+    const terminal = {
+      analysisId,
+      status: "completed" as const,
+      terminal: true,
+      createdAt,
+      result: {
+        scopeDecision: "IN_SCOPE" as const,
+        risk: "SUSPICIOUS" as const,
+        score: 60,
+        confidence: 0.7,
+        summary: "Cần thận trọng.",
+        followUpQuestion: null,
+        boundaryMessage: null,
+        limitations: [],
+        recommendedActions: ["PROCEED_WITH_CAUTION" as const],
+        degraded: false,
+      },
+    };
     const getSnapshot = vi.fn()
-      .mockResolvedValueOnce({ analysisId, status: "running", terminal: false, createdAt })
+      .mockResolvedValueOnce({ analysisId, status: "running", terminal: false, createdAt, result: null })
       .mockResolvedValueOnce(terminal);
     const issueTicket = vi.fn().mockResolvedValue({ url: "ws://localhost:8000/stream?ticket=one" });
     const api: ProgressTransportApi = {

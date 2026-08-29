@@ -63,6 +63,10 @@ export class ActiveAnalysisStore {
     return parsed.success ? parsed.data : null;
   }
 
+  async clear(): Promise<void> {
+    await this.storage.remove(ACTIVE_ANALYSIS_STORAGE_KEY);
+  }
+
   async observe(
     analysisId: string,
     observation: {

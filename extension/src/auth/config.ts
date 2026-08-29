@@ -28,8 +28,8 @@ function parseLocalHttpsUrl(value: string, label: string): URL {
   if (url.protocol !== "https:" && !(localhost && url.protocol === "http:")) {
     throw new Error(`${label} must use HTTPS except on localhost.`);
   }
-  if (url.username || url.password || url.hash) {
-    throw new Error(`${label} cannot contain credentials or a fragment.`);
+  if (url.hostname.includes("*") || url.username || url.password || url.search || url.hash) {
+    throw new Error(`${label} cannot contain a wildcard, credentials, query or fragment.`);
   }
   return url;
 }

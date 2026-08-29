@@ -95,7 +95,13 @@ function exactRedirect(value: string): string {
   } catch {
     throw new AuthFlowError("redirect_mismatch");
   }
-  if (url.protocol !== "https:" || !url.hostname.endsWith(".chromiumapp.org") || url.hash.length > 0) {
+  if (
+    url.protocol !== "https:" ||
+    !url.hostname.endsWith(".chromiumapp.org") ||
+    url.username.length > 0 ||
+    url.password.length > 0 ||
+    url.hash.length > 0
+  ) {
     throw new AuthFlowError("redirect_mismatch");
   }
   return `${url.origin}${url.pathname}`;
@@ -209,8 +215,11 @@ export class OidcAuthManager {
         throw new AuthFlowError("redirect_mismatch");
       }
       if (callback.searchParams.has("error")) throw new AuthFlowError("canceled");
-      const code = callback.searchParams.get("code");
-      const state = callback.searchParams.get("state");
+      const codes = callback.searchParams.getAll("code");
+      const states = callback.searchParams.getAll("state");
+      if (codes.length !== 1 || states.length !== 1) throw new AuthFlowError("state_mismatch");
+      const code = codes[0];
+      const state = states[0];
       if (!code || state !== transaction.state) throw new AuthFlowError("state_mismatch");
       if (this.now() - transaction.createdAt > AUTH_TRANSACTION_TTL_MS) {
         throw new AuthFlowError("expired");

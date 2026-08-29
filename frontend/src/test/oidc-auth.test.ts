@@ -55,6 +55,16 @@ describe("OIDC Authorization Code + PKCE", () => {
     expect(transaction.codeVerifier).not.toBe(authorizationUrl.searchParams.get("code_challenge"));
   });
 
+  it("preserves a validated case deep link through the OIDC callback transaction", async () => {
+    const casePath = "/cases/4d5c2bc5-20ab-4ec4-8c7a-2c307d24c64e";
+    await createOidcAuthorizationRequest(casePath);
+    const transaction = JSON.parse(
+      window.sessionStorage.getItem("ai_protect_oidc_transaction") ?? "{}",
+    ) as Record<string, unknown>;
+
+    expect(transaction.returnTo).toBe(casePath);
+  });
+
   it("opens Universal Login in signup mode without changing the PKCE flow", async () => {
     const authorizationUrl = new URL(
       await createOidcAuthorizationRequest("/", { screenHint: "signup" }),

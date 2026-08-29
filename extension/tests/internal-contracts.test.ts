@@ -143,6 +143,38 @@ describe("internal messages", () => {
     })).toThrow();
   });
 
+  it("allows only the bounded Phase 7 final result projection", () => {
+    const snapshot = {
+      type: "analysis.snapshot",
+      analysis: {
+        analysisId: baseCapture.captureId,
+        status: "completed",
+        terminal: true,
+        createdAt: baseCapture.createdAt,
+        result: {
+          scopeDecision: "IN_SCOPE",
+          risk: "SUSPICIOUS",
+          score: 62,
+          confidence: 0.71,
+          summary: "Có tín hiệu cần thận trọng.",
+          followUpQuestion: null,
+          boundaryMessage: null,
+          limitations: [],
+          recommendedActions: ["PROCEED_WITH_CAUTION"],
+          degraded: false,
+        },
+      },
+    };
+    expect(internalMessageSchema.parse(snapshot)).toEqual(snapshot);
+    expect(() => internalMessageSchema.parse({
+      ...snapshot,
+      analysis: {
+        ...snapshot.analysis,
+        result: { ...snapshot.analysis.result, rawHtml: "<script>private()</script>" },
+      },
+    })).toThrow();
+  });
+
   it("accepts only allow-listed public submission failures", () => {
     expect(internalMessageSchema.parse({
       type: "analysis.error",

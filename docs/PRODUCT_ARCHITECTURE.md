@@ -42,7 +42,7 @@ flowchart TD
     UI[Next.js workspace] --> API[FastAPI /api/v4]
     Page[Chrome page user gesture] --> Extension[MV3 capture + Side Panel]
     Extension --> ExtAuth[OIDC public client + PKCE]
-    Extension -. Phase 5 API adapter .-> API
+    Extension -. Phase 5 submit + Phase 6 progress adapter .-> API
     API --> Auth[Demo auth local hoặc OIDC/JWKS]
     ExtAuth -. bearer validated from Phase 5 .-> Auth
     Auth --> Scope[Scope + structured context]
@@ -64,10 +64,23 @@ flowchart TD
     Store --> Admin[HITL + immutable audit]
 ```
 
-Chrome Extension đang ở Phase 3 local: capture chỉ nhận selection/link do user chủ động chọn; auth code exchange,
+Chrome Extension đang ở Phase 8 local automated-hardening: capture chỉ nhận selection/link do user chủ động chọn; auth code exchange,
 refresh và revoke nằm trong background service worker, còn transaction/token chỉ ở trusted `storage.session`. Side Panel
-chỉ nhận auth status tối thiểu. Unconfigured build không có network origin; local OIDC build chỉ cho exact issuer/token
-origin. Extension chưa gọi `/api/v4` cho đến Phase 5 và không thay đổi backend pipeline/risk authority.
+chỉ gửi `captureId + request-scoped consent` và nhận auth/analysis status tối thiểu. Background map capture value trực tiếp
+vào `/api/v4`, gọi capability để chọn inline/async, giữ bearer riêng và xóa raw capture sau 200/202. Build chỉ mở exact
+API/OIDC origins. Backend tách exact web origins khỏi exact `chrome-extension://<id>` origins và kiểm tra WebSocket
+`Origin` trước khi consume single-use ticket; ticket, owner check và JWT/RBAC vẫn giữ authorization authority. Extension
+không thêm client/source signal vào request và không thay đổi pipeline/risk authority. Side Panel mở ticketed WebSocket
+trực tiếp; mỗi reconnect dùng ticket mới. Khi stream lỗi, background owner-poll event bằng bearer và cursor đã lưu trong
+`storage.session`. Event được thu nhỏ về ID/sequence/status/stage/state; backend message, evidence và risk hint không được
+render. Terminal signal luôn dẫn tới `GET /api/v4/analyses/{analysis_id}` authoritative trước khi dừng transport.
+Final adapter chỉ giữ bounded scope/risk/summary/action/limitation allow-list và Side Panel render bằng text nodes. CTA full
+case được tạo duy nhất từ exact `VITE_TRUSTGUARD_WEB_URL` cùng UUID đã validate; không mang raw capture hoặc arbitrary query.
+Web OIDC transaction giữ local `/cases/{analysisId}` return target, còn API owner scope quyết định tài khoản nào được đọc case.
+MVP khai báo `incognito: not_allowed`, không có persistent content script và chỉ dùng trusted in-memory
+`storage.session`; source/build gate cấm persistent Web/extension storage, runtime console logging, remote executable
+code, unsafe DOM HTML sinks, externally-connectable wildcard và credential/token artifact. Manual Chrome lifecycle,
+runtime privacy inspection và local end-to-end vẫn là Phase 8 exit gate trước Railway.
 
 Inline là mặc định. Async chỉ được quảng bá khi PostgreSQL, durable worker và configuration đều ready.
 PostgreSQL là source of truth; Redis phục vụ rate limit, ticket ngắn hạn và wake-up notification.

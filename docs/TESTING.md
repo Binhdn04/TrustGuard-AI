@@ -26,15 +26,19 @@ npm run check
 npm audit --audit-level=high
 ```
 
-Verification gần nhất của workspace ngày 2026-08-29: Ruff đạt; backend mặc định `751 passed, 6 deselected`,
-line coverage `69.93%` vượt gate `68%`; Alembic có một head `0022_action_assurance_metadata`. Coverage run còn
+Verification gần nhất của workspace ngày 2026-08-29: Ruff đạt; backend mặc định `775 passed, 6 deselected`,
+line coverage `70.07%` vượt gate `68%`; Alembic có một head `0022_action_assurance_metadata`. Coverage run còn
 phát 5 `ResourceWarning` về SQLite connection chưa đóng và 1 pytest cache warning; warning không làm fail gate
-nhưng chưa được coi là sạch. Extension đạt lint, typecheck, OpenAPI/type drift check, 53 unit tests,
-deterministic build/manifest/bundle checks; `npm audit --audit-level=high` không phát hiện vulnerability.
+nhưng chưa được coi là sạch. Extension Phase 8 đạt lint, typecheck, OpenAPI/type drift check, `112 tests`,
+deterministic build/manifest/bundle/security checks; `npm audit --offline --audit-level=high` không phát hiện vulnerability
+trong advisory cache local và `npm ls --all` xác nhận dependency tree hợp lệ. Cần chạy lại online audit trước merge/release
+khi registry khả dụng. Backend exact extension-origin/product-boundary regression đạt Ruff và `30 tests`.
 Năm PostgreSQL integration case được tách sang job CI riêng, job này dựng PostgreSQL 16 disposable, chạy
 `alembic upgrade head`,
 rồi mới chạy marker `integration`. Máy local của snapshot này không có Docker daemon nên chưa tạo được bằng chứng
-PostgreSQL thật tại local; CI integration phải pass trước merge. Frontend không được chạy lại trong thay đổi extension này.
+PostgreSQL thật tại local; CI integration phải pass trước merge. Frontend Phase 7 đạt lint, typecheck, v4 cutover và
+`131 tests`; runtime frontend không đổi, chỉ bổ sung characterization cho OIDC case deep-link return target và
+deleted/expired case presentation.
 
 Evaluation:
 
