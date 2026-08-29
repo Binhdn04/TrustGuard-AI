@@ -260,10 +260,7 @@ async function requestTokens(
     throw new Error("OIDC token endpoint trả về dữ liệu không hợp lệ.");
   }
   if (!response.ok) {
-    const description = typeof payload.error_description === "string"
-      ? payload.error_description
-      : "Identity Provider từ chối yêu cầu token.";
-    throw new Error(description);
+    throw new Error("Không thể hoàn tất đăng nhập. Vui lòng thử lại hoặc liên hệ quản trị viên.");
   }
   return payload;
 }
@@ -287,7 +284,7 @@ export async function completeOidcAuthorization(
   if (!config) throw new Error("OIDC chưa được cấu hình cho frontend.");
   const query = new URLSearchParams(search);
   const providerError = query.get("error_description") ?? query.get("error");
-  if (providerError) throw new Error(providerError);
+  if (providerError) throw new Error("Đăng nhập bị từ chối hoặc đã hết hạn. Vui lòng thử lại.");
   const code = query.get("code");
   const state = query.get("state");
   if (!code || !state) throw new Error("OIDC callback thiếu code hoặc state.");

@@ -61,9 +61,9 @@ function messageForError(error: unknown): string {
       return `Dữ liệu gửi lên không tương thích ở trường: ${[...new Set(fields)].join(", ")}.`;
     }
   }
-  return error instanceof Error
+  return error instanceof ApiError
     ? error.message
-    : "Không thể kết nối tới dịch vụ Security Triage.";
+    : "Không thể hoàn tất đánh giá. Vui lòng thử lại.";
 }
 
 function mergeLifecycleEvents(

@@ -36,7 +36,7 @@ function unavailableMessage(error: unknown): string | null {
 function caseLoadMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 403) return "Bạn không có quyền mở lượt kiểm tra này.";
   if (error instanceof ApiError && error.status === 404) return "Lượt kiểm tra không tồn tại hoặc không còn khả dụng.";
-  return error instanceof Error ? error.message : "Không thể tải lượt kiểm tra.";
+  return error instanceof ApiError ? error.message : "Không thể tải lượt kiểm tra.";
 }
 
 export function CaseDetail({

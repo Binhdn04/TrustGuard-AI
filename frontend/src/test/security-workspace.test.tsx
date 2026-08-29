@@ -446,7 +446,7 @@ describe("Security Chat workspace", () => {
     await waitFor(() => expect(api.createAppeal).toHaveBeenCalled());
   });
 
-  it("offers a recoverable retry without duplicating the failed turn", async () => {
+  it("offers a recoverable retry without exposing an unexpected error", async () => {
     const create = vi.fn()
       .mockRejectedValueOnce(new Error("Mất kết nối tạm thời"))
       .mockResolvedValueOnce(response());
@@ -455,7 +455,8 @@ describe("Security Chat workspace", () => {
     setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Kiểm tra yêu cầu chuyển tiền");
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Mất kết nối tạm thời");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể hoàn tất đánh giá. Vui lòng thử lại.");
+    expect(screen.queryByText("Mất kết nối tạm thời")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Thử lại trường hợp này" }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));

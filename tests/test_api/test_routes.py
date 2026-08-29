@@ -33,6 +33,23 @@ async def test_ip_rate_limit_runs_before_authentication(client, monkeypatch) -> 
     assert response.headers["x-request-id"]
 
 
+@pytest.mark.asyncio
+async def test_validation_error_does_not_echo_submitted_content(client) -> None:
+    response = await client.post(
+        "/api/v4/analyses",
+        headers={"Authorization": "Bearer dev-user-token"},
+        json={"message": "private-message-should-not-be-returned", "unexpected": "private-token"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()["error"]
+    assert body["code"] == "VALIDATION_ERROR"
+    assert "private-message-should-not-be-returned" not in response.text
+    assert "private-token" not in response.text
+    assert body["details"]["errors"]
+    assert set(body["details"]["errors"][0]) <= {"loc", "type"}
+
+
 def test_openapi_contains_only_v4_product_routes() -> None:
     from src.main import app
 
