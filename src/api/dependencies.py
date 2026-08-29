@@ -88,17 +88,10 @@ def get_official_verification_rollout_stage() -> OfficialVerificationRolloutStag
     if mode is OfficialVerificationMode.OFF:
         return None
     repository = get_security_trust_repository()
-    # Discovery evidence may create an admin-review proposal, but it never
-    # activates a source policy.  Bind the durable store before constructing
-    # the coordinator so runtime bootstrap evidence is reconciled with the
-    # same review queue used by source-policy administration.
-    discovery_store = repository
-    if not hasattr(discovery_store, "observe_source_discovery"):
-        # SQLite's trust repository stores identity candidates but not the
-        # source-policy queue; its local Wave2 fallback owns that queue.
-        discovery_store = get_wave2_service().repository
-    if hasattr(discovery_store, "observe_source_discovery"):
-        _source_registry.bind_discovery_store(discovery_store)
+    # Migration 0018 retired the v2/v3 ``source_discoveries`` persistence.
+    # Official-link verification may use reviewed source policies, but it
+    # must not re-enable that legacy general fact-check discovery queue.
+    # Leaving the registry unbound makes proposal observation a safe no-op.
     providers = build_official_verification_providers(settings)
     fetcher = GuardedHtmlFetcher(timeout=settings.provider_timeout_seconds)
     coordinator = OfficialLinkVerificationCoordinator(
