@@ -28,16 +28,16 @@ async def test_wp1_to_wp4_dependencies_share_one_turn_budget() -> None:
     assert responses._runtime is runtime  # noqa: SLF001 - dependency identity is the gate under test
 
 
-def test_async_capability_is_truthful_for_postgres_worker_only() -> None:
+def test_async_capability_is_truthful_for_postgres_with_a_separate_worker() -> None:
     sqlite = Settings(security_async_execution_enabled=True, _env_file=None)
-    postgres = Settings(
+    api_with_remote_worker = Settings(
         security_async_execution_enabled=True,
         database_url="postgresql://test:test@localhost/test",
-        run_durable_worker=True,
+        run_durable_worker=False,
         _env_file=None,
     )
     assert sqlite.enabled_security_capabilities()["security_async_execution"] is False
-    assert postgres.enabled_security_capabilities()["security_async_execution"] is True
+    assert api_with_remote_worker.enabled_security_capabilities()["security_async_execution"] is True
 
 
 def test_wp5_migration_uses_isolated_encrypted_durable_tables() -> None:
