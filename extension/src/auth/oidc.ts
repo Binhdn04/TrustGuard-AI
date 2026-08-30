@@ -138,7 +138,10 @@ export class OidcAuthManager {
   private readonly codeChallenge: (verifier: string) => Promise<string>;
 
   constructor(private readonly dependencies: OidcAuthDependencies) {
-    this.fetcher = dependencies.fetcher ?? fetch;
+    // `fetch` is a Web API method whose receiver must remain the worker global.
+    // Calling a stored native reference as `this.fetcher(...)` binds it to this
+    // manager instead, which Chrome rejects with "Illegal invocation".
+    this.fetcher = dependencies.fetcher ?? ((input, init) => globalThis.fetch(input, init));
     this.now = dependencies.now ?? Date.now;
     this.randomValue = dependencies.randomValue ?? secureRandomValue;
     this.codeChallenge = dependencies.codeChallenge ?? pkceChallenge;
