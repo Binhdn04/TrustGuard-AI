@@ -76,6 +76,13 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
   sidebar hoặc navigation di động.
 - Whitelist cho phép admin tạo/vô hiệu hóa trực tiếp. Blacklist cho phép tạo/vô hiệu hóa proposal trên UI,
   nhưng thay đổi chỉ có hiệu lực sau một quyết định review rõ ràng và được ghi immutable audit.
+- Form thêm whitelist thủ công chỉ yêu cầu target/phạm vi và căn cứ; backend tự ghi policy, thời gian và reviewer.
+  Blacklist thủ công yêu cầu thêm URL nguồn xác minh, không cho nhập provenance/evidence ID kỹ thuật; backend chỉ
+  tự ghi provenance, còn evidence thật từ report/analysis hoặc URL nguồn đã làm sạch được giữ nguyên.
+- Form thêm thương hiệu chính chỉ yêu cầu tên, website/domain và URL nguồn xác minh; backend tự ghi policy,
+  thời điểm hiệu lực và reviewer. Tên khác, domain bổ sung, liên hệ và thời hạn nằm trong phần nâng cao.
+- Định danh URL/domain bổ sung được tạo hoặc nhập thủ công tại Duyệt định danh dưới dạng candidate `discovered`;
+  chỉ quyết định duyệt mới thêm nó vào phiên bản thương hiệu. Social/URL cụ thể không mở rộng tin cậy cho toàn domain.
 - Khi report đề xuất blacklist, quyết định report chỉ tạo action `pending_review`; admin phải xác nhận hoặc từ chối
   action liên kết. Thất bại/từ chối giữ `admin_action_id` để truy vết và đặt remediation của report là `failed`.
 - Brand, identity candidate, Security Memory, campaign, intelligence, Observatory và audit độc lập là các khả năng

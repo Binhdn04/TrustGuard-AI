@@ -20,7 +20,7 @@ export function MobileNavigation({
   return (
     <nav
       aria-label="Điều hướng di động"
-      className="fixed inset-x-3 bottom-3 z-40 flex items-center gap-1 overflow-x-auto rounded-2xl border border-border/80 bg-card/95 p-1.5 shadow-[0_18px_55px_rgba(15,23,42,0.22)] backdrop-blur-xl lg:hidden"
+      className="fixed inset-x-3 bottom-3 z-40 flex items-center gap-1 rounded-2xl border border-border/80 bg-card/95 p-1.5 shadow-[0_18px_55px_rgba(15,23,42,0.22)] backdrop-blur-xl lg:hidden"
     >
       {items.map((item) => {
         const Icon = item.icon;
@@ -30,10 +30,10 @@ export function MobileNavigation({
             <span
               key={item.label}
               aria-disabled="true"
-              className="flex min-w-[68px] flex-1 flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10px] font-semibold text-muted-foreground/50"
+              className="flex min-w-0 flex-1 flex-col items-center gap-1 overflow-hidden rounded-xl px-1 py-2 text-[10px] font-semibold leading-4 text-muted-foreground/50 sm:px-2 sm:text-[11px]"
             >
               <Icon className="size-[18px]" aria-hidden="true" />
-              {item.label}
+              <span className="w-full truncate whitespace-nowrap text-center">{item.mobileLabel ?? item.label}</span>
             </span>
           );
         }
@@ -41,14 +41,15 @@ export function MobileNavigation({
           <Link
             key={item.label}
             href={item.href}
+            aria-label={item.label}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex min-w-[68px] flex-1 flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "flex min-w-0 flex-1 flex-col items-center gap-1 overflow-hidden rounded-xl px-1 py-2 text-[10px] font-semibold leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-2 sm:text-[11px]",
               active ? "bg-primary/12 text-primary" : "text-muted-foreground",
             )}
           >
             <Icon className="size-[18px]" aria-hidden="true" />
-            {item.label}
+            <span className="w-full truncate whitespace-nowrap text-center">{item.mobileLabel ?? item.label}</span>
           </Link>
         );
       })}

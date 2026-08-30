@@ -334,6 +334,13 @@ export interface IdentityCandidateDecisionRequestV4 {
   action: IdentityCandidateDecisionActionV4; note: string; target_brand_id?: string | null;
   relationship?: IdentityRelationshipV4 | null; identity_type?: OfficialIdentityTypeV4 | null;
 }
+export interface ManualIdentityCandidateCreateRequestV4 {
+  entity_name: string;
+  identity_value: string;
+  identity_type: OfficialIdentityTypeV4;
+  relationship: IdentityRelationshipV4;
+  source_url: string;
+}
 export type IdentityCandidatePageV4 = SecurityPageV4<IdentityCandidateV4>;
 
 export interface BrandCreateRequestV4 {
@@ -344,7 +351,7 @@ export interface BrandCreateRequestV4 {
   official_contacts?: string[];
   provenance: string;
   policy_version?: string;
-  effective_from: string;
+  effective_from?: string;
   effective_until?: string | null;
 }
 
@@ -372,7 +379,7 @@ export interface WhitelistCreateRequestV4 {
   scope: WhitelistScopeV4;
   provenance: string;
   policy_version?: string;
-  effective_from: string;
+  effective_from?: string;
   effective_until?: string | null;
 }
 
@@ -395,15 +402,15 @@ export interface SecurityBlacklistProposalRequestV4 {
   canonical_domain: string;
   reason: string;
   evidence_refs: string[];
-  provenance: string;
+  provenance?: string | null;
   source_analysis_id?: string | null;
   source_report_id?: string | null;
 }
 
 export interface SecurityBlacklistDisableRequestV4 {
   reason: string;
-  evidence_refs: string[];
-  provenance: string;
+  evidence_refs?: string[];
+  provenance?: string | null;
 }
 
 export interface SecurityBlacklistRecordV4 {

@@ -16,7 +16,7 @@ async def test_security_blacklist_v4_admin_flow_is_proposal_then_review(client) 
     payload = {
         "canonical_domain": "malicious.example",
         "reason": "Reviewed phishing evidence.",
-        "evidence_refs": ["evidence:api-reviewed"],
+        "evidence_refs": ["https://security.example/advisories/malicious"],
         "provenance": "api-test",
     }
     try:
@@ -41,4 +41,41 @@ async def test_security_blacklist_v4_admin_flow_is_proposal_then_review(client) 
     assert decision.status_code == 200
     assert decision.json()["status"] == "executed"
     assert detail.json()["lifecycle"] == "active"
-    assert audit.json()[0]["evidence_refs"] == ["evidence:api-reviewed"]
+    assert audit.json()[0]["evidence_refs"] == ["https://security.example/advisories/malicious"]
+
+
+@pytest.mark.asyncio
+async def test_security_blacklist_v4_manual_flow_requires_real_source_input(client) -> None:
+    service = SecurityBlacklistAdminService(Wave2PlatformService(MemoryWave2Repository()))
+    app.dependency_overrides[get_security_blacklist_admin_service] = lambda: service
+    try:
+        missing_source = await client.post(
+            "/api/v4/admin/blacklist/proposals",
+            headers=ADMIN_HEADERS,
+            json={
+                "canonical_domain": "manual-api.example",
+                "reason": "Admin confirmed a credential harvesting page.",
+            },
+        )
+        proposal = await client.post(
+            "/api/v4/admin/blacklist/proposals",
+            headers=ADMIN_HEADERS,
+            json={
+                "canonical_domain": "manual-api.example",
+                "reason": "Admin confirmed a credential harvesting page.",
+                "evidence_refs": ["https://security.example/advisory?token=secret#finding"],
+            },
+        )
+        assert proposal.status_code == 201
+        decision = await client.post(
+            f"/api/v4/admin/blacklist/actions/{proposal.json()['action_id']}/decision",
+            headers=ADMIN_HEADERS,
+            json={"decision": "approved", "note": "Human reviewer confirmed the block."},
+        )
+    finally:
+        app.dependency_overrides.pop(get_security_blacklist_admin_service, None)
+
+    assert missing_source.status_code == 422
+    assert decision.status_code == 200
+    assert decision.json()["record"]["provenance"] == "admin-manual:demo-security-admin"
+    assert decision.json()["record"]["evidence_refs"] == ["https://security.example/advisory"]

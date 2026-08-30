@@ -10,6 +10,7 @@ type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
 export interface WorkspaceNavItem {
   label: string;
+  mobileLabel?: string;
   description: string;
   href?: string;
   icon: Icon;
@@ -39,8 +40,8 @@ export function workspaceNavigation(
   if (role !== "security_admin") return groups;
 
   const adminItems: WorkspaceNavItem[] = [
-    { label: "Duyệt bảo mật", description: "Báo cáo và khiếu nại", href: "/admin/review", icon: BadgeCheck },
-    { label: "Tin cậy & chặn", description: "Ngoại lệ và domain chặn", href: "/admin/trust", icon: ShieldCheck },
+    { label: "Duyệt bảo mật", mobileLabel: "Duyệt", description: "Báo cáo và khiếu nại", href: "/admin/review", icon: BadgeCheck },
+    { label: "Tin cậy & chặn", mobileLabel: "Tin cậy", description: "Ngoại lệ và domain chặn", href: "/admin/trust", icon: ShieldCheck },
   ];
   groups.push({ label: "Quản trị", items: adminItems });
   return groups;

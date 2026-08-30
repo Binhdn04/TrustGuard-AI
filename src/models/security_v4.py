@@ -4,6 +4,7 @@ import ipaddress
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -762,6 +763,29 @@ class IdentityCandidateDecisionRequestV4(SecurityContractModel):
     identity_type: OfficialIdentityTypeV4 | None = None
 
 
+class ManualIdentityCandidateCreateRequestV4(SecurityContractModel):
+    """A human-submitted identity proposal; it remains review-gated."""
+
+    entity_name: str = Field(min_length=1, max_length=200)
+    identity_value: str = Field(min_length=1, max_length=2048)
+    identity_type: OfficialIdentityTypeV4
+    relationship: IdentityRelationshipV4
+    source_url: str = Field(min_length=1, max_length=2048)
+
+    @field_validator("source_url")
+    @classmethod
+    def normalize_source_url(cls, value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValueError("source_url must be an HTTP(S) URL without credentials")
+        return urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path or "/", "", ""))
+
+
 class IdentityCandidateDecisionV4(SecurityContractModel):
     decision_id: UUID = Field(default_factory=uuid4)
     candidate_id: UUID
@@ -801,7 +825,10 @@ class BrandCreateRequestV4(SecurityContractModel):
     official_contacts: list[str] = Field(default_factory=list, max_length=50)
     provenance: str = Field(min_length=1, max_length=1000)
     policy_version: str = Field(default="brand-registry-v1", pattern=r"^[a-z0-9._-]+$")
-    effective_from: datetime
+    # A newly approved registry entry becomes active immediately unless a
+    # caller intentionally supplies a future effective time.  The reviewer,
+    # policy version and normalization remain server-owned.
+    effective_from: datetime = Field(default_factory=lambda: datetime.now(UTC))
     effective_until: datetime | None = None
 
     @model_validator(mode="after")
@@ -837,7 +864,7 @@ class WhitelistCreateRequestV4(SecurityContractModel):
     scope: WhitelistScopeV4
     provenance: str = Field(min_length=1, max_length=1000)
     policy_version: str = Field(default="whitelist-v1", pattern=r"^[a-z0-9._-]+$")
-    effective_from: datetime
+    effective_from: datetime = Field(default_factory=lambda: datetime.now(UTC))
     effective_until: datetime | None = None
 
     @model_validator(mode="after")
@@ -874,7 +901,7 @@ class SecurityBlacklistProposalRequestV4(SecurityContractModel):
     canonical_domain: str = Field(min_length=1, max_length=253)
     reason: str = Field(min_length=1, max_length=5000)
     evidence_refs: list[str] = Field(min_length=1, max_length=100)
-    provenance: str = Field(min_length=1, max_length=1000)
+    provenance: str | None = Field(default=None, max_length=1000)
     source_analysis_id: UUID | None = None
     source_report_id: UUID | None = None
 
@@ -882,6 +909,34 @@ class SecurityBlacklistProposalRequestV4(SecurityContractModel):
     @classmethod
     def normalize_proposal_domain(cls, value: str) -> str:
         return SecurityReportBlacklistProposalV4.require_canonical_domain(value)
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def normalize_evidence_references(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            if len(value) > 2048:
+                raise ValueError("blacklist evidence references cannot exceed 2048 characters")
+            if value.startswith(("evidence:", "report:", "analysis:", "source:")):
+                prefix, _, identifier = value.partition(":")
+                if not identifier.strip():
+                    raise ValueError(f"{prefix} evidence reference requires an identifier")
+                candidate = f"{prefix}:{identifier.strip()}"
+            else:
+                parsed = urlsplit(value)
+                if (
+                    parsed.scheme.casefold() not in {"http", "https"}
+                    or not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                ):
+                    raise ValueError("blacklist evidence must be an internal reference or an HTTP(S) source URL")
+                candidate = urlunsplit(
+                    (parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path or "/", "", "")
+                )
+            if candidate not in normalized:
+                normalized.append(candidate)
+        return normalized
 
     @model_validator(mode="after")
     def require_analysis_for_report(self) -> Self:
@@ -892,8 +947,8 @@ class SecurityBlacklistProposalRequestV4(SecurityContractModel):
 
 class SecurityBlacklistDisableRequestV4(SecurityContractModel):
     reason: str = Field(min_length=1, max_length=5000)
-    evidence_refs: list[str] = Field(min_length=1, max_length=100)
-    provenance: str = Field(min_length=1, max_length=1000)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+    provenance: str | None = Field(default=None, max_length=1000)
 
 
 class SecurityBlacklistRecordV4(SecurityContractModel):
@@ -1988,6 +2043,7 @@ __all__ = [
     "IdentityAssociationV4",
     "IdentityCandidateV4",
     "IdentityCandidateDecisionActionV4",
+    "ManualIdentityCandidateCreateRequestV4",
     "IdentityCandidateDecisionRequestV4",
     "IdentityCandidateDecisionV4",
     "IdentityCandidatePageV4",

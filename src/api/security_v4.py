@@ -59,6 +59,7 @@ from src.models import (
     IdentityCandidatePageV4,
     IdentityCandidateV4,
     IdentityRelationshipV4,
+    ManualIdentityCandidateCreateRequestV4,
     PotentialThreatV4,
     ReportStatus,
     ScopeDecisionV4,
@@ -976,6 +977,20 @@ async def page_identity_candidates_v4(
         records = [item for item in records if needle in item.entity_name.casefold()]
     items, total = _page(records, limit, offset)
     return IdentityCandidatePageV4(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/admin/identity-candidates",
+    response_model=IdentityCandidateV4,
+    status_code=201,
+    responses=_COMMON_ERRORS,
+)
+async def create_manual_identity_candidate_v4(
+    request: ManualIdentityCandidateCreateRequestV4,
+    admin: SecurityTrustAdminServiceDependency,
+    principal: PrincipalDependency,
+) -> IdentityCandidateV4:
+    return await admin.create_manual_identity_candidate(request, principal)
 
 
 @router.post(

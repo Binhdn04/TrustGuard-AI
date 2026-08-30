@@ -9,13 +9,10 @@ import {
   Check,
   Eye,
   History,
-  Languages,
-  LogOut,
   Mail,
   Palette,
   RotateCcw,
   ShieldCheck,
-  SlidersHorizontal,
   UserRound,
 } from "lucide-react";
 
@@ -23,30 +20,23 @@ import {
   avatarToneClass,
   useAccountPreferences,
   type AvatarTone,
-  type MotionPreference,
 } from "@/lib/account-preferences-context";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
-export type AccountTab = "profile" | "preferences" | "privacy";
-
-const tabs: Array<{ id: AccountTab; label: string; icon: typeof UserRound }> = [
-  { id: "profile", label: "Hồ sơ", icon: UserRound },
-  { id: "preferences", label: "Tùy chọn", icon: SlidersHorizontal },
-  { id: "privacy", label: "Quyền riêng tư", icon: ShieldCheck },
-];
+export type AccountTab = "profile" | "settings";
 
 const tones: AvatarTone[] = ["emerald", "blue", "violet", "amber"];
 
-export function AccountSettings({ initialTab = "profile" }: { initialTab?: AccountTab }) {
-  const { user, logout } = useAuth();
+export function AccountSettings({ section }: { section: AccountTab }) {
+  const { user } = useAuth();
   const { preferences, updatePreferences, resetPreferences } = useAccountPreferences();
-  const { theme = "system", setTheme } = useTheme();
-  const [tab, setTab] = useState<AccountTab>(initialTab);
+  const { theme = "system", resolvedTheme, setTheme } = useTheme();
   const [saved, setSaved] = useState(false);
 
   if (!user) return null;
   const displayName = preferences.displayName || user.name;
+  const selectedTheme = theme === "dark" || (theme === "system" && resolvedTheme === "dark") ? "dark" : "light";
 
   const saveProfile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,36 +51,17 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <header className="border-b border-border/70 pb-6">
-        <p className="micro-label text-primary">TÀI KHOẢN / TÙY CHỌN THIẾT BỊ</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-[-0.025em]">Tài khoản và cài đặt</h1>
+        <p className="micro-label text-primary">{section === "profile" ? "TÀI KHOẢN" : "TÙY CHỌN THIẾT BỊ"}</p>
+        <h1 className="mt-2 text-3xl font-bold tracking-[-0.025em]">{section === "profile" ? "Hồ sơ cá nhân" : "Cài đặt"}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Quản lý hồ sơ hiển thị và trải nghiệm trên thiết bị này. Danh tính và quyền truy cập vẫn do hệ thống đăng nhập xác minh.
+          {section === "profile"
+            ? "Quản lý thông tin hiển thị của bạn. Danh tính và quyền truy cập vẫn do hệ thống đăng nhập xác minh."
+            : "Điều chỉnh trải nghiệm trên thiết bị này và xem cách dữ liệu, quyền riêng tư được bảo vệ."}
         </p>
       </header>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <nav aria-label="Mục cài đặt tài khoản" className="rounded-2xl border border-border bg-card p-2">
-          {tabs.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                aria-current={tab === item.id ? "page" : undefined}
-                onClick={() => { setTab(item.id); setSaved(false); }}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors",
-                  tab === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4" aria-hidden="true" />{item.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <section className="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-7">
-          {tab === "profile" && (
+      <section className="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-7">
+          {section === "profile" && (
             <form onSubmit={saveProfile} className="space-y-6">
               <div className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-center">
                 <div className={cn("grid size-20 shrink-0 place-items-center rounded-2xl border text-2xl font-bold uppercase", avatarToneClass[preferences.avatarTone])}>
@@ -145,12 +116,12 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
             </form>
           )}
 
-          {tab === "preferences" && (
+          {section === "settings" && (
             <div className="space-y-6">
               <div><p className="micro-label">Trải nghiệm</p><h2 className="mt-1 text-xl font-bold">Tùy chọn giao diện</h2></div>
               <PreferenceRow icon={Palette} title="Giao diện" description="Áp dụng ngay cho toàn bộ workspace.">
-                <select aria-label="Giao diện" value={theme} onChange={(event) => setTheme(event.target.value)} className="rounded-xl border border-input bg-background px-3 py-2 text-sm">
-                  <option value="system">Theo hệ thống</option><option value="light">Sáng</option><option value="dark">Tối</option>
+                <select aria-label="Giao diện" value={selectedTheme} onChange={(event) => setTheme(event.target.value)} className="rounded-xl border border-input bg-background px-3 py-2 text-sm">
+                  <option value="light">Sáng</option><option value="dark">Tối</option>
                 </select>
               </PreferenceRow>
               <PreferenceRow icon={Eye} title="Mức chi tiết mặc định" description="Chỉ thay đổi cách trình bày; không thay đổi kế hoạch, công cụ hay chính sách rủi ro.">
@@ -158,20 +129,14 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
                   <option value="simple">Đơn giản</option><option value="analyst">Kỹ thuật</option>
                 </select>
               </PreferenceRow>
-              <PreferenceRow icon={BellRing} title="Chuyển động" description="Giảm animation nếu bạn muốn giao diện ổn định hơn.">
-                <select aria-label="Chuyển động" value={preferences.motion} onChange={(event) => updatePreferences({ motion: event.target.value as MotionPreference })} className="rounded-xl border border-input bg-background px-3 py-2 text-sm">
-                  <option value="system">Theo hệ thống</option><option value="reduced">Giảm chuyển động</option>
+              <PreferenceRow icon={BellRing} title="Hiệu ứng chuyển động" description="Bật hoặc tắt hiệu ứng trượt, mờ và phóng to/thu nhỏ.">
+                <select aria-label="Hiệu ứng chuyển động" value={preferences.motion} onChange={(event) => updatePreferences({ motion: event.target.value as "default" | "reduced" })} className="rounded-xl border border-input bg-background px-3 py-2 text-sm">
+                  <option value="default">Bật</option><option value="reduced">Tắt</option>
                 </select>
               </PreferenceRow>
-              <PreferenceRow icon={Languages} title="Ngôn ngữ" description="Bản MVP hiện cung cấp giao diện tiếng Việt.">
-                <span className="rounded-xl border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">Tiếng Việt</span>
-              </PreferenceRow>
-            </div>
-          )}
-
-          {tab === "privacy" && (
-            <div className="space-y-6">
-              <div><p className="micro-label">Quyền riêng tư và truy cập</p><h2 className="mt-1 text-xl font-bold">Dữ liệu và phiên đăng nhập</h2></div>
+              <div className="border-t border-border pt-6">
+                <p className="micro-label">Quyền riêng tư và truy cập</p><h2 className="mt-1 text-xl font-bold">Dữ liệu của bạn</h2>
+              </div>
               <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/8 p-4 text-sm leading-6">
                 <ShieldCheck className="mb-2 size-5 text-emerald-700 dark:text-emerald-300" />
                 Lịch sử chỉ được đọc theo chủ sở hữu. Đồng ý cho DNS, redirect, RDAP và kiểm tra uy tín URL luôn được hỏi theo từng yêu cầu và không được lưu thành đồng ý mặc định tại đây.
@@ -180,14 +145,12 @@ export function AccountSettings({ initialTab = "profile" }: { initialTab?: Accou
                 <Link href="/history" className="rounded-xl border border-border p-4 transition-colors hover:bg-muted/60"><History className="size-5 text-primary" /><strong className="mt-3 block text-sm">Lịch sử kiểm tra</strong><span className="mt-1 block text-xs leading-5 text-muted-foreground">Xem các lượt kiểm tra thuộc tài khoản hiện tại.</span></Link>
                 <Link href="/history" className="rounded-xl border border-border p-4 transition-colors hover:bg-muted/60"><Archive className="size-5 text-primary" /><strong className="mt-3 block text-sm">Báo cáo của tôi</strong><span className="mt-1 block text-xs leading-5 text-muted-foreground">Mở lượt kiểm tra tương ứng để xem trạng thái báo cáo và khiếu nại.</span></Link>
               </div>
-              <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:justify-between">
-                <button type="button" onClick={() => { resetPreferences(); setTheme("system"); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold"><RotateCcw className="size-4" />Đặt lại tùy chọn</button>
-                <button type="button" onClick={logout} className="inline-flex items-center justify-center gap-2 rounded-xl border border-destructive/30 px-4 py-2.5 text-sm font-semibold text-destructive hover:bg-destructive/10"><LogOut className="size-4" />Đăng xuất</button>
+              <div className="border-t border-border pt-5">
+                <button type="button" onClick={() => { resetPreferences(); setTheme("light"); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold"><RotateCcw className="size-4" />Đặt lại tùy chọn</button>
               </div>
             </div>
           )}
-        </section>
-      </div>
+      </section>
     </div>
   );
 }

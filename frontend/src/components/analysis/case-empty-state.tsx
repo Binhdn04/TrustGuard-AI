@@ -6,8 +6,9 @@ export function CaseEmptyState({ composer }: { composer: ReactNode }) {
       <section aria-labelledby="intake-heading" className="relative w-full text-center">
         <div className="absolute left-1/2 top-0 -z-10 size-80 -translate-x-1/2 rounded-full border border-primary/10" aria-hidden="true" />
         <div className="absolute left-1/2 top-12 -z-10 size-52 -translate-x-1/2 rounded-full border border-primary/15" aria-hidden="true" />
-        <h1 id="intake-heading" className="mx-auto max-w-3xl text-4xl font-semibold leading-[1.05] tracking-[-0.04em] sm:text-5xl lg:text-6xl">
-          Bạn muốn kiểm tra điều gì?
+        <h1 id="intake-heading" aria-label="Bạn muốn kiểm tra điều gì?" className="mx-auto max-w-3xl whitespace-nowrap text-[clamp(1.625rem,8vw,2.25rem)] font-semibold leading-[1.05] tracking-[-0.04em] sm:text-5xl lg:text-6xl">
+          <span className="sm:hidden">Bạn cần kiểm tra gì?</span>
+          <span className="hidden sm:inline">Bạn muốn kiểm tra điều gì?</span>
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
           Tin nhắn lạ, link đáng ngờ hay thông tin khó xác minh — cứ gửi mình
