@@ -242,7 +242,10 @@ export class HttpTrustGuardAnalysisApi implements TrustGuardAnalysisApi, TrustGu
     private readonly config: TrustGuardApiConfig,
     options: { fetcher?: Fetcher; timeoutMs?: number } = {},
   ) {
-    this.fetcher = options.fetcher ?? fetch;
+    // Preserve the worker-global receiver for the native Fetch API. Calling a
+    // stored reference as `this.fetcher(...)` otherwise fails in Chrome with
+    // "Illegal invocation" before the request reaches the backend.
+    this.fetcher = options.fetcher ?? ((input, init) => globalThis.fetch(input, init));
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 

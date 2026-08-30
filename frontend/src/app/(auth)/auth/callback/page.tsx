@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, LoaderCircle, ShieldCheck } from "lucide-react";
@@ -12,10 +12,16 @@ export default function OidcCallbackPage() {
   const { establishOidcSession } = useAuth();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const callbackCompletion = useRef<ReturnType<typeof completeOidcAuthorization> | null>(null);
 
   useEffect(() => {
+    // The callback consumes its single-use state before awaiting token
+    // exchange. React Strict Mode re-runs effects in development, so reuse the
+    // first completion rather than treating the intentionally consumed state
+    // as an invalid login in the second invocation.
     let cancelled = false;
-    void completeOidcAuthorization(window.location.search)
+    const completion = callbackCompletion.current ??= completeOidcAuthorization(window.location.search);
+    void completion
       .then(({ session, returnTo }) => {
         if (cancelled) return;
         establishOidcSession(session);
