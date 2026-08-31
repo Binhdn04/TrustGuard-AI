@@ -202,6 +202,7 @@ export function CaseWorkspace({
   state,
   transport,
   error,
+  recoveryAction,
   lifecycleEvents,
   progress,
   latest,
@@ -209,12 +210,14 @@ export function CaseWorkspace({
   api,
   onSubmit,
   onRetry,
+  onRecover,
   onReset,
 }: {
   turns: SecurityCaseTurn[];
   state: SecurityCaseState;
   transport: AnalysisTransportState;
   error: string | null;
+  recoveryAction: "reload_and_resubmit" | "start_new_case" | null;
   lifecycleEvents: SecurityAnalysisEventV4[];
   progress: SecurityProgressViewModel;
   latest: SecurityScopeResponseV4 | null;
@@ -222,6 +225,7 @@ export function CaseWorkspace({
   api: SecurityAnalysisApi;
   onSubmit(message: string): void;
   onRetry(): void;
+  onRecover(): void;
   onReset(): void;
 }) {
   const { preferences } = useAccountPreferences();
@@ -295,12 +299,14 @@ export function CaseWorkspace({
             state={state}
             transport={transport}
             error={error}
+            recoveryAction={recoveryAction}
             busy={busy}
             mode={mode}
             progress={progress}
             followUp={state === "NEED_MORE_INFO" ? latest?.follow_up_question : null}
             onSubmit={onSubmit}
             onRetry={onRetry}
+            onRecover={onRecover}
           />
         </div>
         {mode === "analyst" && (

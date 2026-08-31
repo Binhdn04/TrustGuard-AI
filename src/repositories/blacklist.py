@@ -949,7 +949,7 @@ class SQLiteBlacklistRepository:
                 if isinstance(exc, RuntimeError) and str(exc) == "SECURITY_CONVERSATION_VERSION_CONFLICT":
                     raise PlatformError(
                         status_code=409,
-                        code=ErrorCode.CONFLICT,
+                        code=ErrorCode.CONVERSATION_VERSION_STALE,
                         message="Security conversation was updated by another turn.",
                         retryable=True,
                     ) from exc

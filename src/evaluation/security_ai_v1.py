@@ -201,10 +201,10 @@ def _understanding(message: str, fixture: EvaluationUnderstanding | None) -> Und
     if fixture is None:
         return None
     data = fixture.model_dump()
+    data.pop("sender_intent", None)  # Immutable v1 fixture compatibility; retired from runtime output.
     grounded: list[str] = []
     for field_name in (
         "scope_decision",
-        "sender_intent",
         "social_engineering_techniques",
         "claimed_entity",
         "scenario",

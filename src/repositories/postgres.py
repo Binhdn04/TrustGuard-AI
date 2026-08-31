@@ -312,7 +312,7 @@ class PostgresPlatformRepository(
             if not updated:
                 raise PlatformError(
                     status_code=409,
-                    code=ErrorCode.CONFLICT,
+                    code=ErrorCode.CONVERSATION_VERSION_STALE,
                     message="Security conversation was updated by another turn.",
                     retryable=True,
                 )

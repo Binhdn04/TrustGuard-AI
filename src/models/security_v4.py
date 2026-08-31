@@ -173,21 +173,6 @@ class VerificationStatusV4(StrEnum):
     CONFLICTING = "CONFLICTING"
 
 
-class SenderProvenanceKindV4(StrEnum):
-    """Trusted transport fact made available by an inbound integration.
-
-    This deliberately records no raw header, address, account handle, or
-    message metadata. The opaque reference is resolvable only by the
-    integration that supplied it for the current turn.
-    """
-
-    EMAIL_HEADER = "email_header"
-    AUTHENTICATED_ACCOUNT = "authenticated_account"
-    AUTHENTICATED_CHANNEL = "authenticated_channel"
-    SIGNED_SENDER = "signed_sender"
-    MESSAGE_METADATA = "message_metadata"
-
-
 class OfficialIdentityTypeV4(StrEnum):
     PRIMARY_WEBSITE = "primary_website"
     WEBSITE = "website"
@@ -681,13 +666,6 @@ class OfficialVerificationComponentV4(SecurityContractModel):
         return self
 
 
-class SenderProvenanceV4(SecurityContractModel):
-    """Non-persistent, trusted sender provenance for an inbound integration."""
-
-    kind: SenderProvenanceKindV4
-    provenance_ref: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9._:-]+$")
-
-
 class PublisherVerificationV4(OfficialVerificationComponentV4):
     identity: OfficialIdentityV4 | None = None
 
@@ -713,11 +691,6 @@ class OfficialLinkVerificationReportV4(SecurityContractModel):
     claim_verification: ClaimVerificationV4
     resource_verification: ResourceVerificationV4
     domain_ownership_verification: OfficialVerificationComponentV4 = Field(
-        default_factory=lambda: OfficialVerificationComponentV4(
-            applicable=False, status=None, reason_code="not_applicable"
-        )
-    )
-    sender_verification: OfficialVerificationComponentV4 = Field(
         default_factory=lambda: OfficialVerificationComponentV4(
             applicable=False, status=None, reason_code="not_applicable"
         )
@@ -1086,7 +1059,6 @@ class AssistantSourceSpanV4(SecurityContractModel):
 
 class AssistantContextV4(SecurityContractModel):
     processing_mode: AssistantProcessingModeV4
-    sender_intent: str | None = Field(default=None, max_length=500)
     social_engineering_techniques: list[str] = Field(default_factory=list, max_length=20)
     exposure_state: ExposureStateV4 = ExposureStateV4.UNKNOWN
     missing_information: list[str] = Field(default_factory=list, max_length=20)
@@ -1223,8 +1195,26 @@ class SecurityScopeResponseV4(SecurityContractModel):
     def remove_retired_stored_investigation_steps(cls, value: Any, info: ValidationInfo) -> Any:
         if not info.context or not info.context.get("stored_security_scope") or not isinstance(value, dict):
             return value
-        # Historical reports never had explicit coverage for ownership,
-        # sender, or action endorsement. Preserve their original report
+        assistant_context = value.get("assistant_context")
+        if isinstance(assistant_context, dict) and "sender_intent" in assistant_context:
+            value = {
+                **value,
+                "assistant_context": {
+                    key: item for key, item in assistant_context.items() if key != "sender_intent"
+                },
+            }
+        evidence = value.get("evidence")
+        if isinstance(evidence, list):
+            value = {
+                **value,
+                "evidence": [
+                    item
+                    for item in evidence
+                    if not isinstance(item, dict) or item.get("signal") != "sender_identity_unverified"
+                ],
+            }
+        # Historical reports never had explicit coverage for ownership or
+        # action endorsement. Preserve their original report
         # version/payload while making the missing assurance visible; never
         # silently reinterpret it as NOT_APPLICABLE on read.
         report = value.get("official_verification")
@@ -1236,17 +1226,11 @@ class SecurityScopeResponseV4(SecurityContractModel):
             has_action = bool(intent.get("requested_action"))
             has_url = bool(intent.get("action_url_indices"))
             report = {
-                **report,
+                **{key: item for key, item in report.items() if key != "sender_verification"},
                 "domain_ownership_verification": {
                     "applicable": has_url,
                     "status": "UNVERIFIED" if has_url else None,
                     "reason_code": "legacy_coverage_unavailable",
-                    "evidence_refs": [],
-                },
-                "sender_verification": {
-                    "applicable": False,
-                    "status": None,
-                    "reason_code": "sender_provenance_unavailable_in_legacy_report",
                     "evidence_refs": [],
                 },
                 "action_endorsement_verification": {
@@ -1256,6 +1240,9 @@ class SecurityScopeResponseV4(SecurityContractModel):
                     "evidence_refs": [],
                 },
             }
+            value = {**value, "official_verification": report}
+        elif isinstance(report, dict) and "sender_verification" in report:
+            report = {key: item for key, item in report.items() if key != "sender_verification"}
             value = {**value, "official_verification": report}
         raw_plan = value.get("investigation_plan")
         if not isinstance(raw_plan, list):
@@ -2063,8 +2050,6 @@ __all__ = [
     "SubmittedResourceResolutionV4",
     "ResourceTypeV4",
     "ResourceVerificationV4",
-    "SenderProvenanceKindV4",
-    "SenderProvenanceV4",
     "ScopeDecisionV4",
     "SecurityConsentV4",
     "SecurityConversationStatusV4",

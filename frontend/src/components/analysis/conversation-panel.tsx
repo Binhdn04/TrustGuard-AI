@@ -29,23 +29,27 @@ export function ConversationPanel({
   state,
   transport,
   error,
+  recoveryAction,
   busy,
   mode,
   progress,
   followUp,
   onSubmit,
   onRetry,
+  onRecover,
 }: {
   turns: SecurityCaseTurn[];
   state: SecurityCaseState;
   transport: AnalysisTransportState;
   error: string | null;
+  recoveryAction: "reload_and_resubmit" | "start_new_case" | null;
   busy: boolean;
   mode: SecurityPresentationMode;
   progress: SecurityProgressViewModel;
   followUp?: string | null;
   onSubmit(message: string): void;
   onRetry(): void;
+  onRecover(): void;
 }) {
   return (
     <section aria-labelledby="conversation-heading" className="case-panel flex min-h-[36rem] flex-col overflow-hidden">
@@ -125,9 +129,19 @@ export function ConversationPanel({
           <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/8 p-3 text-sm text-rose-700 dark:text-rose-300">
             <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4" />Không thể hoàn tất đánh giá</p>
             <p className="mt-1 text-xs leading-5">{error}</p>
-            <button type="button" onClick={onRetry} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-4">
-              <RotateCcw className="size-3.5" />Thử lại trường hợp này
-            </button>
+            {recoveryAction === "reload_and_resubmit" ? (
+              <button type="button" onClick={onRecover} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-4">
+                <RotateCcw className="size-3.5" />Tải lại hội thoại và gửi lại
+              </button>
+            ) : recoveryAction === "start_new_case" ? (
+              <button type="button" onClick={onRecover} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-4">
+                <RotateCcw className="size-3.5" />Kiểm tra như trường hợp mới
+              </button>
+            ) : (
+              <button type="button" onClick={onRetry} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold underline underline-offset-4">
+                <RotateCcw className="size-3.5" />Thử lại trường hợp này
+              </button>
+            )}
           </div>
         )}
 

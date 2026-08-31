@@ -467,6 +467,88 @@ describe("Security Chat workspace", () => {
     expect(screen.queryByText("Input 2")).not.toBeInTheDocument();
   });
 
+  it("starts the rejected message as a separate case when the active case does not match", async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(response({
+        scope_decision: "IN_SCOPE",
+        follow_up_question: null,
+        risk: "SUSPICIOUS",
+        score: 55,
+        confidence: 0.7,
+        threat_type: "PHISHING",
+        policy_version: "security-risk-v1",
+        recommended_actions: ["PROCEED_WITH_CAUTION"],
+        explanation: "Cần thận trọng.",
+      }))
+      .mockRejectedValueOnce(new ApiError("Different case", "NEW_CASE_REQUIRED", false, 409))
+      .mockResolvedValueOnce(response({
+        conversation_id: "20000000-0000-4000-8000-000000000002",
+        conversation_version: 1,
+      }));
+    render(<AnalysisWorkspace api={apiWith(create)} />);
+
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn thứ nhất");
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+    await screen.findByRole("heading", { name: "Đáng ngờ" });
+
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn BIDV không liên quan");
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nội dung này thuộc một trường hợp bảo mật khác.");
+    expect(screen.queryByRole("button", { name: "Thử lại trường hợp này" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kiểm tra như trường hợp mới" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(3));
+    expect(create.mock.calls[2][0]).toEqual(expect.objectContaining({
+      message: "Tin nhắn BIDV không liên quan",
+      consent: { external_url_lookup: true, official_source_lookup: true },
+    }));
+    expect(create.mock.calls[2][0]).not.toHaveProperty("conversation_id");
+  });
+
+  it("reloads the latest conversation before resubmitting a stale turn", async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(response({
+        scope_decision: "IN_SCOPE",
+        follow_up_question: null,
+        risk: "SUSPICIOUS",
+        score: 55,
+        confidence: 0.7,
+        threat_type: "PHISHING",
+        policy_version: "security-risk-v1",
+        recommended_actions: ["PROCEED_WITH_CAUTION"],
+        explanation: "Cần thận trọng.",
+      }))
+      .mockRejectedValueOnce(new ApiError("Stale", "CONVERSATION_VERSION_STALE", true, 409))
+      .mockResolvedValueOnce(response({ conversation_version: 3 }));
+    const api = apiWith(create);
+    vi.mocked(api.getConversation).mockResolvedValue({
+      contract_version: "v4",
+      conversation_id: "10000000-0000-4000-8000-000000000001",
+      context_version: 2,
+      active_analysis_id: "analysis-current",
+      status: "active",
+      summary: { security_context: null, assistant_context: null, unresolved_slots: [], evidence_refs: [] },
+      created_at: "2026-08-13T08:00:00Z",
+      updated_at: "2026-08-13T08:00:01Z",
+      expires_at: "2026-09-13T08:00:01Z",
+    });
+    render(<AnalysisWorkspace api={api} />);
+
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn thứ nhất");
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+    await screen.findByRole("heading", { name: "Đáng ngờ" });
+
+    setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn cần gửi lại");
+    fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
+    expect(await screen.findByRole("button", { name: "Tải lại hội thoại và gửi lại" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tải lại hội thoại và gửi lại" }));
+
+    await waitFor(() => expect(api.getConversation).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000001"));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(3));
+    expect(create.mock.calls[2][0]).toEqual(expect.objectContaining({ conversation_version: 2 }));
+  });
+
   it("shows the incompatible request field returned by backend validation", async () => {
     const create = vi.fn().mockRejectedValue(new ApiError(
       "Request validation failed.",

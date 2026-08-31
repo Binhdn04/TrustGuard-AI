@@ -138,6 +138,8 @@ def test_openapi_adds_cp2_contracts_without_removing_v1_read_shapes() -> None:
     assert "official_verification" in components["SecurityScopeResponseV4"]["properties"]
     assert "official_link_verification" in components["SecurityCapabilitiesResponseV4"]["properties"]
     assert "official_web_search_ready" in components["SecurityCapabilitiesResponseV4"]["properties"]
+    assert "sender_intent" not in components["AssistantContextV4"]["properties"]
+    assert "sender_verification" not in components["OfficialLinkVerificationReportV4"]["properties"]
     assert set(components["VerificationStatusV4"]["enum"]) == {
         "VERIFIED",
         "PARTIALLY_VERIFIED",
@@ -170,31 +172,46 @@ def test_old_context_risk_and_brand_json_remain_readable() -> None:
 def test_old_official_report_defaults_new_verification_layers_to_not_applicable() -> None:
     payload = _report(schema_version="official-link-verification-v1").model_dump(mode="json")
     payload.pop("domain_ownership_verification", None)
-    payload.pop("sender_verification", None)
     payload.pop("action_endorsement_verification", None)
 
     restored = OfficialLinkVerificationReportV4.model_validate(payload)
 
     assert restored.domain_ownership_verification.reason_code == "not_applicable"
-    assert restored.sender_verification.applicable is False
+    assert "sender_verification" not in restored.model_dump(mode="json")
     assert restored.action_endorsement_verification.status is None
 
 
-def test_stored_legacy_report_does_not_fabricate_sender_unverified_from_action() -> None:
+def test_stored_legacy_report_drops_retired_sender_verification() -> None:
     payload = _response(report=_report(schema_version="official-link-verification-v1")).model_dump(mode="json")
     legacy_report = payload["official_verification"]
     assert legacy_report is not None
     legacy_report.pop("domain_ownership_verification", None)
-    legacy_report.pop("sender_verification", None)
+    legacy_report["sender_verification"] = {
+        "applicable": True,
+        "status": "UNVERIFIED",
+        "reason_code": "legacy_sender_status",
+        "evidence_refs": [],
+    }
     legacy_report.pop("action_endorsement_verification", None)
 
     restored = SecurityScopeResponseV4.model_validate_stored(payload)
 
     assert restored.official_verification is not None
-    sender = restored.official_verification.sender_verification
-    assert sender.applicable is False
-    assert sender.status is None
-    assert sender.reason_code == "sender_provenance_unavailable_in_legacy_report"
+    assert "sender_verification" not in restored.official_verification.model_dump(mode="json")
+
+
+def test_stored_legacy_response_drops_retired_sender_intent() -> None:
+    payload = _response().model_dump(mode="json")
+    payload["assistant_context"] = AssistantContextV4(
+        processing_mode=AssistantProcessingModeV4.RULES_ONLY,
+        model_version="legacy-fixture",
+    ).model_dump(mode="json")
+    payload["assistant_context"]["sender_intent"] = "legacy_sender_intent"
+
+    restored = SecurityScopeResponseV4.model_validate_stored(payload)
+
+    assert restored.assistant_context is not None
+    assert "sender_intent" not in restored.assistant_context.model_dump(mode="json")
 
 
 def test_understanding_reads_v1_and_new_contracts_emit_v2() -> None:

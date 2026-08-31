@@ -98,11 +98,6 @@ def _redact_assistant_context(context: AssistantContextV4 | None) -> AssistantCo
     allowed_slots = {slot.value for slot in MissingInformationSlotV4}
     return context.model_copy(
         update={
-            "sender_intent": (
-                None
-                if context.sender_intent and _SENSITIVE_SUMMARY_VALUE.search(context.sender_intent)
-                else context.sender_intent
-            ),
             "social_engineering_techniques": [
                 value for value in context.social_engineering_techniques if not _SENSITIVE_SUMMARY_VALUE.search(value)
             ],
@@ -133,7 +128,7 @@ def _merge_context(previous: SecurityContextV4, current: SecurityContextV4) -> S
     if previous_entity is not None and current_entity is not None and previous_entity != current_entity:
         raise PlatformError(
             status_code=409,
-            code=ErrorCode.CONFLICT,
+            code=ErrorCode.NEW_CASE_REQUIRED,
             message="This message appears to describe a different case; start a new conversation.",
             retryable=False,
         )
@@ -218,7 +213,7 @@ class SecurityAnalysisService:
             if existing.context_version != request.conversation_version:
                 raise PlatformError(
                     status_code=409,
-                    code=ErrorCode.CONFLICT,
+                    code=ErrorCode.CONVERSATION_VERSION_STALE,
                     message="Security conversation was updated by another turn.",
                     retryable=True,
                     details={"current_version": existing.context_version},
@@ -229,7 +224,7 @@ class SecurityAnalysisService:
             ):
                 raise PlatformError(
                     status_code=409,
-                    code=ErrorCode.CONFLICT,
+                    code=ErrorCode.NEW_CASE_REQUIRED,
                     message="This message is outside the active security case; start a new conversation.",
                     retryable=False,
                 )

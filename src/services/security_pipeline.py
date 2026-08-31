@@ -284,9 +284,6 @@ class SecurityTriagePipeline:
                     "action": report.action_endorsement_verification.status.value
                     if report.action_endorsement_verification.status is not None
                     else None,
-                    "sender": report.sender_verification.status.value
-                    if report.sender_verification.status is not None
-                    else None,
                     "verdict": scoped.risk.value if scoped.risk is not None else None,
                     "recommended_actions": [item.value for item in scoped.recommended_actions],
                     "policy_version": scoped.policy_version,

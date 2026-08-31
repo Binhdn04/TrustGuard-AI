@@ -207,10 +207,11 @@ def _semantic_fixture_output(case: SecurityEvaluationCase) -> Understanding | No
     fixture = case.semantic_understanding
     if fixture is None:
         return None
+    fixture_data = fixture.model_dump()
+    fixture_data.pop("sender_intent", None)  # Immutable v1 fixture compatibility; retired from runtime output.
     field_names: list[str] = []
     for field_name in (
         "scope_decision",
-        "sender_intent",
         "social_engineering_techniques",
         "claimed_entity",
         "scenario",
@@ -244,7 +245,7 @@ def _semantic_fixture_output(case: SecurityEvaluationCase) -> Understanding | No
             )
         )
     return Understanding(
-        **fixture.model_dump(),
+        **fixture_data,
         action_mentions=action_mentions,
         field_confidences={field_name: 0.95 for field_name in field_names},
         source_spans=[

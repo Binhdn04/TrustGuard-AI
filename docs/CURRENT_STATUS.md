@@ -34,7 +34,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Persistence | PostgreSQL facade tách feedback, jobs/outbox, trust và Wave 2 thành domain mixins; integration suite chạy trên PostgreSQL 16 disposable trong CI |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; backend span candidates + model-selected IDs; per-candidate fail-soft grounding; suggestion-only Admin Copilot |
-| Official verification | publisher/claim/resource compatibility plus URL-routed domain ownership/sender identity/action endorsement, resource-first identity discovery, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, action-relevant SAFE policy, reviewed promotion and rollout `off|shadow|visible|enforced` |
+| Official verification | publisher/claim/resource compatibility plus URL-routed domain ownership/action endorsement, resource-first identity discovery, bounded attribution, two-host ownership, guarded redirects, 7-day consent-gated cache, action-relevant SAFE policy, reviewed promotion and rollout `off|shadow|visible|enforced` |
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | UI MVP tiếng Việt; một navigation/sidebar; user có Kiểm tra/Lịch sử, còn Hồ sơ/Cài đặt nằm trong menu avatar; admin có thêm Duyệt bảo mật và Tin cậy & chặn; whitelist/blacklist thao tác trực tiếp với trạng thái/audit; route Observatory/Audit cũ redirect về Trust workspace |
 | Testing | `pytest-cov` gate `68%`, default offline suite và PostgreSQL integration job riêng; xem bằng chứng hiện hành trong `docs/TESTING.md` |
@@ -88,7 +88,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - Brand, identity candidate, Security Memory, campaign, intelligence, Observatory và audit độc lập là các khả năng
   nâng cao vẫn còn ở API/component nội bộ khi cần vận hành hoặc phát triển tiếp, nhưng đã bị ẩn khỏi navigation MVP.
 - Whitelist chỉ là ngoại lệ có provenance; reviewed platform familiarity chỉ mô tả platform quen thuộc; official
-  identity kiểm tra domain ownership, sender identity và action endorsement riêng. Không nguồn nào được suy rộng
+  identity kiểm tra domain ownership và action endorsement riêng. Không nguồn nào được suy rộng
   để xác minh nội dung do người dùng tạo trên shared platform hoặc tự động kết luận `SAFE`.
 
 ## Deprecated and removed

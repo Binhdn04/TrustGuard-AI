@@ -36,7 +36,6 @@ class StaticUnderstandingModel:
 def _grounded_payment(message: str) -> Understanding:
     fields = [
         "scope_decision",
-        "sender_intent",
         "scenario",
         "requested_action",
         "payment_request",
@@ -44,7 +43,6 @@ def _grounded_payment(message: str) -> Understanding:
     ]
     return Understanding(
         scope_decision=ScopeDecisionV4.IN_SCOPE,
-        sender_intent="coerce_payment",
         scenario=SecurityScenarioV4.PAYMENT,
         requested_action=RequestedActionV4.TRANSFER_MONEY,
         security_signals=[

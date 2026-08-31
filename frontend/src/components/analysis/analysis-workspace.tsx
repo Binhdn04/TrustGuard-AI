@@ -30,6 +30,7 @@ export function AnalysisWorkspace({ api = getSecurityAnalysisApi() }: { api?: Se
       state={securityCase.state}
       transport={securityCase.transport}
       error={securityCase.error}
+      recoveryAction={securityCase.recoveryAction}
       lifecycleEvents={securityCase.lifecycleEvents}
       progress={securityCase.progress}
       latest={securityCase.latest}
@@ -37,6 +38,7 @@ export function AnalysisWorkspace({ api = getSecurityAnalysisApi() }: { api?: Se
       api={api}
       onSubmit={securityCase.submit}
       onRetry={securityCase.retry}
+      onRecover={securityCase.recoverLatestTurn}
       onReset={securityCase.reset}
     />
   );

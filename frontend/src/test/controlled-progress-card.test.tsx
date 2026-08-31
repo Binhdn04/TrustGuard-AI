@@ -44,11 +44,13 @@ function panel(
       state={state}
       transport="connected"
       error={null}
+      recoveryAction={null}
       busy
       mode={mode}
       progress={currentProgress}
       onSubmit={() => undefined}
       onRetry={() => undefined}
+      onRecover={() => undefined}
     />
   );
 }

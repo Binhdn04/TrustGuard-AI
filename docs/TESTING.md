@@ -102,11 +102,11 @@ populate a passing evidence file from offline fixtures or unit-test output.
   revalidation, guarded short-link chains, neutral-anchor exact-resource links, 7-day stale revalidation,
   one-source exact-resource endorsement, self-endorsement rejection, relationship evidence anchors,
   SQLite/PostgreSQL versioning, admin RBAC/terminal decisions/promotion và Trust candidate queue.
-- bounded sender attribution không dùng registry riêng, attribution không tự tạo impersonation, two-consent
-  ownership/cache, ba component domain/sender/action, neutral evidence projection, sensitive-login precedence,
+- attribution không tự tạo impersonation, two-consent ownership/cache, hai component domain/action,
+  neutral evidence projection, sensitive-login precedence,
   synthesis không suy rộng ownership và frontend compatibility với report cũ.
 - URL-driven ownership applicability, action-driven endorsement applicability, registry-miss resource discovery,
-  passport-service regression, sender-independent SAFE khi exact resource/action đã verified và `ALLOW_OPEN`.
+  passport-service regression, SAFE khi exact resource/action đã verified và `ALLOW_OPEN`.
 
 ## Manual scenarios
 

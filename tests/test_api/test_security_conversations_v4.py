@@ -127,6 +127,29 @@ async def test_chat_requires_complete_conversation_reference(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_returns_a_specific_stale_conversation_code(client) -> None:
+    created = await client.post(
+        "/api/v4/analyses",
+        headers=USER_HEADERS,
+        json={"message": "Ngân hàng yêu cầu tôi gửi OTP ngay"},
+    )
+    body = created.json()
+
+    stale = await client.post(
+        "/api/v4/chat",
+        headers=USER_HEADERS,
+        json={
+            "message": "Tôi cần làm gì?",
+            "conversation_id": body["conversation_id"],
+            "conversation_version": body["conversation_version"] + 1,
+        },
+    )
+
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "CONVERSATION_VERSION_STALE"
+
+
+@pytest.mark.asyncio
 async def test_stale_and_concurrent_conversation_updates_conflict(client) -> None:
     created = await client.post("/api/v4/analyses", headers=USER_HEADERS, json={"message": "Tin nhắn yêu cầu OTP"})
     body = created.json()
@@ -142,7 +165,7 @@ async def test_stale_and_concurrent_conversation_updates_conflict(client) -> Non
 
     assert sorted(item.status_code for item in results) == [200, 409]
     conflict = next(item for item in results if item.status_code == 409)
-    assert conflict.json()["error"]["code"] == "CONFLICT"
+    assert conflict.json()["error"]["code"] == "CONVERSATION_VERSION_STALE"
 
 
 @pytest.mark.asyncio
@@ -164,7 +187,7 @@ async def test_unrelated_case_is_not_merged(client) -> None:
     )
 
     assert unrelated.status_code == 409
-    assert unrelated.json()["error"]["code"] == "CONFLICT"
+    assert unrelated.json()["error"]["code"] == "NEW_CASE_REQUIRED"
 
 
 @pytest.mark.asyncio

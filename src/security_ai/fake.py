@@ -19,7 +19,7 @@ class DeterministicFakeSecurityAssistant(SecurityAssistantModel):
         return ModelResponse(output=output, provider="fake", model="deterministic-v1")
 
     async def understand(self, message: str, conversation_summary: str | None):
-        return self._response(Understanding(sender_intent="unknown"))
+        return self._response(Understanding())
 
     async def prioritize_plan(self, context: dict[str, Any], candidate_steps: list[dict[str, Any]]):
         return self._response(PlanPriority(ordered_step_ids=[str(step["step_id"]) for step in candidate_steps]))

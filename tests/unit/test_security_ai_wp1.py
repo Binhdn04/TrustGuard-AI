@@ -40,7 +40,6 @@ def _understanding(message: str, **values) -> Understanding:
     grounded_fields: list[str] = []
     for field_name in (
         "scope_decision",
-        "sender_intent",
         "social_engineering_techniques",
         "claimed_entity",
         "scenario",
@@ -79,7 +78,6 @@ def _grounded_ai_signals_are_merged_and_change_deterministic_score() -> None:
     output = _understanding(
         message,
         scope_decision=ScopeDecisionV4.IN_SCOPE,
-        sender_intent="coerce_payment",
         scenario=SecurityScenarioV4.PAYMENT,
         requested_action=RequestedActionV4.TRANSFER_MONEY,
         security_signals=[SemanticSecuritySignal.PAYMENT_REQUEST, SemanticSecuritySignal.URGENCY],
@@ -548,7 +546,6 @@ def test_assistant_context_stores_offsets_but_no_raw_excerpt() -> None:
     output = _understanding(
         message,
         exposure_state=ExposureStateV4.LINK_OPENED,
-        sender_intent="credential_capture",
     )
 
     merged = merge_semantic_understanding(message, scoped, output, model_version="fake-semantic-v1")

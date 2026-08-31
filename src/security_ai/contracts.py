@@ -192,7 +192,6 @@ class Understanding(StrictModel):
     )
 
     scope_decision: ScopeDecisionV4 | None = None
-    sender_intent: str | None = None
     social_engineering_techniques: list[str] = Field(default_factory=list, max_length=20)
     claimed_entity: str | None = None
     claimed_entity_candidate_id: str | None = Field(default=None, pattern=r"^(?:entity|phrase)_[0-9]+$")
@@ -235,7 +234,7 @@ class Understanding(StrictModel):
             return None
         return value
 
-    @field_validator("sender_intent", "claimed_entity", mode="before")
+    @field_validator("claimed_entity", mode="before")
     @classmethod
     def normalize_optional_unknown_text(cls, value: Any) -> Any:
         if isinstance(value, str) and value.strip().casefold() in {"unknown", "n/a", "none"}:

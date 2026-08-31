@@ -381,7 +381,6 @@ def apply_official_verification_outcome(
 
     verification_evidence: list[SecurityEvidenceV4] = []
     ownership = report.domain_ownership_verification
-    sender = report.sender_verification
     action = report.action_endorsement_verification
     verified_domain = next(
         (
@@ -405,13 +404,6 @@ def apply_official_verification_outcome(
                 else "Quan hệ sở hữu tên miền chính thức đã được xác minh."
             ),
             VerificationStatusV4.VERIFIED,
-        ),
-        (
-            sender,
-            "sender_identity_unverified",
-            report.intent.organization_name,
-            "Tin nhắn không cung cấp bằng chứng xác thực đủ để xác nhận danh tính người gửi.",
-            VerificationStatusV4.UNVERIFIED,
         ),
         (
             action,
@@ -1365,7 +1357,6 @@ class OfficialLinkVerificationCoordinator:
             external_url_consent=request.consent.external_url_lookup,
             action_evidence_refs=action_evidence_refs,
             reviewed_ownership=reviewed_ownership,
-            sender_provenance_present=execution_context.sender_provenance is not None,
         )
         self._validate_reference_closure(report)
         reported_associations = report.identity_associations
@@ -3066,7 +3057,6 @@ class OfficialLinkVerificationCoordinator:
         external_url_consent: bool = False,
         action_evidence_refs: Sequence[str] = (),
         reviewed_ownership: dict[str, list[str]] | None = None,
-        sender_provenance_present: bool = False,
     ) -> OfficialLinkVerificationReportV4:
         action_hosts = {(urlsplit(url).hostname or "").casefold() for url in user_urls}
         reviewed_owner = next(
@@ -3119,15 +3109,6 @@ class OfficialLinkVerificationCoordinator:
                         "evidence_refs": verified.evidence_refs,
                     }
                 )
-        # A pasted message can assert an organization or request an action,
-        # but neither is sender provenance. Only a trusted transport context
-        # (email header, authenticated account/channel, signed sender, or
-        # normalized message metadata) activates this independent dimension.
-        sender = OfficialVerificationComponentV4(
-            applicable=sender_provenance_present,
-            status=VerificationStatusV4.UNVERIFIED if sender_provenance_present else None,
-            reason_code=("sender_provenance_not_verified" if sender_provenance_present else "not_applicable"),
-        )
         action = OfficialVerificationComponentV4(
             applicable=intent.contract.requested_action is not None,
             status=(VerificationStatusV4.UNVERIFIED if intent.contract.requested_action is not None else None),
@@ -3195,7 +3176,6 @@ class OfficialLinkVerificationCoordinator:
             claim_verification=claim,
             resource_verification=resource,
             domain_ownership_verification=ownership,
-            sender_verification=sender,
             action_endorsement_verification=action,
             overall_status=overall,
             reason_code=reason,
@@ -3216,7 +3196,6 @@ class OfficialLinkVerificationCoordinator:
         cited.update(report.claim_verification.evidence_refs)
         cited.update(report.resource_verification.evidence_refs)
         cited.update(report.domain_ownership_verification.evidence_refs)
-        cited.update(report.sender_verification.evidence_refs)
         cited.update(report.action_endorsement_verification.evidence_refs)
         if cited - available:
             raise ValueError("official verification evidence-reference closure failed")

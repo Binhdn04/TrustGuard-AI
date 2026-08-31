@@ -32,6 +32,8 @@ export interface SecurityCaseTurn extends SecurityCaseSubmission {
   chatResponse?: string;
 }
 
+export type SecurityCaseRecoveryAction = "reload_and_resubmit" | "start_new_case" | null;
+
 function stateFor(result: SecurityScopeResponseV4): SecurityCaseState {
   if (result.status === "failed") return "FAILED";
   if (result.scope_decision === "OUT_OF_SCOPE_GENERAL_FACT_CHECK") {
@@ -80,6 +82,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
   const [state, setState] = useState<SecurityCaseState>("IDLE");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
   const [error, setError] = useState<string | null>(null);
+  const [recoveryAction, setRecoveryAction] = useState<SecurityCaseRecoveryAction>(null);
   const [lifecycleEvents, setLifecycleEvents] = useState<SecurityAnalysisEventV4[]>([]);
   const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<{ id: string; version: number } | null>(null);
@@ -108,6 +111,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     setConversation({ id: result.conversation_id, version: result.conversation_version });
     setState(stateFor(result));
     setActiveAnalysisId(null);
+    setRecoveryAction(null);
   }, []);
 
   const monitor = useCallback((turnId: string, analysisId: string, activeGeneration: number) => {
@@ -147,11 +151,13 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
   const execute = useCallback(async (
     turnId: string,
     submission: SecurityCaseSubmission,
+    conversationOverride?: { id: string; version: number } | null,
   ) => {
     generation.current += 1;
     const activeGeneration = generation.current;
     stopRuntime();
     setError(null);
+    setRecoveryAction(null);
     setState("RUNNING");
     setTransport("disconnected");
     setLifecycleEvents([]);
@@ -165,12 +171,13 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
         // Capability discovery failure preserves the compatible inline path.
       }
       const useAsync = capabilities?.security_async_execution === true;
+      const activeConversation = conversationOverride === undefined ? conversation : conversationOverride;
       const result = await api.createAnalysis({
         message: submission.message,
         consent: AUTOMATIC_LOOKUP_CONSENT,
         ...(useAsync ? { execution_mode: "async" as const } : {}),
-        ...(conversation
-          ? { conversation_id: conversation.id, conversation_version: conversation.version }
+        ...(activeConversation
+          ? { conversation_id: activeConversation.id, conversation_version: activeConversation.version }
           : {}),
       }, useAsync ? { idempotencyKey: turnId } : undefined);
       if (!mounted.current || activeGeneration !== generation.current) return;
@@ -190,6 +197,13 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     } catch (submitError) {
       if (!mounted.current || activeGeneration !== generation.current) return;
       setError(messageForError(submitError));
+      setRecoveryAction(submitError instanceof ApiError
+        ? submitError.code === "CONVERSATION_VERSION_STALE"
+          ? "reload_and_resubmit"
+          : submitError.code === "NEW_CASE_REQUIRED"
+            ? "start_new_case"
+            : null
+        : null);
       setState("FAILED");
     }
   }, [api, applyResult, conversation, monitor, stopRuntime]);
@@ -198,24 +212,30 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     turnId: string,
     submission: SecurityCaseSubmission,
     settledState: SecurityCaseState,
+    conversationOverride?: { id: string; version: number } | null,
   ) => {
     generation.current += 1;
     const activeGeneration = generation.current;
     stopRuntime();
     setError(null);
+    setRecoveryAction(null);
     setState("CHATTING");
     setTransport("disconnected");
 
     try {
+      const activeConversation = conversationOverride === undefined ? conversation : conversationOverride;
       const reply = await api.chat!(
         submission.message,
-        conversation
-          ? { conversationId: conversation.id, conversationVersion: conversation.version }
+        activeConversation
+          ? {
+              conversationId: activeConversation.id,
+              conversationVersion: activeConversation.version,
+            }
           : undefined,
       );
       if (!mounted.current || activeGeneration !== generation.current) return;
       if (reply.route === "security_analysis") {
-        await execute(turnId, submission);
+        await execute(turnId, submission, conversationOverride);
         return;
       }
       if (!reply.response.trim()) throw new Error("Trợ lý không trả về nội dung.");
@@ -226,6 +246,10 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     } catch (chatError) {
       if (!mounted.current || activeGeneration !== generation.current) return;
       setError(messageForError(chatError));
+      setRecoveryAction(chatError instanceof ApiError
+        && chatError.code === "CONVERSATION_VERSION_STALE"
+        ? "reload_and_resubmit"
+        : null);
       setState("FAILED");
     }
   }, [api, conversation, execute, stopRuntime]);
@@ -260,12 +284,53 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     void execute(latestTurn.id, latestTurn);
   }, [execute, monitor, stopRuntime, turns]);
 
+  const recoverLatestTurn = useCallback(async () => {
+    const latestTurn = turns.at(-1);
+    if (!latestTurn || !recoveryAction) return;
+
+    if (recoveryAction === "start_new_case") {
+      const newTurn: SecurityCaseTurn = {
+        id: latestTurn.id,
+        idempotencyKey: latestTurn.idempotencyKey,
+        message: latestTurn.message,
+        result: null,
+      };
+      setTurns([newTurn]);
+      setConversation(null);
+      setError(null);
+      setRecoveryAction(null);
+      await execute(newTurn.id, newTurn, null);
+      return;
+    }
+
+    if (!conversation) return;
+    try {
+      const refreshed = await api.getConversation(conversation.id);
+      const context = { id: refreshed.conversation_id, version: refreshed.context_version };
+      setConversation(context);
+      setError(null);
+      setRecoveryAction(null);
+      const settledResult = turns.slice(0, -1).findLast((turn) => turn.result !== null)?.result;
+      if (settledResult && stateFor(settledResult) !== "NEED_MORE_INFO" && typeof api.chat === "function") {
+        await routeFollowUp(latestTurn.id, latestTurn, stateFor(settledResult), context);
+      } else {
+        await execute(latestTurn.id, latestTurn, context);
+      }
+    } catch (refreshError) {
+      if (!mounted.current) return;
+      setError(messageForError(refreshError));
+      setRecoveryAction(null);
+      setState("FAILED");
+    }
+  }, [api, conversation, execute, recoveryAction, routeFollowUp, turns]);
+
   const reset = useCallback(() => {
     generation.current += 1;
     stopRuntime();
     setTurns([]);
     setConversation(null);
     setError(null);
+    setRecoveryAction(null);
     setState("IDLE");
     setTransport("disconnected");
     setLifecycleEvents([]);
@@ -281,6 +346,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     state,
     transport,
     error,
+    recoveryAction,
     lifecycleEvents,
     progress,
     conversation,
@@ -288,6 +354,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
     busy,
     submit,
     retry,
+    recoverLatestTurn,
     reset,
   };
 }
