@@ -184,10 +184,11 @@ describe("FE5 case detail and resume", () => {
     render(<CaseDetail analysisId={analysis.analysis_id} api={client} />);
 
     expect(await screen.findByRole("heading", { name: "Tiếp tục cuộc trò chuyện" })).toBeInTheDocument();
-    screen.getAllByText("account_verification").forEach((item) => expect(item).not.toBeVisible());
+    expect(screen.getAllByText("Xác minh tài khoản").length).toBeGreaterThan(0);
+    expect(screen.queryByText("account_verification")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Kỹ thuật" }));
     expect(screen.getByRole("heading", { name: "Ngữ cảnh có cấu trúc được giữ lại" })).toBeInTheDocument();
-    expect(screen.getAllByText("account_verification").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Xác minh tài khoản").length).toBeGreaterThan(0);
     expect(screen.getByText(/Ngữ cảnh v3/)).toBeInTheDocument();
     expect(screen.queryByText("Nội dung chat riêng tư không thuộc contract")).not.toBeInTheDocument();
 

@@ -84,6 +84,24 @@ describe("FE4 security case presentation", () => {
     expect(screen.getByRole("list", { name: "Quan hệ giữa các tín hiệu" })).toHaveTextContent("phụ thuộc");
   });
 
+  it("summarizes the signal map before exposing the complete technical graph", () => {
+    const viewModel = mapSecurityCaseViewModel(completedSecurityCase());
+    render(<CaseSignalMap nodes={viewModel.signalNodes} edges={viewModel.signalEdges} mode="analyst" />);
+
+    expect(screen.getByRole("tab", { name: "Tổng quan" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/2 bước kiểm tra · 2 bằng chứng · 1 dùng trong kết luận/)).toBeInTheDocument();
+    expect(screen.getByText("Bằng chứng dùng trong kết luận")).toBeInTheDocument();
+    expect(screen.getByText("Đường dẫn nhạy cảm về đăng nhập")).toBeInTheDocument();
+    expect(screen.queryByText("Mã nguồn")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Toàn bộ kỹ thuật" }));
+
+    expect(screen.getByRole("tab", { name: "Toàn bộ kỹ thuật" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Các bước kiểm tra")).toBeInTheDocument();
+    expect(screen.getAllByText("Mã nguồn").length).toBeGreaterThan(0);
+    expect(screen.getByText("Kiểm tra URL cục bộ")).toBeInTheDocument();
+  });
+
   it("changes presentation depth without changing the verdict or evidence set", () => {
     render(<Presentation />);
 
