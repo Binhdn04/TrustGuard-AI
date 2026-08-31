@@ -134,6 +134,28 @@ def test_export_mask_preserves_application_owned_safe_structured_output() -> Non
     assert "langfuse.observation.output" not in patch.set_attributes
 
 
+def test_export_mask_preserves_safe_dataset_case_identifier() -> None:
+    identifier = object()
+    params = SimpleNamespace(
+        spans=MappingProxyType(
+            {
+                identifier: SimpleNamespace(
+                    attributes=MappingProxyType(
+                        {
+                            "langfuse.observation.metadata.privacy": "safe-structured",
+                            "langfuse.observation.metadata.dataset_case_id": "case_040_paypal_urgent_login",
+                        }
+                    )
+                )
+            }
+        )
+    )
+
+    patch = mask_private_trace_data(params=params).span_patches[identifier]
+
+    assert "langfuse.observation.metadata.dataset_case_id" not in patch.delete_attributes
+
+
 def test_sanitized_content_capture_keeps_debug_text_without_sensitive_values() -> None:
     identifier = object()
     params = SimpleNamespace(
