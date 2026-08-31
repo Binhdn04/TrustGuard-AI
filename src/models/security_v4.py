@@ -927,9 +927,7 @@ class SecurityBlacklistProposalRequestV4(SecurityContractModel):
                     or parsed.password
                 ):
                     raise ValueError("blacklist evidence must be an internal reference or an HTTP(S) source URL")
-                candidate = urlunsplit(
-                    (parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path or "/", "", "")
-                )
+                candidate = urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path or "/", "", ""))
             if candidate not in normalized:
                 normalized.append(candidate)
         return normalized
@@ -1222,9 +1220,7 @@ class SecurityScopeResponseV4(SecurityContractModel):
         if isinstance(assistant_context, dict) and "sender_intent" in assistant_context:
             value = {
                 **value,
-                "assistant_context": {
-                    key: item for key, item in assistant_context.items() if key != "sender_intent"
-                },
+                "assistant_context": {key: item for key, item in assistant_context.items() if key != "sender_intent"},
             }
         evidence = value.get("evidence")
         if isinstance(evidence, list):

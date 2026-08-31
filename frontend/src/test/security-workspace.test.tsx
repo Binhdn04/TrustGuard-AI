@@ -148,7 +148,7 @@ describe("Security Chat workspace", () => {
     setComposerMessage(screen.getByLabelText(/Dán tin nhắn đáng ngờ/i), "Tin nhắn yêu cầu OTP");
     expect(screen.queryByText("Cho phép kiểm tra URL bên ngoài")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Cho phép đối chiếu nguồn chính thức/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/kiểm tra liên kết bằng dịch vụ bảo mật/i)).toBeInTheDocument();
+    expect(screen.getByText("AI PROTECT có thể mắc sai lầm. Hãy xác minh thông tin quan trọng")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Gửi để đánh giá/i }));
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));

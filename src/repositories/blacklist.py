@@ -342,25 +342,51 @@ class SQLiteBlacklistRepository:
 
     async def get_account_lookup_consent(self, owner_id: str):
         from src.models import AccountLookupConsentStatusV4, AccountLookupConsentV4
+
         async with self._lock:
-            row = self._connection.execute("SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = ?", (owner_id,)).fetchone()
-        return AccountLookupConsentV4(status=AccountLookupConsentStatusV4.PENDING) if row is None else AccountLookupConsentV4(status=row[0], decided_at=datetime.fromisoformat(row[1]), disclosure_version=row[2])
+            row = self._connection.execute(
+                "SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = ?",
+                (owner_id,),
+            ).fetchone()
+        return (
+            AccountLookupConsentV4(status=AccountLookupConsentStatusV4.PENDING)
+            if row is None
+            else AccountLookupConsentV4(
+                status=row[0], decided_at=datetime.fromisoformat(row[1]), disclosure_version=row[2]
+            )
+        )
 
     async def decide_account_lookup_consent(self, owner_id: str, granted: bool, disclosure_version: str):
         from src.models import AccountLookupConsentV4
+
         now, status = datetime.now(UTC), "granted" if granted else "denied"
         async with self._lock:
-            self._connection.execute("INSERT OR IGNORE INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version) VALUES (?, ?, ?, ?)", (owner_id, status, now.isoformat(), disclosure_version))
+            self._connection.execute(
+                "INSERT OR IGNORE INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version) VALUES (?, ?, ?, ?)",
+                (owner_id, status, now.isoformat(), disclosure_version),
+            )
             self._connection.commit()
-            row = self._connection.execute("SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = ?", (owner_id,)).fetchone()
-        return AccountLookupConsentV4(status=row[0], decided_at=datetime.fromisoformat(row[1]), disclosure_version=row[2])
+            row = self._connection.execute(
+                "SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = ?",
+                (owner_id,),
+            ).fetchone()
+        return AccountLookupConsentV4(
+            status=row[0], decided_at=datetime.fromisoformat(row[1]), disclosure_version=row[2]
+        )
 
     async def override_account_lookup_consent(self, owner_id: str, granted: bool, actor_id: str, note: str):
         from src.models import AccountLookupConsentV4
+
         now, status = datetime.now(UTC), "granted" if granted else "denied"
         async with self._lock:
-            self._connection.execute("INSERT INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version) VALUES (?, ?, ?, 'lookup-consent-v1') ON CONFLICT(owner_id) DO UPDATE SET status=excluded.status, decided_at=excluded.decided_at", (owner_id, status, now.isoformat()))
-            self._connection.execute("INSERT INTO security_account_lookup_consent_audit VALUES (?, ?, ?, ?, ?, ?)", (str(uuid4()), owner_id, actor_id, status, note, now.isoformat()))
+            self._connection.execute(
+                "INSERT INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version) VALUES (?, ?, ?, 'lookup-consent-v1') ON CONFLICT(owner_id) DO UPDATE SET status=excluded.status, decided_at=excluded.decided_at",
+                (owner_id, status, now.isoformat()),
+            )
+            self._connection.execute(
+                "INSERT INTO security_account_lookup_consent_audit VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid4()), owner_id, actor_id, status, note, now.isoformat()),
+            )
             self._connection.commit()
         return AccountLookupConsentV4(status=status, decided_at=now)
 

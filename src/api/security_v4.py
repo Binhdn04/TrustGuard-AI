@@ -366,7 +366,9 @@ async def decide_account_lookup_consent_v4(
     )
 
 
-@router.post("/admin/account-lookup-consent/{owner_id}", response_model=AccountLookupConsentV4, responses=_COMMON_ERRORS)
+@router.post(
+    "/admin/account-lookup-consent/{owner_id}", response_model=AccountLookupConsentV4, responses=_COMMON_ERRORS
+)
 async def override_account_lookup_consent_v4(
     owner_id: str,
     request: AdminAccountLookupConsentOverrideRequestV4,
@@ -589,22 +591,21 @@ async def create_security_analysis_v4(
     http_request: Request,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)] = None,
 ) -> SecurityScopeResponseV4 | JSONResponse:
-    account_consent = await analyses.repository.get_account_lookup_consent(principal.user_id)
-    if account_consent.status is AccountLookupConsentStatusV4.PENDING:
-        raise PlatformError(
-            status_code=409,
-            code=ErrorCode.CONFLICT,
-            message="Account lookup consent must be decided before creating an analysis.",
-            retryable=False,
+    lookup_consent = getattr(analyses.repository, "get_account_lookup_consent", None)
+    if lookup_consent is not None:
+        account_consent = await lookup_consent(principal.user_id)
+        # An undecided or denied account preference must only disable external
+        # lookups; local security triage remains available.  This also keeps
+        # ownership checks ahead of any downstream investigation work.
+        granted = account_consent.status is AccountLookupConsentStatusV4.GRANTED
+        request = request.model_copy(
+            update={
+                "consent": SecurityConsentV4(
+                    external_url_lookup=granted,
+                    official_source_lookup=granted,
+                )
+            }
         )
-    request = request.model_copy(
-        update={
-            "consent": SecurityConsentV4(
-                external_url_lookup=account_consent.status is AccountLookupConsentStatusV4.GRANTED,
-                official_source_lookup=account_consent.status is AccountLookupConsentStatusV4.GRANTED,
-            )
-        }
-    )
     scoped = service.assess(request)
     if request.execution_mode is SecurityExecutionModeV4.ASYNC:
         settings = get_settings()

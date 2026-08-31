@@ -45,9 +45,7 @@ async def grant_default_test_lookup_consent() -> None:
     override so they can assert the pending state explicitly.
     """
     analyses = get_security_analysis_service()
-    await analyses.repository.decide_account_lookup_consent(
-        "demo-user", False, "test-default-consent-v1"
-    )
+    await analyses.repository.decide_account_lookup_consent("demo-user", False, "test-default-consent-v1")
 
 
 @pytest_asyncio.fixture
