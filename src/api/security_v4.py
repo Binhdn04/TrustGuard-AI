@@ -281,7 +281,6 @@ def _chat_context_document(
     assistant_context = None
     if assistant is not None:
         assistant_context = {
-            "sender_intent": assistant.sender_intent,
             "exposure_state": assistant.exposure_state.value,
             "missing_information": assistant.missing_information,
         }
@@ -480,7 +479,7 @@ async def security_chat_v4(
         if conversation.context_version != request.conversation_version:
             raise PlatformError(
                 status_code=409,
-                code=ErrorCode.CONFLICT,
+                code=ErrorCode.CONVERSATION_VERSION_STALE,
                 message="The security conversation version is stale.",
                 retryable=True,
                 details={"current_version": conversation.context_version},

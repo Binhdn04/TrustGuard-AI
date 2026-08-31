@@ -770,7 +770,6 @@ def assess_security_risk(
         and item.signal
         in {
             "official_domain_verified",
-            "sender_identity_unverified",
             "action_endorsement_unverified",
         }
     )

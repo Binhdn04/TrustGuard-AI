@@ -98,10 +98,6 @@ _SIGNAL_GUIDANCE: tuple[tuple[frozenset[str], str], ...] = (
         "Tên miền được nêu đã được xác minh thuộc quyền kiểm soát chính thức của tổ chức.",
     ),
     (
-        frozenset({"sender_identity_unverified"}),
-        "Tin nhắn chưa có đủ bằng chứng xác thực danh tính người gửi.",
-    ),
-    (
         frozenset({"action_endorsement_unverified"}),
         "Nguồn chính thức chưa xác nhận đúng yêu cầu đăng nhập hoặc hành động trong tin nhắn.",
     ),
@@ -540,7 +536,7 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
                 category="exact_resource_endorsed",
                 evidence=exact_resource_evidence,
                 finding="Nguồn chính thức đã xác nhận tài nguyên cụ thể được gửi.",
-                implication="Điều này không tự xác nhận người gửi hoặc mọi hành động được nêu trong tin nhắn.",
+                implication="Điều này không tự xác nhận mọi hành động được nêu trong tin nhắn.",
             )
 
     # Verification evidence is emitted by independent components. Rank the
@@ -564,7 +560,7 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
             category="official_domain_verified",
             evidence=domain_evidence,
             finding=f"Tên miền {target or 'được gửi'} đã được xác minh thuộc tổ chức được nêu.",
-            implication="Điều này xác nhận nguồn của tên miền, không tự xác nhận người gửi hay nội dung yêu cầu.",
+            implication="Điều này xác nhận nguồn của tên miền, không tự xác nhận nội dung yêu cầu.",
         )
     claim_unverified = bool(
         verification is not None and verification.claim_verification.status is VerificationStatusV4.UNVERIFIED
@@ -619,48 +615,18 @@ def _decisive_response_facts(scope: SecurityScopeResponseV4) -> list[dict[str, o
                 finding="Kiểm tra uy tín không ghi nhận cảnh báo độc hại cho địa chỉ này.",
                 implication="Kết quả này chỉ nói về tín hiệu nguy hại của địa chỉ, không xác nhận tổ chức được nhắc tới hoặc hành động trong tin nhắn.",
             )
-        elif signal == "sender_identity_unverified":
-            # Sender provenance is useful only when there is no stronger
-            # resource/action fact explaining the decision. It must not crowd
-            # out the actual claim the user is being asked to act on.
-            if (
-                domain_evidence is not None
-                or (
-                    verification is not None
-                    and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
-                )
-            ) and (
-                action_evidence is not None
-                or (
-                    verification is not None
-                    and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
-                )
-            ):
-                continue
-            add(
-                category="sender_identity_unverified",
-                evidence=evidence,
-                finding="Danh tính người gửi chưa được xác minh riêng.",
-                implication="Điều này chỉ giới hạn kết luận về người gửi; cần phân biệt với kết quả kiểm tra liên kết và hành động.",
-            )
     return facts[:3]
 
 
 def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
     assert scope.risk is not None
     # This is a response-selection invariant, not merely an explanation
-    # preference. Sender assurance is independent of the verified resource and
-    # action, and must not turn their affirmative conclusion into generic
-    # caution when composition falls back.
+    # preference. A verified resource and action must retain their affirmative
+    # conclusion when composition falls back.
     if _has_verified_official_allow_open(scope):
         verification = scope.official_verification
         assert verification is not None
         summary = "Liên kết và thủ tục bạn hỏi đã được nguồn chính thức xác nhận. Bạn có thể mở liên kết này."
-        if (
-            verification.sender_verification.applicable
-            and verification.sender_verification.status is VerificationStatusV4.UNVERIFIED
-        ):
-            summary += " Danh tính người gửi chưa được xác minh riêng, nhưng điều đó không thay đổi kết luận về liên kết và thủ tục này."
         return summary
 
     if _has_verified_passive_target_allow_open(scope):
@@ -697,14 +663,12 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
         return explanation
 
     summary = _RISK_GUIDANCE[scope.risk]
-    # A verified submitted resource is affirmative truth even when the message
-    # sender has not been authenticated. Do not collapse that distinction into
-    # the generic INSUFFICIENT_EVIDENCE caution fallback.
+    # A verified submitted resource is affirmative truth. Do not collapse it
+    # into the generic INSUFFICIENT_EVIDENCE caution fallback.
     if _has_verified_exact_resource_endorsement(scope) and scope.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE:
         summary = "Tài nguyên bạn gửi đã được nguồn chính thức xác nhận cho quy trình này."
     evidence_by_signal = {item.signal: item for item in scope.evidence if item.type.value == "official_verification"}
     ownership = evidence_by_signal.get("official_domain_verified")
-    sender = evidence_by_signal.get("sender_identity_unverified")
     action = evidence_by_signal.get("action_endorsement_unverified")
     verification_sentences: list[str] = []
     verification = scope.official_verification
@@ -724,14 +688,6 @@ def _friendly_summary(scope: SecurityScopeResponseV4) -> str:
             )
         )
         verification_sentences.append(f"{domain or 'Tên miền được gửi'} đã được xác minh là tên miền chính thức.")
-    # A text-and-URL submission does not identify a sender. Keep this separate
-    # observation out of the fallback unless it is the only material fact.
-    if sender is not None and not (
-        verification is not None
-        and verification.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
-        and verification.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
-    ):
-        verification_sentences.append("Danh tính người gửi chưa được xác minh riêng.")
     if action is not None:
         verification_sentences.append("Chưa có xác nhận chính thức cho đúng hành động mà tin nhắn yêu cầu.")
         verification_sentences.append("Không nhập mật khẩu hoặc OTP chỉ dựa trên tin nhắn này.")
@@ -829,28 +785,17 @@ def check_grounded_ai_response(
     verification = scope.official_verification
     # A partial or unverified edge is never promotable by wording.  Each
     # verification edge is checked independently: a verified resource must
-    # not become evidence that the sender, domain, or requested action is
-    # verified too.
+    # not become evidence that the domain or requested action is verified too.
     if verification is not None:
         affirmative = r"(?:đã được|được|đã)\s*(?:xác minh|xác nhận|kiểm chứng)"
         if verification.domain_ownership_verification.status is not VerificationStatusV4.VERIFIED and re.search(
             rf"(?:tên miền|domain).{{0,60}}{affirmative}", combined
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-        if not verification.sender_verification.applicable and re.search(
-            r"(?:danh tính )?(?:người gửi|sender).{0,60}(?:chưa|không)", combined
-        ):
-            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
             verification.resource_verification.status is not VerificationStatusV4.VERIFIED
             and not _has_verified_exact_resource_endorsement(scope)
             and re.search(rf"(?:liên kết|đường link|tài nguyên).{{0,60}}{affirmative}", combined)
-        ):
-            return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
-        if (
-            verification.sender_verification.applicable
-            and verification.sender_verification.status is not VerificationStatusV4.VERIFIED
-            and re.search(rf"(?:người gửi|sender).{{0,60}}{affirmative}", combined)
         ):
             return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
         if (
@@ -876,8 +821,8 @@ def check_grounded_ai_response(
             SynthesisGroundingFailure.CONTRADICTS_VERIFIED_EXACT_RESOURCE_ENDORSEMENT,
         )
     if _has_verified_official_allow_open(scope) and not _POSITIVE_VERIFICATION_AFFIRMATION.search(synthesis.summary):
-        # A composer may mention an unverified sender, but it cannot omit the
-        # affirmative conclusion that policy has already established.
+        # The composer cannot omit the affirmative conclusion that policy has
+        # already established.
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.MISSING_REQUIRED_AFFIRMATION)
     if (
         _has_verified_exact_resource_action_endorsement(scope)
@@ -907,15 +852,12 @@ def check_grounded_ai_response(
         item.type.value == "official_verification" and item.signal == "official_domain_verified"
         for item in scope.evidence
     )
+    if re.search(r"(?:danh tính )?(?:người gửi|sender).{0,60}(?:xác minh|xác nhận|kiểm chứng)", combined):
+        return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
     if (
         ("tên miền chính thức" in combined or "domain chính thức" in combined)
         and "đã được xác minh" in combined
         and not (domain_ownership_verified or projected_domain_verified)
-    ) or (
-        re.search(r"người gửi.{0,30}(?:đã được|được) xác minh", combined) is not None
-        and scope.official_verification is not None
-        and scope.official_verification.sender_verification.applicable
-        and scope.official_verification.sender_verification.status is not VerificationStatusV4.VERIFIED
     ):
         return SynthesisGroundingCheck(None, SynthesisGroundingFailure.OFFICIAL_VERIFICATION_OVERREACH)
     try:
@@ -1176,26 +1118,7 @@ class GroundedSecurityResponseService:
                         if verification.domain_ownership_verification.status is not None
                         else None
                     ),
-                    **(
-                        {"sender_identity": verification.sender_verification.status.value}
-                        if verification.sender_verification.applicable
-                        and verification.sender_verification.status is not None
-                        else {}
-                    ),
                     "uncertainty_boundaries": {
-                        **(
-                            {
-                                "sender_identity": (
-                                    "The sender identity is not independently verified. This fact does not change "
-                                    "the official endorsement of the exact submitted resource or requested action."
-                                    if _has_verified_exact_resource_action_endorsement(scope)
-                                    else "The sender identity is a separate fact from resource and action verification."
-                                )
-                            }
-                            if verification.sender_verification.applicable
-                            and verification.sender_verification.status is not None
-                            else {}
-                        ),
                         "domain_ownership": (
                             "The submitted resource is third-party hosted; do not infer that its entire domain "
                             "is owned by the organization."

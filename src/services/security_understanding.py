@@ -217,7 +217,6 @@ def _project_action_mentions(
 _SEMANTIC_FIELDS = frozenset(
     {
         "scope_decision",
-        "sender_intent",
         "social_engineering_techniques",
         "scenario",
         "exposure_state",
@@ -627,7 +626,6 @@ def merge_semantic_understanding(
         return False
 
     accepted_scope = output.scope_decision if accept("scope_decision", output.scope_decision is not None) else None
-    sender_intent = output.sender_intent if accept("sender_intent", bool(output.sender_intent)) else None
     techniques = (
         _unique(output.social_engineering_techniques)[:20]
         if accept("social_engineering_techniques", bool(output.social_engineering_techniques))
@@ -767,7 +765,6 @@ def merge_semantic_understanding(
             accepted_confidences.setdefault(span.field_name, 1.0)
     assistant_context = AssistantContextV4(
         processing_mode=AssistantProcessingModeV4.HYBRID,
-        sender_intent=sender_intent,
         social_engineering_techniques=techniques,
         exposure_state=exposure_state,
         missing_information=_unique(output.missing_information)[:20],
@@ -805,7 +802,6 @@ def merge_semantic_understanding(
                 field_name
                 for field_name, present in {
                     "scope_decision": output.scope_decision is not None,
-                    "sender_intent": bool(output.sender_intent),
                     "social_engineering_techniques": bool(output.social_engineering_techniques),
                     "claimed_entity": bool(output.claimed_entity),
                     "entity_url_claims": bool(output.entity_url_claims),

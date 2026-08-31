@@ -271,9 +271,6 @@ async def test_composer_keeps_structured_verified_ownership_without_projected_ev
         domain_ownership_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.VERIFIED, reason_code="official_domain_confirmed"
         ),
-        sender_verification=OfficialVerificationComponentV4(
-            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
-        ),
         action_endorsement_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
         ),
@@ -515,9 +512,6 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
         domain_ownership_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="ownership_not_confirmed"
         ),
-        sender_verification=OfficialVerificationComponentV4(
-            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
-        ),
         action_endorsement_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
         ),
@@ -563,9 +557,7 @@ def test_composer_and_fallback_receive_case_specific_unverified_verification_tru
             "official_association": "not_established",
         },
         "domain_ownership": "UNVERIFIED",
-        "sender_identity": "UNVERIFIED",
         "uncertainty_boundaries": {
-            "sender_identity": "The sender identity is a separate fact from resource and action verification.",
             "domain_ownership": None,
         },
         "malicious_evidence": "none_observed",
@@ -643,9 +635,6 @@ def _exact_resource_endorsement_scope(*, organization: str, resource_url: str):
         domain_ownership_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="ownership_not_confirmed"
         ),
-        sender_verification=OfficialVerificationComponentV4(
-            applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="sender_not_confirmed"
-        ),
         action_endorsement_verification=OfficialVerificationComponentV4(
             applicable=True, status=VerificationStatusV4.UNVERIFIED, reason_code="action_not_confirmed"
         ),
@@ -692,7 +681,7 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
     assert payload["authoritative_security_truth"]["verified_exact_resource_endorsement"] is True
     assert payload["verification_state"]["submitted_resource"]["official_association"] == "exact_resource_endorsed"
     assert payload["verification_state"]["domain_ownership"] == "UNVERIFIED"
-    assert payload["verification_state"]["sender_identity"] == "UNVERIFIED"
+    assert "sender_identity" not in payload["verification_state"]
     assert payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is False
 
     contradiction = AssistantSynthesis(
@@ -750,7 +739,7 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
         AssistantSynthesis(
             summary=(
                 "An official provenance chain endorses this exact submitted resource; "
-                "the publisher domain and sender are not independently verified."
+                "the publisher domain is not independently verified."
             )
         ),
     )
@@ -777,7 +766,7 @@ async def test_exact_resource_endorsement_survives_grounding_without_granting_do
     action_payload = GroundedSecurityResponseService._synthesis_payload(action_endorsed)
     assert action_payload["verification_state"]["requested_action"]["exact_resource_endorsed"] is True
     assert action_payload["important_uncertainties"] == []
-    assert "does not change" in action_payload["verification_state"]["uncertainty_boundaries"]["sender_identity"]
+    assert "sender_identity" not in action_payload["verification_state"]
     rejected = check_grounded_ai_response(
         action_endorsed,
         AssistantSynthesis(summary="Chưa có xác nhận chính thức cho hành động đăng ký này."),

@@ -7,6 +7,8 @@ const MESSAGES: Record<string, string> = {
   RATE_LIMITED: "Bạn đã thao tác quá nhanh. Vui lòng thử lại sau ít phút.",
   PROVIDER_TIMEOUT: "Dịch vụ kiểm tra đang phản hồi chậm. Vui lòng thử lại.",
   CONFLICT: "Dữ liệu vừa thay đổi. Vui lòng tải lại và thử lại.",
+  CONVERSATION_VERSION_STALE: "Hội thoại đã có lượt cập nhật mới hơn.",
+  NEW_CASE_REQUIRED: "Nội dung này thuộc một trường hợp bảo mật khác.",
   INTERNAL_ERROR: "Dịch vụ kiểm tra gặp sự cố tạm thời. Vui lòng thử lại.",
   HTTP_ERROR: "Không thể hoàn tất yêu cầu. Vui lòng thử lại.",
 };

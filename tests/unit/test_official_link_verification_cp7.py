@@ -28,8 +28,6 @@ from src.models import (
     SecurityRiskV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
-    SenderProvenanceKindV4,
-    SenderProvenanceV4,
     VerificationStatusV4,
 )
 from src.security_ai.contracts import AssistantSynthesis, ModelResponse
@@ -288,8 +286,6 @@ async def test_plain_text_organization_url_and_action_do_not_fabricate_sender_ve
     first = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
     assert first.report is not None
     assert first.report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
-    assert first.report.sender_verification.applicable is False
-    assert first.report.sender_verification.status is None
     assert first.report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
     assert first.report.overall_status is VerificationStatusV4.PARTIALLY_VERIFIED
 
@@ -312,28 +308,6 @@ async def test_plain_text_organization_url_and_action_do_not_fabricate_sender_ve
     second = await coordinator.coordinate(request, scope, execution_context=TurnExecutionContext())
     assert second.identity_cache_hits > 0
     assert search.calls == []
-
-
-@pytest.mark.asyncio
-async def test_trusted_sender_provenance_activates_the_independent_sender_guard() -> None:
-    request, scope = _request_scope()
-
-    outcome = await _coordinator().coordinate(
-        request,
-        scope,
-        execution_context=TurnExecutionContext(
-            sender_provenance=SenderProvenanceV4(
-                kind=SenderProvenanceKindV4.AUTHENTICATED_ACCOUNT,
-                provenance_ref="integration:turn-123",
-            )
-        ),
-    )
-
-    assert outcome.report is not None
-    assert outcome.report.sender_verification.applicable is True
-    assert outcome.report.sender_verification.status is VerificationStatusV4.UNVERIFIED
-    completed = apply_official_verification_outcome(scope, outcome)
-    assert "sender_identity_unverified" in {item.signal for item in completed.evidence}
 
 
 @pytest.mark.asyncio
@@ -1809,8 +1783,6 @@ async def test_runtime_pipeline_reuses_exact_source_campaign_evidence_without_ca
     assert report.domain_ownership_verification.status is VerificationStatusV4.UNVERIFIED
     assert report.resource_verification.status is VerificationStatusV4.VERIFIED
     assert report.action_endorsement_verification.status is VerificationStatusV4.VERIFIED
-    assert report.sender_verification.applicable is False
-    assert report.sender_verification.status is None
     assert report.claim_verification.status is VerificationStatusV4.VERIFIED
     assert report.claim_verification.reason_code == "exact_resource_source_claim_match"
     assert result.risk is not SecurityRiskV4.SAFE
@@ -1875,8 +1847,6 @@ async def test_official_domain_identity_does_not_endorse_an_arbitrary_passport_r
     assert report.domain_ownership_verification.status is VerificationStatusV4.VERIFIED
     assert report.resource_verification.status is VerificationStatusV4.UNVERIFIED
     assert report.action_endorsement_verification.status is VerificationStatusV4.UNVERIFIED
-    assert report.sender_verification.applicable is False
-    assert report.sender_verification.status is None
 
     completed = assess_security_risk(
         apply_official_verification_outcome(scope, outcome),

@@ -19,16 +19,16 @@ from src.security_ai.runtime import SecurityAssistantRuntime, TurnBudget
 
 def test_security_ai_structured_outputs_forbid_extra_fields() -> None:
     with pytest.raises(ValidationError):
-        Understanding.model_validate({"sender_intent": "payment", "invented": True})
+        Understanding.model_validate({"scenario": "payment", "invented": True})
 
 
 @pytest.mark.parametrize(("start", "end"), [(83, 83), (90, 83), (0, 0)])
 def test_provider_source_span_offsets_are_deferred_to_grounding_boundary(start: int, end: int) -> None:
     parsed = Understanding.model_validate(
         {
-            "sender_intent": "registration",
-            "field_confidences": {"sender_intent": 0.9},
-            "source_spans": [{"field_name": "sender_intent", "start": start, "end": end}],
+            "claimed_entity": "Example",
+            "field_confidences": {"claimed_entity": 0.9},
+            "source_spans": [{"field_name": "claimed_entity", "start": start, "end": end}],
         }
     )
 
@@ -104,7 +104,7 @@ async def test_runtime_logs_normalized_fallback_without_provider_payload(caplog)
 
 @pytest.mark.asyncio
 async def test_runtime_enforces_four_calls_and_single_synthesis() -> None:
-    response = ModelResponse(output=Understanding(sender_intent="unknown"), provider="fake", model="v1")
+    response = ModelResponse(output=Understanding(), provider="fake", model="v1")
 
     async def valid():
         return response
@@ -181,8 +181,8 @@ async def test_openai_adapter_accounts_configured_token_cost() -> None:
             assert "security_message_understanding" in payload
             return {
                 "parsed": {
-                    "sender_intent": "credential_theft",
-                    "field_confidences": [{"field_name": "sender_intent", "confidence": 0.9}],
+                    "claimed_entity": "Example",
+                    "field_confidences": [{"field_name": "claimed_entity", "confidence": 0.9}],
                 },
                 "raw": SimpleNamespace(
                     usage_metadata={"input_tokens": 1_000, "output_tokens": 250},
@@ -203,14 +203,13 @@ async def test_openai_adapter_accounts_configured_token_cost() -> None:
     assert response.usage.output_tokens == 250
     assert response.usage.cost_usd == pytest.approx(0.004)
     assert response.model == "priced-model-2026-08-01"
-    assert response.output.field_confidences == {"sender_intent": 0.9}
+    assert response.output.field_confidences == {"claimed_entity": 0.9}
 
 
 def test_understanding_treats_unknown_optional_candidates_as_omitted() -> None:
     parsed = Understanding.model_validate(
         {
             "scope_decision": "UNKNOWN",
-            "sender_intent": "UNKNOWN",
             "claimed_entity": "UNKNOWN",
             "scenario": "UNKNOWN",
             "requested_action": "UNKNOWN",
@@ -219,7 +218,6 @@ def test_understanding_treats_unknown_optional_candidates_as_omitted() -> None:
     )
 
     assert parsed.scope_decision is None
-    assert parsed.sender_intent is None
     assert parsed.claimed_entity is None
     assert parsed.scenario is None
     assert parsed.requested_action is None

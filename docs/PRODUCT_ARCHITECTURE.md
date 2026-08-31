@@ -105,8 +105,8 @@ validate request/version → scope/context → boundary hoặc investigation
 - Lần phân tích sau vẫn chạy pipeline đầy đủ. Chỉ whitelist/blacklist đang active hoặc reviewed Memory phù hợp mới
   trở thành evidence; report chưa review hoặc bị reject/dismiss không được dùng như risk signal.
 - Whitelist, familiarity và official identity là ba khái niệm độc lập: whitelist là ngoại lệ có provenance;
-  familiarity xác nhận platform/usage đã review; official identity đánh giá domain ownership, sender identity và
-  action endorsement. Một nguồn không được dùng thay thế hoặc suy rộng cho nguồn còn lại.
+  familiarity xác nhận platform/usage đã review; official identity đánh giá domain ownership và action
+  endorsement. Một nguồn không được dùng thay thế hoặc suy rộng cho nguồn còn lại.
 
 Identity discovery là phần mở rộng provider-neutral của official-link verification, không phải pipeline mới.
 Official-link verification đã được triển khai hoàn chỉnh trong runtime `/api/v4`; trạng thái release và
@@ -133,21 +133,20 @@ similarity chỉ là supporting hoặc bị loại khỏi root establishment. Id
 domain ownership; không xác minh arbitrary URL cùng host, social account, hay third-party resource nếu không có
 exact provenance riêng.
 
-Report v3 tách domain ownership, sender identity và action endorsement thành ba component độc lập. Việc entity
+Report v4 chỉ công bố domain ownership và action endorsement. Việc entity
 được nhắc trước “gửi/yêu cầu/thông báo” chỉ tạo grounded claim, không phải impersonation signal. Ownership
 discovery/cache chỉ được công bố khi request có cả `official_source_lookup` và `external_url_lookup`; verified
-domain không xác minh người gửi hoặc yêu cầu đăng nhập. Ba evidence projection này trung tính với score và
+domain không xác minh yêu cầu đăng nhập. Hai evidence projection này trung tính với score và
 `official_domain_verified` không phải SAFE signal.
 
 Semantic understanding không nhận quyền tính character offset. Backend tạo span candidate ổn định cho URL,
 phrase/action, clause và toàn message; model chỉ chọn span ID. Confidence hoặc span ID thiếu/sai chỉ loại đúng
 semantic candidate liên quan. URL và action hiển nhiên vẫn do rule deterministic trích xuất.
 
-Official verification v4 route ownership theo URL và endorsement theo action, không phụ thuộc sender mention.
+Official verification v4 route ownership theo URL và endorsement theo action, không công bố suy đoán/xác minh sender.
 Registry miss khởi động resource-first discovery thay vì kết thúc ở `UNVERIFIED`; association đủ hai evidence
 family độc lập được cache có TTL bằng identity-candidate store hiện hữu. SAFE dùng chain liên quan đến hành động:
-exact resource/action endorsement đã verified có thể đủ dù sender identity còn unverified, miễn không có conflict,
-malicious evidence hoặc hành động trực tiếp phụ thuộc vào việc tin người gửi.
+exact resource/action endorsement đã verified có thể đủ khi không có conflict hoặc malicious evidence.
 
 ## Persistence and lifecycle
 

@@ -123,6 +123,9 @@ export function AppShell({
 
         <main id="workspace-content" tabIndex={-1} className="mx-auto w-full max-w-[1600px] px-4 py-6 pb-28 sm:px-7 lg:px-9 lg:py-8 lg:pb-10">
           {children}
+          <p className="mt-8 text-center text-xs leading-5 text-muted-foreground">
+            AI có thể mắc sai lầm. Kết quả chỉ mang tính hỗ trợ; hãy tự xác minh trước khi thực hiện hành động quan trọng.
+          </p>
         </main>
       </div>
 
