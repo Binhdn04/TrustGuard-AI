@@ -384,7 +384,8 @@ class SQLiteBlacklistRepository:
                 (owner_id, status, now.isoformat()),
             )
             self._connection.execute(
-                "INSERT INTO security_account_lookup_consent_audit VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO security_account_lookup_consent_audit "
+                "(audit_id, owner_id, actor_id, status, note, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (str(uuid4()), owner_id, actor_id, status, note, now.isoformat()),
             )
             self._connection.commit()

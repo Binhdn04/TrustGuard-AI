@@ -147,17 +147,13 @@ class PostgresPlatformRepository(
             row = await connection.fetchrow(
                 """INSERT INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version)
                    VALUES ($1, $2, now(), $3)
-                   ON CONFLICT (owner_id) DO NOTHING
+                   ON CONFLICT (owner_id) DO UPDATE
+                   SET owner_id = security_account_lookup_consent.owner_id
                    RETURNING status, decided_at, disclosure_version""",
                 owner_id,
                 status.value,
                 disclosure_version,
             )
-            if row is None:
-                row = await connection.fetchrow(
-                    "SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = $1",
-                    owner_id,
-                )
         return AccountLookupConsentV4(
             status=row["status"], decided_at=row["decided_at"], disclosure_version=row["disclosure_version"]
         )
