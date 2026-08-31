@@ -123,6 +123,44 @@ class PostgresPlatformRepository(
             self._pool = await asyncpg.create_pool(self._database_url, min_size=1, max_size=10)
         return self._pool
 
+    async def get_account_lookup_consent(self, owner_id: str):
+        from src.models import AccountLookupConsentStatusV4, AccountLookupConsentV4
+        pool = await self._get_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = $1", owner_id
+            )
+        if row is None:
+            return AccountLookupConsentV4(status=AccountLookupConsentStatusV4.PENDING)
+        return AccountLookupConsentV4(status=row["status"], decided_at=row["decided_at"], disclosure_version=row["disclosure_version"])
+
+    async def decide_account_lookup_consent(self, owner_id: str, granted: bool, disclosure_version: str):
+        from src.models import AccountLookupConsentStatusV4, AccountLookupConsentV4
+        status = AccountLookupConsentStatusV4.GRANTED if granted else AccountLookupConsentStatusV4.DENIED
+        pool = await self._get_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                """INSERT INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version)
+                   VALUES ($1, $2, now(), $3)
+                   ON CONFLICT (owner_id) DO NOTHING
+                   RETURNING status, decided_at, disclosure_version""",
+                owner_id, status.value, disclosure_version,
+            )
+            if row is None:
+                row = await connection.fetchrow(
+                    "SELECT status, decided_at, disclosure_version FROM security_account_lookup_consent WHERE owner_id = $1", owner_id
+                )
+        return AccountLookupConsentV4(status=row["status"], decided_at=row["decided_at"], disclosure_version=row["disclosure_version"])
+
+    async def override_account_lookup_consent(self, owner_id: str, granted: bool, actor_id: str, note: str):
+        from src.models import AccountLookupConsentV4
+        pool = await self._get_pool()
+        status = "granted" if granted else "denied"
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow("""INSERT INTO security_account_lookup_consent (owner_id, status, decided_at, disclosure_version) VALUES ($1, $2, now(), 'lookup-consent-v1') ON CONFLICT (owner_id) DO UPDATE SET status=excluded.status, decided_at=excluded.decided_at RETURNING status, decided_at, disclosure_version""", owner_id, status)
+            await connection.execute("INSERT INTO security_account_lookup_consent_audit (audit_id, owner_id, actor_id, status, note, occurred_at) VALUES ($1, $2, $3, $4, $5, $6)", uuid4(), owner_id, actor_id, status, note, row["decided_at"])
+        return AccountLookupConsentV4(status=row["status"], decided_at=row["decided_at"], disclosure_version=row["disclosure_version"])
+
     async def create_analysis(
         self,
         *,

@@ -80,7 +80,9 @@ validate request/version → scope/context → boundary hoặc investigation
   stale version bị từ chối và chat thường không làm tăng version hoặc persist nội dung mới.
 - Frontend chỉ render Markdown giới hạn trong phản hồi chatbot (nhấn mạnh, danh sách, inline code và HTTP(S) link)
   thành React element; không dùng raw HTML. Nội dung người dùng không được diễn giải như Markdown.
-- External lookup cần consent của request hiện tại; consent không kế thừa qua conversation.
+- External lookup dùng lựa chọn tổng cấp tài khoản được người dùng quyết định một lần trước lượt phân tích đầu tiên.
+  Backend luôn ghi rõ hai cờ consent vào request pipeline; trạng thái `pending` chặn tạo analysis và `denied` chỉ cho
+  local/internal checks. Lựa chọn không được suy ra từ AI hoặc nội dung người dùng.
 - Domain registration giữ một public evidence/tool type `rdap`: `.vn` dùng BKNS WHOIS v2 khi có key; domain khác
   dùng IANA RDAP và chỉ fallback BKNS khi IANA không công bố RDAP service. BKNS no-hit/lỗi/timeout không chứng minh
   domain an toàn; registrant, nameserver và raw provider payload không đi vào contract hoặc persistence.

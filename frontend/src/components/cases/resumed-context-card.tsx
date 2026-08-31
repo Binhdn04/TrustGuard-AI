@@ -5,7 +5,6 @@ import { ArrowUp, History, Loader2, ShieldCheck } from "lucide-react";
 
 import {
   AUTOMATIC_LOOKUP_DISCLOSURE,
-  OFFICIAL_SOURCE_LOOKUP_DISCLOSURE,
 } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
 import { securityLabel } from "@/lib/presentation/security-labels";
@@ -92,7 +91,7 @@ export function ResumedContextCard({
               {busy ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </button>
           </div>
-          <p className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE} {OFFICIAL_SOURCE_LOOKUP_DISCLOSURE} Thông tin bổ sung chỉ gửi ngữ cảnh có cấu trúc, không gửi lại nội dung hội thoại thô cũ.</p>
+          <p className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE} Thông tin bổ sung chỉ gửi ngữ cảnh có cấu trúc, không gửi lại nội dung hội thoại thô cũ.</p>
         </form>
       </div>
     </section>

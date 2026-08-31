@@ -33,7 +33,21 @@ for _flag in (
     os.environ[_flag] = "false"
 os.environ["SECURITY_OFFICIAL_VERIFICATION_MODE"] = "off"
 
+from src.api.dependencies import get_security_analysis_service  # noqa: E402
 from src.main import app  # noqa: E402 - test environment must precede application import
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def grant_default_test_lookup_consent() -> None:
+    """Keep pre-existing analysis tests focused on their stated behavior.
+
+    Tests for the first-run consent journey use their own repository/service
+    override so they can assert the pending state explicitly.
+    """
+    analyses = get_security_analysis_service()
+    await analyses.repository.decide_account_lookup_consent(
+        "demo-user", False, "test-default-consent-v1"
+    )
 
 
 @pytest_asyncio.fixture

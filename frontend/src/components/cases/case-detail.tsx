@@ -16,7 +16,6 @@ import { InvestigationTimelineV4 } from "@/components/analysis/investigation-tim
 import { SimpleAnalystToggle } from "@/components/analysis/simple-analyst-toggle";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import { useAccountPreferences } from "@/lib/account-preferences-context";
-import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
 import { ApiError } from "@/lib/api/api-error";
@@ -147,11 +146,13 @@ export function CaseDetail({
     setResumeBusy(true);
     setResumeIssue(null);
     try {
+      const savedConsent = api.getAccountLookupConsent ? await api.getAccountLookupConsent() : null;
+      const lookupGranted = savedConsent?.status !== "denied";
       const next = await api.createAnalysis({
         message,
         conversation_id: conversation.conversation_id,
         conversation_version: conversation.context_version,
-        consent: AUTOMATIC_LOOKUP_CONSENT,
+        consent: { external_url_lookup: lookupGranted, official_source_lookup: lookupGranted },
       });
       if (activeGeneration !== generation.current) return false;
       if (!("scope_decision" in next)) {

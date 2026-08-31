@@ -529,6 +529,29 @@ class SecurityConsentV4(SecurityContractModel):
     official_source_lookup: bool = False
 
 
+class AccountLookupConsentStatusV4(StrEnum):
+    PENDING = "pending"
+    GRANTED = "granted"
+    DENIED = "denied"
+
+
+class AccountLookupConsentV4(SecurityContractModel):
+    """Account-wide lookup preference; no submitted content is retained here."""
+
+    status: AccountLookupConsentStatusV4
+    decided_at: datetime | None = None
+    disclosure_version: str = Field(default="lookup-consent-v1", max_length=50)
+
+
+class AccountLookupConsentDecisionRequestV4(SecurityContractModel):
+    granted: bool
+
+
+class AdminAccountLookupConsentOverrideRequestV4(SecurityContractModel):
+    granted: bool
+    note: str = Field(min_length=1, max_length=500)
+
+
 class DerivedQueryProvenanceV4(SecurityContractModel):
     query_id: str = Field(pattern=r"^query:[a-f0-9]{16}$")
     derived_from_fields: list[str] = Field(min_length=1, max_length=20)

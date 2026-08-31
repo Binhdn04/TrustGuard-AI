@@ -26,7 +26,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 |---|---|
 | Boundary | `/api/v4` only; v2/v3 không mount/OpenAPI |
 | Scope | structured context, focused follow-up, recovery-first incident path |
-| Investigation | rules, blacklist, DNS, IANA RDAP + optional BKNS WHOIS v2 routing, VirusTotal, optional Cloudflare Radar domain ranking, consent/budget/deadline/SSRF |
+| Investigation | rules, blacklist, DNS, IANA RDAP + optional BKNS WHOIS v2 routing, VirusTotal, optional Cloudflare Radar domain ranking, account lookup consent/budget/deadline/SSRF |
 | Trust/risk | versioned brand/whitelist, reviewed first-party/shared-platform familiarity, target-owner resolution, deterministic risk v1-v7 with action-intent assurance, false-positive policy |
 | User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
@@ -38,7 +38,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | Evaluation | versioned offline security, memory, AI, immutable `security-v4-v2` official-link dataset and additive `security-identity-discovery-v3` cases |
 | Frontend | UI MVP tiếng Việt; một navigation/sidebar; user có Kiểm tra/Lịch sử, còn Hồ sơ/Cài đặt nằm trong menu avatar; admin có thêm Duyệt bảo mật và Tin cậy & chặn; whitelist/blacklist thao tác trực tiếp với trạng thái/audit; route Observatory/Audit cũ redirect về Trust workspace |
 | Testing | `pytest-cov` gate `68%`, default offline suite và PostgreSQL integration job riêng; xem bằng chứng hiện hành trong `docs/TESTING.md` |
-| Schema | Alembic through `0022_action_assurance_metadata` (one head) |
+| Schema | Alembic through `0023_account_lookup_consent` (one head) |
 
 ## Partial and pending
 
@@ -60,6 +60,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - `0022_action_assurance_metadata` additive lưu `policy_metadata` riêng cho analysis và reserve
   `assurance_metadata` trên feedback audit. Runtime đã ghi analysis metadata; audit column hiện giữ default `{}` và
   vẫn cần staging migration cùng end-to-end write/read validation trước khi được dùng.
+- `0023_account_lookup_consent` thêm trạng thái consent lookup cấp tài khoản; cần staging migration và smoke OIDC/PostgreSQL trước production.
 - PostgreSQL 16 disposable local đã migrate sạch đến `0022` và integration suite đạt 5 tests ngày 2026-08-28;
   điều này không thay thế staging/production persistence, worker hoặc Redis evidence.
 - Streaming progress/async chưa có hosted readiness, worker artifact/heartbeat, Redis outage/cursor fallback,

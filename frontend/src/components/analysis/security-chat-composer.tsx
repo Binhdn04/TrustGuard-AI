@@ -5,7 +5,6 @@ import { ArrowUp, Loader2, ShieldCheck } from "lucide-react";
 
 import {
   AUTOMATIC_LOOKUP_DISCLOSURE,
-  OFFICIAL_SOURCE_LOOKUP_DISCLOSURE,
 } from "@/lib/security/automatic-lookup-policy";
 import {
   messageTextParts,
@@ -250,7 +249,7 @@ export function SecurityChatComposer({
       </div>
 
       <div className="flex items-start justify-between gap-4 text-[11px] leading-5 text-muted-foreground">
-        <p className="flex items-start gap-1.5"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE} {OFFICIAL_SOURCE_LOOKUP_DISCLOSURE}</p>
+        <p className="flex items-start gap-1.5"><ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />{AUTOMATIC_LOOKUP_DISCLOSURE}</p>
         <span className="shrink-0 text-right">
           <span className="font-mono">{message.length}/5000</span>
         </span>
