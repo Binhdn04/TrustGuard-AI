@@ -3,6 +3,7 @@ import logging
 import pytest
 
 from src.api.dependencies import (
+    get_security_analysis_service,
     get_security_investigation_service,
     get_security_memory_service,
     get_wave2_service,
@@ -21,6 +22,37 @@ async def test_v4_requires_authentication(client) -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_v4_granted_account_consent_allows_url_analysis(client) -> None:
+    """Regression: persisted consent must remain a typed model in the pipeline."""
+    observed_consent = []
+
+    class TypedConsentInvestigation:
+        async def investigate(self, request, scoped, *, runtime):
+            del scoped, runtime
+            observed_consent.append(request.consent)
+            raise RuntimeError("stop after consent type assertion")
+
+    analyses = get_security_analysis_service()
+    await analyses.repository.override_account_lookup_consent(
+        "demo-user", True, "test-admin", "Exercise the granted consent path."
+    )
+    app.dependency_overrides[get_security_investigation_service] = TypedConsentInvestigation
+    try:
+        response = await client.post(
+            "/api/v4/analyses",
+            headers=USER_HEADERS,
+            json={
+                "message": "Vingroup hoàn 20 triệu cho khách hàng. Đăng nhập tại https://vingroup.net/vi/lien-he",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_security_investigation_service, None)
+
+    assert response.status_code == 500
+    assert observed_consent and observed_consent[0].external_url_lookup is True
 
 
 @pytest.mark.asyncio

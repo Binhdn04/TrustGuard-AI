@@ -12,6 +12,7 @@ import type {
   SecurityAdminCopilotResponseV4,
   SecurityAnalysisEventPageV4,
   SecurityAnalysisAcceptedResponseV4,
+  AccountLookupConsentV4,
   SecurityAnalysisPageV4,
   SecurityAppealAdminRecordV4,
   SecurityAppealCreateRequestV4,
@@ -140,6 +141,14 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async getCapabilities(): Promise<SecurityCapabilitiesResponseV4> {
     return this.get<SecurityCapabilitiesResponseV4>("capabilities");
+  }
+
+  async getAccountLookupConsent(): Promise<AccountLookupConsentV4> {
+    return this.get<AccountLookupConsentV4>("account/lookup-consent");
+  }
+
+  async decideAccountLookupConsent(granted: boolean): Promise<AccountLookupConsentV4> {
+    return this.post<AccountLookupConsentV4>("account/lookup-consent", { granted });
   }
 
   async chat(message: string, context?: SecurityChatContext): Promise<SecurityChatResponseV4> {

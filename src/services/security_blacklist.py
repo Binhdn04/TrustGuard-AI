@@ -235,17 +235,13 @@ class SecurityBlacklistAdminService:
         ]
 
     @staticmethod
-    def _proposal_metadata(
-        request: SecurityBlacklistProposalRequestV4, principal: Principal
-    ) -> tuple[str, list[str]]:
+    def _proposal_metadata(request: SecurityBlacklistProposalRequestV4, principal: Principal) -> tuple[str, list[str]]:
         linked_refs = []
         if request.source_report_id is not None:
             linked_refs.append(f"report:{request.source_report_id}")
         if request.source_analysis_id is not None:
             linked_refs.append(f"analysis:{request.source_analysis_id}")
-        if not linked_refs and not any(
-            ref.startswith(("http://", "https://")) for ref in request.evidence_refs
-        ):
+        if not linked_refs and not any(ref.startswith(("http://", "https://")) for ref in request.evidence_refs):
             raise _validation("A manual blacklist proposal requires an HTTP(S) verification-source URL.")
         provenance = request.provenance or (
             ";".join(linked_refs) if linked_refs else f"admin-manual:{principal.user_id}"

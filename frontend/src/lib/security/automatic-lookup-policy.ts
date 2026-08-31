@@ -1,12 +1,3 @@
-import type { SecurityConsentV4 } from "@/types/generated/api-v4";
-
-export const AUTOMATIC_LOOKUP_CONSENT = {
-  external_url_lookup: true,
-  official_source_lookup: true,
-} as const satisfies SecurityConsentV4;
-
+/** Copy shared by UI disclosures. Consent itself is loaded from the account API. */
 export const AUTOMATIC_LOOKUP_DISCLOSURE =
-  "Khi gửi, AI PROTECT có thể kiểm tra liên kết bằng dịch vụ bảo mật.";
-
-export const OFFICIAL_SOURCE_LOOKUP_DISCLOSURE =
-  "Có thể đối chiếu nguồn công khai; không gửi mật khẩu, OTP hoặc token.";
+  "AI PROTECT có thể mắc sai lầm. Hãy xác minh thông tin quan trọng";

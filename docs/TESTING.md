@@ -81,7 +81,7 @@ populate a passing evidence file from offline fixtures or unit-test output.
 
 - scope terminal behavior và zero provider calls khi out-of-scope;
 - credential/OTP, financial, recruitment, promotion và impersonation threats;
-- consent, DNS/RDAP/redirect/reputation failure, timeout và SSRF;
+- account lookup consent (`pending`/grant/deny), DNS/RDAP/redirect/reputation failure, timeout và SSRF;
 - whitelist precedence, provider no-hit, mismatch và deterministic thresholds;
 - familiarity PSL/IDNA, Radar rank/bucket/no-hit/cache/timeout/429/circuit, consent và zero-call OOS;
 - reviewed `platform_service` most-specific precedence, no content-owner inference, no official fetch/exact-resource

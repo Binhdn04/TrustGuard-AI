@@ -14,6 +14,7 @@ import type {
   SecurityAdminCopilotResponseV4,
   SecurityAnalysisEventPageV4,
   SecurityAnalysisAcceptedResponseV4,
+  AccountLookupConsentV4,
   SecurityAnalysisPageV4,
   SecurityAppealAdminRecordV4,
   SecurityAppealCreateRequestV4,
@@ -147,6 +148,8 @@ export interface SecurityChatContext {
 
 export interface SecurityAnalysisApi {
   getCapabilities(): Promise<SecurityCapabilitiesResponseV4>;
+  getAccountLookupConsent?(): Promise<AccountLookupConsentV4>;
+  decideAccountLookupConsent?(granted: boolean): Promise<AccountLookupConsentV4>;
   chat?(message: string, context?: SecurityChatContext): Promise<SecurityChatResponseV4>;
   createAnalysis(
     request: SecurityTriageCreateRequestV4,

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/api-error";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { subscribeToSecurityEvents } from "@/lib/api/security-event-stream";
-import { AUTOMATIC_LOOKUP_CONSENT } from "@/lib/security/automatic-lookup-policy";
 import { selectSecurityProgress } from "@/lib/security-progress";
 import type { AnalysisTransportState } from "@/types/analysis-view-model";
 import type { SecurityAnalysisEventV4, SecurityScopeResponseV4 } from "@/types/generated/api-v4";
@@ -77,7 +76,10 @@ function mergeLifecycleEvents(
   return [...byEventId.values()].sort((left, right) => left.sequence - right.sequence);
 }
 
-export function useSecurityCase(api: SecurityAnalysisApi) {
+export function useSecurityCase(
+  api: SecurityAnalysisApi,
+  consent: { external_url_lookup: boolean; official_source_lookup: boolean } = { external_url_lookup: false, official_source_lookup: false },
+) {
   const [turns, setTurns] = useState<SecurityCaseTurn[]>([]);
   const [state, setState] = useState<SecurityCaseState>("IDLE");
   const [transport, setTransport] = useState<AnalysisTransportState>("disconnected");
@@ -174,7 +176,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
       const activeConversation = conversationOverride === undefined ? conversation : conversationOverride;
       const result = await api.createAnalysis({
         message: submission.message,
-        consent: AUTOMATIC_LOOKUP_CONSENT,
+        consent,
         ...(useAsync ? { execution_mode: "async" as const } : {}),
         ...(activeConversation
           ? { conversation_id: activeConversation.id, conversation_version: activeConversation.version }
@@ -206,7 +208,7 @@ export function useSecurityCase(api: SecurityAnalysisApi) {
         : null);
       setState("FAILED");
     }
-  }, [api, applyResult, conversation, monitor, stopRuntime]);
+  }, [api, applyResult, consent, conversation, monitor, stopRuntime]);
 
   const routeFollowUp = useCallback(async (
     turnId: string,

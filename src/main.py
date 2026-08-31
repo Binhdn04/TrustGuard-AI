@@ -34,12 +34,7 @@ logger = logging.getLogger("trustguard.official_verification")
 
 def _public_validation_details(errors: list[dict]) -> dict[str, list[dict[str, object]]]:
     """Expose field locations only; Pydantic's raw errors can echo submitted content."""
-    return {
-        "errors": [
-            {"loc": error.get("loc", []), "type": error.get("type", "invalid")}
-            for error in errors
-        ]
-    }
+    return {"errors": [{"loc": error.get("loc", []), "type": error.get("type", "invalid")} for error in errors]}
 
 
 def documentation_urls(app_env: str) -> dict[str, str | None]:

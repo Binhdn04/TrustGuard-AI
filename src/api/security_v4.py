@@ -41,6 +41,10 @@ from src.config import get_settings
 from src.core.auth import require_security_admin
 from src.core.errors import PlatformError
 from src.models import (
+    AccountLookupConsentDecisionRequestV4,
+    AccountLookupConsentStatusV4,
+    AccountLookupConsentV4,
+    AdminAccountLookupConsentOverrideRequestV4,
     AdminActionAuditRecordV3,
     AdminActionDecisionRequestV3,
     AdminActionDecisionResponseV3,
@@ -94,6 +98,7 @@ from src.models import (
     SecurityChatRequestV4,
     SecurityChatResponseV4,
     SecurityChatRouteV4,
+    SecurityConsentV4,
     SecurityConversationPageV4,
     SecurityConversationV4,
     SecurityDomainIntelligencePageV4,
@@ -342,6 +347,40 @@ async def get_admin_action_v4(
     return await wave2.get_admin_action(action_id)
 
 
+@router.get("/account/lookup-consent", response_model=AccountLookupConsentV4, responses=_COMMON_ERRORS)
+async def get_account_lookup_consent_v4(
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> AccountLookupConsentV4:
+    return await analyses.repository.get_account_lookup_consent(principal.user_id)
+
+
+@router.post("/account/lookup-consent", response_model=AccountLookupConsentV4, responses=_COMMON_ERRORS)
+async def decide_account_lookup_consent_v4(
+    request: AccountLookupConsentDecisionRequestV4,
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> AccountLookupConsentV4:
+    return await analyses.repository.decide_account_lookup_consent(
+        principal.user_id, request.granted, "lookup-consent-v1"
+    )
+
+
+@router.post(
+    "/admin/account-lookup-consent/{owner_id}", response_model=AccountLookupConsentV4, responses=_COMMON_ERRORS
+)
+async def override_account_lookup_consent_v4(
+    owner_id: str,
+    request: AdminAccountLookupConsentOverrideRequestV4,
+    analyses: SecurityAnalysisServiceDependency,
+    principal: PrincipalDependency,
+) -> AccountLookupConsentV4:
+    require_security_admin(principal)
+    return await analyses.repository.override_account_lookup_consent(
+        owner_id, request.granted, principal.user_id, request.note
+    )
+
+
 @router.post(
     "/admin/actions/{action_id}/decision",
     response_model=AdminActionDecisionResponseV3,
@@ -552,6 +591,21 @@ async def create_security_analysis_v4(
     http_request: Request,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)] = None,
 ) -> SecurityScopeResponseV4 | JSONResponse:
+    lookup_consent = getattr(analyses.repository, "get_account_lookup_consent", None)
+    if lookup_consent is not None:
+        account_consent = await lookup_consent(principal.user_id)
+        # An undecided or denied account preference must only disable external
+        # lookups; local security triage remains available.  This also keeps
+        # ownership checks ahead of any downstream investigation work.
+        granted = account_consent.status is AccountLookupConsentStatusV4.GRANTED
+        request = request.model_copy(
+            update={
+                "consent": SecurityConsentV4(
+                    external_url_lookup=granted,
+                    official_source_lookup=granted,
+                )
+            }
+        )
     scoped = service.assess(request)
     if request.execution_mode is SecurityExecutionModeV4.ASYNC:
         settings = get_settings()

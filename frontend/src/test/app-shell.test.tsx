@@ -73,7 +73,7 @@ describe("application shell", () => {
     expect(screen.getByText("Trợ lý an toàn số")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "AI PROTECT — Trợ lý an toàn số" })).toHaveAttribute("href", "/");
     expect(screen.getByText("Workspace content")).toBeInTheDocument();
-    expect(screen.getByText(/AI có thể mắc sai lầm/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Kết quả chỉ mang tính hỗ trợ/i)).not.toBeInTheDocument();
   });
 
   it("keeps technical web readiness out of the application header", async () => {

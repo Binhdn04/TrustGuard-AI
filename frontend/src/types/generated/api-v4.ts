@@ -181,6 +181,13 @@ export interface SecurityConsentV4 {
   official_source_lookup: boolean;
 }
 
+export type AccountLookupConsentStatusV4 = "pending" | "granted" | "denied";
+export interface AccountLookupConsentV4 {
+  status: AccountLookupConsentStatusV4;
+  decided_at: string | null;
+  disclosure_version: string;
+}
+
 export type SecurityChatRouteV4 = "conversation" | "security_analysis";
 
 export interface SecurityChatRequestV4 {

@@ -282,7 +282,8 @@ Bật riêng từng capability: understanding → planning → explanation → r
 async. Official-link verification mặc định `visible`, dùng
 `SECURITY_OFFICIAL_VERIFICATION_MODE=off|shadow|visible|enforced` và
 phải đi theo thứ tự `off → shadow → visible → enforced`; Tavily/OpenAI không phải điều kiện startup cho stage
-này. Web search vẫn yêu cầu `official_source_lookup=true` riêng trên từng request. Frontend mặc định gửi giá trị
+này. Web search nhận `official_source_lookup` từ lựa chọn lookup cấp tài khoản đã lưu; frontend không tự gán consent
+trước khi người dùng quyết định. Backend vẫn truyền cờ rõ ràng vào từng request pipeline.
 này cùng `external_url_lookup=true`, và domain ownership discovery/cache chỉ được công bố khi request có cả hai;
 backend vẫn kiểm tra từng gate trước provider tương ứng. Kiểm tra riêng capabilities
 `official_link_verification`, `official_web_search_ready`, evaluation,
