@@ -4,6 +4,7 @@ import type {
   BrandPageV4,
   BrandRecordV4,
   IdentityCandidateDecisionRequestV4,
+  ManualIdentityCandidateCreateRequestV4,
   IdentityCandidatePageV4,
   IdentityCandidateV4,
   SecurityAdminAuditPageV4,
@@ -316,6 +317,12 @@ export class HttpSecurityAnalysisApi implements SecurityAnalysisApi {
 
   async pageIdentityCandidates(query: IdentityCandidatePageQuery = {}): Promise<IdentityCandidatePageV4> {
     return this.get<IdentityCandidatePageV4>(withQuery("admin/identity-candidates/page", query));
+  }
+
+  async createManualIdentityCandidate(
+    request: ManualIdentityCandidateCreateRequestV4,
+  ): Promise<IdentityCandidateV4> {
+    return this.post<IdentityCandidateV4>("admin/identity-candidates", request);
   }
 
   async decideIdentityCandidate(

@@ -275,6 +275,38 @@ async def test_v4_trust_registry_mutations_require_admin(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_v4_manual_identity_candidate_requires_review_before_promotion(client) -> None:
+    payload = {
+        "entity_name": "Manual Identity Brand",
+        "identity_value": "https://social.example/manual-brand?private=query",
+        "identity_type": "social_profile",
+        "relationship": "official_controlled",
+        "source_url": "https://manual-brand.example/about?private=query#proof",
+    }
+    denied = await client.post("/api/v4/admin/identity-candidates", headers=USER_HEADERS, json=payload)
+    created = await client.post("/api/v4/admin/identity-candidates", headers=ADMIN_HEADERS, json=payload)
+
+    assert denied.status_code == 403
+    assert created.status_code == 201
+    candidate = created.json()
+    assert candidate["assurance"] == "discovered"
+    assert candidate["canonical_url"] == "https://social.example/manual-brand"
+    assert candidate["observations"][0]["canonical_url"] == "https://manual-brand.example/about"
+
+    decided = await client.post(
+        f"/api/v4/admin/identity-candidates/{candidate['association_id']}/decisions",
+        headers=ADMIN_HEADERS,
+        json={
+            "action": "approve",
+            "note": "Reviewed manual source.",
+            "identity_type": "social_profile",
+        },
+    )
+    assert decided.status_code == 200
+    assert decided.json()["assurance"] == "promoted"
+
+
+@pytest.mark.asyncio
 async def test_v4_owner_history_report_and_appeal_round_trip(client) -> None:
     created = await client.post(
         "/api/v4/analyses",

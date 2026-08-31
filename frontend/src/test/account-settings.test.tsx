@@ -9,13 +9,13 @@ const auth = vi.hoisted(() => ({
   user: { id: "admin-1", name: "Admin", email: "admin@example.test", role: "security_admin" as const },
   logout: vi.fn(),
 }));
-const theme = vi.hoisted(() => ({ current: "system", setTheme: vi.fn() }));
+const theme = vi.hoisted(() => ({ current: "system", resolved: "light", setTheme: vi.fn() }));
 
 vi.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: auth.user, isLoading: false, logout: auth.logout }),
 }));
 vi.mock("next-themes", () => ({
-  useTheme: () => ({ theme: theme.current, setTheme: theme.setTheme }),
+  useTheme: () => ({ theme: theme.current, resolvedTheme: theme.resolved, setTheme: theme.setTheme }),
 }));
 
 function renderWithPreferences(node: React.ReactNode) {
@@ -30,15 +30,15 @@ describe("account MVP", () => {
     document.documentElement.removeAttribute("data-motion");
   });
 
-  it("opens a functional avatar menu with account, history, admin and logout actions", async () => {
+  it("opens a focused avatar menu with profile, settings, admin and logout actions", async () => {
     renderWithPreferences(<UserMenu />);
 
     fireEvent.click(screen.getByRole("button", { name: "Mở menu tài khoản" }));
 
     expect(screen.getByRole("menu", { name: "Tài khoản" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Hồ sơ cá nhân" })).toHaveAttribute("href", "/profile?tab=profile");
-    expect(screen.getByRole("menuitem", { name: "Cài đặt" })).toHaveAttribute("href", "/profile?tab=preferences");
-    expect(screen.getByRole("menuitem", { name: "Lịch sử & báo cáo" })).toHaveAttribute("href", "/history");
+    expect(screen.getByRole("menuitem", { name: "Hồ sơ cá nhân" })).toHaveAttribute("href", "/profile");
+    expect(screen.getByRole("menuitem", { name: "Cài đặt" })).toHaveAttribute("href", "/settings");
+    expect(screen.queryByRole("menuitem", { name: "Lịch sử & báo cáo" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Khu vực quản trị" })).toHaveAttribute("href", "/admin");
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Đăng xuất" }));
@@ -46,7 +46,7 @@ describe("account MVP", () => {
   });
 
   it("saves only device-local display preferences for the current user", async () => {
-    renderWithPreferences(<AccountSettings initialTab="profile" />);
+    renderWithPreferences(<AccountSettings section="profile" />);
 
     fireEvent.change(screen.getByRole("textbox", { name: "Tên hiển thị" }), { target: { value: "Security Reviewer" } });
     fireEvent.click(screen.getByRole("radio", { name: "violet" }));
@@ -63,17 +63,18 @@ describe("account MVP", () => {
     });
   });
 
-  it("keeps consent request-scoped while applying presentation preferences", async () => {
-    renderWithPreferences(<AccountSettings initialTab="preferences" />);
+  it("groups device preferences and privacy information under settings", async () => {
+    renderWithPreferences(<AccountSettings section="settings" />);
 
     fireEvent.change(screen.getByRole("combobox", { name: "Giao diện" }), { target: { value: "dark" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Mức chi tiết mặc định" }), { target: { value: "analyst" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Chuyển động" }), { target: { value: "reduced" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Hiệu ứng chuyển động" }), { target: { value: "reduced" } });
 
     expect(theme.setTheme).toHaveBeenCalledWith("dark");
     await waitFor(() => expect(document.documentElement.dataset.motion).toBe("reduced"));
+    expect(screen.queryByRole("option", { name: "Theo hệ thống" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Quyền riêng tư" }));
     expect(screen.getByText(/luôn được hỏi theo từng yêu cầu/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Đăng xuất" })).not.toBeInTheDocument();
   });
 });

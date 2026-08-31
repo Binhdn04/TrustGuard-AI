@@ -108,3 +108,12 @@ def test_openapi_exposes_v4_blacklist_lifecycle_without_public_v3_expansion() ->
     assert proposal["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/SecurityBlacklistProposalRequestV4"
     )
+
+    blacklist_request = components["SecurityBlacklistProposalRequestV4"]
+    assert "evidence_refs" in blacklist_request["required"]
+    assert "provenance" not in blacklist_request["required"]
+
+    whitelist_request = components["WhitelistCreateRequestV4"]
+    assert "effective_from" not in whitelist_request["required"]
+    assert "scope" in whitelist_request["required"]
+    assert whitelist_request["properties"]["policy_version"]["default"] == "whitelist-v1"

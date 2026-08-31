@@ -87,6 +87,9 @@ function securityClient(overrides: Partial<SecurityAnalysisApi> = {}): SecurityA
     createBrand: vi.fn().mockResolvedValue(brand),
     createBrandVersion: vi.fn().mockResolvedValue({ ...brand, supersedes: brand.brand_id }),
     disableBrand: vi.fn().mockResolvedValue({ ...brand, lifecycle: "disabled" }),
+    pageIdentityCandidates: vi.fn().mockResolvedValue({ contract_version: "v4", items: [], total: 0, limit: 10, offset: 0 }),
+    createManualIdentityCandidate: vi.fn().mockResolvedValue({}),
+    decideIdentityCandidate: vi.fn().mockResolvedValue({}),
     pageWhitelist: vi.fn().mockResolvedValue({ contract_version: "v4", items: [whitelist], total: 1, limit: 10, offset: 0 }),
     createWhitelist: vi.fn().mockResolvedValue(whitelist),
     disableWhitelist: vi.fn().mockResolvedValue({ ...whitelist, lifecycle: "disabled" }),
@@ -125,15 +128,14 @@ describe("FE8 trust lifecycle and audit isolation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Thêm thương hiệu" }));
     fireEvent.change(screen.getByLabelText("Tên thương hiệu"), { target: { value: "Example Bank" } });
-    fireEvent.change(screen.getByLabelText("Domain chính thức"), { target: { value: "bank.example, secure.bank.example" } });
-    fireEvent.change(screen.getByLabelText("Nguồn xác minh thương hiệu"), { target: { value: "Verified registry entry" } });
-    fireEvent.change(screen.getByLabelText("Thời điểm thương hiệu bắt đầu hiệu lực"), { target: { value: "2026-08-14T08:00" } });
+    fireEvent.change(screen.getByLabelText("Website hoặc domain chính thức"), { target: { value: "https://secure.bank.example/login?token=private" } });
+    fireEvent.change(screen.getByLabelText("URL nguồn xác minh thương hiệu"), { target: { value: "https://registry.example/entry?case=private#proof" } });
     fireEvent.click(screen.getByRole("button", { name: "Xem lại yêu cầu tạo" }));
     expect(createBrand).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Xác nhận tạo" }));
     await waitFor(() => expect(createBrand).toHaveBeenCalledWith(expect.objectContaining({
-      name: "Example Bank", official_domains: ["bank.example", "secure.bank.example"],
-      provenance: "Verified registry entry", effective_from: expect.stringContaining("2026-08-14"),
+      name: "Example Bank", official_domains: ["secure.bank.example"],
+      provenance: "https://registry.example/entry",
     })));
 
     fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
@@ -150,13 +152,34 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     expect(await screen.findByText("ACME Bank")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tạo phiên bản mới" }));
     expect(screen.getByText(/bản ghi hiện tại không bị chỉnh sửa/i)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Nguồn xác minh thương hiệu"), { target: { value: "Reviewed registry update" } });
+    fireEvent.change(screen.getByLabelText("URL nguồn xác minh thương hiệu"), { target: { value: "https://registry.example/updated-brand" } });
     fireEvent.click(screen.getByRole("button", { name: "Xem lại phiên bản mới" }));
     expect(createBrandVersion).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Xác nhận phiên bản mới" }));
     await waitFor(() => expect(createBrandVersion).toHaveBeenCalledWith(brand.brand_id, expect.objectContaining({
-      name: brand.name, provenance: "Reviewed registry update", official_domains: brand.official_domains,
+      name: brand.name, provenance: "https://registry.example/updated-brand", official_domains: brand.official_domains,
     })));
+  });
+
+  it("moves manual identities into the review queue instead of the brand form", async () => {
+    const createManualIdentityCandidate = vi.fn().mockResolvedValue({});
+    const api = securityClient({ createManualIdentityCandidate });
+    render(<TrustWorkspace api={api} />);
+    fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
+    fireEvent.click(screen.getByRole("button", { name: "Nguồn chính thức" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thương hiệu" }));
+    expect(screen.queryByText("Định danh bổ sung")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt định danh" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm định danh thủ công" }));
+    fireEvent.change(screen.getByLabelText("Tên thương hiệu của định danh thủ công"), { target: { value: "Example Bank" } });
+    fireEvent.change(screen.getByLabelText("Giá trị định danh thủ công"), { target: { value: "https://social.example/example-bank?private=query" } });
+    fireEvent.change(screen.getByLabelText("URL nguồn xác minh định danh thủ công"), { target: { value: "https://bank.example/about" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gửi vào hàng đợi duyệt" }));
+    await waitFor(() => expect(createManualIdentityCandidate).toHaveBeenCalledWith({
+      entity_name: "Example Bank", identity_value: "https://social.example/example-bank?private=query",
+      identity_type: "website", relationship: "official_controlled", source_url: "https://bank.example/about",
+    }));
   });
 
   it("creates and disables whitelist entries with scope and lifecycle confirmation", async () => {
@@ -165,13 +188,16 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     render(<TrustWorkspace api={securityClient({ createWhitelist, disableWhitelist })} />);
     expect(await screen.findByText("acme.example")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Thêm ngoại lệ" }));
-    fireEvent.change(screen.getByLabelText("Giá trị ngoại lệ tin cậy"), { target: { value: "safe.example" } });
-    fireEvent.change(screen.getByLabelText("Phạm vi ngoại lệ tin cậy"), { target: { value: "domain" } });
-    fireEvent.change(screen.getByLabelText("Provenance ngoại lệ tin cậy"), { target: { value: "Official security bulletin" } });
-    fireEvent.change(screen.getByLabelText("Thời điểm bắt đầu hiệu lực"), { target: { value: "2026-08-14T08:00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Xem lại yêu cầu tạo" }));
+    fireEvent.change(screen.getByLabelText("Giá trị ngoại lệ tin cậy"), { target: { value: "https://safe.example/login?token=secret#step" } });
+    expect(screen.getByLabelText("Phạm vi ngoại lệ tin cậy")).toHaveValue("url");
+    fireEvent.change(screen.getByLabelText("Căn cứ xác minh ngoại lệ tin cậy"), { target: { value: "Official security bulletin" } });
+    fireEvent.click(screen.getByRole("button", { name: "Xem lại và xác nhận" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("https://safe.example/login");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("secret");
     fireEvent.click(screen.getByRole("button", { name: "Xác nhận tạo" }));
-    await waitFor(() => expect(createWhitelist).toHaveBeenCalledWith(expect.objectContaining({ indicator: "safe.example", scope: "domain", provenance: "Official security bulletin" })));
+    await waitFor(() => expect(createWhitelist).toHaveBeenCalledWith({
+      indicator: "https://safe.example/login", scope: "url", provenance: "Official security bulletin", effective_until: null,
+    }));
     fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
     fireEvent.click(screen.getByRole("button", { name: "Xác nhận vô hiệu hóa" }));
     await waitFor(() => expect(disableWhitelist).toHaveBeenCalledWith(whitelist.whitelist_id));

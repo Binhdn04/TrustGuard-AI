@@ -136,7 +136,7 @@ def test_report_resolution_is_independent_from_admin_copilot_disposition() -> No
     }
 
 
-@pytest.mark.parametrize("missing", ["indicator", "scope", "provenance", "effective_from"])
+@pytest.mark.parametrize("missing", ["indicator", "scope", "provenance"])
 def test_whitelist_remediation_requires_complete_trust_input(missing: str) -> None:
     entry = _whitelist_entry()
     entry.pop(missing)

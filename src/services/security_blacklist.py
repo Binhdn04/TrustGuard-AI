@@ -38,6 +38,10 @@ def _not_found(message: str) -> PlatformError:
     return PlatformError(status_code=404, code=ErrorCode.NOT_FOUND, message=message, retryable=False)
 
 
+def _validation(message: str) -> PlatformError:
+    return PlatformError(status_code=422, code=ErrorCode.VALIDATION_ERROR, message=message, retryable=False)
+
+
 class SecurityBlacklistAdminService:
     """V4 blacklist lifecycle projected from reviewer-gated admin actions."""
 
@@ -80,13 +84,14 @@ class SecurityBlacklistAdminService:
         current = await self._record_for_domain(domain)
         if current is not None and current.lifecycle is SecurityBlacklistLifecycleV4.ACTIVE:
             raise _conflict("The domain is already active in the security blacklist.")
+        provenance, evidence_refs = self._proposal_metadata(request, principal)
         action = await self._wave2.repository.propose_admin_action(
             analysis_id=None,
             security_analysis_id=request.source_analysis_id,
             campaign_id=None,
             action=ReviewedAction.ADD_TO_BLACKLIST,
             target=domain,
-            evidence=self._evidence(request.reason, request.provenance, request.evidence_refs, domain),
+            evidence=self._evidence(request.reason, provenance, evidence_refs, domain),
         )
         return self._proposal(action, request.source_report_id)
 
@@ -99,13 +104,15 @@ class SecurityBlacklistAdminService:
         record = await self.get_record(blacklist_id, principal)
         if record.lifecycle is not SecurityBlacklistLifecycleV4.ACTIVE:
             raise _conflict("The security blacklist record is already disabled.")
+        provenance = request.provenance or f"blacklist-record:{record.blacklist_id}"
+        evidence_refs = request.evidence_refs or record.evidence_refs or [f"blacklist:{record.blacklist_id}"]
         action = await self._wave2.repository.propose_admin_action(
             analysis_id=None,
             security_analysis_id=None,
             campaign_id=None,
             action=ReviewedAction.DISABLE_BLACKLIST,
             target=record.canonical_domain,
-            evidence=self._evidence(request.reason, request.provenance, request.evidence_refs, record.canonical_domain),
+            evidence=self._evidence(request.reason, provenance, evidence_refs, record.canonical_domain),
         )
         return self._proposal(action, None)
 
@@ -219,13 +226,31 @@ class SecurityBlacklistAdminService:
                 type=EvidenceType.BLACKLIST,
                 source=provenance,
                 title=ref,
-                url=f"https://{domain}/",
+                url=ref if ref.startswith(("http://", "https://")) else f"https://{domain}/",
                 finding=reason,
                 stance=ClaimStance.SUPPORTS,
                 observed_at=now,
             )
             for ref in refs
         ]
+
+    @staticmethod
+    def _proposal_metadata(
+        request: SecurityBlacklistProposalRequestV4, principal: Principal
+    ) -> tuple[str, list[str]]:
+        linked_refs = []
+        if request.source_report_id is not None:
+            linked_refs.append(f"report:{request.source_report_id}")
+        if request.source_analysis_id is not None:
+            linked_refs.append(f"analysis:{request.source_analysis_id}")
+        if not linked_refs and not any(
+            ref.startswith(("http://", "https://")) for ref in request.evidence_refs
+        ):
+            raise _validation("A manual blacklist proposal requires an HTTP(S) verification-source URL.")
+        provenance = request.provenance or (
+            ";".join(linked_refs) if linked_refs else f"admin-manual:{principal.user_id}"
+        )
+        return provenance, request.evidence_refs
 
     @staticmethod
     def _proposal(action: AdminActionRecordV3, source_report_id: UUID | None) -> SecurityBlacklistActionProposalV4:

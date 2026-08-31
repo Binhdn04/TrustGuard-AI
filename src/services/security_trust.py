@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import logging
-from datetime import UTC, datetime
-from urllib.parse import urlsplit
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
+from src.agents.nodes.rules import normalize_url
 from src.agents.security_trust import canonical_whitelist_url
 from src.core.auth import Principal, require_security_admin
 from src.core.errors import PlatformError
@@ -17,6 +19,9 @@ from src.models import (
     IdentityCandidateDecisionRequestV4,
     IdentityCandidateDecisionV4,
     IdentityCandidateV4,
+    IdentityEvidenceFamilyV4,
+    IdentityEvidenceObservationV4,
+    ManualIdentityCandidateCreateRequestV4,
     OfficialIdentityMatchScopeV4,
     OfficialIdentityTypeV4,
     OfficialIdentityV4,
@@ -42,6 +47,93 @@ class SecurityTrustAdminService:
     async def list_identity_candidates(self, principal: Principal) -> list[IdentityCandidateV4]:
         require_security_admin(principal)
         return await self._repository.list_identity_candidates()
+
+    async def create_manual_identity_candidate(
+        self,
+        request: ManualIdentityCandidateCreateRequestV4,
+        principal: Principal,
+    ) -> IdentityCandidateV4:
+        """Queue a manually supplied identity for review; never activate it directly."""
+        require_security_admin(principal)
+        if request.identity_type is OfficialIdentityTypeV4.SUB_ORGANIZATION:
+            raise PlatformError(
+                status_code=422,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Manual identity review supports URL or domain identities, not free-text sub-organizations.",
+                retryable=False,
+            )
+        now = datetime.now(UTC)
+        canonical_url, canonical_domain = self._manual_identity_target(request)
+        source = urlsplit(request.source_url)
+        material = "\0".join(
+            ["manual-identity-v1", request.entity_name.casefold().strip(), canonical_url, request.source_url]
+        )
+        evidence_ref = "identity-evidence:" + hashlib.sha256(material.encode()).hexdigest()[:16]
+        observation = IdentityEvidenceObservationV4(
+            evidence_ref=evidence_ref,
+            family=IdentityEvidenceFamilyV4.CANDIDATE_CORROBORATION,
+            source_host=(source.hostname or "").casefold(),
+            canonical_url=request.source_url,
+            content_hash=hashlib.sha256(material.encode()).hexdigest(),
+            observed_at=now,
+        )
+        candidate = IdentityCandidateV4(
+            entity_name=" ".join(request.entity_name.split()),
+            canonical_url=canonical_url,
+            canonical_domain=canonical_domain,
+            relationship=request.relationship,
+            assurance=IdentityAssociationAssuranceV4.DISCOVERED,
+            confidence=0.35,
+            evidence_refs=[evidence_ref],
+            discovered_at=now,
+            expires_at=now + timedelta(days=7),
+            observations=[observation],
+        )
+        return await self._repository.save_identity_candidate(candidate)
+
+    @staticmethod
+    def _manual_identity_target(request: ManualIdentityCandidateCreateRequestV4) -> tuple[str, str]:
+        value = request.identity_value.strip()
+        if request.identity_type in {OfficialIdentityTypeV4.PRIMARY_WEBSITE, OfficialIdentityTypeV4.DOMAIN}:
+            try:
+                domain = normalize_domain(value)
+            except ValueError as exc:
+                raise PlatformError(
+                    status_code=422,
+                    code=ErrorCode.VALIDATION_ERROR,
+                    message="Manual domain identity is invalid.",
+                    retryable=False,
+                ) from exc
+            return f"https://{domain}/", domain
+
+        candidate = value if "://" in value else f"https://{value}"
+        parsed = urlsplit(candidate)
+        if parsed.username or parsed.password:
+            raise PlatformError(
+                status_code=422,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Manual identity URL cannot contain credentials.",
+                retryable=False,
+            )
+        normalized = normalize_url(candidate)
+        if normalized is None:
+            raise PlatformError(
+                status_code=422,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Manual identity URL is invalid.",
+                retryable=False,
+            )
+        parsed = urlsplit(normalized)
+        try:
+            domain = normalize_domain(parsed.hostname or "")
+        except ValueError as exc:
+            raise PlatformError(
+                status_code=422,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Manual identity URL must use a registrable domain.",
+                retryable=False,
+            ) from exc
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", "")), domain
 
     async def decide_identity_candidate(
         self,
@@ -136,8 +228,9 @@ class SecurityTrustAdminService:
                     message="Identity candidate is ambiguous; target_brand_id is required.",
                     retryable=False,
                 )
+        identity_type = request.identity_type or OfficialIdentityTypeV4.WEBSITE
         identity = OfficialIdentityV4(
-            identity_type=request.identity_type or OfficialIdentityTypeV4.WEBSITE,
+            identity_type=identity_type,
             canonical_value=candidate.canonical_url,
             display_value=candidate.canonical_url,
             entity_name=candidate.entity_name,
@@ -149,11 +242,15 @@ class SecurityTrustAdminService:
             reviewed=True,
         )
         host = (urlsplit(candidate.canonical_url).hostname or candidate.canonical_domain).casefold()
+        is_domain_identity = identity_type in {
+            OfficialIdentityTypeV4.PRIMARY_WEBSITE,
+            OfficialIdentityTypeV4.DOMAIN,
+        }
         provenance = f"identity-candidate:{candidate.association_id};evidence:{','.join(candidate.evidence_refs)}"
         if not matches:
             create = BrandCreateRequestV4(
                 name=candidate.entity_name,
-                official_domains=[host],
+                official_domains=[host] if is_domain_identity else [],
                 official_identities=[identity],
                 provenance=provenance,
                 policy_version="brand-registry-identity-promotion-v1",
@@ -164,7 +261,11 @@ class SecurityTrustAdminService:
         create = BrandCreateRequestV4(
             name=previous.name,
             aliases=previous.aliases,
-            official_domains=list(dict.fromkeys([*previous.official_domains, host])),
+            official_domains=(
+                list(dict.fromkeys([*previous.official_domains, host]))
+                if is_domain_identity
+                else previous.official_domains
+            ),
             official_identities=[*previous.official_identities, identity],
             official_contacts=previous.official_contacts,
             provenance=provenance,

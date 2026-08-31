@@ -100,6 +100,41 @@ async def test_blacklist_admin_surface_rejects_regular_user() -> None:
 
 
 @pytest.mark.asyncio
+async def test_manual_blacklist_proposal_requires_source_and_generates_only_provenance() -> None:
+    service = SecurityBlacklistAdminService(Wave2PlatformService(MemoryWave2Repository()))
+    with pytest.raises(PlatformError) as missing_source:
+        await service.propose_add(
+            SecurityBlacklistProposalRequestV4(
+                canonical_domain="manual.example",
+                reason="Reviewer confirmed a credential harvesting page.",
+                evidence_refs=["evidence:unlinked-manual-reference"],
+            ),
+            ADMIN,
+        )
+    assert missing_source.value.status_code == 422
+
+    proposal = await service.propose_add(
+        SecurityBlacklistProposalRequestV4(
+            canonical_domain="manual.example",
+            reason="Reviewer confirmed a credential harvesting page.",
+            evidence_refs=["https://security.example/advisory?token=secret#finding"],
+        ),
+        ADMIN,
+    )
+
+    result = await service.decide(
+        proposal.action_id,
+        SecurityBlacklistReviewDecisionV4.APPROVED,
+        "Admin confirmed the manual block.",
+        ADMIN,
+    )
+
+    assert result.record is not None
+    assert result.record.provenance == "admin-manual:m3-admin"
+    assert result.record.evidence_refs == ["https://security.example/advisory"]
+
+
+@pytest.mark.asyncio
 async def test_blacklist_rejected_review_never_creates_an_active_record() -> None:
     wave = Wave2PlatformService(MemoryWave2Repository())
     service = SecurityBlacklistAdminService(wave)

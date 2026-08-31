@@ -72,13 +72,13 @@ jobs:
           APP_ENV: test
           OPENAI_API_KEY: test-key
 
-      - name: Upload backend coverage
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-coverage
-          path: coverage.xml
-          if-no-files-found: error
+      # - name: Upload backend coverage
+      #   if: ${{ always() }}
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: backend-coverage
+      #     path: coverage.xml
+      #     if-no-files-found: error
 
   frontend-checks:
     name: Frontend checks

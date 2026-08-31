@@ -11,6 +11,7 @@ from src.agents.security_trust import (
     SecurityTrustService,
 )
 from src.models import (
+    BrandCreateRequestV4,
     BrandRecordV4,
     EntityUrlClaimV4,
     EntityUrlRelationshipV4,
@@ -19,6 +20,7 @@ from src.models import (
     SecurityRecommendedActionV4,
     SecurityRiskV4,
     SecurityTriageCreateRequestV4,
+    WhitelistCreateRequestV4,
     WhitelistRecordV4,
     WhitelistScopeV4,
 )
@@ -27,6 +29,32 @@ from src.services.platform_wave2 import VersionedSourceRegistry, default_source_
 from src.services.security_triage import SecurityTriageScopeService
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
+
+
+def test_whitelist_request_uses_server_owned_defaults() -> None:
+    before = datetime.now(UTC)
+    request = WhitelistCreateRequestV4(
+        indicator="safe.example", scope=WhitelistScopeV4.DOMAIN, provenance="Reviewed official notice"
+    )
+    after = datetime.now(UTC)
+
+    assert request.policy_version == "whitelist-v1"
+    assert before <= request.effective_from <= after
+    assert request.effective_until is None
+
+
+def test_brand_request_uses_server_owned_defaults() -> None:
+    before = datetime.now(UTC)
+    request = BrandCreateRequestV4(
+        name="Example Bank",
+        official_domains=["bank.example"],
+        provenance="https://registry.example/example-bank",
+    )
+    after = datetime.now(UTC)
+
+    assert request.policy_version == "brand-registry-v1"
+    assert before <= request.effective_from <= after
+    assert request.effective_until is None
 
 
 def _brand(**updates) -> BrandRecordV4:

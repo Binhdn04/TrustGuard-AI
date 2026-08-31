@@ -23,7 +23,7 @@ const candidate: IdentityCandidateV4 = {
 describe("IdentityCandidateQueue", () => {
   it("shows evidence and requires a reviewer note before approval", async () => {
     const onDecide = vi.fn().mockResolvedValue(undefined);
-    render(<IdentityCandidateQueue page={{ contract_version: "v4", items: [candidate], total: 1, limit: 10, offset: 0 }} query={{ entity: "", status: "all", relationship: "all", page: 1 }} loading={false} busy={false} error={null} onQueryChange={vi.fn()} onDecide={onDecide} onRetry={vi.fn()} />);
+    render(<IdentityCandidateQueue page={{ contract_version: "v4", items: [candidate], total: 1, limit: 10, offset: 0 }} query={{ entity: "", status: "all", relationship: "all", page: 1 }} loading={false} busy={false} error={null} onQueryChange={vi.fn()} onCreateManual={vi.fn()} onDecide={onDecide} onRetry={vi.fn()} />);
 
     expect(screen.getByText(/exact_resource_endorsement/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Duyệt" }));

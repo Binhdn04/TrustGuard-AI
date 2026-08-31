@@ -63,12 +63,13 @@ function api(overrides: Partial<SecurityAnalysisApi> = {}): SecurityAnalysisApi 
 
 async function fillCreateForm() {
   fireEvent.click(screen.getByRole("button", { name: "Thêm domain cần chặn" }));
-  fireEvent.change(screen.getByLabelText("Domain cần chặn"), { target: { value: "Fraud.Example." } });
-  fireEvent.change(screen.getByLabelText("Provenance danh sách chặn"), { target: { value: "Reviewed user report" } });
-  fireEvent.change(screen.getByLabelText("Lý do chặn"), { target: { value: "Credential theft" } });
-  fireEvent.change(screen.getByLabelText("Nguồn bằng chứng chặn"), { target: { value: "evidence:credential-form, report:42" } });
-  fireEvent.click(screen.getByRole("button", { name: "Xem trước domain chuẩn hóa" }));
+  fireEvent.change(screen.getByLabelText("Link hoặc domain cần chặn"), { target: { value: "https://Fraud.Example/login?token=secret" } });
+  fireEvent.change(screen.getByLabelText("Căn cứ chặn"), { target: { value: "Credential theft" } });
+  fireEvent.change(screen.getByLabelText("URL nguồn xác minh blacklist"), { target: { value: "https://security.example/advisory?token=secret#finding" } });
+  fireEvent.click(screen.getByRole("button", { name: "Xem lại và xác nhận" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("fraud.example");
+  expect(screen.getByRole("dialog")).toHaveTextContent("https://security.example/advisory");
+  expect(screen.getByRole("dialog")).not.toHaveTextContent("secret");
 }
 
 describe("M5 blacklist registry", () => {
@@ -79,23 +80,34 @@ describe("M5 blacklist registry", () => {
     await screen.findByText("Không có domain phù hợp.");
 
     await fillCreateForm();
-    fireEvent.click(screen.getByRole("button", { name: "Xác nhận chặn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận chặn toàn domain" }));
 
     await waitFor(() => expect(proposeBlacklist).toHaveBeenCalledWith({
       canonical_domain: "fraud.example",
       reason: "Credential theft",
-      provenance: "Reviewed user report",
-      evidence_refs: ["evidence:credential-form", "report:42"],
+      evidence_refs: ["https://security.example/advisory"],
     }));
     expect(decideBlacklistAction).toHaveBeenCalledWith("action-add", { decision: "approved", note: "Credential theft" });
     expect(await screen.findByRole("status")).toHaveTextContent("Đã chặn fraud.example");
+  });
+
+  it("does not allow a manual proposal without a verification-source URL", async () => {
+    render(<BlacklistRegistry api={api()} />);
+    await screen.findByText("Không có domain phù hợp.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Thêm domain cần chặn" }));
+    fireEvent.change(screen.getByLabelText("Link hoặc domain cần chặn"), { target: { value: "fraud.example" } });
+    fireEvent.change(screen.getByLabelText("Căn cứ chặn"), { target: { value: "Credential theft" } });
+    expect(screen.getByRole("button", { name: "Xem lại và xác nhận" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("URL nguồn xác minh blacklist"), { target: { value: "not-a-url" } });
+    expect(screen.getByRole("button", { name: "Xem lại và xác nhận" })).toBeDisabled();
   });
 
   it.each(["rejected", "failed"] as const)("does not show success when the reviewed action is %s", async (status) => {
     render(<BlacklistRegistry api={api({ decideBlacklistAction: vi.fn().mockResolvedValue(decision(status)) })} />);
     await screen.findByText("Không có domain phù hợp.");
     await fillCreateForm();
-    fireEvent.click(screen.getByRole("button", { name: "Xác nhận chặn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận chặn toàn domain" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(status === "failed" ? "BLACKLIST_WRITE_FAILED" : "Đã từ chối");
     expect(screen.queryByText(/^Đã chặn fraud\.example/)).not.toBeInTheDocument();
@@ -106,7 +118,7 @@ describe("M5 blacklist registry", () => {
     render(<BlacklistRegistry api={api({ proposeBlacklist })} />);
     await screen.findByText("Không có domain phù hợp.");
     await fillCreateForm();
-    fireEvent.click(screen.getByRole("button", { name: "Xác nhận chặn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận chặn toàn domain" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("không tự gửi lại quyết định");
     expect(proposeBlacklist).toHaveBeenCalledTimes(1);
@@ -139,9 +151,9 @@ describe("M5 blacklist registry", () => {
     fireEvent.click(screen.getByRole("button", { name: "Vô hiệu hóa" }));
     fireEvent.click(screen.getByRole("button", { name: "Xác nhận vô hiệu hóa" }));
 
-    await waitFor(() => expect(proposeDisableBlacklist).toHaveBeenCalledWith("blacklist-1", expect.objectContaining({
-      provenance: "blacklist-record:blacklist-1",
-    })));
+    await waitFor(() => expect(proposeDisableBlacklist).toHaveBeenCalledWith("blacklist-1", {
+      reason: "Vô hiệu hóa fraud.example sau khi rà soát.",
+    }));
     expect(decideBlacklistAction).toHaveBeenCalledWith("action-disable", expect.objectContaining({ decision: "approved" }));
   });
 });

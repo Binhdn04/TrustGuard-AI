@@ -383,6 +383,9 @@ describe("Security Chat workspace", () => {
     const assistant = await screen.findByRole("region", { name: "Phản hồi của trợ lý bảo mật" });
     expect(assistant).toHaveTextContent("Liên kết này có rủi ro cao");
     await waitFor(() => expect(api.capturePage).toHaveBeenCalledWith(expect.any(String), 0));
+    const pagePreview = screen.getByRole("heading", { name: "Xem trước trang web" });
+    const securityContext = screen.getByText("Ngữ cảnh bảo mật");
+    expect(pagePreview.compareDocumentPosition(securityContext) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Chụp ảnh web" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Chụp lại" })).not.toBeInTheDocument();
     const resultDetailLabel = screen.getByText("Xem kết quả chi tiết");

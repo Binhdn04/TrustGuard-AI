@@ -1,18 +1,14 @@
 import type { ReactNode } from "react";
 import { ShieldIcon } from "@/components/ui/icons";
 
-import { ThemeToggle } from "@/components/theme-toggle";
-
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background relative">
-      {/* Absolute top-right controls */}
-      <div className="absolute top-4 right-4 z-50 flex items-center gap-4">
+      <div className="absolute top-4 right-4 z-50">
         <div className="lg:hidden flex items-center gap-2 text-primary font-bold mr-2">
           <ShieldIcon className="w-6 h-6" />
           AI PROTECT
         </div>
-        <ThemeToggle />
       </div>
 
       {/* Left Column - Branding (Hidden on mobile) */}

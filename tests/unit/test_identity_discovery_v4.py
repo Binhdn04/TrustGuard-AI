@@ -16,6 +16,8 @@ from src.models import (
     IdentityEvidenceFamilyV4,
     IdentityEvidenceObservationV4,
     IdentityRelationshipV4,
+    ManualIdentityCandidateCreateRequestV4,
+    OfficialIdentityTypeV4,
     VerificationIntentV4,
 )
 from src.repositories import SQLiteBlacklistRepository
@@ -105,6 +107,44 @@ async def test_sqlite_versions_candidates_and_admin_promotion_is_terminal(tmp_pa
     assert duplicate.value.status_code == 409
     audit = await repository.list_security_admin_audit()
     assert any(item.resource_type.value == "identity_candidate" and item.action == "approve" for item in audit)
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_identity_stays_review_gated_and_does_not_broaden_social_domain(tmp_path) -> None:
+    repository = SQLiteBlacklistRepository(tmp_path / "manual-identity.db")
+    service = SecurityTrustAdminService(repository)
+
+    candidate = await service.create_manual_identity_candidate(
+        ManualIdentityCandidateCreateRequestV4(
+            entity_name="ACME Bank",
+            identity_value="https://social.example/acme-bank?private=query#fragment",
+            identity_type=OfficialIdentityTypeV4.SOCIAL_PROFILE,
+            relationship=IdentityRelationshipV4.OFFICIAL_CONTROLLED,
+            source_url="https://acme.example/about/social?private=query#fragment",
+        ),
+        ADMIN,
+    )
+
+    assert candidate.assurance is IdentityAssociationAssuranceV4.DISCOVERED
+    assert candidate.canonical_url == "https://social.example/acme-bank"
+    assert candidate.observations[0].canonical_url == "https://acme.example/about/social"
+    assert not await repository.list_brands()
+
+    promoted = await service.decide_identity_candidate(
+        str(candidate.association_id),
+        IdentityCandidateDecisionRequestV4(
+            action=IdentityCandidateDecisionActionV4.APPROVE,
+            note="Reviewed the official social-profile reference.",
+            identity_type=OfficialIdentityTypeV4.SOCIAL_PROFILE,
+        ),
+        ADMIN,
+    )
+
+    assert promoted.assurance is IdentityAssociationAssuranceV4.PROMOTED
+    brand = (await repository.list_brands())[0]
+    assert brand.official_domains == []
+    assert brand.official_identities[0].identity_type is OfficialIdentityTypeV4.SOCIAL_PROFILE
     await repository.close()
 
 

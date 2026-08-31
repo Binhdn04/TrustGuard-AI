@@ -14,7 +14,7 @@ import { useAuth, type User } from "@/lib/auth-context";
 import type { SecurityPresentationMode } from "@/lib/mappers/security-case-view-model";
 
 export type AvatarTone = "emerald" | "blue" | "violet" | "amber";
-export type MotionPreference = "system" | "reduced";
+export type MotionPreference = "default" | "reduced";
 
 export interface AccountPreferences {
   displayName: string;
@@ -36,7 +36,7 @@ function defaults(user?: User | null): AccountPreferences {
     displayName: user?.name ?? "",
     avatarTone: "emerald",
     defaultPresentation: "simple",
-    motion: "system",
+    motion: "default",
   };
 }
 
@@ -59,7 +59,8 @@ function readPreferences(user: User): AccountPreferences {
         ? saved.avatarTone as AvatarTone
         : fallback.avatarTone,
       defaultPresentation: saved.defaultPresentation === "analyst" ? "analyst" : "simple",
-      motion: saved.motion === "reduced" ? "reduced" : "system",
+      // Migrate the former "system" value to the explicit default state.
+      motion: saved.motion === "reduced" ? "reduced" : "default",
     };
   } catch {
     window.localStorage.removeItem(storageKey(user.id));

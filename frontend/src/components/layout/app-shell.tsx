@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { MobileNavigation } from "@/components/layout/mobile-navigation";
 import { UserMenu } from "@/components/layout/user-menu";
 import { WorkspaceNavigation } from "@/components/layout/workspace-navigation";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { getSecurityAnalysisApi } from "@/lib/api/security-analysis-api";
 import type { SecurityAnalysisApi } from "@/lib/api/security-analysis-api.types";
 import { useAuth } from "@/lib/auth-context";
@@ -16,7 +16,8 @@ import { Hexagon, LoaderCircle, PanelLeftClose } from "lucide-react";
 const routeCopy: Array<{ match: (pathname: string) => boolean; eyebrow: string; title: string }> = [
   { match: (pathname) => pathname === "/", eyebrow: "KIỂM TRA BẢO MẬT", title: "Kiểm tra mới" },
   { match: (pathname) => pathname.startsWith("/history"), eyebrow: "LỊCH SỬ", title: "Các lần kiểm tra" },
-  { match: (pathname) => pathname.startsWith("/profile"), eyebrow: "HỒ SƠ", title: "Tài khoản và cài đặt" },
+  { match: (pathname) => pathname.startsWith("/profile"), eyebrow: "HỒ SƠ", title: "Hồ sơ cá nhân" },
+  { match: (pathname) => pathname.startsWith("/settings"), eyebrow: "CÀI ĐẶT", title: "Tùy chọn và quyền riêng tư" },
   { match: (pathname) => pathname.startsWith("/admin/review"), eyebrow: "NGƯỜI DUYỆT", title: "Duyệt bảo mật" },
   { match: (pathname) => pathname.startsWith("/admin/trust"), eyebrow: "QUẢN TRỊ", title: "Danh sách tin cậy & chặn" },
   { match: (pathname) => pathname.startsWith("/admin/"), eyebrow: "KHU VỰC NÂNG CAO", title: "Đang chuyển về giao diện MVP" },
@@ -79,7 +80,7 @@ export function AppShell({
       </a>
 
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-border/80 bg-card/92 px-5 py-6 backdrop-blur-xl lg:block">
-        <div className="flex items-center gap-3 px-2">
+        <Link href="/" aria-label="AI PROTECT — Trợ lý an toàn số" className="flex items-center gap-3 rounded-xl px-2 py-1 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <span className="relative grid size-11 place-items-center text-primary" aria-hidden="true">
             <Hexagon className="absolute size-11 stroke-[1.25]" />
             <span className="size-2 rounded-full bg-primary shadow-[0_0_0_6px_color-mix(in_srgb,var(--primary)_16%,transparent)]" />
@@ -88,7 +89,7 @@ export function AppShell({
             <p className="text-[11px] font-bold tracking-[0.24em] text-muted-foreground">AI PROTECT</p>
             <p className="text-base font-semibold tracking-tight">Trợ lý an toàn số</p>
           </div>
-        </div>
+        </Link>
 
         <WorkspaceNavigation
           pathname={pathname}
@@ -115,7 +116,6 @@ export function AppShell({
               <p className="truncate text-sm font-semibold sm:text-base">{currentRoute.title}</p>
             </div>
             <div className="flex items-center gap-2">
-              <ThemeToggle />
               <UserMenu />
             </div>
           </div>

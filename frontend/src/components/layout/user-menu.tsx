@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { avatarToneClass, useAccountPreferences } from "@/lib/account-preferences-context";
-import { Archive, ShieldCheck, User, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { ShieldCheck, User, Settings, LogOut, LayoutDashboard } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -34,6 +34,7 @@ export function UserMenu() {
   if (!user) return null;
 
   const displayName = preferences.displayName || user.name;
+  const reduceMotion = preferences.motion === "reduced";
 
   return (
     <div className="relative" ref={menuRef}>
@@ -50,10 +51,10 @@ export function UserMenu() {
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            initial={reduceMotion ? false : { opacity: 0, y: 10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: reduceMotion ? 0 : 0.2 }}
             role="menu"
             aria-label="Tài khoản"
             className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-border bg-card shadow-xl backdrop-blur-xl"
@@ -84,7 +85,7 @@ export function UserMenu() {
               )}
               
               <Link
-                href="/profile?tab=profile"
+                href="/profile"
                 role="menuitem"
                 className="flex w-full items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
                 onClick={() => setIsOpen(false)}
@@ -94,23 +95,13 @@ export function UserMenu() {
               </Link>
               
               <Link
-                href="/profile?tab=preferences"
+                href="/settings"
                 role="menuitem"
                 className="flex w-full items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
                 onClick={() => setIsOpen(false)}
               >
                 <Settings className="w-4 h-4 mr-3 text-muted-foreground" />
                 Cài đặt
-              </Link>
-
-              <Link
-                href="/history"
-                role="menuitem"
-                className="flex w-full items-center rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
-                onClick={() => setIsOpen(false)}
-              >
-                <Archive className="mr-3 size-4 text-muted-foreground" />
-                Lịch sử &amp; báo cáo
               </Link>
             </div>
 

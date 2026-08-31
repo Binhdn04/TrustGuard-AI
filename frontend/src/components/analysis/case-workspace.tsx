@@ -126,7 +126,6 @@ function ActionPanel({
               mode={mode}
               showSimpleTechnicalDetails={mode !== "simple"}
             />
-            {mode === "simple" && <DomainIdentitySummary viewModel={completed} mode="simple" />}
             {mode === "simple" && (
               <PageCapturePanel
                 analysisId={latest!.analysis_id}
@@ -134,6 +133,7 @@ function ActionPanel({
                 api={api}
               />
             )}
+            {mode === "simple" && <DomainIdentitySummary viewModel={completed} mode="simple" />}
             {mode === "simple" ? (
               <details
                 key={`${latest!.analysis_id}:${latest!.conversation_version}`}
@@ -169,13 +169,13 @@ function ActionPanel({
               </details>
             ) : (
               <>
-                <DomainIdentitySummary viewModel={completed} mode="analyst" />
-                <OfficialVerificationPanel viewModel={completed} mode="analyst" />
                 <PageCapturePanel
                   analysisId={latest!.analysis_id}
                   urls={completed.context?.urls ?? []}
                   api={api}
                 />
+                <DomainIdentitySummary viewModel={completed} mode="analyst" />
+                <OfficialVerificationPanel viewModel={completed} mode="analyst" />
                 <AnalysisReportForm analysisId={latest!.analysis_id} securityApi={api} />
                 <AnalysisAppealForm analysisId={latest!.analysis_id} securityApi={api} />
               </>
