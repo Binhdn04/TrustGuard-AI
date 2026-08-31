@@ -212,9 +212,9 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     fireEvent.click(await screen.findByRole("button", { name: /ACME Bank/ }));
     expect(await screen.findByText("evidence:memory")).toBeInTheDocument();
     expect(screen.getByText(/Chưa duyệt → Độc hại/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Kết luận hiệu chỉnh"), { target: { value: "malicious" } });
+    fireEvent.change(screen.getByLabelText("Kết luận của người duyệt"), { target: { value: "malicious" } });
     fireEvent.change(screen.getByLabelText("Ghi chú của người duyệt"), { target: { value: "Confirmed by evidence" } });
-    fireEvent.click(screen.getByRole("button", { name: "Lưu hiệu chỉnh" }));
+    fireEvent.click(screen.getByRole("button", { name: "Lưu kết luận" }));
     await waitFor(() => expect(correctSecurityMemory).toHaveBeenCalledWith(memory.memory_id, { verdict: "malicious", note: "Confirmed by evidence" }));
   });
 
@@ -224,10 +224,12 @@ describe("FE8 trust lifecycle and audit isolation", () => {
     render(<TrustWorkspace api={api} />);
     fireEvent.click(screen.getByText("Nguồn chính thức và công cụ nâng cao"));
     fireEvent.click(screen.getByRole("button", { name: "Chiến dịch" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Shared credential lure/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Cụm tín hiệu liên quan đến fraud.example/ }));
     await waitFor(() => expect(api.getSecurityCampaign).toHaveBeenCalledWith(campaign.campaign_id));
     expect(api.listSecurityCampaignAudit).toHaveBeenCalledWith(campaign.campaign_id);
-    expect(screen.getByText("Tín hiệu có tên").parentElement).toHaveTextContent("domain:fraud.example: 3");
+    expect(screen.getByText("Tóm tắt để duyệt").parentElement).toHaveTextContent("Cụm gồm 3 phân tích");
+    expect(screen.getByText("Toàn bộ tín hiệu thô").parentElement).toHaveTextContent("domain:fraud.example");
+    expect(screen.getByRole("radio", { name: /Xác nhận chiến dịch/ })).toBeChecked();
     fireEvent.change(screen.getByLabelText("Ghi chú của người duyệt"), { target: { value: "Signals verified" } });
     fireEvent.click(screen.getByRole("button", { name: "Gửi kết quả duyệt" }));
     await waitFor(() => expect(reviewSecurityCampaign).toHaveBeenCalledWith(campaign.campaign_id, { decision: "confirmed", note: "Signals verified" }));

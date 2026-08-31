@@ -11,7 +11,7 @@ export function CaseEmptyState({ composer }: { composer: ReactNode }) {
           <span className="hidden sm:inline">Bạn muốn kiểm tra điều gì?</span>
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-          Tin nhắn lạ, link đáng ngờ hay thông tin khó xác minh — cứ gửi mình
+          Tin nhắn lạ, link đáng ngờ hay yêu cầu bất thường — cứ gửi mình
         </p>
 
         <section aria-label="Tạo case mới" className="case-panel relative mx-auto mt-8 max-w-3xl overflow-hidden p-4 text-left shadow-sm sm:p-6">
