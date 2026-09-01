@@ -15,18 +15,21 @@ TrustGuard AI là trợ lý hội thoại giúp người dùng đánh giá tin n
 
 ```mermaid
 flowchart LR
-    Input[Message / URL] --> Scope[Security scope +<br/>normalized context]
-    Scope --> Understanding[Rules + default-on<br/>grounded AI understanding]
-    Understanding --> Decision{In scope?}
-    Decision -->|No / need info| Boundary[Boundary or<br/>follow-up question]
-    Decision -->|Incident exposure| Recovery[Recovery-first path]
-    Decision -->|Security investigation| Tools[Local checks + consented<br/>DNS, redirect, RDAP,<br/>reputation]
-    Tools --> Trust[Brand, whitelist,<br/>approved blacklist]
-    Recovery --> MemoryLookup[Reviewed Security Memory]
-    Trust --> MemoryLookup
-    MemoryLookup --> Risk[Deterministic risk v1/v2]
-    Risk --> Response[Grounded warning +<br/>recommended actions]
-    Response --> Store[(Analysis, conversation,<br/>events, memory, campaign)]
+    Input["Message or URL"] --> Scope["Scope gate and normalized context"]
+    Scope --> Understanding["Rules and grounded AI understanding"]
+    Understanding --> Decision{"Scope decision"}
+    Decision -->|"Out of scope or need info"| Boundary["Terminal boundary or focused follow-up"]
+    Decision -->|"Incident exposure"| Recovery["Recovery-first guidance"]
+    Decision -->|"In scope"| Investigation["Local checks and consented external lookup"]
+    Investigation --> Trust["Brand, whitelist, blacklist and familiarity"]
+    Trust --> Official["Official-link verification and identity discovery"]
+    Recovery --> Memory["Reviewed Security Memory and campaigns"]
+    Official --> Memory
+    Memory --> Risk["Deterministic risk policy v1-v7"]
+    Risk --> Response["Grounded response and recommended actions"]
+    Response --> Store["Persisted analysis, conversation and events"]
+    Store --> Replay["Owner-scoped cursor polling or ticketed WebSocket replay"]
+    Store --> Review["History, reports, admin review and immutable audit"]
 ```
 
 - Lượt intake/follow-up của case bảo mật gọi `POST /api/v4/analyses`.
