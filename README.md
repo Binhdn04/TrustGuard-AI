@@ -1,76 +1,21 @@
 # TrustGuard AI — Security Triage Assistant
 
-> Web đã deploy: https://frontend-production-3dd5.up.railway.app/
+TrustGuard AI giúp người dùng đánh giá tin nhắn và URL đáng ngờ trước khi chuyển tiền, đăng nhập, cung cấp OTP hoặc thực hiện hành động có rủi ro. Public runtime duy nhất là **Security Triage API v4** tại `/api/v4`; public API v2/v3 và vector-search compatibility đã được gỡ bỏ.
+
+> Web đã deploy: <https://frontend-production-3dd5.up.railway.app/>
 >
 > Tài khoản admin để test: `TestTrustGuard@AI.com`  
 > Mật khẩu: `TestTrustGuard@AI.com`
 >
-> Kết quả eval: [eval/results/security-langfuse-report.json](eval/results/security-langfuse-report.json). Ảnh chụp Langfuse nằm trong [eval/evidence](eval/evidence).
+> Kết quả evaluation: [eval/results/security-langfuse-report.json](eval/results/security-langfuse-report.json). Ảnh chụp Langfuse nằm trong [eval/evidence](eval/evidence).
 
-TrustGuard AI là trợ lý hội thoại giúp người dùng đánh giá tin nhắn và URL đáng ngờ trước khi thực hiện hành động có thể làm mất tiền, tài khoản hoặc dữ liệu. Runtime chính là **Security Triage API v4**: phân loại phạm vi, điều tra theo consent, tạo bằng chứng, tính risk bằng policy xác định và trả lời có grounding.
+## Bắt đầu nhanh
 
-> Product flow hiện tại chỉ cung cấp Security v4 tại `/api/v4`; public API v2/v3 và vector-search compatibility đã được gỡ bỏ.
+Yêu cầu: Python 3.11+, [uv](https://docs.astral.sh/uv/) và Node.js 22+. Docker + Docker Compose chỉ cần cho full stack.
 
-## Flow hiện tại
+### Local inline
 
-```mermaid
-flowchart LR
-    Input["Message or URL"] --> Scope["Scope gate and normalized context"]
-    Scope --> Understanding["Rules and grounded AI understanding"]
-    Understanding --> Decision{"Scope decision"}
-    Decision -->|"Out of scope or need info"| Boundary["Terminal boundary or focused follow-up"]
-    Decision -->|"Incident exposure"| Recovery["Recovery-first guidance"]
-    Decision -->|"In scope"| Investigation["Local checks and consented external lookup"]
-    Investigation --> Trust["Brand, whitelist, blacklist and familiarity"]
-    Trust --> Official["Official-link verification and identity discovery"]
-    Recovery --> Memory["Reviewed Security Memory and campaigns"]
-    Official --> Memory
-    Memory --> Risk["Deterministic risk policy v1-v7"]
-    Risk --> Response["Grounded response and recommended actions"]
-    Response --> Store["Persisted analysis, conversation and events"]
-    Store --> Replay["Owner-scoped cursor polling or ticketed WebSocket replay"]
-    Store --> Review["History, reports, admin review and immutable audit"]
-```
-
-- Lượt intake/follow-up của case bảo mật gọi `POST /api/v4/analyses`.
-- Sau khi đã có verdict, frontend gửi câu hỏi hội thoại thông thường qua `POST /api/v4/chat`; nếu router chọn `security_analysis`, frontend mở một analysis v4 mới.
-- Inline là chế độ mặc định. Async chỉ được quảng bá khi PostgreSQL, durable worker và feature flag đều sẵn sàng.
-- Async dùng job lease, encrypted payload, idempotency key, event log và transactional outbox.
-- PostgreSQL là source of truth; Redis chỉ giữ WebSocket ticket ngắn hạn và phát wake-up notification. Client có polling fallback và replay event theo cursor.
-- Chỉ Security Memory đã được admin review và campaign đã xác nhận mới có thể ảnh hưởng risk của lượt sau; lookup luôn owner-scoped và không dùng chính analysis hiện tại.
-
-Tài liệu root được kiểm tra theo source hiện tại:
-
-- [Architecture diagram](ARCHITECTURE.md) — topology, luồng đồng bộ/bền vững và trust boundary.
-- [Đặc tả & thiết kế](SPECIFICATION_AND_DESIGN.md) — phạm vi sản phẩm, API và quyết định thiết kế.
-- [Kiểm thử](TESTING.md) — lệnh kiểm tra, phạm vi test và bằng chứng gần nhất.
-
-Các tài liệu vận hành/canonical chi tiết vẫn ở [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md).
-
-## Tính năng chính
-
-- Security scope gate, structured context và multi-turn conversation có optimistic versioning.
-- Local URL rules, approved blacklist, SSRF guard, DNS, redirect resolution, RDAP và VirusTotal reputation khi được cấu hình.
-- Brand registry và whitelist có provenance.
-- Whitelist chỉ xác nhận target; quan hệ tổ chức–URL được kiểm tra riêng và mismatch không thể bị whitelist che khuất.
-- Risk policy xác định: `SAFE`, `LOW_RISK`, `SUSPICIOUS`, `HIGH_RISK`, `MALICIOUS`, `INSUFFICIENT_EVIDENCE`.
-- Grounded assistant response; AI output không hợp lệ hoặc không grounded tự động rơi về policy response.
-- Owner-isolated history, reports, appeals, event replay và WebSocket stream.
-- Admin Review, Trust registry, Security Memory, campaign review, intelligence views, unified audit và suggestion-only Admin Copilot.
-- SQLite/in-memory fallback cho development/test; PostgreSQL + Redis cho durable/production topology.
-
-## Yêu cầu
-
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) — khuyến nghị, hoặc `venv` + `pip`
-- Node.js 22+ và npm
-- Docker + Docker Compose nếu chạy full stack
-
-## Quick start — local inline
-
-Flow này dùng SQLite, demo auth và deterministic Security v4; không cần PostgreSQL, Redis hay API key bên ngoài.
-
-### 1. Backend
+Chế độ này dùng SQLite và demo auth; không cần PostgreSQL, Redis hay API key bên ngoài.
 
 ```bash
 cp .env.example .env
@@ -78,288 +23,42 @@ uv sync
 uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Nếu không dùng `uv`:
+Chạy frontend ở terminal khác:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Backend local mặc định:
-
-- API: <http://localhost:8000>
-- OpenAPI/Swagger (local/development only): <http://localhost:8000/docs>. Production disables `/docs`, `/redoc`, and `/openapi.json`.
-- Health: <http://localhost:8000/health>
-- Readiness: <http://localhost:8000/health/ready>
-- User token: `dev-user-token`
-- Security Admin token: `dev-admin-token`
-
-### 2. Frontend
-
-Mở terminal khác:
-
-```bash
-cp frontend/.env.example frontend/.env.local
 cd frontend
+cp .env.example .env.local
 npm ci
 npm run dev
 ```
 
-Trong `frontend/.env.local`, bật demo token cho local development:
+Để đăng nhập bằng demo auth local, cấu hình hai demo token theo [hướng dẫn frontend](frontend/README.md).
 
-```dotenv
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_DEMO_USER_TOKEN=dev-user-token
-NEXT_PUBLIC_DEMO_ADMIN_TOKEN=dev-admin-token
-```
+- Frontend: <http://localhost:3000>
+- Backend: <http://localhost:8000>
+- API docs (local/development): <http://localhost:8000/docs>
+- Readiness: <http://localhost:8000/health/ready>
 
-Mở <http://localhost:3000>. Không đưa demo token vào hosted/production build.
-
-## Full stack bằng Docker Compose
+### Full stack với Docker Compose
 
 ```bash
 cp .env.example .env
+cp frontend/.env.example frontend/.env.local
 docker compose up --build -d
-docker compose ps
-curl http://localhost:8000/health/ready
 ```
 
-Services:
-
-| Service | Địa chỉ | Vai trò |
-|---|---|---|
-| Frontend | <http://localhost:3000> | Next.js application |
-| Backend | <http://localhost:8000> | FastAPI `/api/v4` |
-| PostgreSQL | internal `postgres:5432` | Source of truth và durable records |
-| Redis | internal `redis:6379` | Realtime wake-up và WS tickets |
-| Worker | internal | Durable worker, outbox publisher, retention |
-
-Compose tự chạy `alembic upgrade head` trước khi khởi động backend. Cấu hình mặc định vẫn chạy analysis inline vì `SECURITY_ASYNC_EXECUTION_ENABLED=false`.
-
-## Deploy production trên Railway
-
-Repo có config-as-code riêng cho frontend, backend và worker. Topology production dùng
-Railway PostgreSQL + Redis trong cùng project, OIDC thật và chỉ public frontend/backend.
-Xem [Deployment and Operations](docs/DEPLOYMENT.md) để cấu hình root directory,
-config path, reference variables, domain, migration, smoke test và rollback.
-
-Dừng stack:
-
-```bash
-docker compose down
-```
-
-`docker compose down -v` xóa cả PostgreSQL/Redis volumes và không thể khôi phục nếu chưa backup.
-
-## Environment variables
-
-Toàn bộ giá trị mẫu nằm trong [.env.example](.env.example) và [frontend/.env.example](frontend/.env.example). Các biến dưới đây là những biến tác động trực tiếp tới flow Security v4.
-
-### Runtime và storage
-
-| Biến | Mặc định | Ý nghĩa |
-|---|---:|---|
-| `APP_ENV` | `development` | `development`, `test` hoặc `production`; production bật validation nghiêm ngặt. |
-| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Bind address của backend khi dùng trong launcher riêng. |
-| `CORS_ORIGINS` | `http://localhost:3000` | Danh sách origin phân cách bằng dấu phẩy; production chỉ chấp nhận HTTPS origin cụ thể. |
-| `DATABASE_URL` | `sqlite:///./data/app.db` | PostgreSQL bắt buộc cho production và async execution. |
-| `SECURITY_DATABASE_PATH` | `./data/security.db` | SQLite Security v4 fallback cho local/test. |
-| `DATABASE_ENCRYPTION_KEY` | development placeholder | Khóa mã hóa durable payload; production cần secret riêng dài tối thiểu 32 ký tự. |
-| `REDIS_URL` | `redis://localhost:6379/0` | Notification, distributed rate limit và WS ticket trong production. |
-| `RUN_DURABLE_WORKER` | `true` | Chạy worker/outbox/retention trong process hiện tại khi repository là PostgreSQL. |
-| `SECURITY_ASYNC_EXECUTION_ENABLED` | `false` | Cho phép request `execution_mode=async` khi durable runtime thực sự ready. |
-| `JOB_LEASE_SECONDS` | `60` | Thời hạn lease của durable job. |
-| `SECURITY_CONVERSATION_RETENTION_DAYS` | `30` | Thời gian giữ conversation summary đã redacted. |
-| `CONTENT_RETENTION_DAYS` | `30` | Thời gian giữ nội dung phân tích đã tối giản trước retention cleanup. |
-| `LOG_LEVEL` | `INFO` | Structured application logging. |
-
-### Authentication và abuse controls
-
-| Biến | Mặc định | Ý nghĩa |
-|---|---:|---|
-| `DEMO_AUTH_ENABLED` | `true` | Chỉ dùng local/test; production bắt buộc `false`. |
-| `DEMO_USER_TOKEN` | `dev-user-token` | Bearer token của local user. |
-| `DEMO_ADMIN_TOKEN` | `dev-admin-token` | Bearer token của local Security Admin. |
-| `OIDC_ISSUER` / `OIDC_AUDIENCE` | rỗng | Bắt buộc khi demo auth tắt. |
-| `OIDC_JWKS_URL` | issuer JWKS | Optional override cho JWKS endpoint. |
-| `OIDC_ROLES_CLAIM` | `roles` | Claim chứa roles; Auth0 production dùng claim namespaced `<audience>/roles`. |
-| `OIDC_ADMIN_ROLE` | `security_admin` | Role được ánh xạ sang Security Admin. |
-| `USER_RATE_LIMIT_PER_MINUTE` | `120` | Limit riêng cho user. |
-| `ADMIN_RATE_LIMIT_PER_MINUTE` | `60` | Limit riêng cho admin. |
-| `IP_RATE_LIMIT_PER_MINUTE` | `240` | Pre-authentication limit for `/api/*`; its key is an HMAC of the IP, so raw IP is not written to Redis or logs. |
-| `TRUSTED_PROXY_IPS` | empty | Comma-separated deployment-controlled proxy IPs/CIDRs. `X-Forwarded-For` is accepted only when the connected peer is in this list; leave empty for direct backend access. |
-| `WEBSOCKET_TICKET_TTL_SECONDS` | `60` | TTL của one-time stream ticket. |
-
-Frontend hosted dùng Authorization Code + PKCE. Cần ít nhất:
-
-```dotenv
-NEXT_PUBLIC_API_URL=https://api.example.com
-NEXT_PUBLIC_OIDC_ISSUER=https://your-tenant.auth0.com/
-NEXT_PUBLIC_OIDC_CLIENT_ID=your-public-spa-client-id
-NEXT_PUBLIC_OIDC_AUDIENCE=https://api.example.com
-NEXT_PUBLIC_OIDC_REDIRECT_URI=https://app.example.com/auth/callback
-NEXT_PUBLIC_OIDC_ROLES_CLAIM=https://api.example.com/roles
-```
-
-### Security AI feature flags
-
-Các AI stage mặc định bật nhưng từng flag vẫn là kill switch. Trong production phải có `OPENAI_API_KEY` và model configuration hợp lệ khi bất kỳ AI operation nào được bật.
-
-| Biến | Mặc định | Stage được bật |
-|---|---:|---|
-| `SECURITY_AI_UNDERSTANDING_ENABLED` | `true` | Structured semantic understanding chọn backend span IDs và confidence; flag là kill switch. |
-| `SECURITY_AI_PLANNING_ENABLED` | `true` | Chỉ ưu tiên deterministic plan; không được tạo target/tool mới. |
-| `SECURITY_AI_EXPLANATION_ENABLED` | `true` | Synthesis có grounding; failure quay về policy response. |
-| `SECURITY_ADMIN_COPILOT_ENABLED` | `true` | Gợi ý cho admin có RBAC, không tự thực thi action. |
-| `SECURITY_MEMORY_RETRIEVAL_ENABLED` | `false` | Dùng reviewed, owner-scoped memory và risk policy v2. |
-| `SECURITY_OFFICIAL_VERIFICATION_MODE` | `visible` | Chạy official-link verification và hiển thị kết quả; chỉ web-search khi request có consent riêng. |
-| `OPENAI_API_KEY` | rỗng | Credential của AI provider. |
-| `SECURITY_AI_SMALL_MODEL` | `gpt-4o-mini` | Understanding và planning model. |
-| `SECURITY_AI_SYNTHESIS_MODEL` | `gpt-4o-mini` | Response/copilot synthesis model. |
-| `SECURITY_AI_MAX_CALLS_PER_TURN` | `8` | Tổng call budget cho một turn (tối đa 12). |
-| `SECURITY_AI_TIMEOUT_SECONDS` | `15` | Timeout mỗi AI call. |
-| `SECURITY_AI_TURN_DEADLINE_SECONDS` | `60` | Deadline chung cho understanding, planning và explanation. |
-| `SECURITY_AI_MAX_RETRIES` | `1` | Retry một lần khi provider lỗi, timeout hoặc trả structured output không hợp lệ; retry vẫn tính vào turn budget. |
-| `ANALYSIS_DEADLINE_SECONDS` | `60` | Deadline end-to-end, bao gồm AI và provider tools. |
-
-### Investigation providers
-
-| Biến | Mặc định | Ý nghĩa |
-|---|---:|---|
-| `VIRUSTOTAL_API_KEY` | rỗng | Bật URL reputation provider. |
-| `BKNS_WHOIS_API_KEY` | rỗng | Optional: dùng BKNS WHOIS v2 trực tiếp cho `.vn` và fallback khi IANA không công bố RDAP service. |
-| `PROVIDER_TIMEOUT_SECONDS` | `10` | Timeout adapter bên ngoài. |
-| `SECURITY_INVESTIGATION_MAX_EXTERNAL_CALLS` | `16` | Network-call budget của một analysis. |
-| `SECURITY_INVESTIGATION_MAX_RETRIES` | `1` | Retry budget. |
-| `SECURITY_INVESTIGATION_DEADLINE_SECONDS` | `20` | Deadline của investigation. |
-| `LIVE_PROVIDERS_REQUIRED` | `false` | Fail fast nếu provider bắt buộc chưa được cấu hình. |
-
-DNS, redirect và RDAP không cần API key nhưng chỉ chạy khi request cấp `external_url_lookup=true`. Provider no-hit/error không được suy diễn thành `SAFE`.
-
-## Sample API queries
-
-Các ví dụ sau dùng demo auth local:
-
-```bash
-export API_URL=http://localhost:8000
-export USER_TOKEN=dev-user-token
-export ADMIN_TOKEN=dev-admin-token
-```
-
-### Health và capabilities
-
-```bash
-curl "$API_URL/health"
-curl "$API_URL/health/ready"
-curl "$API_URL/api/v4/capabilities"
-```
-
-`capabilities` là nguồn quyết định frontend có dùng async/AI/reviewed-memory capability hay không; không nên suy ra capability chỉ từ một flag đơn lẻ.
-
-### Inline security analysis
-
-Không cấp network consent — chỉ local checks và internal trust data:
-
-```bash
-curl -sS -X POST "$API_URL/api/v4/analyses" \
-  -H "Authorization: Bearer $USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Ngân hàng yêu cầu tôi gửi OTP và đăng nhập tại https://secure-check.example/login",
-    "execution_mode": "inline",
-    "consent": {
-      "external_url_lookup": false,
-      "official_source_lookup": false
-    }
-  }'
-```
-
-Response quan trọng gồm `analysis_id`, `conversation_id`, `conversation_version`, `scope_decision`, `security_context`, `evidence`, `risk`, `recommended_actions`, `assistant_response` và `limitations`.
-
-Frontend Security Triage gửi cả `external_url_lookup=true` và `official_source_lookup=true` trên từng lượt;
-API caller khác vẫn phải truyền hai consent độc lập trong chính request của mình.
-```
-
-## Database migrations
-
-Với PostgreSQL ngoài Compose:
-
-```bash
-uv run alembic upgrade head
-uv run alembic current
-uv run alembic heads
-```
-
-Migration `0018_remove_legacy_vector_compatibility` dọn fact-check/vector/source-discovery storage đã nghỉ hưu. Hãy backup trước khi áp dụng trên database đã có dữ liệu vì migration này không hỗ trợ downgrade.
-
-## Kiểm thử
-
-Backend:
-
-```bash
-uv run ruff check .
-uv run pytest -q --cov --cov-report=term-missing --cov-report=xml:coverage.xml
-uv run alembic heads
-```
-
-Lệnh pytest mặc định loại marker `integration`. CI có job riêng dựng PostgreSQL 16 disposable, apply toàn bộ migration
-và chạy `tests/integration`; coverage backend hiện có gate tối thiểu `68%` trong `pyproject.toml`.
-
-Frontend:
-
-```bash
-cd frontend
-npm test
-npm run lint
-npm run typecheck
-npm run check:cutover
-npm run build
-npm run test:e2e
-```
-
-Offline security evaluation và rollout guard:
-
-```bash
-uv run python scripts/evaluate_security_v4.py
-uv run python scripts/evaluate_security_memory_v2.py
-uv run python scripts/evaluate_security_ai.py
-uv run python scripts/check_security_ai_rollout.py --target-stage off
-```
-
-Offline pass không thay thế hosted OIDC/provider/PostgreSQL/Redis/load/backup-restore evidence.
-
-## Production checklist tối thiểu
-
-- `APP_ENV=production`, `DEMO_AUTH_ENABLED=false`.
-- PostgreSQL và Redis URLs thật; chạy migrations trước traffic.
-- HTTPS OIDC issuer/audience và frontend Authorization Code + PKCE configuration.
-- `DATABASE_ENCRYPTION_KEY` không phải placeholder và dài tối thiểu 32 ký tự.
-- `CORS_ORIGINS` chỉ chứa HTTPS origins cụ thể.
-- Chỉ bật từng AI/provider/memory/async flag sau evaluation tương ứng.
-- Xác minh `/health/ready`, `/api/v4/capabilities`, worker lease, outbox, WebSocket fallback và retention.
-- Backup/restore rehearsal trước schema cleanup hoặc cutover.
-
-Chi tiết rollout, release gate và rollback: [Deployment and Operations](docs/DEPLOYMENT.md).
-
-## Safety invariants
-
-- Out-of-scope dừng trong Security v4, không tự chuyển sang general fact-check.
-- AI không trực tiếp đặt risk, score, consent hoặc tự tạo network target.
-- Network lookup cần consent của từng request; consent không được kế thừa qua conversation.
-- SSRF guard chặn private/local/metadata targets và revalidate redirect.
-- Provider no-hit, timeout hoặc thiếu evidence không tự tạo verdict `SAFE`.
-- URL đáng ngờ được hiển thị như text, không khuyến khích click.
-- Owner isolation được kiểm tra trước khi đọc analysis/conversation/evidence.
-- Admin Copilot chỉ gợi ý; quyết định cần người review và audit.
+Services dùng các địa chỉ mặc định: frontend `http://localhost:3000`, backend `http://localhost:8000`, PostgreSQL và Redis chỉ internal. Dừng stack bằng `docker compose down`; không dùng `-v` nếu chưa có backup cho volumes.
 
 ## Tài liệu
 
-- [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md) — scope, contract, components và invariants.
-- [Current Status](docs/CURRENT_STATUS.md) — implemented, deprecated và production gaps.
-- [Deployment and Operations](docs/DEPLOYMENT.md) — Railway, migration, rollout và rollback.
-- [Testing and Verification](docs/TESTING.md) — automated checks, evaluation và manual scenarios.
-- [Architecture diagram](ARCHITECTURE.md) — sơ đồ kiến trúc đã đối chiếu source/Compose.
-- [Specification and design](SPECIFICATION_AND_DESIGN.md) — đặc tả và thiết kế Security Triage v4.
-- [Root testing guide](TESTING.md) — bộ kiểm thử và kết quả xác minh workspace.
+| Nội dung | Tài liệu canonical |
+|---|---|
+| Phạm vi sản phẩm, API v4, runtime flow, safety invariants và persistence | [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md) |
+| Trạng thái implementation, phần pending và release gates | [Current Status](docs/CURRENT_STATUS.md) |
+| Cấu hình môi trường, Railway, migrations, async/streaming rollout và rollback | [Deployment and Operations](docs/DEPLOYMENT.md) |
+| Lệnh kiểm thử, evaluation và manual/hosted smoke | [Testing and Verification](docs/TESTING.md) |
+| Sơ đồ topology và trust boundary | [Architecture diagram](ARCHITECTURE.md) |
+| Đặc tả sản phẩm và thiết kế tóm tắt | [Specification and design](SPECIFICATION_AND_DESIGN.md) |
+| Hướng dẫn kiểm thử root và evidence workspace gần nhất | [Root testing guide](TESTING.md) |
+
+Các thay đổi runtime cần tuân thủ safety invariants và release gates trong tài liệu canonical ở trên.
