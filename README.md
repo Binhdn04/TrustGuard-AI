@@ -1,5 +1,12 @@
 # TrustGuard AI — Security Triage Assistant
 
+> Web đã deploy: https://frontend-production-3dd5.up.railway.app/
+>
+> Tài khoản admin để test: `TestTrustGuard@AI.com`  
+> Mật khẩu: `TestTrustGuard@AI.com`
+>
+> Kết quả eval: [eval/results/security-langfuse-report.json](eval/results/security-langfuse-report.json). Ảnh chụp Langfuse nằm trong [eval/evidence](eval/evidence).
+
 TrustGuard AI là trợ lý hội thoại giúp người dùng đánh giá tin nhắn và URL đáng ngờ trước khi thực hiện hành động có thể làm mất tiền, tài khoản hoặc dữ liệu. Runtime chính là **Security Triage API v4**: phân loại phạm vi, điều tra theo consent, tạo bằng chứng, tính risk bằng policy xác định và trả lời có grounding.
 
 > Product flow hiện tại chỉ cung cấp Security v4 tại `/api/v4`; public API v2/v3 và vector-search compatibility đã được gỡ bỏ.
