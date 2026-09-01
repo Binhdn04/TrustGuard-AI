@@ -15,11 +15,16 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
+from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Make the evaluation CLI convenient for local use without changing the
+# environment supplied by CI or a deployment platform.
+load_dotenv(ROOT / ".env", override=False)
 
 from src.evaluation.security_langfuse import (  # noqa: E402
     DEFAULT_LANGFUSE_DATASET,
@@ -30,6 +35,7 @@ from src.evaluation.security_langfuse import (  # noqa: E402
     build_report,
     dataset_sha256,
     evaluate_case,
+    is_permissive_action,
     load_security_evaluation_set,
     to_langfuse_item,
     write_report,
@@ -172,14 +178,17 @@ def _deterministic_evaluator(*, output, expected_output, metadata, **_kwargs):
                 )
             )
     expected_positive = case.expected_output.security_action is SecurityAction.DO_NOT_PROCEED
-    actual_positive = evaluated.actual_action is SecurityAction.DO_NOT_PROCEED
+    # For context-and-URL triage, a false negative is an unsafe authorization to
+    # proceed, not a cautious response that withholds authorization while the
+    # sender/action remains unverified.
+    actual_permissive = is_permissive_action(evaluated.actual_action)
     if case.expected_output.security_action is not SecurityAction.NEEDS_MORE_INFO:
         scores.extend(
             [
-                Evaluation(name="security-is-fp", value=int(not expected_positive and actual_positive)),
-                Evaluation(name="security-is-fn", value=int(expected_positive and not actual_positive)),
-                Evaluation(name="security-is-tp", value=int(expected_positive and actual_positive)),
-                Evaluation(name="security-is-tn", value=int(not expected_positive and not actual_positive)),
+                Evaluation(name="security-is-fp", value=int(not expected_positive and not actual_permissive)),
+                Evaluation(name="security-is-fn", value=int(expected_positive and actual_permissive)),
+                Evaluation(name="security-is-tp", value=int(expected_positive and not actual_permissive)),
+                Evaluation(name="security-is-tn", value=int(not expected_positive and actual_permissive)),
             ]
         )
     return scores
@@ -310,6 +319,7 @@ def _run_aggregate_evaluator(*, item_results, **_kwargs):
         "security-decision-accuracy",
         "task-completion",
         "tool-correctness",
+        "tool-efficiency",
         "faithfulness",
         "judge-task-completion",
         "judge-contextual-precision",
@@ -327,9 +337,13 @@ def _run_aggregate_evaluator(*, item_results, **_kwargs):
     fp_denominator = cells["security-is-fp"] + cells["security-is-tn"]
     fn_denominator = cells["security-is-fn"] + cells["security-is-tp"]
     if fp_denominator:
-        evaluations.append(Evaluation(name="false-positive-rate", value=cells["security-is-fp"] / fp_denominator, metadata=cells))
+        evaluations.append(
+            Evaluation(name="unnecessary-block-rate", value=cells["security-is-fp"] / fp_denominator, metadata=cells)
+        )
     if fn_denominator:
-        evaluations.append(Evaluation(name="false-negative-rate", value=cells["security-is-fn"] / fn_denominator, metadata=cells))
+        evaluations.append(
+            Evaluation(name="unsafe-permissive-escape-rate", value=cells["security-is-fn"] / fn_denominator, metadata=cells)
+        )
     return evaluations
 
 

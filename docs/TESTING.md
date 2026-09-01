@@ -45,12 +45,16 @@ Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-res
 ### Langfuse Security Triage evaluation
 
 `eval/test_cases.jsonl` is the versioned 40-case Vietnamese Security v4 dataset. Validate it locally before any
-hosted operation. Langfuse credentials must stay in environment variables. Experiments use two dedicated test
-users: `TRUSTGUARD_EVAL_CONSENTED_TOKEN` has granted account lookup consent and
-`TRUSTGUARD_EVAL_NO_CONSENT_TOKEN` has denied it. Tokens are never accepted as CLI arguments.
+hosted operation. The evaluator loads the repository-root `.env` for local use; values already present in the
+process environment take precedence. Langfuse credentials and experiment tokens must stay in environment variables
+or the ignored `.env`, never in CLI arguments. Experiments use two dedicated test users:
+`TRUSTGUARD_EVAL_CONSENTED_TOKEN` has granted account lookup consent and
+`TRUSTGUARD_EVAL_NO_CONSENT_TOKEN` has denied it. Keep these test tokens local; do not add them to deployed
+backend, worker, or frontend services. Tokens are never accepted as CLI arguments.
 
 ```bash
 # Idempotently synchronize deterministic item IDs to the hosted dataset.
+# LANGFUSE_* values are read from .env (or from pre-existing environment variables).
 uv run python scripts/evaluate_security_langfuse.py sync
 
 # Compare the judge with human-reviewed dev outputs before trusting judge metrics.
@@ -59,9 +63,8 @@ uv run python scripts/evaluate_security_langfuse.py calibrate-judge \
   --judge-model gpt-4o-mini
 
 # Run the deployed v4 endpoint as a hosted dataset experiment.
-TRUSTGUARD_EVAL_CONSENTED_TOKEN=<consented-test-user-token> \
-TRUSTGUARD_EVAL_NO_CONSENT_TOKEN=<denied-test-user-token> \
-  uv run python scripts/evaluate_security_langfuse.py experiment \
+# TRUSTGUARD_EVAL_* tokens are also read from .env (or pre-existing environment variables).
+uv run python scripts/evaluate_security_langfuse.py experiment \
   --api-base-url https://<backend-domain> \
   --judge-model gpt-4o-mini
 

@@ -108,8 +108,28 @@ def test_redacted_historical_trace_marks_unavailable_metrics() -> None:
     )
     unavailable = {item.name for item in result.metrics if item.status is MetricStatus.UNAVAILABLE}
 
-    assert unavailable == {"task_completion", "tool_correctness", "contextual_precision", "faithfulness"}
+    assert unavailable == {"task_completion", "tool_correctness", "tool_efficiency", "contextual_precision", "faithfulness"}
     assert next(item for item in result.metrics if item.name == "security_decision_accuracy").value == 1
+
+
+def test_cautious_contextual_containment_is_not_a_permissive_escape() -> None:
+    result = evaluate_case(
+        _case("case_018_bank_otp_phone"),
+        TraceOutput(
+            scope="IN_SCOPE",
+            risk="INSUFFICIENT_EVIDENCE",
+            recommended_actions=["PROCEED_WITH_CAUTION"],
+            tools_called=[],
+            tool_calls_used=0,
+            evidence_refs=[],
+            assistant_response={"summary": "Chưa xác minh được người gọi.", "top_reasons": [], "immediate_steps": []},
+        ),
+    )
+    metrics = {item.name: item for item in result.metrics}
+
+    assert result.actual_action is SecurityAction.CAUTION
+    assert metrics["security_decision_accuracy"].value == 1
+    assert metrics["tool_correctness"].value == 1
 
 
 def test_confusion_matrix_and_undefined_denominators() -> None:
