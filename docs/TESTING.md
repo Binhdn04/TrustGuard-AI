@@ -37,9 +37,49 @@ uv run python scripts/evaluate_security_memory_v2.py
 uv run python scripts/evaluate_security_ai.py
 uv run python scripts/check_security_ai_rollout.py --target-stage off
 uv run python scripts/evaluate_official_link_verification.py
+uv run python scripts/evaluate_security_langfuse.py validate
 ```
 
 Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-restore evidence.
+
+### Langfuse Security Triage evaluation
+
+`eval/test_cases.jsonl` is the versioned 40-case Vietnamese Security v4 dataset. Validate it locally before any
+hosted operation. The evaluator loads the repository-root `.env` for local use; values already present in the
+process environment take precedence. Langfuse credentials and experiment tokens must stay in environment variables
+or the ignored `.env`, never in CLI arguments. Experiments use two dedicated test users:
+`TRUSTGUARD_EVAL_CONSENTED_TOKEN` has granted account lookup consent and
+`TRUSTGUARD_EVAL_NO_CONSENT_TOKEN` has denied it. Keep these test tokens local; do not add them to deployed
+backend, worker, or frontend services. Tokens are never accepted as CLI arguments.
+
+```bash
+# Idempotently synchronize deterministic item IDs to the hosted dataset.
+# LANGFUSE_* values are read from .env (or from pre-existing environment variables).
+uv run python scripts/evaluate_security_langfuse.py sync
+
+# Compare the judge with human-reviewed dev outputs before trusting judge metrics.
+uv run python scripts/evaluate_security_langfuse.py calibrate-judge \
+  --annotations <human-reviewed-dev-outputs.jsonl> \
+  --judge-model gpt-4o-mini
+
+# Run the deployed v4 endpoint as a hosted dataset experiment.
+# TRUSTGUARD_EVAL_* tokens are also read from .env (or pre-existing environment variables).
+uv run python scripts/evaluate_security_langfuse.py experiment \
+  --api-base-url https://<backend-domain> \
+  --judge-model gpt-4o-mini
+
+# Diagnose linked historical observations; score attachment is opt-in.
+uv run python scripts/evaluate_security_langfuse.py traces \
+  --environment production --from-time 2026-08-01T00:00:00+00:00 \
+  --trace-case-map <observation-to-case.json> \
+  --output eval/results/security-langfuse-report.json
+```
+
+The deterministic evaluator is authoritative for scope, security action, tool policy, evidence-reference closure,
+latency, and cost. The optional judge scores response completion, contextual precision, and semantic faithfulness;
+calibrate it on the `dev` split before using the `test` split for quality claims. Historical redacted observations
+without response or tool inventories are reported as `unavailable`, never silently converted to failures or passes.
+No thresholds in this evaluator are release gates until the labels and judge calibration are reviewed.
 
 Streaming-progress hosted rollout smoke (requires separately approved async staging, two real OIDC user tokens and
 a reviewed non-sensitive message):

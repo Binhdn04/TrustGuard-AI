@@ -30,7 +30,7 @@ _PRIVATE_ATTRIBUTE_PARTS = (
     ".completions",
     ".tool.arguments",
 )
-_SAFE_METADATA_KEYS = {"feature", "operation", "privacy"}
+_SAFE_METADATA_KEYS = {"dataset_case_id", "feature", "operation", "privacy"}
 _REDACTED = "[REDACTED_PRIVATE_CONTENT]"
 _SAFE_STRUCTURED = "safe-structured"
 _SANITIZED_CONTENT = "sanitized-content"
@@ -183,6 +183,7 @@ class LangfuseObservability:
         user_id: str | None = None,
         session_id: str | None = None,
         input: dict[str, Any] | None = None,
+        dataset_case_id: str | None = None,
     ) -> Iterator[Any | None]:
         if self._client is None:
             with nullcontext(None) as span:
@@ -202,6 +203,7 @@ class LangfuseObservability:
                 "privacy": _SANITIZED_CONTENT
                 if self._settings.langfuse_capture_sanitized_content
                 else _CONTENT_REDACTED,
+                **({"dataset_case_id": dataset_case_id} if dataset_case_id else {}),
             },
         ) as span:
             failure: tuple[BaseException, Any] | None = None
@@ -211,7 +213,11 @@ class LangfuseObservability:
                     user_id=self.pseudonymous_user_id(user_id) if user_id else None,
                     session_id=session_id,
                     tags=["security-triage", feature],
-                    metadata={"feature": feature, "privacy": _SAFE_STRUCTURED},
+                    metadata={
+                        "feature": feature,
+                        "privacy": _SAFE_STRUCTURED,
+                        **({"dataset_case_id": dataset_case_id} if dataset_case_id else {}),
+                    },
                 ):
                     yield span
             except BaseException as exc:

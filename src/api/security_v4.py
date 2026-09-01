@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import unicodedata
 from datetime import UTC, datetime
 from typing import Annotated
@@ -591,6 +592,9 @@ async def create_security_analysis_v4(
     http_request: Request,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)] = None,
 ) -> SecurityScopeResponseV4 | JSONResponse:
+    evaluation_case_id = http_request.headers.get("X-Evaluation-Case-Id", "").strip()
+    if evaluation_case_id and not re.fullmatch(r"[a-z0-9_]{1,100}", evaluation_case_id):
+        evaluation_case_id = ""
     lookup_consent = getattr(analyses.repository, "get_account_lookup_consent", None)
     if lookup_consent is not None:
         account_consent = await lookup_consent(principal.user_id)
@@ -655,6 +659,7 @@ async def create_security_analysis_v4(
             user_id=principal.user_id,
             session_id=str(scoped.conversation_id),
             input={"message": request.message},
+            dataset_case_id=evaluation_case_id or None,
         ) as trace:
             scoped = await pipeline.process(
                 request,
@@ -673,6 +678,20 @@ async def create_security_analysis_v4(
                         "threat_type": scoped.threat_type.value if scoped.threat_type else None,
                         "investigation_status": scoped.investigation_status.value,
                         "tool_calls_used": scoped.tool_calls_used,
+                        "tools_called": [
+                            step.tool.value
+                            for step in scoped.investigation_plan
+                            if step.status.value in {"completed", "failed"}
+                        ],
+                        "consent": {
+                            "external_url_lookup": request.consent.external_url_lookup,
+                            "official_source_lookup": request.consent.official_source_lookup,
+                        },
+                        "evidence_refs": [item.evidence_ref for item in scoped.evidence],
+                        "explanation_evidence_refs": scoped.explanation_evidence_refs,
+                        "recommended_actions": [item.value for item in scoped.recommended_actions],
+                        "boundary_message": scoped.boundary_message,
+                        "follow_up_question": scoped.follow_up_question,
                         "errors": [
                             {
                                 "tool": error.tool.value,
