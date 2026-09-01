@@ -44,6 +44,8 @@ OIDC_AUDIENCE=<api-audience>
 OIDC_ROLES_CLAIM=<api-audience>/roles
 OIDC_ADMIN_ROLE=security_admin
 CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
+# Empty until this environment has a reserved, stable extension ID.
+CHROME_EXTENSION_ORIGINS=
 IP_RATE_LIMIT_PER_MINUTE=240
 # Leave empty unless this backend is reached through a deployment-controlled
 # proxy. When configured, use only its IP/CIDR; never trust a public header.
@@ -128,6 +130,22 @@ Không đặt `NEXT_PUBLIC_DEMO_USER_TOKEN` hoặc `NEXT_PUBLIC_DEMO_ADMIN_TOKEN
 được đóng vào Next.js bundle trong Docker build, nên thay đổi biến phải redeploy frontend. Authorization/token
 endpoint overrides để trống khi dùng endpoint chuẩn suy ra từ issuer. `CORS_ORIGINS` của backend phải là
 `https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`.
+
+### Chrome Extension origin allow-list
+
+Backend ghép hai allow-list exact cho HTTP CORS và WebSocket handshake:
+
+- `CORS_ORIGINS`: web origins `http://`/`https://`; production chỉ HTTPS.
+- `CHROME_EXTENSION_ORIGINS`: các origin exact dạng `chrome-extension://<32-character-id>`; để trống khi extension
+  chưa được bật cho environment.
+
+Không chấp nhận wildcard, credential, path, query hoặc fragment. WebSocket thiếu `Origin` hoặc có origin không
+được duyệt bị từ chối trước khi ticket single-use bị consume; ticket, owner check và JWT/RBAC vẫn là authorization
+boundary. Không commit unpacked ID local. Trước hosted rollout, reserve ID riêng cho từng environment, đăng ký exact
+OIDC redirect URI và cấu hình exact origin tương ứng; Store production ID được quản lý riêng.
+
+Build extension chỉ nhận exact API và web origins. API origin được cấp host permission/CSP cho HTTP(S)/WS(S); web
+origin chỉ dùng để tạo link `/cases/{validatedAnalysisId}`, không cấp host permission và không mang query/raw capture.
 
 Page capture mặc định tắt. Chỉ bật `SECURITY_PAGE_CAPTURE_ENABLED=true` khi backend Chromium đã được giới hạn
 egress khỏi private/metadata/service network; Docker image cài Chromium cho API target. Frontend tự yêu cầu ảnh
@@ -252,6 +270,15 @@ TRUSTGUARD_BASE_URL=https://<backend-domain> \\
 
 Nếu bất kỳ check nào không đạt, giữ async tắt và rollback application image hoặc presentation observer; không
 rewrite event/history hay đổi final result. Local PostgreSQL/Redis fakes và unit tests không thay thế checklist này.
+
+### Chrome Extension rollout
+
+Sau khi local lifecycle/capture/auth/HTTP/WebSocket/polling/final/handoff smoke đạt, rollout extension theo internal
+→ staging → production cohort → general availability. Mỗi môi trường cần OIDC public client PKCE, stable extension
+ID, exact origin allow-list và smoke bằng hai user để kiểm tra owner isolation, ticket single-use, reconnect/polling
+fallback và final fetch. Kiểm tra riêng install/update/uninstall, browser restart, incognito policy và privacy runtime;
+không lưu token, raw capture, OTP, credential, URL query hoặc provider payload trong evidence. Không quảng bá realtime
+async trước khi toàn bộ gate streaming ở trên đạt.
 
 ### MVP post-deploy smoke
 

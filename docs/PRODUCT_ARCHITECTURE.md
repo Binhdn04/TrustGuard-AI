@@ -40,7 +40,11 @@ intelligence vẫn là capability backend/nâng cao, không phải bề mặt đ
 ```mermaid
 flowchart TD
     UI[Next.js workspace] --> API[FastAPI /api/v4]
+    Page[Chrome page user gesture] --> Extension[MV3 capture + Side Panel]
+    Extension --> ExtAuth[OIDC public client + PKCE]
+    Extension --> API
     API --> Auth[Demo auth local hoặc OIDC/JWKS]
+    ExtAuth --> Auth
     Auth --> Scope[Scope + structured context]
     Scope -->|Out of scope| Boundary[Terminal boundary]
     Scope -->|Need info| FollowUp[Focused follow-up]
@@ -59,6 +63,29 @@ flowchart TD
     Store --> Memory[Reviewed memory + campaigns]
     Store --> Admin[HITL + immutable audit]
 ```
+
+Chrome Extension là adapter mỏng của `/api/v4`, không phải pipeline hay risk engine khác. MVP chỉ nhận text được
+chọn hoặc đích link từ context-menu user gesture; không đọc toàn trang, cookie, form, history hoặc request traffic.
+Background service worker giữ OIDC Authorization Code + PKCE, bearer và API calls; Side Panel chỉ nhận state tối
+thiểu, consent theo từng request và dữ liệu hiển thị đã allow-list. Raw capture/token chỉ ở `storage.session`, bị
+xóa sau accepted/final hoặc cancel; không dùng persistent content script hay arbitrary host permission.
+
+Background gọi capabilities để chọn inline/async và dùng idempotency key ổn định cho cùng capture. Progress chỉ là
+observer: Side Panel dùng ticketed WebSocket, reconnect bằng ticket mới và fallback owner-scoped cursor polling;
+dedupe theo event ID/sequence, không render message, evidence hay risk hint. Terminal signal luôn dẫn tới fetch
+`GET /api/v4/analyses/{analysis_id}` authoritative. CTA case chỉ tạo từ web origin cố định và UUID đã validate.
+
+Backend tách web origin với exact `chrome-extension://<id>` origin, kiểm tra `Origin` của WebSocket trước khi
+consume ticket; ticket single-use, owner scope, JWT và RBAC vẫn là authorization boundary. Extension implementation
+đã hoàn tất automated hardening; lifecycle/E2E, hosted origin/OIDC và Store rollout được theo dõi trong
+`CURRENT_STATUS.md` và `DEPLOYMENT.md`.
+
+Controlled progress phát các event coarse, allow-listed cho `running`, `understanding`, `scope_gate`,
+`incident_response`, `investigation`, `official_link_verification`, `security_memory_lookup`, `risk_assessment` và
+`assistant_response`. Event chỉ có stage/state an toàn (`started`, `completed`, `skipped`, `degraded`) và được ghi
+qua reporter bounded, fail-open; queue/append failure không được retry job, đổi pipeline hay ngăn final transaction.
+Frontend dedupe/replay theo event ID và sequence, dùng label tĩnh cho unknown fallback, và final analysis luôn thay
+progress. Không có tool-level event, token streaming, model draft hoặc chain-of-thought.
 
 Inline là mặc định. Async chỉ được quảng bá khi PostgreSQL, durable worker và configuration đều ready.
 PostgreSQL là source of truth; Redis phục vụ rate limit, ticket ngắn hạn và wake-up notification.
