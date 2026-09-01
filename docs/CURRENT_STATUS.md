@@ -1,6 +1,6 @@
 # Current Status
 
-**Updated:** 2026-08-28
+**Updated:** 2026-09-01
 
 `Implemented` nghĩa là có code và automated coverage trong repository, không đồng nghĩa đã verify trên
 hosted production với OIDC, PostgreSQL, Redis và provider thật.
@@ -15,6 +15,11 @@ backup/restore rehearsal, load/failure testing và live-provider smoke.
 Streaming coarse progress đã có code và local verification cho event contract, reporter fail-open, pipeline,
 PostgreSQL ordering/retry và frontend replay/presentation. Async production vẫn tắt; chưa có hosted evidence cho
 backend/worker cùng artifact, Redis/WebSocket fallback, owner/ticket smoke hoặc operational metrics.
+
+Chrome Extension MVP đã hoàn tất implementation và automated hardening: Manifest V3, context-menu capture,
+background-only OIDC PKCE, exact-origin boundary, consent-gated submit, ticketed progress/resume, authoritative
+final result và web handoff. Đây chưa là Railway/Chrome Web Store approval: local Chrome lifecycle/E2E và hosted
+OIDC/origin/Store rollout evidence vẫn là release gate.
 
 Phạm vi UI của MVP đã hoàn tất trong workspace: một navigation/sidebar dùng chung, user có hai mục chính và
 `security_admin` có thêm **Duyệt bảo mật** cùng **Tin cậy & chặn**. Login local vẫn hỗ trợ demo khi được cấu hình;
@@ -31,6 +36,7 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 | User flow | context-aware conversations, history/resume, reports, appeals, owner isolation, event replay |
 | Durable flow | PostgreSQL lease, encrypted payload, idempotency, outbox; SQLite inline fallback |
 | Streaming progress | coarse allow-listed stages, ordered fail-open reporter, PostgreSQL event replay/cursor and frontend WebSocket/polling presentation |
+| Chrome Extension | Manifest V3 Side Panel adapter cho `/api/v4`: selection/link capture, background-only OIDC PKCE và submit, ticketed WebSocket/cursor fallback, authoritative final fetch, fixed-host case handoff và automated privacy hardening |
 | Persistence | PostgreSQL facade tách feedback, jobs/outbox, trust và Wave 2 thành domain mixins; integration suite chạy trên PostgreSQL 16 disposable trong CI |
 | Admin/HITL | review, `ADD_TO_BLACKLIST`, trust, memory/campaign, intelligence, audit |
 | AI | optional understanding/planning/explanation; backend span candidates + model-selected IDs; per-candidate fail-soft grounding; suggestion-only Admin Copilot |
@@ -66,6 +72,9 @@ hosted dùng OAuth/OIDC. Bản code hiện tại chưa được deploy để ch�
 - Streaming progress/async chưa có hosted readiness, worker artifact/heartbeat, Redis outage/cursor fallback,
   owner/ticket reconnect/final-fetch smoke hay latency/event-volume observation. Async production vẫn mặc định tắt
   và chỉ được bật theo approval gate trong `DEPLOYMENT.md`.
+- Chrome Extension còn thiếu local Chrome lifecycle/E2E, runtime privacy inspection, stable environment-specific
+  extension IDs/OIDC redirects, hosted origin smoke, Web Store listing/review và production canary. Không dùng
+  wildcard origin, persistent content script, persistent raw capture/token storage hoặc hosted demo token.
 - Luồng MVP report → admin resolution/remediation → phân tích lại → audit đã có automated integration coverage
   trên local SQLite, nhưng chưa có smoke production với hai phiên OAuth thật `user` và `security_admin`.
 

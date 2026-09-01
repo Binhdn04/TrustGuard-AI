@@ -29,7 +29,13 @@ flowchart LR
 - PostgreSQL là source of truth; Redis chỉ giữ WebSocket ticket ngắn hạn và phát wake-up notification. Client có polling fallback và replay event theo cursor.
 - Chỉ Security Memory đã được admin review và campaign đã xác nhận mới có thể ảnh hưởng risk của lượt sau; lookup luôn owner-scoped và không dùng chính analysis hiện tại.
 
-Xem [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md) để biết product boundary, contract và data flow.
+Tài liệu root được kiểm tra theo source hiện tại:
+
+- [Architecture diagram](ARCHITECTURE.md) — topology, luồng đồng bộ/bền vững và trust boundary.
+- [Đặc tả & thiết kế](SPECIFICATION_AND_DESIGN.md) — phạm vi sản phẩm, API và quyết định thiết kế.
+- [Kiểm thử](TESTING.md) — lệnh kiểm tra, phạm vi test và bằng chứng gần nhất.
+
+Các tài liệu vận hành/canonical chi tiết vẫn ở [Product and Architecture](docs/PRODUCT_ARCHITECTURE.md).
 
 ## Tính năng chính
 
@@ -276,7 +282,7 @@ uv run alembic current
 uv run alembic heads
 ```
 
-Migration `0018_remove_vector_compat` dọn fact-check/vector/source-discovery storage đã nghỉ hưu. Hãy backup trước khi áp dụng trên database đã có dữ liệu vì migration này không hỗ trợ downgrade.
+Migration `0018_remove_legacy_vector_compatibility` dọn fact-check/vector/source-discovery storage đã nghỉ hưu. Hãy backup trước khi áp dụng trên database đã có dữ liệu vì migration này không hỗ trợ downgrade.
 
 ## Kiểm thử
 
@@ -344,3 +350,6 @@ Chi tiết rollout, release gate và rollback: [Deployment and Operations](docs/
 - [Current Status](docs/CURRENT_STATUS.md) — implemented, deprecated và production gaps.
 - [Deployment and Operations](docs/DEPLOYMENT.md) — Railway, migration, rollout và rollback.
 - [Testing and Verification](docs/TESTING.md) — automated checks, evaluation và manual scenarios.
+- [Architecture diagram](ARCHITECTURE.md) — sơ đồ kiến trúc đã đối chiếu source/Compose.
+- [Specification and design](SPECIFICATION_AND_DESIGN.md) — đặc tả và thiết kế Security Triage v4.
+- [Root testing guide](TESTING.md) — bộ kiểm thử và kết quả xác minh workspace.

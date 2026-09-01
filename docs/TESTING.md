@@ -19,6 +19,11 @@ npm run typecheck
 npm run check:cutover
 npm run build
 npm run test:e2e
+
+cd ../extension
+npm ci
+npm run check
+npm audit --audit-level=high
 ```
 
 Verification gần nhất của workspace ngày 2026-08-28: Ruff đạt; backend mặc định `702 passed, 3 deselected`,
@@ -41,6 +46,17 @@ uv run python scripts/evaluate_security_langfuse.py validate
 ```
 
 Offline checks không thay hosted OIDC/PostgreSQL/Redis/provider/load/backup-restore evidence.
+
+Chrome Extension automated coverage phải bao gồm Manifest V3/permission và bundle gates, capture normalization,
+trusted internal-message boundary, OIDC PKCE/state/nonce/token handling, exact API/web origin build validation,
+consent/idempotency submit, ticket/WebSocket/cursor fallback, final-result rendering và fixed-host handoff. Manual
+smoke dùng unpacked extension không được lưu raw capture, token, credential, OTP hoặc URL query vào evidence.
+
+Streaming progress coverage phải kiểm tra backward-compatible event thiếu `progress_state`, queue order/full,
+append failure và quiesce timeout; observer failure không được fail/retry job hoặc append sau final; OOS/
+need-more-info không gọi investigation/provider; no-consent không phát lookup; payload không chứa raw message,
+credential, OTP, token, tool args hay exception. Frontend cần bao phủ malformed/duplicate/out-of-order replay,
+unknown-stage fallback, reconnect/polling parity, reset, accessibility và final fetch không bị presentation lỗi chặn.
 
 ### Langfuse Security Triage evaluation
 
