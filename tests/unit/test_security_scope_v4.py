@@ -3,9 +3,16 @@ from pydantic import ValidationError
 
 from src.agents.security_scope import classify_security_scope, extract_security_context
 from src.models import (
+    AnalysisStatus,
+    AssistantImmediateStepV4,
+    AssistantReasonV4,
+    AssistantResponseV4,
     PotentialThreatV4,
     RequestedActionV4,
     ScopeDecisionV4,
+    SecurityInvestigationStatusV4,
+    SecurityRecommendedActionV4,
+    SecurityRiskV4,
     SecurityScenarioV4,
     SecurityScopeResponseV4,
     SecurityTriageCreateRequestV4,
@@ -196,6 +203,54 @@ def test_scope_response_rejects_non_terminal_out_of_scope_state() -> None:
             scope_reasons=["general_fact_check_sports"],
             boundary_message="Out of scope.",
         )
+
+
+def test_stored_response_drops_ungrounded_legacy_assistant_synthesis() -> None:
+    response = SecurityTriageScopeService().assess(
+        SecurityTriageCreateRequestV4(message="Ngân hàng yêu cầu gửi OTP ngay")
+    )
+    payload = response.model_dump(mode="json")
+    payload.update(
+        {
+            "status": AnalysisStatus.COMPLETED.value,
+            "terminal": True,
+            "next_step": "END",
+            "investigation_status": SecurityInvestigationStatusV4.COMPLETED.value,
+            "investigation_plan": [],
+            "evidence": [],
+            "risk": SecurityRiskV4.INSUFFICIENT_EVIDENCE.value,
+            "score": 0,
+            "confidence": 0.5,
+            "threat_type": PotentialThreatV4.PHISHING.value,
+            "policy_version": "security-risk-v7",
+            "recommended_actions": [SecurityRecommendedActionV4.DO_NOT_SHARE_OTP.value],
+            "explanation": "Không đủ bằng chứng để xác minh độc lập.",
+            "assistant_response": AssistantResponseV4(
+                summary="Không gửi OTP.",
+                top_reasons=[
+                    AssistantReasonV4(
+                        text="Tin nhắn yêu cầu OTP.",
+                        evidence_refs=["evidence:0000000000000000"],
+                    )
+                ],
+                immediate_steps=[
+                    AssistantImmediateStepV4(
+                        action=SecurityRecommendedActionV4.DO_NOT_SHARE_OTP,
+                        policy_ref="security-risk-v7",
+                    )
+                ],
+                generation_mode="policy_grounded",
+            ).model_dump(mode="json"),
+        }
+    )
+
+    with pytest.raises(ValidationError, match="assistant response cites evidence"):
+        SecurityScopeResponseV4.model_validate(payload)
+
+    restored = SecurityScopeResponseV4.model_validate_stored(payload)
+
+    assert restored.assistant_response is None
+    assert restored.risk is SecurityRiskV4.INSUFFICIENT_EVIDENCE
 
 
 def test_stored_scope_response_removes_retired_investigation_tool_only_in_storage_mode() -> None:

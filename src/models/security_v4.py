@@ -1263,6 +1263,33 @@ class SecurityScopeResponseV4(SecurityContractModel):
         elif isinstance(report, dict) and "sender_verification" in report:
             report = {key: item for key, item in report.items() if key != "sender_verification"}
             value = {**value, "official_verification": report}
+
+        # Older deployments could persist an assistant synthesis alongside
+        # evidence that was subsequently retired from the read contract. An
+        # ungrounded synthesis must never be rendered as if it were valid, but
+        # it also must not make an owner-scoped history page unavailable. This
+        # is storage-read compatibility only: new v4 payloads still fail the
+        # public grounding validation below.
+        assistant_response = value.get("assistant_response")
+        if isinstance(assistant_response, dict):
+            available_refs = {
+                item.get("evidence_ref")
+                for item in value.get("evidence", [])
+                if isinstance(item, dict) and isinstance(item.get("evidence_ref"), str)
+            }
+            top_reasons = assistant_response.get("top_reasons")
+            cited_refs = (
+                {
+                    ref
+                    for reason in top_reasons
+                    if isinstance(reason, dict) and isinstance(reason.get("evidence_refs"), list)
+                    for ref in reason["evidence_refs"]
+                }
+                if isinstance(top_reasons, list)
+                else set()
+            )
+            if not cited_refs <= available_refs:
+                value = {key: item for key, item in value.items() if key != "assistant_response"}
         raw_plan = value.get("investigation_plan")
         if not isinstance(raw_plan, list):
             return value

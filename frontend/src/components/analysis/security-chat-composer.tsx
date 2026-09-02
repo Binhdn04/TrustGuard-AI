@@ -154,15 +154,15 @@ export function SecurityChatComposer({
   const editorRef = useRef<HTMLDivElement>(null);
   const animatedPlaceholder = useTypewriterPlaceholder(variant === "intake" && !followUp);
 
-  useEffect(() => {
-    if (!message) editorRef.current?.replaceChildren();
-  }, [message]);
-
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = (editorRef.current ? textFromEditable(editorRef.current) : message).trim();
     if (!value || busy) return;
     onSubmit(value);
+    // Clear synchronously with this submission. A passive effect that clears
+    // an empty, newly mounted follow-up composer can otherwise race with the
+    // user's next input and drop that turn.
+    editorRef.current?.replaceChildren();
     setMessage("");
   };
 
